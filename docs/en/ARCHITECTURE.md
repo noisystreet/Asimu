@@ -135,6 +135,9 @@ Planned `[numerics] precision` / `backend` — commented in `config/default.toml
 - [0004](../adr/0004-mcp-integration.md) — MCP integration
 - [0005](../adr/0005-time-integration.md) — Time integration
 - [0006](../adr/0006-ffi-interop.md) — FFI / Python interop
+- [0007](../adr/0007-vts-binary-io.md) — VTS binary I/O
+- [0008](../adr/0008-cgns-io.md) — CGNS read / VTS export
+- [0009](../adr/0009-compressible-navier-stokes.md) — 3D compressible Navier-Stokes solver architecture
 
 ## Open decisions
 

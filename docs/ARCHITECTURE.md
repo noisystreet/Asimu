@@ -77,7 +77,7 @@ CFD 程序的核心工作流固定且重复：
 
 ### 2.2 非目标（当前阶段）
 
-- 完整三维可压 Navier-Stokes 生产级求解
+- 完整三维可压 Navier-Stokes **生产级**求解（架构基线见 [adr/0009](adr/0009-compressible-navier-stokes.md)，首版目标 v1.x）
 - GUI、云服务、Web 前端
 - 分布式 MPI 并行（远期单独 ADR）
 - 与 CFL3D 等 Fortran 遗留代码的二进制兼容
@@ -781,6 +781,7 @@ crates/
 | **v1.1.x** | [MCP.md](MCP.md) 实现：`asimu-mcp` stdio | Tools：validate / run / list_fixtures | MCP `get_run_summary` 读 manifest |
 | **v1.2.x** | MCP Resources + `get_run_summary` | `exec` + wgpu 原型；文档 Resource | Resource `asimu://run/latest`（manifest） |
 | **v1.3.x** | MCP Prompts；`.cursor/mcp.json.example` | 可选 CUDA；MCP 与 VTK 输出联动 | 可选 `--profile` flamegraph |
+| **v1.x** | `physics` 可压扩展、`discretization` 通量 | 3D 可压 NS 原型（显式 RK3 + HLLC）；见 [adr/0009](adr/0009-compressible-navier-stokes.md) | Sod / 双马赫 V&V 算例 |
 
 每版本**只填满一层**，避免同时改 mesh 格式、精度模型与 GPU 后端。
 
@@ -798,6 +799,9 @@ crates/
 | [0004](adr/0004-mcp-integration.md) | MCP 集成规划 |
 | [0005](adr/0005-time-integration.md) | 时间推进与稳态/瞬态统一模型 |
 | [0006](adr/0006-ffi-interop.md) | FFI / Python 互操作原则 |
+| [0007](adr/0007-vts-binary-io.md) | VTK VTS 二进制读入 |
+| [0008](adr/0008-cgns-io.md) | CGNS 读入与 VTS 导出 |
+| [0009](adr/0009-compressible-navier-stokes.md) | 三维可压缩 NS 求解器架构（FVM + 守恒变量 + HLLC） |
 
 ### 11.1 空间离散
 

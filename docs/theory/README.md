@@ -21,10 +21,11 @@
 |------|------|------|------|----------|
 | [fvm_diffusion.md](fvm_diffusion.md) | `discretization` | v0.2 | **骨架** | Patankar (1980) Ch. 5 |
 | *(待建)* `fvm_convection_diffusion.md` | `discretization` | v0.2 | 规划 | Patankar (1980) Ch. 5–6 |
-| *(待建)* `boundary_conditions.md` | `discretization` / BC | v0.2–v0.3 | 规划 | — |
+| `boundary_conditions.md` | `discretization` / BC | v0.2–v0.3 | **已实现（v0.2 Dirichlet/Neumann）** | [boundary_conditions.md](boundary_conditions.md) |
 | *(待建)* `time_integration.md` | `solver/time` | v0.2+ | 规划 | ADR 0005；Ferziger et al. |
 | *(待建)* `linear_cg.md` | `linalg` | v0.2 | 规划 | Saad (2003) Ch. 6 |
 | *(待建)* `incompressible_simple.md` | `solver` | v0.3 | 规划 | Patankar (1980) Ch. 6 |
+| *(待建)* `compressible_ns.md` | `discretization` / `physics` | v1.x | 规划 | [adr/0009](../adr/0009-compressible-navier-stokes.md)；Toro (2009) |
 
 实现对应功能时：将「规划」改为链接，并从索引表移除 *(待建)* 前缀。
 

@@ -109,6 +109,28 @@ pub struct Fields {
 
 **约束**：所有场的长度必须与关联网格的 `num_cells()` 一致；构造时校验，违反返回 `AsimuError::Field`。
 
+### 4.4 守恒变量场（v1.x 可压 NS）
+
+可压缩 NS 以守恒变量 SoA 为主状态（见 [adr/0009-compressible-navier-stokes.md](adr/0009-compressible-navier-stokes.md)）：
+
+```rust
+pub struct ConservedFields {
+    pub density: ScalarField,       // ρ
+    pub momentum_x: ScalarField,    // ρu
+    pub momentum_y: ScalarField,    // ρv
+    pub momentum_z: ScalarField,    // ρw
+    pub total_energy: ScalarField,  // ρE
+}
+```
+
+| 类型 | 说明 |
+|------|------|
+| `ConservedState` | 单单元 \([\rho, \rho u, \rho v, \rho w, \rho E]\) |
+| `PrimitiveState` | 派生原始变量 \((\rho, \mathbf{u}, p, T)\) |
+| `IdealGasEoS` | 理想气体闭合 \(p=\rho R T\) |
+
+原始变量**不作为**时间推进主存储；由 `physics::eos` 从 `ConservedState` 计算。
+
 ---
 
 ## 5. 边界条件
@@ -466,3 +488,4 @@ pub enum FieldBuffer {
 - [adr/0003-multi-precision-and-gpu.md](adr/0003-multi-precision-and-gpu.md)
 - [adr/0005-time-integration.md](adr/0005-time-integration.md)
 - [adr/0006-ffi-interop.md](adr/0006-ffi-interop.md)
+- [adr/0009-compressible-navier-stokes.md](adr/0009-compressible-navier-stokes.md)

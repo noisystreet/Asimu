@@ -26,5 +26,6 @@
 | [0006](adr/0006-ffi-interop.md) | FFI / Python 互操作原则 |
 | [0007](adr/0007-vts-binary-io.md) | VTK VTS 二进制读入（feature `io-vtk`） |
 | [0008](adr/0008-cgns-io.md) | CGNS 读入与 VTS 导出（feature `io-cgns-vts`，系统 libcgns） |
+| [0009](adr/0009-compressible-navier-stokes.md) | 三维可压缩 Navier-Stokes 求解器架构（规划基线） |
 
 维护策略：修改中文架构/数据模型文档时，同步更新 `docs/en/` 对应摘要（见 [AGENTS.md](../AGENTS.md)）。
