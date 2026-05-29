@@ -13,28 +13,31 @@ pub struct GhostCellState {
     pub conserved: ConservedState,
 }
 
-/// 边界面 ghost 缓冲（face 索引对齐 `FaceId`）。
-#[derive(Debug, Clone, PartialEq)]
+/// 边界面 ghost 缓冲（按 `FaceId` 索引）。
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct BoundaryGhostBuffer {
     states: Vec<Option<GhostCellState>>,
 }
 
 impl BoundaryGhostBuffer {
     #[must_use]
-    pub fn new(capacity: usize) -> Self {
-        Self {
-            states: vec![None; capacity],
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    pub fn insert(&mut self, index: usize, state: GhostCellState) {
-        if index < self.states.len() {
-            self.states[index] = Some(state);
+    pub fn insert_face(&mut self, face: crate::core::FaceId, state: GhostCellState) {
+        let index = face.index() as usize;
+        if index >= self.states.len() {
+            self.states.resize(index + 1, None);
         }
+        self.states[index] = Some(state);
     }
 
-    pub fn get(&self, index: usize) -> Option<GhostCellState> {
-        self.states.get(index).copied().flatten()
+    pub fn get_face(&self, face: crate::core::FaceId) -> Option<GhostCellState> {
+        self.states
+            .get(face.index() as usize)
+            .copied()
+            .flatten()
     }
 }
 
@@ -151,7 +154,7 @@ fn apply_patch_compressible(
     freestream: &FreestreamParams,
 ) -> Result<()> {
     let handler = BoundaryRegistry::handler_for(&patch.kind);
-    for (idx, &face) in patch.face_ids.iter().enumerate() {
+    for &face in &patch.face_ids {
         let owner_id = mesh.face_owner(face)?;
         let owner = fields.cell_state(owner_id.index() as usize)?;
         let geom = mesh.face_geometry_3d(face)?;
@@ -189,7 +192,7 @@ fn apply_patch_compressible(
             }
             _ => farfield_ghost(&owner, &geom, freestream, eos)?,
         };
-        ghosts.insert(idx, ghost);
+        ghosts.insert_face(face, ghost);
     }
     Ok(())
 }
@@ -243,6 +246,7 @@ mod tests {
         let fs = FreestreamParams::default();
         let fields = ConservedFields::from_freestream(mesh.num_cells(), &eos, &fs).expect("fields");
         let faces = mesh.resolve_logical_boundary("i_max").expect("faces");
+        let first_face = faces[0];
         let patches = BoundarySet::new(vec![BoundaryPatch::new(
             "farfield",
             faces,
@@ -254,9 +258,9 @@ mod tests {
                 beta: 0.0,
             },
         )]);
-        let mut ghosts = BoundaryGhostBuffer::new(patches.patches()[0].face_ids.len());
+        let mut ghosts = BoundaryGhostBuffer::new();
         apply_compressible_boundary_conditions(&mesh, &patches, &fields, &mut ghosts, &eos, &fs)
             .expect("bc");
-        assert!(ghosts.get(0).is_some());
+        assert!(ghosts.get_face(first_face).is_some());
     }
 }

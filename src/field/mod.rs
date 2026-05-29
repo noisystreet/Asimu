@@ -4,6 +4,7 @@
 
 mod conserved;
 mod initial;
+mod residual;
 
 use std::collections::BTreeMap;
 
@@ -13,6 +14,7 @@ use crate::mesh::StructuredMesh1d;
 use crate::physics::IdealGasEoS;
 
 pub use conserved::{ConservedFields, primitive_from_conserved};
+pub use residual::ConservedResidual;
 pub use initial::{
     FluidInitialConfig, InitialKind, InitialSet, ScalarInitial, build_scalar_initial,
 };

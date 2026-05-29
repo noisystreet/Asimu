@@ -174,10 +174,6 @@ impl StructuredMesh3d {
             }
         }
     }
-
-    fn cell_index(&self, i: usize, j: usize, k: usize) -> usize {
-        i + j * self.nx + k * self.nx * self.ny
-    }
 }
 
 impl BoundaryMesh for StructuredMesh3d {

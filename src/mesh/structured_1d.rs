@@ -45,6 +45,18 @@ impl StructuredMesh1d {
         self.length / self.ncells as Real
     }
 
+    /// 1D 单元体积（单位展宽）。
+    #[must_use]
+    pub fn cell_volume(&self) -> Real {
+        self.dx()
+    }
+
+    /// 1D 面面积（单位展宽）。
+    #[must_use]
+    pub const fn face_area(&self) -> Real {
+        1.0
+    }
+
     /// 左域边界 `FaceId(0)`，右域边界 `FaceId(1)`。
     #[must_use]
     pub const fn left_face() -> FaceId {

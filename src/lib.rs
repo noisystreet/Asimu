@@ -25,12 +25,14 @@ pub mod prelude {
     pub use crate::core::{CellId, FaceId, Real, Vector3, approx_eq};
     pub use crate::discretization::{
         apply_boundary_conditions, apply_compressible_boundary_conditions, apply_dirichlet,
-        apply_neumann, assemble_diffusion_1d,
+        apply_neumann, assemble_diffusion_1d, assemble_inviscid_residual_1d,
+        assemble_inviscid_residual_3d, face_inviscid_flux, reconstruct_first_order, roe_flux,
+        BoundaryGhosts1d, InviscidFlux, InterfaceStates, RoeFluxConfig,
     };
     pub use crate::error::{AsimuError, Result};
     pub use crate::field::{
-        ConservedFields, Fields, FluidInitialConfig, InitialKind, InitialSet, ScalarField,
-        ScalarInitial,
+        ConservedFields, ConservedResidual, Fields, FluidInitialConfig, InitialKind, InitialSet,
+        ScalarField, ScalarInitial,
     };
     pub use crate::io::{CaseMesh, CaseSpec, load_case, load_conserved_fields};
     pub use crate::linalg::LinearSystem;

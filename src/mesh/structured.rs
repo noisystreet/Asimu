@@ -176,6 +176,19 @@ impl StructuredMesh3d {
     pub fn node_z(&self, i: usize, j: usize, k: usize) -> f64 {
         self.points_z[self.node_index(i, j, k)]
     }
+
+    #[must_use]
+    pub fn cell_index(&self, i: usize, j: usize, k: usize) -> usize {
+        i + j * self.nx + k * self.nx * self.ny
+    }
+
+    #[must_use]
+    pub fn cell_volume(&self) -> f64 {
+        let dx = self.points_x[self.node_index(1, 0, 0)] - self.points_x[self.node_index(0, 0, 0)];
+        let dy = self.points_y[self.node_index(0, 1, 0)] - self.points_y[self.node_index(0, 0, 0)];
+        let dz = self.points_z[self.node_index(0, 0, 1)] - self.points_z[self.node_index(0, 0, 0)];
+        dx.abs() * dy.abs() * dz.abs()
+    }
 }
 
 #[cfg(test)]

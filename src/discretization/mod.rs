@@ -5,6 +5,10 @@
 pub mod bc;
 pub mod bc_compressible;
 pub mod diffusion_1d;
+pub mod inviscid;
+pub mod reconstruction;
+pub mod residual;
+pub mod roe;
 
 use crate::core::Real;
 use crate::error::Result;
@@ -20,6 +24,13 @@ pub use bc_compressible::{
     farfield_ghost, inlet_ghost, outlet_ghost, symmetry_ghost, wall_ghost,
 };
 pub use diffusion_1d::assemble_diffusion_1d;
+pub use inviscid::{InviscidFlux, physical_inviscid_flux};
+pub use reconstruction::{InterfaceStates, reconstruct_first_order};
+pub use residual::{
+    BoundaryGhosts1d, accumulate_boundary_face, accumulate_interior_face,
+    assemble_inviscid_residual_1d, assemble_inviscid_residual_3d,
+};
+pub use roe::{RoeFluxConfig, face_inviscid_flux, roe_flux};
 
 /// 占位装配入口：验证 field / mesh / system 尺寸一致。
 ///
