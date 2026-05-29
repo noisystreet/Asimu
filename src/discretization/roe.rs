@@ -45,7 +45,18 @@ pub fn roe_flux(
     let l1 = fixed_eigenvalue(roe.un - roe.a, delta, config.entropy_fix);
     let l5 = fixed_eigenvalue(roe.un + roe.a, delta, config.entropy_fix);
     let l_mid = roe.un.abs();
-    let diss = dissipation_vector(&roe, n, t1, t2, &waves, l1, l_mid, l5);
+    let diss = dissipation_vector(
+        n,
+        t1,
+        t2,
+        &RoeDissipation {
+            roe: &roe,
+            waves: &waves,
+            l1,
+            l_mid,
+            l5,
+        },
+    );
     Ok(combine_fluxes(flux_l, flux_r, diss))
 }
 
@@ -207,16 +218,22 @@ fn harten_entropy_fix(lambda: Real, delta: Real) -> Real {
     }
 }
 
-fn dissipation_vector(
-    roe: &RoeAverages,
-    normal: Vector3,
-    t1: Vector3,
-    t2: Vector3,
-    waves: &WaveStrengths,
+struct RoeDissipation<'a> {
+    roe: &'a RoeAverages,
+    waves: &'a WaveStrengths,
     l1: Real,
     l_mid: Real,
     l5: Real,
+}
+
+fn dissipation_vector(
+    normal: Vector3,
+    t1: Vector3,
+    t2: Vector3,
+    input: &RoeDissipation<'_>,
 ) -> Dissipation {
+    let roe = input.roe;
+    let waves = input.waves;
     let u = roe.velocity;
     let h = roe.enthalpy;
     let a = roe.a;
@@ -231,11 +248,11 @@ fn dissipation_vector(
     let r4 = eigenvector_shear(t2v, tangential_velocity(u, t2));
     let r5 = eigenvector_acoustic(u, h, a, un, n, 1.0);
 
-    let mut diss = scale_eigenvector(&r1, l1 * waves.alpha1);
-    add_scaled(&mut diss, &r2, l_mid * waves.alpha2);
-    add_scaled(&mut diss, &r3, l_mid * waves.alpha3);
-    add_scaled(&mut diss, &r4, l_mid * waves.alpha4);
-    add_scaled(&mut diss, &r5, l5 * waves.alpha5);
+    let mut diss = scale_eigenvector(&r1, input.l1 * waves.alpha1);
+    add_scaled(&mut diss, &r2, input.l_mid * waves.alpha2);
+    add_scaled(&mut diss, &r3, input.l_mid * waves.alpha3);
+    add_scaled(&mut diss, &r4, input.l_mid * waves.alpha4);
+    add_scaled(&mut diss, &r5, input.l5 * waves.alpha5);
     diss
 }
 

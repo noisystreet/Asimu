@@ -1,5 +1,7 @@
 //! CFD 求解器入口（占位实现：返回收敛占位结果）。
 
+pub mod compressible;
+pub mod sod;
 pub mod state;
 pub mod time;
 
@@ -10,8 +12,19 @@ use crate::core::Real;
 use crate::error::Result;
 use crate::mesh::Mesh;
 
+pub use compressible::{
+    CompressibleAdvanceContext1d, CompressibleAdvanceContext3d, CompressibleEulerConfig,
+    CompressibleEulerSolver, CompressibleStepInfo, max_wave_speed,
+};
+pub use sod::{
+    SodBenchmarkConfig, SodBenchmarkResult, run_sod_benchmark, sod_initial_fields,
+    write_sod_profile,
+};
 pub use state::SolverState;
-pub use time::{SteadyStateIntegrator, TimeIntegrator, TimeMode, TimeStepInfo};
+pub use time::{
+    Rk4Storage, RungeKutta4Config, RungeKutta4Integrator, SteadyStateIntegrator, TimeIntegrator,
+    TimeMode, TimeStepInfo, rk4_step,
+};
 
 /// 求解结果摘要。
 #[derive(Debug, Clone, PartialEq)]

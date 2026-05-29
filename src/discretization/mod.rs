@@ -16,19 +16,17 @@ use crate::field::ScalarField;
 use crate::linalg::LinearSystem;
 use crate::mesh::Mesh;
 
-pub use bc::{
-    apply_boundary_conditions, apply_dirichlet, apply_dirichlet_face, apply_neumann,
-};
+pub use bc::{apply_boundary_conditions, apply_dirichlet, apply_dirichlet_face, apply_neumann};
 pub use bc_compressible::{
-    BoundaryGhostBuffer, GhostCellState, apply_compressible_boundary_conditions,
-    farfield_ghost, inlet_ghost, outlet_ghost, symmetry_ghost, wall_ghost,
+    BoundaryGhostBuffer, GhostCellState, apply_compressible_boundary_conditions, farfield_ghost,
+    inlet_ghost, outlet_ghost, symmetry_ghost, wall_ghost,
 };
 pub use diffusion_1d::assemble_diffusion_1d;
 pub use inviscid::{InviscidFlux, physical_inviscid_flux};
 pub use reconstruction::{InterfaceStates, reconstruct_first_order};
 pub use residual::{
-    BoundaryGhosts1d, accumulate_boundary_face, accumulate_interior_face,
-    assemble_inviscid_residual_1d, assemble_inviscid_residual_3d,
+    BoundaryGhosts1d, InviscidBoundary1d, accumulate_boundary_face, accumulate_interior_face,
+    assemble_inviscid_residual_1d, assemble_inviscid_residual_3d, zero_gradient_ghosts_1d,
 };
 pub use roe::{RoeFluxConfig, face_inviscid_flux, roe_flux};
 

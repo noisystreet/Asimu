@@ -8,7 +8,9 @@ use crate::discretization::InviscidFlux;
 use crate::error::Result;
 use crate::field::ConservedResidual;
 
-pub use assembly_1d::{BoundaryGhosts1d, assemble_inviscid_residual_1d};
+pub use assembly_1d::{
+    BoundaryGhosts1d, InviscidBoundary1d, assemble_inviscid_residual_1d, zero_gradient_ghosts_1d,
+};
 pub use assembly_3d::assemble_inviscid_residual_3d;
 
 fn add_inviscid_flux(

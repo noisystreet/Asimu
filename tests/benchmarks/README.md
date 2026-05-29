@@ -9,6 +9,7 @@
 | 算例 | 版本 | 状态 |
 |------|------|------|
 | `1d_diffusion_analytical/` | v0.2 | 骨架（case + expected） |
+| `sod_1d/` | v1.x | Sod 激波管 vs 精确 Riemann 解 |
 | `1d_advection_diffusion/` | v0.2 | 规划 |
 | `channel_poiseuille/` | v0.3 | 规划 |
 | `lid_driven_cavity_re100/` | v0.4 | 规划 |

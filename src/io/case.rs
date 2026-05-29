@@ -11,9 +11,11 @@ use crate::boundary::{
 use crate::config::SolverConfig;
 use crate::core::Real;
 use crate::error::{AsimuError, Result};
-use crate::field::{Fields, FluidInitialConfig, InitialKind, InitialSet, ScalarField, ScalarInitial};
+use crate::field::{
+    Fields, FluidInitialConfig, InitialKind, InitialSet, ScalarField, ScalarInitial,
+};
 use crate::mesh::{BoundaryMesh, StructuredMesh1d, StructuredMesh3d};
-use crate::physics::{IdealGasEoS, PhysicsConfig, FreestreamParams};
+use crate::physics::{FreestreamParams, IdealGasEoS, PhysicsConfig};
 
 use super::validate_input_path;
 
@@ -122,7 +124,9 @@ struct MeshToml {
     lx: Option<Real>,
     ly: Option<Real>,
     lz: Option<Real>,
+    #[cfg_attr(not(feature = "io-cgns"), allow(dead_code))]
     path: Option<PathBuf>,
+    #[cfg_attr(not(feature = "io-cgns"), allow(dead_code))]
     zone: Option<usize>,
 }
 
@@ -260,23 +264,28 @@ fn parse_physics(raw: &PhysicsToml) -> Result<PhysicsConfig> {
 fn parse_mesh(raw: &MeshToml, name: &str, case_dir: Option<&Path>) -> Result<CaseMesh> {
     match raw.kind.as_str() {
         "structured_1d" => {
-            let cells = raw.cells.ok_or_else(|| {
-                AsimuError::Config("structured_1d 缺少 cells".to_string())
-            })?;
+            let cells = raw
+                .cells
+                .ok_or_else(|| AsimuError::Config("structured_1d 缺少 cells".to_string()))?;
             let mesh = StructuredMesh1d::new(
                 name,
                 cells,
                 raw.origin.unwrap_or(0.0),
-                raw.length.ok_or_else(|| {
-                    AsimuError::Config("structured_1d 缺少 length".to_string())
-                })?,
+                raw.length
+                    .ok_or_else(|| AsimuError::Config("structured_1d 缺少 length".to_string()))?,
             )?;
             Ok(CaseMesh::Structured1d(mesh))
         }
         "structured_3d" => {
-            let nx = raw.nx.ok_or_else(|| AsimuError::Config("structured_3d 缺少 nx".to_string()))?;
-            let ny = raw.ny.ok_or_else(|| AsimuError::Config("structured_3d 缺少 ny".to_string()))?;
-            let nz = raw.nz.ok_or_else(|| AsimuError::Config("structured_3d 缺少 nz".to_string()))?;
+            let nx = raw
+                .nx
+                .ok_or_else(|| AsimuError::Config("structured_3d 缺少 nx".to_string()))?;
+            let ny = raw
+                .ny
+                .ok_or_else(|| AsimuError::Config("structured_3d 缺少 ny".to_string()))?;
+            let nz = raw
+                .nz
+                .ok_or_else(|| AsimuError::Config("structured_3d 缺少 nz".to_string()))?;
             let mesh = StructuredMesh3d::uniform_box(
                 name,
                 nx,
@@ -289,7 +298,9 @@ fn parse_mesh(raw: &MeshToml, name: &str, case_dir: Option<&Path>) -> Result<Cas
             Ok(CaseMesh::Structured3d(mesh))
         }
         "cgns" => load_cgns_mesh(raw, name, case_dir),
-        other => Err(AsimuError::Config(format!("不支持的 mesh.kind \"{other}\""))),
+        other => Err(AsimuError::Config(format!(
+            "不支持的 mesh.kind \"{other}\""
+        ))),
     }
 }
 
@@ -341,18 +352,9 @@ fn parse_freestream(raw: &FreestreamToml) -> FreestreamParams {
 fn resolve_initial_set(initials: &BTreeMap<String, InitialToml>) -> Result<InitialSet> {
     let mut scalars = Vec::with_capacity(initials.len());
     for (name, ic) in initials {
-        let kind = InitialKind::from_toml(
-            &ic.kind,
-            ic.value,
-            ic.left,
-            ic.right,
-            ic.data.clone(),
-        )
-        .ok_or_else(|| {
-            AsimuError::Field(format!(
-                "初始条件 \"{name}\" 无效：kind=\"{}\"",
-                ic.kind
-            ))
+        let kind = InitialKind::from_toml(&ic.kind, ic.value, ic.left, ic.right, ic.data.clone())
+            .ok_or_else(|| {
+            AsimuError::Field(format!("初始条件 \"{name}\" 无效：kind=\"{}\"", ic.kind))
         })?;
         scalars.push(ScalarInitial::new(name.clone(), kind));
     }
@@ -361,7 +363,10 @@ fn resolve_initial_set(initials: &BTreeMap<String, InitialToml>) -> Result<Initi
     Ok(set)
 }
 
-fn resolve_boundary_set(mesh: &CaseMesh, boundaries: &BTreeMap<String, BoundaryToml>) -> Result<BoundarySet> {
+fn resolve_boundary_set(
+    mesh: &CaseMesh,
+    boundaries: &BTreeMap<String, BoundaryToml>,
+) -> Result<BoundarySet> {
     let mut patches = Vec::with_capacity(boundaries.len());
     for (logical_name, bc) in boundaries {
         let fields = BoundaryTomlFields {
@@ -405,7 +410,8 @@ fn resolve_boundary_set(mesh: &CaseMesh, boundaries: &BTreeMap<String, BoundaryT
 mod tests {
     use super::*;
 
-    const BENCHMARK_CASE: &str = include_str!("../../tests/benchmarks/1d_diffusion_analytical/case.toml");
+    const BENCHMARK_CASE: &str =
+        include_str!("../../tests/benchmarks/1d_diffusion_analytical/case.toml");
 
     #[test]
     fn parses_diffusion_benchmark() {

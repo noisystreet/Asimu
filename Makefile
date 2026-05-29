@@ -56,6 +56,14 @@ cgns-to-vts:
 	@test -n "$(IN)" && test -n "$(OUT)" || { echo "用法: make cgns-to-vts IN=mesh.cgns OUT=out.vts [ZONE=1]"; exit 1; }
 	$(CARGO) run --example cgns_to_vts $(CGNS_FLAGS) -- $(IN) $(OUT) $(if $(ZONE),--zone $(ZONE),)
 
+sod-export:
+	@test -n "$(OUT)" || { echo "用法: make sod-export OUT=sod_profile.txt [CELLS=100]"; exit 1; }
+	$(CARGO) run --example sod_benchmark_export -- $(OUT) $(if $(CELLS),--cells $(CELLS),)
+
+sod-plot:
+	@test -n "$(FILE)" || { echo "用法: make sod-plot FILE=sod_profile.txt [PNG=sod_compare.png]"; exit 1; }
+	$(PYTHON) scripts/plot_sod_benchmark.py $(FILE) $(if $(PNG),-o $(PNG),)
+
 test-cgns:
 	$(CARGO) test $(CGNS_FLAGS)
 

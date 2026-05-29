@@ -240,7 +240,10 @@ fn build_parsed_vts(state: VtsParseState) -> Result<ParsedVts> {
 }
 
 fn parse_points_scalar_type(points_type: Option<String>) -> Result<ScalarKind> {
-    match points_type.unwrap_or_else(|| "Float64".to_string()).as_str() {
+    match points_type
+        .unwrap_or_else(|| "Float64".to_string())
+        .as_str()
+    {
         "Float64" => Ok(ScalarKind::Float64),
         "Float32" => Ok(ScalarKind::Float32),
         other => Err(io_error(
@@ -280,10 +283,8 @@ fn apply_vtk_file_start(
             b"byte_order" => {
                 state.byte_order = Some(String::from_utf8_lossy(&attr.value).into_owned());
             }
-            b"compressor" => {
-                if apply_vtk_compressor_attr(&attr.value)? {
-                    state.compressed = true;
-                }
+            b"compressor" if apply_vtk_compressor_attr(&attr.value)? => {
+                state.compressed = true;
             }
             b"type" => ensure_structured_grid_type(&attr.value)?,
             _ => {}
@@ -342,9 +343,9 @@ fn apply_data_array_start(
     let format = attribute_value(e, b"format")?;
     if format.as_deref() == Some("appended") {
         if let Some(offset) = attribute_value(e, b"offset")? {
-            let offset = offset.parse().map_err(|_| {
-                io_error(std::io::ErrorKind::InvalidData, "DataArray offset 无效")
-            })?;
+            let offset = offset
+                .parse()
+                .map_err(|_| io_error(std::io::ErrorKind::InvalidData, "DataArray offset 无效"))?;
             state.appended_array_offsets.push(offset);
         }
     }
@@ -367,7 +368,8 @@ fn apply_points_data_array(
     }
     state.points_format = format;
     state.points_type = attribute_value(e, b"type")?;
-    state.points_components = attribute_value(e, b"NumberOfComponents")?.and_then(|s| s.parse().ok());
+    state.points_components =
+        attribute_value(e, b"NumberOfComponents")?.and_then(|s| s.parse().ok());
     if let Some(offset) = attribute_value(e, b"offset")? {
         state.points_offset = Some(offset.parse().map_err(|_| {
             io_error(

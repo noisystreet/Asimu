@@ -1,0 +1,21 @@
+name = "sod_1d"
+benchmark_id = "sod_1d"
+
+[mesh]
+kind = "structured_1d"
+ncells = 100
+origin = 0.0
+length = 1.0
+
+[physics]
+gamma = 1.4
+gas_constant = 1.0
+
+[sod]
+diaphragm = 0.5
+final_time = 0.2
+cfl = 0.4
+
+[solver]
+max_iterations = 1
+tolerance = 1.0e-6

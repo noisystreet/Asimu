@@ -20,14 +20,14 @@ pub mod solver;
 
 /// 常用类型 re-export，便于库集成。
 pub mod prelude {
-    pub use crate::boundary::{BoundaryKind, BoundaryPatch, BoundarySet, BoundaryRegistry};
+    pub use crate::boundary::{BoundaryKind, BoundaryPatch, BoundaryRegistry, BoundarySet};
     pub use crate::config::{AppConfig, SolverConfig};
     pub use crate::core::{CellId, FaceId, Real, Vector3, approx_eq};
     pub use crate::discretization::{
-        apply_boundary_conditions, apply_compressible_boundary_conditions, apply_dirichlet,
-        apply_neumann, assemble_diffusion_1d, assemble_inviscid_residual_1d,
-        assemble_inviscid_residual_3d, face_inviscid_flux, reconstruct_first_order, roe_flux,
-        BoundaryGhosts1d, InviscidFlux, InterfaceStates, RoeFluxConfig,
+        BoundaryGhosts1d, InterfaceStates, InviscidFlux, RoeFluxConfig, apply_boundary_conditions,
+        apply_compressible_boundary_conditions, apply_dirichlet, apply_neumann,
+        assemble_diffusion_1d, assemble_inviscid_residual_1d, assemble_inviscid_residual_3d,
+        face_inviscid_flux, reconstruct_first_order, roe_flux,
     };
     pub use crate::error::{AsimuError, Result};
     pub use crate::field::{
@@ -42,7 +42,10 @@ pub mod prelude {
     };
     pub use crate::physics::{FreestreamParams, IdealGasEoS, PhysicsConfig, PrimitiveState};
     pub use crate::solver::{
-        SolveResult, Solver, SolverState, SteadyStateIntegrator, TimeIntegrator,
+        CompressibleAdvanceContext1d, CompressibleAdvanceContext3d, CompressibleEulerConfig,
+        CompressibleEulerSolver, CompressibleStepInfo, Rk4Storage, RungeKutta4Config,
+        RungeKutta4Integrator, SolveResult, Solver, SolverState, SteadyStateIntegrator,
+        TimeIntegrator, max_wave_speed, rk4_step,
     };
 
     #[cfg(feature = "io-vtk")]

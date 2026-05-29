@@ -8,4 +8,6 @@ pub struct SolverState {
     pub pseudo_step: u32,
     pub physical_time: Real,
     pub iteration: u32,
+    pub time_step: u64,
+    pub dt: Real,
 }

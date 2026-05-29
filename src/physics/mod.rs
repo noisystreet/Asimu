@@ -1,9 +1,11 @@
 //! 物性参数与状态方程。
 
 mod eos;
+mod riemann_exact;
 
-pub use eos::{
-    ConservedState, FreestreamParams, IdealGasEoS, PrimitiveState,
+pub use eos::{ConservedState, FreestreamParams, IdealGasEoS, PrimitiveState};
+pub use riemann_exact::{
+    RiemannPrimitive1d, RiemannProblem1d, SodProblem, sample_exact, sod_sample,
 };
 
 use crate::core::Real;

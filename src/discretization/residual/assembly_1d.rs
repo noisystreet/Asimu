@@ -9,11 +9,46 @@ use crate::physics::IdealGasEoS;
 
 use super::{accumulate_boundary_face, accumulate_interior_face};
 
+struct InviscidFaceParams<'a> {
+    eos: &'a IdealGasEoS,
+    config: &'a RoeFluxConfig,
+    area: crate::core::Real,
+    volume: crate::core::Real,
+}
+
 /// 1D 边界 ghost（`left` / `right`）；`None` 则跳过该边界面。
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct BoundaryGhosts1d {
     pub left: Option<crate::physics::ConservedState>,
     pub right: Option<crate::physics::ConservedState>,
+}
+
+/// 1D 无粘边界面处理方式。
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub enum InviscidBoundary1d {
+    /// 固定 ghost（每步不更新）。
+    Fixed(BoundaryGhosts1d),
+    /// 零梯度：每步以 owner 单元当前值作为 ghost。
+    #[default]
+    ZeroGradient,
+}
+
+impl InviscidBoundary1d {
+    pub fn resolve(&self, fields: &ConservedFields) -> Result<BoundaryGhosts1d> {
+        match self {
+            Self::Fixed(ghosts) => Ok(*ghosts),
+            Self::ZeroGradient => zero_gradient_ghosts_1d(fields),
+        }
+    }
+}
+
+/// 1D 零梯度边界 ghost（复制 owner 单元）。
+pub fn zero_gradient_ghosts_1d(fields: &ConservedFields) -> Result<BoundaryGhosts1d> {
+    let last = fields.num_cells() - 1;
+    Ok(BoundaryGhosts1d {
+        left: Some(fields.cell_state(0)?),
+        right: Some(fields.cell_state(last)?),
+    })
 }
 
 /// 装配 1D 无粘 Euler 残差：内部面 + 可选边界 ghost 面。
@@ -33,10 +68,14 @@ pub fn assemble_inviscid_residual_1d(
         )));
     }
     residual.clear();
-    let volume = mesh.cell_volume();
-    let area = mesh.face_area();
-    assemble_interior_faces_1d(mesh, fields, residual, eos, config, area, volume)?;
-    assemble_boundary_faces_1d(mesh, fields, residual, eos, config, boundaries, area, volume)?;
+    let params = InviscidFaceParams {
+        eos,
+        config,
+        area: mesh.face_area(),
+        volume: mesh.cell_volume(),
+    };
+    assemble_interior_faces_1d(mesh, fields, residual, &params)?;
+    assemble_boundary_faces_1d(mesh, fields, residual, boundaries, &params)?;
     Ok(())
 }
 
@@ -44,18 +83,23 @@ fn assemble_interior_faces_1d(
     mesh: &StructuredMesh1d,
     fields: &ConservedFields,
     residual: &mut ConservedResidual,
-    eos: &IdealGasEoS,
-    config: &RoeFluxConfig,
-    area: crate::core::Real,
-    volume: crate::core::Real,
+    params: &InviscidFaceParams<'_>,
 ) -> Result<()> {
     let n = mesh.num_cells();
     let normal = Vector3::new(1.0, 0.0, 0.0);
     for i in 0..n.saturating_sub(1) {
         let left = fields.cell_state(i)?;
         let right = fields.cell_state(i + 1)?;
-        let flux = face_inviscid_flux(&left, &right, normal, eos, config)?;
-        accumulate_interior_face(residual, i, i + 1, &flux, area, volume, volume)?;
+        let flux = face_inviscid_flux(&left, &right, normal, params.eos, params.config)?;
+        accumulate_interior_face(
+            residual,
+            i,
+            i + 1,
+            &flux,
+            params.area,
+            params.volume,
+            params.volume,
+        )?;
     }
     Ok(())
 }
@@ -64,24 +108,21 @@ fn assemble_boundary_faces_1d(
     mesh: &StructuredMesh1d,
     fields: &ConservedFields,
     residual: &mut ConservedResidual,
-    eos: &IdealGasEoS,
-    config: &RoeFluxConfig,
     boundaries: &BoundaryGhosts1d,
-    area: crate::core::Real,
-    volume: crate::core::Real,
+    params: &InviscidFaceParams<'_>,
 ) -> Result<()> {
     if let Some(ghost) = boundaries.left {
         let owner = fields.cell_state(0)?;
         let normal = Vector3::new(-1.0, 0.0, 0.0);
-        let flux = face_inviscid_flux(&owner, &ghost, normal, eos, config)?;
-        accumulate_boundary_face(residual, 0, &flux, area, volume)?;
+        let flux = face_inviscid_flux(&owner, &ghost, normal, params.eos, params.config)?;
+        accumulate_boundary_face(residual, 0, &flux, params.area, params.volume)?;
     }
     if let Some(ghost) = boundaries.right {
         let owner = fields.cell_state(mesh.num_cells() - 1)?;
         let normal = Vector3::new(1.0, 0.0, 0.0);
-        let flux = face_inviscid_flux(&owner, &ghost, normal, eos, config)?;
+        let flux = face_inviscid_flux(&owner, &ghost, normal, params.eos, params.config)?;
         let last = mesh.num_cells() - 1;
-        accumulate_boundary_face(residual, last, &flux, area, volume)?;
+        accumulate_boundary_face(residual, last, &flux, params.area, params.volume)?;
     }
     Ok(())
 }
@@ -98,8 +139,9 @@ mod tests {
     fn uniform_field_interior_only_has_zero_rhs() {
         let mesh = StructuredMesh1d::new("line", 4, 0.0, 1.0).expect("mesh");
         let eos = IdealGasEoS::AIR_STANDARD;
-        let fields =
-            ConservedFields::from_freestream(4, &eos, &FreestreamParams::default()).expect("fields");
+        let fields = ConservedFields::from_freestream(4, &eos, &FreestreamParams::default())
+            .expect("fields");
+        let boundaries = zero_gradient_ghosts_1d(&fields).expect("bc");
         let mut rhs = ConservedResidual::zeros(4).expect("rhs");
         assemble_inviscid_residual_1d(
             &mesh,
@@ -107,10 +149,11 @@ mod tests {
             &mut rhs,
             &eos,
             &RoeFluxConfig::default(),
-            &BoundaryGhosts1d::default(),
+            &boundaries,
         )
         .expect("assemble");
         assert!(rhs.density.values().iter().all(|&v| v.abs() < 1.0e-10));
+        assert!(rhs.momentum_x.values().iter().all(|&v| v.abs() < 1.0e-10));
         assert!(rhs.total_energy.values().iter().all(|&v| v.abs() < 1.0e-10));
     }
 

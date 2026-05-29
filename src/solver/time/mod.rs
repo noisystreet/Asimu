@@ -2,6 +2,8 @@
 //!
 //! 理论：[`docs/theory/time_integration.md`](../../../docs/theory/time_integration.md)（规划）
 
+pub mod rk4;
+
 use crate::core::Real;
 use crate::error::Result;
 use crate::solver::state::SolverState;
@@ -28,12 +30,10 @@ pub trait TimeIntegrator {
     fn advance(&mut self, state: &mut SolverState) -> Result<TimeStepInfo>;
 }
 
+pub use rk4::{Rk4Storage, RungeKutta4Config, RungeKutta4Integrator, rk4_step};
+
 /// CFL 建议时间步（可压缩流显式推进）。
-pub fn suggested_dt_cfl(
-    min_spacing: Real,
-    max_wave_speed: Real,
-    cfl: Real,
-) -> Result<Real> {
+pub fn suggested_dt_cfl(min_spacing: Real, max_wave_speed: Real, cfl: Real) -> Result<Real> {
     if min_spacing <= 0.0 || max_wave_speed <= 0.0 || cfl <= 0.0 {
         return Err(crate::error::AsimuError::Solver(
             "suggested_dt_cfl 参数须为正".to_string(),

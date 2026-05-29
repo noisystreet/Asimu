@@ -2,15 +2,22 @@
 
 use crate::boundary::BoundarySet;
 use crate::core::Vector3;
-use crate::discretization::{
-    BoundaryGhostBuffer, RoeFluxConfig, face_inviscid_flux,
-};
+use crate::discretization::{BoundaryGhostBuffer, RoeFluxConfig, face_inviscid_flux};
 use crate::error::{AsimuError, Result};
 use crate::field::{ConservedFields, ConservedResidual};
-use crate::mesh::{BoundaryMesh, BoundaryMesh3d, StructuredMesh3d};
+use crate::mesh::{BoundaryMesh3d, StructuredMesh3d};
 use crate::physics::IdealGasEoS;
 
 use super::{accumulate_boundary_face, accumulate_interior_face};
+
+struct BoundaryAssembly3d<'a> {
+    mesh: &'a dyn BoundaryMesh3d,
+    eos: &'a IdealGasEoS,
+    config: &'a RoeFluxConfig,
+    boundaries: &'a BoundarySet,
+    ghosts: &'a BoundaryGhostBuffer,
+    volume: crate::core::Real,
+}
 
 /// 装配 3D 均匀结构化网格无粘 Euler 残差（内部面 + 边界 ghost）。
 pub fn assemble_inviscid_residual_3d(
@@ -34,7 +41,18 @@ pub fn assemble_inviscid_residual_3d(
     assemble_i_faces(mesh, fields, residual, eos, config, volume)?;
     assemble_j_faces(mesh, fields, residual, eos, config, volume)?;
     assemble_k_faces(mesh, fields, residual, eos, config, volume)?;
-    assemble_boundary_faces_3d(mesh, fields, residual, eos, config, boundaries, ghosts, volume)?;
+    assemble_boundary_faces_3d(
+        fields,
+        residual,
+        &BoundaryAssembly3d {
+            mesh,
+            eos,
+            config,
+            boundaries,
+            ghosts,
+            volume,
+        },
+    )?;
     Ok(())
 }
 
@@ -123,32 +141,27 @@ fn assemble_k_faces(
 }
 
 fn assemble_boundary_faces_3d(
-    mesh: &dyn BoundaryMesh3d,
     fields: &ConservedFields,
     residual: &mut ConservedResidual,
-    eos: &IdealGasEoS,
-    config: &RoeFluxConfig,
-    boundaries: &BoundarySet,
-    ghosts: &BoundaryGhostBuffer,
-    volume: crate::core::Real,
+    ctx: &BoundaryAssembly3d<'_>,
 ) -> Result<()> {
-    for patch in boundaries.patches() {
+    for patch in ctx.boundaries.patches() {
         for &face in &patch.face_ids {
-            let owner_id = mesh.face_owner(face)?;
+            let owner_id = ctx.mesh.face_owner(face)?;
             let owner = owner_id.index() as usize;
             let owner_state = fields.cell_state(owner)?;
-            let geom = mesh.face_geometry_3d(face)?;
-            let ghost = ghosts.get_face(face).ok_or_else(|| {
+            let geom = ctx.mesh.face_geometry_3d(face)?;
+            let ghost = ctx.ghosts.get_face(face).ok_or_else(|| {
                 AsimuError::Boundary(format!("边界面 FaceId({}) 缺少 ghost 状态", face.index()))
             })?;
             let flux = face_inviscid_flux(
                 &owner_state,
                 &ghost.conserved,
                 geom.normal,
-                eos,
-                config,
+                ctx.eos,
+                ctx.config,
             )?;
-            accumulate_boundary_face(residual, owner, &flux, geom.area, volume)?;
+            accumulate_boundary_face(residual, owner, &flux, geom.area, ctx.volume)?;
         }
     }
     Ok(())
@@ -158,7 +171,8 @@ fn assemble_boundary_faces_3d(
 mod tests {
     use super::*;
     use crate::boundary::{BoundaryKind, BoundaryPatch};
-    use crate::discretization::{apply_compressible_boundary_conditions, BoundaryGhostBuffer};
+    use crate::discretization::{BoundaryGhostBuffer, apply_compressible_boundary_conditions};
+    use crate::mesh::BoundaryMesh;
     use crate::physics::FreestreamParams;
 
     #[test]

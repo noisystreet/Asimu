@@ -1,0 +1,26 @@
+{
+  "benchmark_id": "sod_1d",
+  "asimu_min_version": "0.1.0",
+  "quantities": [
+    {
+      "name": "L1_density",
+      "value": 0.025,
+      "tolerance_abs": 0.01,
+      "source": "exact_riemann",
+      "note": "100 单元，t=0.2，一阶 Roe+熵修正+RK4(CFL=0.4)"
+    },
+    {
+      "name": "L2_density",
+      "value": 0.04,
+      "tolerance_abs": 0.02,
+      "source": "exact_riemann"
+    }
+  ],
+  "profiles": [
+    {
+      "name": "density",
+      "time": 0.2,
+      "variable": "rho"
+    }
+  ]
+}

@@ -2,6 +2,7 @@
 //!
 //! 理论：[`docs/theory/fvm_diffusion.md`](../../docs/theory/fvm_diffusion.md)
 
+mod algebra;
 mod conserved;
 mod initial;
 mod residual;
@@ -14,10 +15,10 @@ use crate::mesh::StructuredMesh1d;
 use crate::physics::IdealGasEoS;
 
 pub use conserved::{ConservedFields, primitive_from_conserved};
-pub use residual::ConservedResidual;
 pub use initial::{
     FluidInitialConfig, InitialKind, InitialSet, ScalarInitial, build_scalar_initial,
 };
+pub use residual::ConservedResidual;
 
 /// 标量场，长度与网格单元数一致。
 #[derive(Debug, Clone, PartialEq)]
