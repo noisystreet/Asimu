@@ -25,6 +25,6 @@ alwaysApply: true
 - 理论手册：[docs/theory/](../docs/theory/)
 - MCP：[docs/MCP.md](../docs/MCP.md)
 - Benchmarks / Manifest / Time / Observability：ARCHITECTURE §4.3、§8.5–§8.6
-- 工作流备忘：[agent_workflow.md](../agent_workflow.md)
+- 工作流： [CONTRIBUTING.md](../CONTRIBUTING.md)、`Makefile`
 
 修改中文架构文档时，同步 [docs/en/ARCHITECTURE.md](../docs/en/ARCHITECTURE.md)。

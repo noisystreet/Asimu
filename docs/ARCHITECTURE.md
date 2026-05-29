@@ -1,6 +1,6 @@
 # asimu 架构设计文档
 
-> 版本：v0.1 设计基线 · 最后更新：2026-05-29  
+> 版本：v0.1 设计基线 · 最后更新：2026-05-29
 > 英文摘要：[en/ARCHITECTURE.md](en/ARCHITECTURE.md) · 数据模型：[DATA_MODEL.md](DATA_MODEL.md)
 
 ---
@@ -190,7 +190,7 @@ AI Client → MCP (stdio) → asimu-mcp → app/case → 库 API
 | 安全沙箱 | 路径限制、无 shell Tool、不暴露 `.env` |
 | 晚于 v1.0 | 库 API 稳定后再实现，避免协议与内核同步频繁 breaking |
 
-首批 Tool（v1.1）：`validate_config`、`run_case`、`list_fixtures`、`get_run_summary`。  
+首批 Tool（v1.1）：`validate_config`、`run_case`、`list_fixtures`、`get_run_summary`。
 首批 Resource：架构/API/AGENTS 文档与 fixture 只读 URI。
 
 ---
@@ -576,7 +576,7 @@ values = [100, 400, 1000]
 output_dir = "output/study_re"
 ```
 
-CLI 规划：`asimu study --case cavity.toml --param Re=100,400,1000`（v0.5+）。  
+CLI 规划：`asimu study --case cavity.toml --param Re=100,400,1000`（v0.5+）。
 每次子运行独立 `run-manifest.json`。
 
 #### 8.5.6 标准验证算例库（V&V Benchmark Canon）
@@ -955,4 +955,4 @@ crates/
 | [API.md](API.md) | 公开 library API |
 | [adr/](adr/) | 架构决策记录 |
 | [AGENTS.md](../AGENTS.md) | AI 协作者约束 |
-| [agent_workflow.md](../agent_workflow.md) | 工程工作流备忘 |
+| [CONTRIBUTING.md](../CONTRIBUTING.md) | 贡献与工作流 |

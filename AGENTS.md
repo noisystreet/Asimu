@@ -276,7 +276,7 @@ make check
 | 代码复杂度 | `scripts/complexity_check.py`（lizard）：文件 ≤800 行、函数 ≤150 行、参数 ≤8 个、圈复杂度 ≤15 |
 | 提交说明 | `scripts/commit_msg_check.py`（英文第 1 行 + 中文第 2 行） |
 
-完整工程约定见 [agent_workflow.md](agent_workflow.md) 第 12 节；本项目仅启用上表子集。
+完整工程约定见 [CONTRIBUTING.md](CONTRIBUTING.md) 与本文；本项目仅启用上表子集。
 
 ## 文档与语言约定
 
