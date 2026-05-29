@@ -273,7 +273,7 @@ make check
 | 格式化 | `rustfmt.toml`，CI `cargo fmt --check` |
 | Clippy | `-D warnings`，见 `Cargo.toml [lints.clippy]` |
 | unsafe | 禁止（`[lints.rust] unsafe_code = forbid`） |
-| 代码复杂度 | `scripts/complexity_check.py`：文件 ≤800 行、函数 ≤150 行、参数 ≤8 个 |
+| 代码复杂度 | `scripts/complexity_check.py`（lizard）：文件 ≤800 行、函数 ≤150 行、参数 ≤8 个、圈复杂度 ≤15 |
 | 提交说明 | `scripts/commit_msg_check.py`（英文第 1 行 + 中文第 2 行） |
 
 完整工程约定见 [agent_workflow.md](agent_workflow.md) 第 12 节；本项目仅启用上表子集。

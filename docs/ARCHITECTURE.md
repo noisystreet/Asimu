@@ -879,13 +879,14 @@ crates/
 
 ### 13.5 代码复杂度
 
-`scripts/complexity_check.py`（pre-commit + CI）：
+`scripts/complexity_check.py`（lizard，pre-commit + CI）：
 
 | 指标 | 上限 |
 |------|------|
 | 单文件行数 | 800 |
 | 单函数行数 | 150 |
 | 单函数参数 | 8 |
+| 圈复杂度（CCN） | 15 |
 
 ---
 

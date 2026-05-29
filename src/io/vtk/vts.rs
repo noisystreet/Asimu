@@ -163,6 +163,10 @@ fn parse_vts_xml(content: &str) -> Result<ParsedVts> {
         }
     }
 
+    build_parsed_vts(state)
+}
+
+fn build_parsed_vts(state: VtsParseState) -> Result<ParsedVts> {
     if !state.saw_structured_grid {
         return Err(io_error(
             std::io::ErrorKind::InvalidData,
@@ -201,18 +205,7 @@ fn parse_vts_xml(content: &str) -> Result<ParsedVts> {
         )
     })?;
 
-    let points_type = state.points_type.unwrap_or_else(|| "Float64".to_string());
-    let points_scalar = match points_type.as_str() {
-        "Float64" => ScalarKind::Float64,
-        "Float32" => ScalarKind::Float32,
-        other => {
-            return Err(io_error(
-                std::io::ErrorKind::InvalidData,
-                format!("Points 不支持 type=\"{other}\""),
-            ));
-        }
-    };
-
+    let points_scalar = parse_points_scalar_type(state.points_type)?;
     let points_components = state.points_components.unwrap_or(3);
     if points_components != 3 {
         return Err(io_error(
@@ -246,86 +239,142 @@ fn parse_vts_xml(content: &str) -> Result<ParsedVts> {
     })
 }
 
+fn parse_points_scalar_type(points_type: Option<String>) -> Result<ScalarKind> {
+    match points_type.unwrap_or_else(|| "Float64".to_string()).as_str() {
+        "Float64" => Ok(ScalarKind::Float64),
+        "Float32" => Ok(ScalarKind::Float32),
+        other => Err(io_error(
+            std::io::ErrorKind::InvalidData,
+            format!("Points 不支持 type=\"{other}\""),
+        )),
+    }
+}
+
 fn apply_element_start(
     e: &quick_xml::events::BytesStart<'_>,
     state: &mut VtsParseState,
 ) -> Result<()> {
     match e.name().as_ref() {
-        b"VTKFile" => {
-            for attr in e.attributes().flatten() {
-                match attr.key.as_ref() {
-                    b"byte_order" => {
-                        state.byte_order = Some(String::from_utf8_lossy(&attr.value).into_owned());
-                    }
-                    b"compressor" => {
-                        let name = String::from_utf8_lossy(&attr.value);
-                        if name == "vtkZLibDataCompressor" {
-                            state.compressed = true;
-                        } else {
-                            return Err(io_error(
-                                std::io::ErrorKind::InvalidData,
-                                format!("不支持的 compressor=\"{name}\""),
-                            ));
-                        }
-                    }
-                    b"type" => {
-                        let t = String::from_utf8_lossy(&attr.value);
-                        if t != "StructuredGrid" {
-                            return Err(io_error(
-                                std::io::ErrorKind::InvalidData,
-                                format!("需要 StructuredGrid，实际为 {t}"),
-                            ));
-                        }
-                    }
-                    _ => {}
+        b"VTKFile" => apply_vtk_file_start(e, state),
+        b"StructuredGrid" => apply_structured_grid_start(e, state),
+        b"Piece" => apply_piece_start(e, state),
+        b"Points" => {
+            state.context = XmlContext::Points;
+            Ok(())
+        }
+        b"DataArray" => apply_data_array_start(e, state),
+        b"AppendedData" => {
+            state.context = XmlContext::AppendedData;
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn apply_vtk_file_start(
+    e: &quick_xml::events::BytesStart<'_>,
+    state: &mut VtsParseState,
+) -> Result<()> {
+    for attr in e.attributes().flatten() {
+        match attr.key.as_ref() {
+            b"byte_order" => {
+                state.byte_order = Some(String::from_utf8_lossy(&attr.value).into_owned());
+            }
+            b"compressor" => {
+                if apply_vtk_compressor_attr(&attr.value)? {
+                    state.compressed = true;
                 }
             }
+            b"type" => ensure_structured_grid_type(&attr.value)?,
+            _ => {}
         }
-        b"StructuredGrid" => {
-            state.saw_structured_grid = true;
-            if let Some(value) = attribute_value(e, b"WholeExtent")? {
-                state.extent = Some(parse_extent(&value)?);
-            }
+    }
+    Ok(())
+}
+
+fn apply_vtk_compressor_attr(value: &[u8]) -> Result<bool> {
+    let name = String::from_utf8_lossy(value);
+    if name == "vtkZLibDataCompressor" {
+        return Ok(true);
+    }
+    Err(io_error(
+        std::io::ErrorKind::InvalidData,
+        format!("不支持的 compressor=\"{name}\""),
+    ))
+}
+
+fn ensure_structured_grid_type(value: &[u8]) -> Result<()> {
+    let t = String::from_utf8_lossy(value);
+    if t == "StructuredGrid" {
+        return Ok(());
+    }
+    Err(io_error(
+        std::io::ErrorKind::InvalidData,
+        format!("需要 StructuredGrid，实际为 {t}"),
+    ))
+}
+
+fn apply_structured_grid_start(
+    e: &quick_xml::events::BytesStart<'_>,
+    state: &mut VtsParseState,
+) -> Result<()> {
+    state.saw_structured_grid = true;
+    if let Some(value) = attribute_value(e, b"WholeExtent")? {
+        state.extent = Some(parse_extent(&value)?);
+    }
+    Ok(())
+}
+
+fn apply_piece_start(
+    e: &quick_xml::events::BytesStart<'_>,
+    state: &mut VtsParseState,
+) -> Result<()> {
+    if let Some(value) = attribute_value(e, b"Extent")? {
+        state.extent = Some(parse_extent(&value)?);
+    }
+    Ok(())
+}
+
+fn apply_data_array_start(
+    e: &quick_xml::events::BytesStart<'_>,
+    state: &mut VtsParseState,
+) -> Result<()> {
+    let format = attribute_value(e, b"format")?;
+    if format.as_deref() == Some("appended") {
+        if let Some(offset) = attribute_value(e, b"offset")? {
+            let offset = offset.parse().map_err(|_| {
+                io_error(std::io::ErrorKind::InvalidData, "DataArray offset 无效")
+            })?;
+            state.appended_array_offsets.push(offset);
         }
-        b"Piece" => {
-            if let Some(value) = attribute_value(e, b"Extent")? {
-                state.extent = Some(parse_extent(&value)?);
-            }
-        }
-        b"Points" => state.context = XmlContext::Points,
-        b"DataArray" => {
-            let format = attribute_value(e, b"format")?;
-            if format.as_deref() == Some("appended") {
-                if let Some(offset) = attribute_value(e, b"offset")? {
-                    let offset = offset.parse().map_err(|_| {
-                        io_error(std::io::ErrorKind::InvalidData, "DataArray offset 无效")
-                    })?;
-                    state.appended_array_offsets.push(offset);
-                }
-            }
-            if state.context == XmlContext::Points {
-                if state.points_format.is_some() {
-                    return Err(io_error(
-                        std::io::ErrorKind::InvalidData,
-                        "VTS 仅支持单个 Points DataArray",
-                    ));
-                }
-                state.points_format = format;
-                state.points_type = attribute_value(e, b"type")?;
-                state.points_components =
-                    attribute_value(e, b"NumberOfComponents")?.and_then(|s| s.parse().ok());
-                if let Some(offset) = attribute_value(e, b"offset")? {
-                    state.points_offset = Some(offset.parse().map_err(|_| {
-                        io_error(
-                            std::io::ErrorKind::InvalidData,
-                            "Points DataArray offset 无效",
-                        )
-                    })?);
-                }
-            }
-        }
-        b"AppendedData" => state.context = XmlContext::AppendedData,
-        _ => {}
+    }
+    if state.context == XmlContext::Points {
+        apply_points_data_array(e, state, format)?;
+    }
+    Ok(())
+}
+
+fn apply_points_data_array(
+    e: &quick_xml::events::BytesStart<'_>,
+    state: &mut VtsParseState,
+    format: Option<String>,
+) -> Result<()> {
+    if state.points_format.is_some() {
+        return Err(io_error(
+            std::io::ErrorKind::InvalidData,
+            "VTS 仅支持单个 Points DataArray",
+        ));
+    }
+    state.points_format = format;
+    state.points_type = attribute_value(e, b"type")?;
+    state.points_components = attribute_value(e, b"NumberOfComponents")?.and_then(|s| s.parse().ok());
+    if let Some(offset) = attribute_value(e, b"offset")? {
+        state.points_offset = Some(offset.parse().map_err(|_| {
+            io_error(
+                std::io::ErrorKind::InvalidData,
+                "Points DataArray offset 无效",
+            )
+        })?);
     }
     Ok(())
 }

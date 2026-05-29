@@ -113,7 +113,7 @@ Planned `[numerics] precision` / `backend` — commented in `config/default.toml
 ## Quality gates
 
 - `cargo fmt` / `clippy -D warnings`
-- `scripts/complexity_check.py`: file ≤800 lines, function ≤150 lines, ≤8 params
+- `scripts/complexity_check.py`（lizard）：file ≤800 lines, function ≤150 lines, ≤8 params, CCN ≤15
 
 ## Roadmap (extended)
 

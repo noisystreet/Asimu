@@ -38,6 +38,9 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets --features io-vtk -- -D warnings
 
+      - name: Install Python tools
+        run: pip install -r scripts/requirements.txt
+
       - name: Complexity limits
         run: |
           python3 scripts/complexity_check.py
