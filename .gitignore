@@ -1,0 +1,33 @@
+# Rust 构建产物
+/target/
+**/*.rs.bk
+
+# 环境变量与本地配置
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# 覆盖率与基准报告
+/coverage/
+*.profraw
+*.profdata
+
+# Python
+__pycache__/
+*.py[cod]
+
+# 本地测试输出
+/tests/output/
+
+# 默认运行产物
+/output/

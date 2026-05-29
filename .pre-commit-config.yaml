@@ -1,0 +1,43 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+        args: [--maxkb=1000]
+
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt --
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: cargo clippy --all-targets -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: complexity-check
+        name: rust complexity limits
+        entry: python3 scripts/complexity_check.py
+        language: system
+        types: [rust]
+        pass_filenames: true
+
+      - id: commit-msg-check
+        name: commit message format
+        entry: python3 scripts/commit_msg_check.py
+        language: system
+        stages: [commit-msg]
+
+default_install_hook_types:
+  - pre-commit
+  - commit-msg

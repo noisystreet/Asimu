@@ -1,0 +1,12 @@
+# 项目级 Cargo 配置 — 详见 docs/ARCHITECTURE.md
+
+[build]
+# 统一 target 目录，便于 Makefile 与 CI 引用
+target-dir = "target"
+
+[alias]
+xtask = "run --package asimu --"
+
+[env]
+# 开发默认日志级别（可被 ASIMU_LOG_LEVEL 覆盖）
+ASIMU_LOG_LEVEL = "info"

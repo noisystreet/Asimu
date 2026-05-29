@@ -1,0 +1,9 @@
+# 提交说明模板 — 运行: git config commit.template .gitmessage
+
+# 第 1 行: 英文 Conventional Commits（必填）
+# feat(scope): short English summary
+#
+# 第 2 行: 中文说明（必填，与第 1 行语义一致）
+# 中文摘要说明
+#
+# 可选正文...

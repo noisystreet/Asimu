@@ -1,0 +1,42 @@
+# 默认运行配置 — 优先级低于环境变量与命令行参数
+# 详见 docs/ARCHITECTURE.md
+
+[solver]
+max_iterations = 100
+tolerance = 1.0e-6
+
+[logging]
+level = "info"
+
+# 数值精度与执行后端（v0.5+ / v1.2+ 启用，当前仅文档预留）
+# [numerics]
+# precision = "f64"       # f64 | f32 | mixed
+# backend = "cpu"         # cpu | gpu-wgpu | gpu-cuda
+
+# 运行产物（v0.3+，见 docs/ARCHITECTURE.md §8.5.1）
+# [output]
+# dir = "output"
+# write_manifest = true
+
+# 时间推进（v0.2+ 预留，ADR 0005）
+# [time]
+# mode = "steady"         # steady | transient
+# dt = 1.0e-3
+# cfl_max = 0.5
+
+# 参数扫描（v0.5+）
+# [study]
+# parameter = "Re"
+# values = [100, 400, 1000]
+# output_dir = "output/study_re"
+
+# I/O 安全上限（实现期可调，见 SECURITY.md）
+# [io.limits]
+# max_file_bytes = 268435456
+# max_cells = 100000000
+
+# 可观测性（v0.4+，见 docs/OBSERVABILITY.md）
+# [observability]
+# metrics = true
+# metrics_level = "iteration"
+# profile = false

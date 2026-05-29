@@ -1,0 +1,12 @@
+# 路径级审查者 — 与分支保护「必选审查」配合
+
+# 核心求解与数值模块
+/src/solver/     @maintainers
+/src/core/       @maintainers
+
+# 配置与安全相关
+/src/config.rs   @maintainers
+/SECURITY.md     @maintainers
+
+# 默认
+*                @maintainers

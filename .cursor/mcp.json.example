@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "asimu": {
+      "comment": "规划示例 — v1.1+ 实现 asimu-mcp 后启用，见 docs/MCP.md",
+      "command": "${workspaceFolder}/target/debug/asimu-mcp",
+      "args": [],
+      "env": {
+        "ASIMU_LOG_LEVEL": "warn"
+      }
+    }
+  }
+}

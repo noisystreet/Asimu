@@ -1,0 +1,27 @@
+---
+name: Feature Request
+description: 功能建议
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 问题或需求
+      description: 你想解决什么问题？
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议方案
+      description: 你期望的行为或 API
+    validations:
+      required: true
+  - type: checkboxes
+    id: docs
+    attributes:
+      label: 文档
+      options:
+        - label: 此功能需要更新 ARCHITECTURE.md 或 API.md
+          required: false

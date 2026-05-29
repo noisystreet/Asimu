@@ -1,0 +1,45 @@
+//! 核心数值类型与常量。
+//!
+//! 理论参考：[`docs/theory/`](../../docs/theory/README.md)
+
+pub mod id;
+pub mod real;
+
+pub use id::{CellId, FaceId, NodeId};
+pub use real::{Real, RealOps, approx_eq};
+
+/// 三维向量（占位，后续扩展为 SIMD 友好布局）。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Vector3 {
+    pub x: Real,
+    pub y: Real,
+    pub z: Real,
+}
+
+impl Vector3 {
+    #[must_use]
+    pub const fn new(x: Real, y: Real, z: Real) -> Self {
+        Self { x, y, z }
+    }
+
+    #[must_use]
+    pub fn magnitude(self) -> Real {
+        (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vector_magnitude() {
+        let v = Vector3::new(3.0, 4.0, 0.0);
+        assert!(approx_eq(v.magnitude(), 5.0, 1.0e-12));
+    }
+
+    #[test]
+    fn cell_id_orders() {
+        assert!(CellId(1) < CellId(2));
+    }
+}

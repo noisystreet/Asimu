@@ -1,0 +1,90 @@
+# 数值理论手册
+
+> 与代码实现一一对应的理论说明与参考文献。  
+> Agent 约束见 [AGENTS.md](../../AGENTS.md)「数值理论与参考文献」；算例级文献见 [BENCHMARKS.md](../BENCHMARKS.md)。
+
+## 用途
+
+| 读者 | 用途 |
+|------|------|
+| 审查者 | 核对离散公式、假设与文献是否一致 |
+| 维护者 | 改公式前先读对应理论页 |
+| V&V | 与 `tests/benchmarks/` 算例 README 交叉引用 |
+
+**不写在这里的内容**：架构分层、数据 schema → [ARCHITECTURE.md](../ARCHITECTURE.md)、[DATA_MODEL.md](../DATA_MODEL.md)；重大选型 → [adr/](../adr/)。
+
+---
+
+## 索引
+
+| 文档 | 模块 | 版本 | 状态 | 主要参考 |
+|------|------|------|------|----------|
+| [fvm_diffusion.md](fvm_diffusion.md) | `discretization` | v0.2 | **骨架** | Patankar (1980) Ch. 5 |
+| *(待建)* `fvm_convection_diffusion.md` | `discretization` | v0.2 | 规划 | Patankar (1980) Ch. 5–6 |
+| *(待建)* `boundary_conditions.md` | `discretization` / BC | v0.2–v0.3 | 规划 | — |
+| *(待建)* `time_integration.md` | `solver/time` | v0.2+ | 规划 | ADR 0005；Ferziger et al. |
+| *(待建)* `linear_cg.md` | `linalg` | v0.2 | 规划 | Saad (2003) Ch. 6 |
+| *(待建)* `incompressible_simple.md` | `solver` | v0.3 | 规划 | Patankar (1980) Ch. 6 |
+
+实现对应功能时：将「规划」改为链接，并从索引表移除 *(待建)* 前缀。
+
+---
+
+## 新建理论页模板
+
+复制以下内容为新文件 `docs/theory/{topic}.md`，替换 `{...}` 占位符。
+
+```markdown
+# {标题}
+
+> 模块：`src/{module}/` · 版本：v0.x · 状态：{草稿|已实现}
+
+## 1. 控制方程 / 算法
+
+{连续形式或算法步骤，式编号从 (1) 起}
+
+## 2. 离散化
+
+- 网格假设：{结构化 FVM / …}
+- 离散格式：{中心差分 / upwind / …}
+- 稳定性 / 守恒性：{简要说明}
+
+## 3. 边界条件（如适用）
+
+| BC 类型 | 数学条件 | 离散处理 | 代码入口 |
+|---------|----------|----------|----------|
+| … | … | … | `apply_*` |
+
+## 4. 实现映射
+
+| 式 / 步骤 | 代码位置 |
+|-----------|----------|
+| (1) | `{module}::{fn}` |
+| (2) | … |
+
+## 5. 参考文献
+
+1. {Author} ({Year}). *{Title}*. {Publisher/Journal}. {DOI or ISBN}
+2. …
+
+## 6. 相关算例
+
+- `tests/benchmarks/{id}/` — {验证量}
+```
+
+---
+
+## 维护规则
+
+1. **新增**离散、BC、时间推进、本构或非平凡求解器 → 新增或扩展本目录页面。
+2. **修改**公式、容差或参考值 → 同步更新理论页与 [CHANGELOG.md](../../CHANGELOG.md)。
+3. 模块 rustdoc 顶部加一行：`/// 理论：docs/theory/{topic}.md`。
+4. 算例专用文献仍写在 `tests/benchmarks/{id}/README.md`，理论页可链过去，避免重复粘贴大段表格。
+
+---
+
+## 相关文档
+
+- [AGENTS.md](../../AGENTS.md) — 何时必须写理论页
+- [BENCHMARKS.md](../BENCHMARKS.md) — V&V 算例与 `expected.json`
+- [adr/0002](../adr/0002-layered-cfd-architecture.md) — v0.2 数值基线（FVM + 结构化网格）

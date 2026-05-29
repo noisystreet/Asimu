@@ -1,0 +1,30 @@
+---
+description: asimu 项目核心 Agent 规则
+alwaysApply: true
+---
+
+# asimu Agent 规则
+
+开始任何任务前，**必须先阅读** [AGENTS.md](../AGENTS.md)。
+
+## 快速约束
+
+- 模块依赖：`core ← mesh ← field ← discretization`；禁止反向依赖
+- 编程风格：**减少隐式状态**；Parse→Validate→Trust；热路径零分配；YAGNI（见 AGENTS.md §编程风格约束）
+- 错误：`Result<T, AsimuError>`，禁止生产路径 `unwrap`
+- 日志：使用 `tracing`，禁止 `println!`
+- 完成修改后运行：`make check`
+- 新功能必须附带测试
+
+## 文档
+
+- 架构：[docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md)
+- 数据模型：[docs/DATA_MODEL.md](../docs/DATA_MODEL.md)
+- API：[docs/API.md](../docs/API.md)
+- Case 格式：[docs/CASE_FORMAT.md](../docs/CASE_FORMAT.md)
+- 理论手册：[docs/theory/](../docs/theory/)
+- MCP：[docs/MCP.md](../docs/MCP.md)
+- Benchmarks / Manifest / Time / Observability：ARCHITECTURE §4.3、§8.5–§8.6
+- 工作流备忘：[agent_workflow.md](../agent_workflow.md)
+
+修改中文架构文档时，同步 [docs/en/ARCHITECTURE.md](../docs/en/ARCHITECTURE.md)。

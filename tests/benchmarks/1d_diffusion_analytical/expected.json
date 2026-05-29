@@ -1,0 +1,14 @@
+{
+  "benchmark_id": "1d_diffusion_analytical",
+  "asimu_min_version": "0.2.0",
+  "quantities": [
+    {
+      "name": "L2_error",
+      "value": 0.0,
+      "tolerance_abs": 1.0e-4,
+      "source": "analytical",
+      "note": "均匀 32 单元；解析解 phi(x)=x。实现落地后由 CI 断言。"
+    }
+  ],
+  "profiles": []
+}

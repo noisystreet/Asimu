@@ -1,0 +1,40 @@
+---
+name: Bug Report
+description: 报告缺陷
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 清晰描述发生了什么
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. cargo run --
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: asimu 版本
+      placeholder: "0.1.0 或 git commit"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: 操作系统
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - Other
+    validations:
+      required: true

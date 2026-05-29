@@ -1,0 +1,33 @@
+[package]
+name = "asimu"
+version = "0.1.0"
+edition = "2024"
+description = "面向工程与研究场景的 Rust 计算流体力学（CFD）求解器"
+license = "Apache-2.0 OR MIT"
+readme = "README.md"
+rust-version = "1.85"
+keywords = ["cfd", "simulation", "fluid-dynamics"]
+categories = ["science", "simulation"]
+
+[dependencies]
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+clap = { version = "4", features = ["derive", "env"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"

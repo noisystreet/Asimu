@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 贡献指南
+    url: https://github.com/OWNER/asimu/blob/main/CONTRIBUTING.md
+    about: 提交 PR 前请先阅读 CONTRIBUTING.md
+  - name: 安全漏洞
+    url: https://github.com/OWNER/asimu/blob/main/SECURITY.md
+    about: 请勿在公开 Issue 报告安全问题

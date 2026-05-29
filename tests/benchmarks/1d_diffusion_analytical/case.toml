@@ -1,0 +1,26 @@
+name = "1d_diffusion_analytical"
+benchmark_id = "1d_diffusion_analytical"
+
+[mesh]
+kind = "structured_1d"
+cells = 32
+length = 1.0
+origin = 0.0
+
+[physics]
+diffusivity = 1.0
+
+[boundary.left]
+kind = "dirichlet"
+value = 0.0
+
+[boundary.right]
+kind = "dirichlet"
+value = 1.0
+
+[solver]
+max_iterations = 1000
+tolerance = 1.0e-8
+
+[time]
+mode = "steady"
