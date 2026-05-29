@@ -74,8 +74,26 @@ path = "mesh/cavity.vts"
 | 不支持 | ASCII、inline binary、多 Piece |
 | Feature | 库集成须启用 `io-vtk` |
 | API | `asimu::io::load_vts(&path)` → `StructuredMesh`（2D/3D） |
+| 写出 | `asimu::io::write_vts(&mesh, &path)`（Float64 appended，未压缩） |
 
 详见 [adr/0007-vts-binary-io.md](adr/0007-vts-binary-io.md)。
+
+### 3.4 外部 CGNS（feature `io-cgns-vts`）
+
+```toml
+[mesh]
+kind = "cgns"
+path = "mesh/wing.cgns"
+zone = 1
+```
+
+| 项 | 约定 |
+|----|------|
+| 依赖 | 系统 `libcgns-dev`（`build.rs` 链接 `-lcgns`） |
+| 支持 | Structured zone；ADF / HDF5 由 libcgns 处理 |
+| 导出 | `export_cgns_zone_to_vts` 或 `make cgns-to-vts IN=... OUT=...` |
+
+详见 [adr/0008-cgns-io.md](adr/0008-cgns-io.md)。
 
 ---
 

@@ -28,5 +28,11 @@ pub mod prelude {
     };
 
     #[cfg(feature = "io-vtk")]
-    pub use crate::io::{VtsLoadResult, load_vts};
+    pub use crate::io::{VtmBlock, VtsLoadResult, load_vts, write_vtm, write_vts};
+
+    #[cfg(feature = "io-cgns")]
+    pub use crate::io::{
+        CgnsLoadResult, CgnsMultiLoadResult, CgnsZoneInfo, export_cgns_to_vtm, export_cgns_to_vts,
+        export_cgns_zone_to_vts, list_cgns_zones, load_cgns_all_zones, load_cgns_zone,
+    };
 }

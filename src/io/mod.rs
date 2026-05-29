@@ -5,6 +5,9 @@
 
 mod limits;
 
+#[cfg(feature = "io-cgns")]
+pub mod cgns;
+
 #[cfg(feature = "io-vtk")]
 pub mod vtk;
 
@@ -16,7 +19,13 @@ use crate::mesh::Mesh;
 pub use limits::{validate_cell_count, validate_file_size, validate_input_path};
 
 #[cfg(feature = "io-vtk")]
-pub use vtk::{VtsLoadResult, load_vts};
+pub use vtk::{VtmBlock, VtsLoadResult, load_vts, write_vtm, write_vts};
+
+#[cfg(feature = "io-cgns")]
+pub use cgns::{
+    CgnsLoadResult, CgnsMultiLoadResult, CgnsZoneInfo, export_cgns_to_vtm, export_cgns_to_vts,
+    export_cgns_zone_to_vts, list_cgns_zones, load_cgns_all_zones, load_cgns_zone,
+};
 
 /// 从占位 case 文件加载网格元数据。
 ///

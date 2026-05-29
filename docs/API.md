@@ -99,7 +99,21 @@ let result = solver.run(&mesh)?;
 | `VtsLoadResult` | `{ mesh: StructuredMesh }`（`D2` / `D3`） |
 | `StructuredMesh2d` / `StructuredMesh3d` | 2D/3D 结构化网格（`nx`, `ny`[, `nz`]，节点坐标） |
 
+| `write_vts(&StructuredMesh, &Path) -> Result<()>` | 写出 appended 二进制 VTS |
+
 **不支持**：ASCII VTS、非 zlib 压缩器、`.vtu`。见 [adr/0007-vts-binary-io.md](adr/0007-vts-binary-io.md)。
+
+#### CGNS 读入与 VTS 导出（feature `io-cgns-vts`）
+
+需系统安装 `libcgns-dev`。
+
+| 函数 / 类型 | 说明 |
+|-------------|------|
+| `list_cgns_zones(&Path) -> Result<Vec<CgnsZoneInfo>>` | 列出全部 structured zone |
+| `load_cgns_zone(&Path, zone_index) -> Result<CgnsLoadResult>` | 读取单 zone |
+| `export_cgns_zone_to_vts(input, zone, output) -> Result<CgnsLoadResult>` | CGNS zone → VTS |
+
+见 [adr/0008-cgns-io.md](adr/0008-cgns-io.md)。
 
 #### Case 文件格式（临时）
 

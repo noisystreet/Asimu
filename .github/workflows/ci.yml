@@ -46,6 +46,27 @@ jobs:
       - name: Run tests
         run: cargo test --features io-vtk --verbose
 
+  cgns:
+    name: CGNS I/O (libcgns)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libcgns-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: clippy
+
+      - name: Clippy (io-cgns-vts)
+        run: cargo clippy --all-targets --features io-cgns-vts -- -D warnings
+
+      - name: Run CGNS tests
+        run: cargo test --features io-cgns-vts --verbose
+
   audit:
     name: Dependency audit
     runs-on: ubuntu-latest

@@ -49,3 +49,16 @@ doc:
 probe-vts:
 	@test -n "$(FILE)" || { echo "用法: make probe-vts FILE=/path/to/mesh.vts"; exit 1; }
 	$(CARGO) run --example probe_vts $(CARGO_FLAGS) -- $(FILE)
+
+CGNS_FLAGS := --features io-cgns-vts
+
+cgns-to-vts:
+	@test -n "$(IN)" && test -n "$(OUT)" || { echo "用法: make cgns-to-vts IN=mesh.cgns OUT=out.vts [ZONE=1]"; exit 1; }
+	$(CARGO) run --example cgns_to_vts $(CGNS_FLAGS) -- $(IN) $(OUT) $(if $(ZONE),--zone $(ZONE),)
+
+test-cgns:
+	$(CARGO) test $(CGNS_FLAGS)
+
+check-cgns: lint
+	$(CARGO) clippy --all-targets $(CGNS_FLAGS) -- -D warnings
+	$(CARGO) test $(CGNS_FLAGS)

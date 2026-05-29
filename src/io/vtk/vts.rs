@@ -373,28 +373,87 @@ fn decode_appended_base64(base64_text: &str) -> Result<Vec<u8>> {
     let mut out = Vec::new();
     let mut pos = 0;
     while pos < trimmed.len() {
-        let mut end = pos + 4;
-        let mut decoded_block = None;
-        while end <= trimmed.len() {
-            let part = &trimmed[pos..end];
-            if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(part.as_bytes()) {
-                decoded_block = Some(decoded);
-                if part.ends_with('=') {
-                    break;
-                }
-            }
-            end += 4;
-        }
-        let Some(decoded) = decoded_block else {
-            return Err(io_error(
-                std::io::ErrorKind::InvalidData,
-                format!("base64 解码失败: 偏移 {pos} 处无法解析块"),
-            ));
-        };
+        let decoded = decode_next_base64_block(&trimmed, &mut pos)?;
         out.extend_from_slice(&decoded);
-        pos = end;
     }
     Ok(out)
+}
+
+fn decode_next_base64_block(trimmed: &str, pos: &mut usize) -> Result<Vec<u8>> {
+    let rest = &trimmed[*pos..];
+    if rest.is_empty() {
+        return Err(io_error(
+            std::io::ErrorKind::InvalidData,
+            "base64 解码失败: 意外结束",
+        ));
+    }
+
+    for end in block_end_candidates(trimmed, *pos) {
+        let part = &trimmed[*pos..end];
+        let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(part.as_bytes()) else {
+            continue;
+        };
+        if end == trimmed.len() || can_decode_appended_rest(&trimmed[end..]) {
+            *pos = end;
+            return Ok(decoded);
+        }
+    }
+
+    Err(io_error(
+        std::io::ErrorKind::InvalidData,
+        format!("base64 解码失败: 偏移 {} 处无法解析块", *pos),
+    ))
+}
+
+fn block_end_candidates(trimmed: &str, pos: usize) -> Vec<usize> {
+    let mut ends = Vec::new();
+    let bytes = trimmed.as_bytes();
+    let mut i = pos;
+    while i < bytes.len() {
+        if bytes[i] == b'=' {
+            let mut end = i + 1;
+            while end < bytes.len() && bytes[end] == b'=' {
+                end += 1;
+            }
+            if (end - pos) % 4 == 0 {
+                ends.push(end);
+            }
+            i = end;
+        } else {
+            i += 1;
+        }
+    }
+    if (trimmed.len() - pos) % 4 == 0 {
+        ends.push(trimmed.len());
+    }
+    ends.sort_unstable();
+    ends.dedup();
+    ends
+}
+
+fn can_decode_appended_rest(rest: &str) -> bool {
+    if rest.is_empty() {
+        return true;
+    }
+    let mut pos = 0;
+    while pos < rest.len() {
+        let mut ok = false;
+        for end in block_end_candidates(rest, pos) {
+            let part = &rest[pos..end];
+            if base64::engine::general_purpose::STANDARD
+                .decode(part.as_bytes())
+                .is_ok()
+            {
+                pos = end;
+                ok = true;
+                break;
+            }
+        }
+        if !ok {
+            return false;
+        }
+    }
+    true
 }
 
 /// 将 zlib 压缩的 appended 流还原为与未压缩 VTS 相同的统一缓冲区布局。
