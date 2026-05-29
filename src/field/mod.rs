@@ -2,8 +2,20 @@
 //!
 //! 理论：[`docs/theory/fvm_diffusion.md`](../../docs/theory/fvm_diffusion.md)
 
+mod conserved;
+mod initial;
+
+use std::collections::BTreeMap;
+
 use crate::core::Real;
 use crate::error::{AsimuError, Result};
+use crate::mesh::StructuredMesh1d;
+use crate::physics::IdealGasEoS;
+
+pub use conserved::{ConservedFields, primitive_from_conserved};
+pub use initial::{
+    FluidInitialConfig, InitialKind, InitialSet, ScalarInitial, build_scalar_initial,
+};
 
 /// 标量场，长度与网格单元数一致。
 #[derive(Debug, Clone, PartialEq)]
@@ -46,6 +58,44 @@ impl ScalarField {
 
     pub fn values_mut(&mut self) -> &mut [Real] {
         &mut self.values
+    }
+}
+
+/// 命名标量场集合（与 DATA_MODEL `Fields` 对齐，v0.2 仅标量）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct Fields {
+    scalars: BTreeMap<String, ScalarField>,
+}
+
+impl Fields {
+    #[must_use]
+    pub fn new(scalars: BTreeMap<String, ScalarField>) -> Self {
+        Self { scalars }
+    }
+
+    pub fn from_initial_set(mesh: &StructuredMesh1d, initial: &InitialSet) -> Result<Self> {
+        initial.validate()?;
+        let mut scalars = BTreeMap::new();
+        for scalar in initial.scalars() {
+            scalars.insert(scalar.name.clone(), scalar.build_on_mesh(mesh)?);
+        }
+        Ok(Self { scalars })
+    }
+
+    pub fn get(&self, name: &str) -> Option<&ScalarField> {
+        self.scalars.get(name)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &ScalarField)> {
+        self.scalars.iter().map(|(k, v)| (k.as_str(), v))
+    }
+
+    pub fn build_conserved(
+        num_cells: usize,
+        eos: &IdealGasEoS,
+        config: &FluidInitialConfig,
+    ) -> Result<ConservedFields> {
+        config.build_conserved(num_cells, eos)
     }
 }
 

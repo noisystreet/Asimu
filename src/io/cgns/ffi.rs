@@ -9,9 +9,11 @@ pub const CG_OK: c_int = 0;
 
 pub const ZONE_STRUCTURED: ZoneType = 2;
 pub const REAL_DOUBLE: DataType = 4;
+pub const BC_POINT_RANGE: PointSetType = 2;
 
 pub type ZoneType = c_int;
 pub type DataType = c_int;
+pub type PointSetType = c_int;
 pub type CgSize = c_int;
 
 unsafe extern "C" {
@@ -35,6 +37,29 @@ unsafe extern "C" {
         rmin: *const CgSize,
         rmax: *const CgSize,
         data: *mut c_void,
+    ) -> c_int;
+    pub fn cg_nbocos(fn_: c_int, base: c_int, zone: c_int, nbocos: *mut c_int) -> c_int;
+    pub fn cg_boco_info(
+        fn_: c_int,
+        base: c_int,
+        zone: c_int,
+        boco: c_int,
+        boconame: *mut c_char,
+        bocotype: *mut c_int,
+        ptset_type: *mut PointSetType,
+        npnts: *mut c_int,
+        normalindex: *mut c_int,
+        normal_list_size: *mut c_int,
+        normaldatatype: *mut DataType,
+        ndataset: *mut c_int,
+    ) -> c_int;
+    pub fn cg_boco_read(
+        fn_: c_int,
+        base: c_int,
+        zone: c_int,
+        boco: c_int,
+        pnts: *mut c_void,
+        normal_list: *mut c_void,
     ) -> c_int;
     pub fn cg_get_error() -> *const c_char;
 }

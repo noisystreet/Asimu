@@ -3,7 +3,12 @@
 //! - 遗留单行 case：`load_mesh_from_case`
 //! - VTK VTS（二进制 appended）：feature `io-vtk` → [`vtk::load_vts`]
 
+mod case;
 mod limits;
+mod restart;
+
+pub use case::{CaseMesh, CaseSpec, load_case, parse_case_str};
+pub use restart::{load_conserved_fields, write_conserved_fields};
 
 #[cfg(feature = "io-cgns")]
 pub mod cgns;

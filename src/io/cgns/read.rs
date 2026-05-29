@@ -4,14 +4,17 @@ use std::ffi::{CStr, CString};
 use std::path::Path;
 use std::sync::Mutex;
 
+use crate::boundary::BoundarySet;
 use crate::error::{AsimuError, Result};
 use crate::io::limits::{io_error, validate_cell_count, validate_file_size, validate_input_path};
 use crate::mesh::{StructuredMesh, StructuredMesh3d};
 
 use super::ffi::{
-    CG_MODE_READ, CG_OK, CgSize, REAL_DOUBLE, ZONE_STRUCTURED, cg_close, cg_coord_read,
-    cg_get_error, cg_nzones, cg_open, cg_zone_read, cg_zone_type,
+    BC_POINT_RANGE, CG_MODE_READ, CG_OK, CgSize, REAL_DOUBLE, ZONE_STRUCTURED, cg_boco_info,
+    cg_boco_read, cg_close, cg_coord_read, cg_get_error, cg_nbocos, cg_nzones, cg_open,
+    cg_zone_read, cg_zone_type,
 };
+use super::zonebc::{boundary_set_from_cgns, patch_from_cgns, CgnsPointRange};
 
 /// CGNS MLL 非线程安全，全局串行化所有调用。
 static CGNS_LOCK: Mutex<()> = Mutex::new(());
@@ -31,6 +34,7 @@ pub struct CgnsZoneInfo {
 pub struct CgnsLoadResult {
     pub zone: CgnsZoneInfo,
     pub mesh: StructuredMesh,
+    pub boundary: BoundarySet,
 }
 
 struct CgnsFile {
@@ -146,6 +150,70 @@ impl CgnsFile {
         }
         Ok((points_x, points_y, points_z))
     }
+
+    fn read_zone_bocos(
+        &self,
+        base: i32,
+        zone: i32,
+        mesh: &StructuredMesh3d,
+    ) -> Result<BoundarySet> {
+        let mut nbocos = 0;
+        check_cg(unsafe { cg_nbocos(self.index, base, zone, &mut nbocos) })?;
+        let mut patches = Vec::with_capacity(nbocos as usize);
+        for boco in 1..=nbocos {
+            let mut name = [0i8; 33];
+            let mut bocotype = 0;
+            let mut ptset_type = 0;
+            let mut npnts = 0;
+            let mut normalindex = 0;
+            let mut normal_list_size = 0;
+            let mut normaldatatype = 0;
+            let mut ndataset = 0;
+            let err = unsafe {
+                cg_boco_info(
+                    self.index,
+                    base,
+                    zone,
+                    boco,
+                    name.as_mut_ptr(),
+                    &mut bocotype,
+                    &mut ptset_type,
+                    &mut npnts,
+                    &mut normalindex,
+                    &mut normal_list_size,
+                    &mut normaldatatype,
+                    &mut ndataset,
+                )
+            };
+            check_cg(err)?;
+            if ptset_type != BC_POINT_RANGE || npnts < 6 {
+                continue;
+            }
+            let mut pnts = vec![0i32; npnts as usize];
+            let err = unsafe {
+                cg_boco_read(
+                    self.index,
+                    base,
+                    zone,
+                    boco,
+                    pnts.as_mut_ptr().cast(),
+                    std::ptr::null_mut(),
+                )
+            };
+            check_cg(err)?;
+            let range = CgnsPointRange {
+                imin: pnts[0],
+                imax: pnts[1],
+                jmin: pnts[2],
+                jmax: pnts[3],
+                kmin: pnts[4],
+                kmax: pnts[5],
+            };
+            let boco_name = c_str_to_string(&name)?;
+            patches.push(patch_from_cgns(boco_name, bocotype, range, mesh)?);
+        }
+        Ok(boundary_set_from_cgns(patches))
+    }
 }
 
 impl Drop for CgnsFile {
@@ -200,10 +268,22 @@ fn load_cgns_zone_locked(path: &Path, zone_index: usize) -> Result<CgnsLoadResul
     } else {
         info.name.clone()
     };
-    let mesh = StructuredMesh::D3(StructuredMesh3d::new(
-        mesh_name, info.nx, info.ny, info.nz, points_x, points_y, points_z,
-    )?);
-    Ok(CgnsLoadResult { zone: info, mesh })
+    let mesh3d = StructuredMesh3d::new(
+        mesh_name.clone(),
+        info.nx,
+        info.ny,
+        info.nz,
+        points_x,
+        points_y,
+        points_z,
+    )?;
+    let boundary = file.read_zone_bocos(BASE, zone, &mesh3d)?;
+    let mesh = StructuredMesh::D3(mesh3d);
+    Ok(CgnsLoadResult {
+        zone: info,
+        mesh,
+        boundary,
+    })
 }
 
 /// CGNS 全部 zone 读入结果。
@@ -238,10 +318,22 @@ fn load_cgns_all_zones_locked(path: &Path) -> Result<CgnsMultiLoadResult> {
         } else {
             info.name.clone()
         };
-        let mesh = StructuredMesh::D3(StructuredMesh3d::new(
-            mesh_name, info.nx, info.ny, info.nz, points_x, points_y, points_z,
-        )?);
-        zones.push(CgnsLoadResult { zone: info, mesh });
+        let mesh3d = StructuredMesh3d::new(
+            mesh_name.clone(),
+            info.nx,
+            info.ny,
+            info.nz,
+            points_x,
+            points_y,
+            points_z,
+        )?;
+        let boundary = file.read_zone_bocos(BASE, zone, &mesh3d)?;
+        let mesh = StructuredMesh::D3(mesh3d);
+        zones.push(CgnsLoadResult {
+            zone: info,
+            mesh,
+            boundary,
+        });
     }
     Ok(CgnsMultiLoadResult {
         zones,

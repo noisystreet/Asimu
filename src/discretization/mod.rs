@@ -1,12 +1,25 @@
-//! 空间离散算子（v0.2 骨架）。
+//! 空间离散算子（v0.2）。
 //!
 //! 理论：[`docs/theory/fvm_diffusion.md`](../../docs/theory/fvm_diffusion.md)
+
+pub mod bc;
+pub mod bc_compressible;
+pub mod diffusion_1d;
 
 use crate::core::Real;
 use crate::error::Result;
 use crate::field::ScalarField;
 use crate::linalg::LinearSystem;
 use crate::mesh::Mesh;
+
+pub use bc::{
+    apply_boundary_conditions, apply_dirichlet, apply_dirichlet_face, apply_neumann,
+};
+pub use bc_compressible::{
+    BoundaryGhostBuffer, GhostCellState, apply_compressible_boundary_conditions,
+    farfield_ghost, inlet_ghost, outlet_ghost, symmetry_ghost, wall_ghost,
+};
+pub use diffusion_1d::assemble_diffusion_1d;
 
 /// 占位装配入口：验证 field / mesh / system 尺寸一致。
 ///

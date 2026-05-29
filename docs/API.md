@@ -73,6 +73,8 @@ let result = solver.run(&mesh)?;
 | 类型 | 说明 |
 |------|------|
 | `Mesh` | 网格元数据（`name`, `cell_count`） |
+| `StructuredMesh1d` | 1D 均匀网格 + `BoundaryMesh` |
+| `BoundaryMesh` | 逻辑边界名 → 面 ID |
 | `Mesh::new(name, cell_count) -> Result<Mesh>` | 构造；`cell_count == 0` 返回错误 |
 
 ### `asimu::solver`
@@ -87,6 +89,10 @@ let result = solver.run(&mesh)?;
 
 | 函数 | 说明 |
 |------|------|
+| `load_case(&Path) -> Result<CaseSpec>` | 解析 TOML 算例（网格 + BC + 物性） |
+| `CaseSpec` | `mesh`, `boundary`, `initial`, `diffusivity`, `solver` |
+| `CaseSpec::build_initial_fields()` | 构建 `Fields` |
+| `CaseSpec::initial_scalar(name)` | 单标量；未声明则全零 |
 | `load_mesh_from_case(&Path) -> Result<Mesh>` | 从占位 case 文件加载网格 |
 
 #### VTK VTS 读入（feature `io-vtk`）
@@ -129,11 +135,23 @@ name=<mesh_name>;cells=<count>
 
 | 模块 | 说明 | 状态 |
 |------|------|------|
+| [`asimu::boundary`](#asimuboundary) | `BoundaryKind`、`BoundaryPatch`、`BoundaryRegistry` | v0.2 已实现 |
 | [`asimu::core`](#asimucore) | `Real`、`CellId`、`approx_eq` | 骨架已实现 |
 | [`asimu::field`](#asimufield) | `ScalarField` SoA | 骨架已实现 |
-| [`asimu::linalg`](#asimulinalg) | `LinearSystem` | 骨架已实现 |
-| [`asimu::discretization`](#asimudiscretization) | FVM 装配 | 占位函数 |
+| [`asimu::linalg`](#asimulinalg) | `LinearSystem` 三对角 + Thomas | v0.2 已实现 |
+| [`asimu::discretization`](#asimudiscretization) | FVM 扩散装配 + BC 施加 | v0.2 1D 已实现 |
 | [`asimu::solver::time`](#asimusolver) | `TimeIntegrator`、`SteadyStateIntegrator` | 骨架已实现 |
+
+### `asimu::boundary`
+
+| 类型 | 说明 |
+|------|------|
+| `BoundaryKind` | `Dirichlet { value }` / `Neumann { flux }` |
+| `BoundaryPatch` | 逻辑名 + `face_ids` + `kind` |
+| `BoundarySet` | patch 有序列表 |
+| `BoundaryRegistry` | 校验 + `handler_for` 调度 |
+
+理论：[theory/boundary_conditions.md](theory/boundary_conditions.md)
 
 ### `asimu::core`
 
@@ -149,17 +167,25 @@ name=<mesh_name>;cells=<count>
 | 类型 | 说明 |
 |------|------|
 | `ScalarField` | 标量场；`uniform` / `from_values` 构造 |
+| `InitialKind` | `uniform` / `linear` / `values` |
+| `InitialSet` | 命名初始条件集合 |
+| `Fields` | 命名标量场 map；`from_initial_set` 构建 |
 
 ### `asimu::linalg`
 
 | 类型 | 说明 |
 |------|------|
-| `LinearSystem` | 线性系统 RHS 占位（稀疏矩阵后续 PR） |
+| `LinearSystem` | 三对角 `rhs` / `diag` / `lower` / `upper` |
+| `LinearSystem::zeros(n)` | 构造零系统 |
+| `LinearSystem::solve_tridiagonal()` | Thomas 算法求解 |
 
 ### `asimu::discretization`
 
 | 函数 | 说明 |
 |------|------|
+| `assemble_diffusion_1d` | 1D 内部面扩散装配 |
+| `apply_boundary_conditions` | 按 patch 顺序施加 BC |
+| `apply_dirichlet_face` / `apply_neumann` | 单面 BC |
 | `assemble_diffusion_placeholder` | 尺寸校验 + RHS 清零占位 |
 
 ### `asimu::solver`（扩展）

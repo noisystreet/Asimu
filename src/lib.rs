@@ -6,6 +6,7 @@
 //! SPDX-License-Identifier: Apache-2.0 OR MIT
 
 pub mod app;
+pub mod boundary;
 pub mod config;
 pub mod core;
 pub mod discretization;
@@ -14,15 +15,30 @@ pub mod field;
 pub mod io;
 pub mod linalg;
 pub mod mesh;
+pub mod physics;
 pub mod solver;
 
 /// 常用类型 re-export，便于库集成。
 pub mod prelude {
+    pub use crate::boundary::{BoundaryKind, BoundaryPatch, BoundarySet, BoundaryRegistry};
     pub use crate::config::{AppConfig, SolverConfig};
-    pub use crate::core::{CellId, Real, Vector3, approx_eq};
+    pub use crate::core::{CellId, FaceId, Real, Vector3, approx_eq};
+    pub use crate::discretization::{
+        apply_boundary_conditions, apply_compressible_boundary_conditions, apply_dirichlet,
+        apply_neumann, assemble_diffusion_1d,
+    };
     pub use crate::error::{AsimuError, Result};
-    pub use crate::field::ScalarField;
-    pub use crate::mesh::{Mesh, StructuredMesh, StructuredMesh2d, StructuredMesh3d};
+    pub use crate::field::{
+        ConservedFields, Fields, FluidInitialConfig, InitialKind, InitialSet, ScalarField,
+        ScalarInitial,
+    };
+    pub use crate::io::{CaseMesh, CaseSpec, load_case, load_conserved_fields};
+    pub use crate::linalg::LinearSystem;
+    pub use crate::mesh::{
+        BoundaryMesh, BoundaryMesh3d, Mesh, StructuredMesh, StructuredMesh1d, StructuredMesh2d,
+        StructuredMesh3d,
+    };
+    pub use crate::physics::{FreestreamParams, IdealGasEoS, PhysicsConfig, PrimitiveState};
     pub use crate::solver::{
         SolveResult, Solver, SolverState, SteadyStateIntegrator, TimeIntegrator,
     };

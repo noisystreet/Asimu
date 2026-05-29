@@ -14,6 +14,9 @@ pub enum AsimuError {
     #[error("场错误: {0}")]
     Field(String),
 
+    #[error("边界条件错误: {0}")]
+    Boundary(String),
+
     #[error("线性代数错误: {0}")]
     Linalg(String),
 

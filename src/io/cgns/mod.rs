@@ -4,8 +4,10 @@
 
 mod ffi;
 mod read;
+mod zonebc;
 
 pub use read::{
     CgnsLoadResult, CgnsMultiLoadResult, CgnsZoneInfo, export_cgns_to_vtm, export_cgns_to_vts,
     export_cgns_zone_to_vts, list_cgns_zones, load_cgns_all_zones, load_cgns_zone,
 };
+pub use zonebc::{CgnsPointRange, patch_from_cgns};

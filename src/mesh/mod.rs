@@ -1,8 +1,14 @@
-//! 2D 结构化网格（FVM 首版）。
+//! 结构化网格（1D / 2D / 3D FVM）。
 
+mod boundary;
 mod structured;
+mod structured_1d;
+mod structured_3d_boundary;
 
+pub use boundary::BoundaryMesh;
 pub use structured::{StructuredMesh, StructuredMesh2d, StructuredMesh3d};
+pub use structured_1d::StructuredMesh1d;
+pub use structured_3d_boundary::{BoundaryMesh3d, FaceGeometry3d, LogicalFace3d};
 
 use crate::error::{AsimuError, Result};
 

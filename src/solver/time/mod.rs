@@ -22,10 +22,24 @@ pub struct TimeStepInfo {
     pub is_final: bool,
 }
 
-/// 时间推进策略；v0.2 用具体 struct，v0.5+ 可扩展 enum dispatch。
+/// 时间推进策略。
 pub trait TimeIntegrator {
     fn mode(&self) -> TimeMode;
     fn advance(&mut self, state: &mut SolverState) -> Result<TimeStepInfo>;
+}
+
+/// CFL 建议时间步（可压缩流显式推进）。
+pub fn suggested_dt_cfl(
+    min_spacing: Real,
+    max_wave_speed: Real,
+    cfl: Real,
+) -> Result<Real> {
+    if min_spacing <= 0.0 || max_wave_speed <= 0.0 || cfl <= 0.0 {
+        return Err(crate::error::AsimuError::Solver(
+            "suggested_dt_cfl 参数须为正".to_string(),
+        ));
+    }
+    Ok(cfl * min_spacing / max_wave_speed)
 }
 
 /// 稳态伪时间推进：递增 `pseudo_step` 直至达到上限。
@@ -69,6 +83,12 @@ impl TimeIntegrator for SteadyStateIntegrator {
 mod tests {
     use super::*;
     use crate::solver::state::SolverState;
+
+    #[test]
+    fn suggested_dt_positive() {
+        let dt = suggested_dt_cfl(0.01, 340.0, 0.5).expect("dt");
+        assert!(dt > 0.0);
+    }
 
     #[test]
     fn steady_integrator_reaches_final_step() {

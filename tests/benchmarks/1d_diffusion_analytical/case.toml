@@ -18,6 +18,11 @@ value = 0.0
 kind = "dirichlet"
 value = 1.0
 
+[initial.phi]
+kind = "linear"
+left = 0.0
+right = 1.0
+
 [solver]
 max_iterations = 1000
 tolerance = 1.0e-8

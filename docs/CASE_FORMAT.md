@@ -23,6 +23,7 @@
 | `mesh` | table | 是 | 网格描述（§3） |
 | `physics` | table | 是 | 物性（§4） |
 | `boundary` | table | 是 | 边界条件（§5） |
+| `initial` | table | 否 | 初始条件（§5.5）；缺省为全零 |
 | `solver` | table | 否 | 覆盖 `config/default.toml` 的 `[solver]` |
 | `time` | table | 否 | 时间推进（§6）；默认 `mode = "steady"` |
 
@@ -134,6 +135,35 @@ value = 1.0
 | `neumann` | `flux` | 法向通量（扩散问题为 `-D ∂φ/∂n`） |
 
 1D 默认映射：`left` → 首端面，`right` → 末端面。
+
+---
+
+## 5.5 `[initial]`（可选）
+
+v0.2 支持标量场初始条件。键名为场名（如 `phi`）。未声明时，求解器以**全零**场作为初值。
+
+```toml
+[initial.phi]
+kind = "uniform"
+value = 0.0
+
+[initial.phi]
+kind = "linear"
+left = 0.0
+right = 1.0
+
+[initial.phi]
+kind = "values"
+data = [0.0, 0.25, 0.5, 0.75]
+```
+
+| `kind` | 字段 | 说明 |
+|--------|------|------|
+| `uniform` | `value` | 常值 |
+| `linear` | `left`, `right` | 沿域长线性插值（单元中心） |
+| `values` | `data` | 逐单元数组，长度 = `mesh.cells` |
+
+API：`CaseSpec::build_initial_fields()` / `initial_scalar("phi")`。
 
 ---
 
