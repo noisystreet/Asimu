@@ -1,6 +1,8 @@
 //! 可压缩流边界条件 ghost 单元施加。
 
-use crate::boundary::{BcHandler, BoundaryKind, BoundaryPatch, BoundaryRegistry, BoundarySet, WallHeat};
+use crate::boundary::{
+    BcHandler, BoundaryKind, BoundaryPatch, BoundaryRegistry, BoundarySet, WallHeat,
+};
 use crate::core::Real;
 use crate::error::Result;
 use crate::field::ConservedFields;
@@ -34,10 +36,7 @@ impl BoundaryGhostBuffer {
     }
 
     pub fn get_face(&self, face: crate::core::FaceId) -> Option<GhostCellState> {
-        self.states
-            .get(face.index() as usize)
-            .copied()
-            .flatten()
+        self.states.get(face.index() as usize).copied().flatten()
     }
 }
 
@@ -101,7 +100,9 @@ pub fn inlet_ghost(
     let static_temperature = total_temperature * 0.95;
     let static_pressure = total_pressure * 0.95;
     let density = eos.density(static_pressure, static_temperature)?;
-    let speed = (2.0 * cp * (total_temperature - static_temperature)).max(0.0).sqrt();
+    let speed = (2.0 * cp * (total_temperature - static_temperature))
+        .max(0.0)
+        .sqrt();
     let dir = normalize(velocity_direction)?;
     let prim = PrimitiveState {
         density,
@@ -115,7 +116,11 @@ pub fn inlet_ghost(
 }
 
 /// 出口 ghost：外推 owner 压力，速度零梯度（简化为复制 owner）。
-pub fn outlet_ghost(owner: &ConservedState, static_pressure: Real, eos: &IdealGasEoS) -> Result<GhostCellState> {
+pub fn outlet_ghost(
+    owner: &ConservedState,
+    static_pressure: Real,
+    eos: &IdealGasEoS,
+) -> Result<GhostCellState> {
     let prim = crate::field::primitive_from_conserved(eos, owner)?;
     let ghost_prim = PrimitiveState {
         pressure: static_pressure,
@@ -162,27 +167,57 @@ fn apply_patch_compressible(
             (BcHandler::Wall, BoundaryKind::Wall { no_slip, heat }) => {
                 wall_ghost(&owner, &geom, *no_slip, *heat, eos)?
             }
-            (BcHandler::Farfield, BoundaryKind::Farfield { mach, pressure, temperature, alpha, beta }) => {
-                farfield_ghost(
-                    &owner,
-                    &geom,
-                    &FreestreamParams {
-                        mach: *mach,
-                        pressure: *pressure,
-                        temperature: *temperature,
-                        alpha: *alpha,
-                        beta: *beta,
-                        velocity_direction: [1.0, 0.0, 0.0],
-                    },
-                    eos,
-                )?
-            }
-            (BcHandler::Inlet, BoundaryKind::Inlet { total_pressure, total_temperature, velocity_direction }) => {
-                inlet_ghost(&owner, *total_pressure, *total_temperature, *velocity_direction, eos)?
-            }
-            (BcHandler::TurbulentInlet, BoundaryKind::TurbulentInlet { total_pressure, total_temperature, velocity_direction, .. }) => {
-                inlet_ghost(&owner, *total_pressure, *total_temperature, *velocity_direction, eos)?
-            }
+            (
+                BcHandler::Farfield,
+                BoundaryKind::Farfield {
+                    mach,
+                    pressure,
+                    temperature,
+                    alpha,
+                    beta,
+                },
+            ) => farfield_ghost(
+                &owner,
+                &geom,
+                &FreestreamParams {
+                    mach: *mach,
+                    pressure: *pressure,
+                    temperature: *temperature,
+                    alpha: *alpha,
+                    beta: *beta,
+                    velocity_direction: [1.0, 0.0, 0.0],
+                },
+                eos,
+            )?,
+            (
+                BcHandler::Inlet,
+                BoundaryKind::Inlet {
+                    total_pressure,
+                    total_temperature,
+                    velocity_direction,
+                },
+            ) => inlet_ghost(
+                &owner,
+                *total_pressure,
+                *total_temperature,
+                *velocity_direction,
+                eos,
+            )?,
+            (
+                BcHandler::TurbulentInlet,
+                BoundaryKind::TurbulentInlet {
+                    total_pressure,
+                    total_temperature,
+                    velocity_direction,
+                    ..
+                },
+            ) => inlet_ghost(
+                &owner,
+                *total_pressure,
+                *total_temperature,
+                *velocity_direction,
+                eos,
+            )?,
             (BcHandler::Outlet, BoundaryKind::Outlet { static_pressure }) => {
                 outlet_ghost(&owner, *static_pressure, eos)?
             }

@@ -52,7 +52,9 @@ impl CgnsPointRange {
             }
         }
         if faces.is_empty() {
-            return Err(AsimuError::Boundary("CGNS PointRange 未产生任何面".to_string()));
+            return Err(AsimuError::Boundary(
+                "CGNS PointRange 未产生任何面".to_string(),
+            ));
         }
         Ok(faces)
     }
@@ -79,7 +81,9 @@ fn detect_logical_face(range: &CgnsPointRange, nx: i32, ny: i32, nz: i32) -> Res
     }
     Err(AsimuError::Boundary(format!(
         "无法识别 CGNS PointRange 对应逻辑面: {:?}",
-        (range.imin, range.imax, range.jmin, range.jmax, range.kmin, range.kmax)
+        (
+            range.imin, range.imax, range.jmin, range.jmax, range.kmin, range.kmax
+        )
     )))
 }
 

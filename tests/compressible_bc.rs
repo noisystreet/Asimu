@@ -1,7 +1,7 @@
 //! 可压缩 NS 边界与初始条件集成测试。
 
 use asimu::boundary::BoundaryKind;
-use asimu::discretization::{apply_compressible_boundary_conditions, BoundaryGhostBuffer};
+use asimu::discretization::{BoundaryGhostBuffer, apply_compressible_boundary_conditions};
 use asimu::io::{parse_case_str, write_conserved_fields};
 use asimu::physics::{FreestreamParams, IdealGasEoS};
 

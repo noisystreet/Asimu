@@ -37,6 +37,10 @@ predicates = "3"
 name = "cgns_to_vts"
 required-features = ["io-cgns-vts"]
 
+[[example]]
+name = "probe_vts"
+required-features = ["io-vtk"]
+
 [profile.release]
 lto = true
 codegen-units = 1

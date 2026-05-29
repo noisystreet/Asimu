@@ -115,7 +115,9 @@ impl LinearSystem {
 
         let denom0 = self.diag[0];
         if denom0.abs() < Real::EPSILON {
-            return Err(AsimuError::Linalg("Thomas 分解失败：对角元为零".to_string()));
+            return Err(AsimuError::Linalg(
+                "Thomas 分解失败：对角元为零".to_string(),
+            ));
         }
         c_prime[0] = self.upper[0] / denom0;
         d_prime[0] = self.rhs[0] / denom0;
@@ -123,7 +125,9 @@ impl LinearSystem {
         for i in 1..n {
             let denom = self.diag[i] - self.lower[i] * c_prime[i - 1];
             if denom.abs() < Real::EPSILON {
-                return Err(AsimuError::Linalg("Thomas 分解失败：对角元为零".to_string()));
+                return Err(AsimuError::Linalg(
+                    "Thomas 分解失败：对角元为零".to_string(),
+                ));
             }
             if i < n - 1 {
                 c_prime[i] = self.upper[i] / denom;

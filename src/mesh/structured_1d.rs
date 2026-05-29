@@ -15,12 +15,7 @@ pub struct StructuredMesh1d {
 }
 
 impl StructuredMesh1d {
-    pub fn new(
-        name: impl Into<String>,
-        ncells: usize,
-        origin: Real,
-        length: Real,
-    ) -> Result<Self> {
+    pub fn new(name: impl Into<String>, ncells: usize, origin: Real, length: Real) -> Result<Self> {
         if ncells == 0 {
             return Err(AsimuError::Mesh("ncells 必须大于 0".to_string()));
         }
@@ -78,14 +73,20 @@ impl BoundaryMesh for StructuredMesh1d {
         match face.index() {
             0 => Ok(CellId(0)),
             1 => Ok(CellId((self.ncells - 1) as u32)),
-            _ => Err(AsimuError::Mesh(format!("1D 网格无 FaceId({})", face.index()))),
+            _ => Err(AsimuError::Mesh(format!(
+                "1D 网格无 FaceId({})",
+                face.index()
+            ))),
         }
     }
 
     fn face_spacing(&self, face: FaceId) -> Result<Real> {
         match face.index() {
             0 | 1 => Ok(self.dx() * 0.5),
-            _ => Err(AsimuError::Mesh(format!("1D 网格无 FaceId({})", face.index()))),
+            _ => Err(AsimuError::Mesh(format!(
+                "1D 网格无 FaceId({})",
+                face.index()
+            ))),
         }
     }
 
@@ -93,7 +94,10 @@ impl BoundaryMesh for StructuredMesh1d {
         match face.index() {
             0 => Ok(-1.0),
             1 => Ok(1.0),
-            _ => Err(AsimuError::Mesh(format!("1D 网格无 FaceId({})", face.index()))),
+            _ => Err(AsimuError::Mesh(format!(
+                "1D 网格无 FaceId({})",
+                face.index()
+            ))),
         }
     }
 
@@ -115,15 +119,11 @@ mod tests {
     #[test]
     fn resolves_logical_boundaries() {
         let mesh = StructuredMesh1d::new("line", 8, 0.0, 1.0).expect("mesh");
-        let left = mesh
-            .resolve_logical_boundary("left")
-            .expect("left");
+        let left = mesh.resolve_logical_boundary("left").expect("left");
         assert_eq!(left, vec![FaceId(0)]);
         assert_eq!(mesh.face_owner(left[0]).expect("owner"), CellId(0));
 
-        let right = mesh
-            .resolve_logical_boundary("right")
-            .expect("right");
+        let right = mesh.resolve_logical_boundary("right").expect("right");
         assert_eq!(right, vec![FaceId(1)]);
         assert_eq!(mesh.face_owner(right[0]).expect("owner"), CellId(7));
     }

@@ -13,11 +13,7 @@ pub struct BoundaryPatch {
 }
 
 impl BoundaryPatch {
-    pub fn new(
-        name: impl Into<String>,
-        face_ids: Vec<FaceId>,
-        kind: BoundaryKind,
-    ) -> Self {
+    pub fn new(name: impl Into<String>, face_ids: Vec<FaceId>, kind: BoundaryKind) -> Self {
         Self {
             name: name.into(),
             face_ids,

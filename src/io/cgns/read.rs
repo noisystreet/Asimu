@@ -14,7 +14,7 @@ use super::ffi::{
     cg_boco_read, cg_close, cg_coord_read, cg_get_error, cg_nbocos, cg_nzones, cg_open,
     cg_zone_read, cg_zone_type,
 };
-use super::zonebc::{boundary_set_from_cgns, patch_from_cgns, CgnsPointRange};
+use super::zonebc::{CgnsPointRange, boundary_set_from_cgns, patch_from_cgns};
 
 /// CGNS MLL 非线程安全，全局串行化所有调用。
 static CGNS_LOCK: Mutex<()> = Mutex::new(());

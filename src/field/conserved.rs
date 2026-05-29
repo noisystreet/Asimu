@@ -64,7 +64,10 @@ impl ConservedFields {
 }
 
 /// 守恒变量 → 原始变量（理想气体）。
-pub fn primitive_from_conserved(eos: &IdealGasEoS, cons: &ConservedState) -> Result<PrimitiveState> {
+pub fn primitive_from_conserved(
+    eos: &IdealGasEoS,
+    cons: &ConservedState,
+) -> Result<PrimitiveState> {
     let rho = cons.density;
     if rho <= 0.0 {
         return Err(AsimuError::Field("密度必须大于 0".to_string()));
@@ -74,7 +77,9 @@ pub fn primitive_from_conserved(eos: &IdealGasEoS, cons: &ConservedState) -> Res
         cons.momentum[1] / rho,
         cons.momentum[2] / rho,
     ];
-    let ke = 0.5 * rho * (velocity[0] * velocity[0] + velocity[1] * velocity[1] + velocity[2] * velocity[2]);
+    let ke = 0.5
+        * rho
+        * (velocity[0] * velocity[0] + velocity[1] * velocity[1] + velocity[2] * velocity[2]);
     let e = cons.total_energy / rho - ke / rho;
     if e <= 0.0 {
         return Err(AsimuError::Field("内能必须大于 0".to_string()));

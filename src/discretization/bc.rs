@@ -132,14 +132,8 @@ mod tests {
     fn neumann_adds_conductance_and_flux() {
         let mesh = StructuredMesh1d::new("line", 4, 0.0, 1.0).expect("mesh");
         let mut system = LinearSystem::zeros(4).expect("system");
-        apply_neumann(
-            &mut system,
-            &mesh,
-            StructuredMesh1d::left_face(),
-            2.0,
-            1.0,
-        )
-        .expect("neumann");
+        apply_neumann(&mut system, &mesh, StructuredMesh1d::left_face(), 2.0, 1.0)
+            .expect("neumann");
         let g = 2.0 / (mesh.dx() * 0.5);
         assert!((system.diag()[0] - g).abs() < 1.0e-12);
         assert!((system.rhs()[0] - 1.0).abs() < 1.0e-12);

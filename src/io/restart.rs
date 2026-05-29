@@ -91,8 +91,8 @@ mod tests {
     #[test]
     fn restart_roundtrip() {
         let eos = IdealGasEoS::AIR_STANDARD;
-        let fields =
-            ConservedFields::from_freestream(4, &eos, &FreestreamParams::default()).expect("fields");
+        let fields = ConservedFields::from_freestream(4, &eos, &FreestreamParams::default())
+            .expect("fields");
         let path = std::env::temp_dir().join("asimu_restart_test.toml");
         write_conserved_fields(&path, &fields).expect("write");
         let loaded = load_conserved_fields(&path).expect("load");

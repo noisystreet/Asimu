@@ -149,7 +149,11 @@ impl StructuredMesh3d {
                 if k >= self.nz {
                     return Err(AsimuError::Mesh("面局部索引越界".to_string()));
                 }
-                let i = if face == LogicalFace3d::IMin { 0 } else { self.nx - 1 };
+                let i = if face == LogicalFace3d::IMin {
+                    0
+                } else {
+                    self.nx - 1
+                };
                 Ok((i, j, k))
             }
             LogicalFace3d::JMin | LogicalFace3d::JMax => {
@@ -159,7 +163,11 @@ impl StructuredMesh3d {
                 if k >= self.nz {
                     return Err(AsimuError::Mesh("面局部索引越界".to_string()));
                 }
-                let j = if face == LogicalFace3d::JMin { 0 } else { self.ny - 1 };
+                let j = if face == LogicalFace3d::JMin {
+                    0
+                } else {
+                    self.ny - 1
+                };
                 Ok((i, j, k))
             }
             LogicalFace3d::KMin | LogicalFace3d::KMax => {
@@ -169,7 +177,11 @@ impl StructuredMesh3d {
                 if j >= self.ny {
                     return Err(AsimuError::Mesh("面局部索引越界".to_string()));
                 }
-                let k = if face == LogicalFace3d::KMin { 0 } else { self.nz - 1 };
+                let k = if face == LogicalFace3d::KMin {
+                    0
+                } else {
+                    self.nz - 1
+                };
                 Ok((i, j, k))
             }
         }

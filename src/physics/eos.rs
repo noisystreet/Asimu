@@ -23,7 +23,10 @@ impl IdealGasEoS {
         if gas_constant <= 0.0 {
             return Err(AsimuError::Config("gas_constant 必须大于 0".to_string()));
         }
-        Ok(Self { gamma, gas_constant })
+        Ok(Self {
+            gamma,
+            gas_constant,
+        })
     }
 
     #[must_use]
@@ -63,7 +66,9 @@ impl IdealGasEoS {
         velocity: [Real; 3],
     ) -> Result<Real> {
         let e = self.specific_internal_energy(pressure, density)?;
-        let ke = 0.5 * density * (velocity[0] * velocity[0] + velocity[1] * velocity[1] + velocity[2] * velocity[2]);
+        let ke = 0.5
+            * density
+            * (velocity[0] * velocity[0] + velocity[1] * velocity[1] + velocity[2] * velocity[2]);
         Ok(density * e + ke)
     }
 

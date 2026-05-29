@@ -14,8 +14,12 @@ pub enum WallHeat {
 #[derive(Debug, Clone, PartialEq)]
 pub enum BoundaryKind {
     // --- 扩散 (v0.2) ---
-    Dirichlet { value: Real },
-    Neumann { flux: Real },
+    Dirichlet {
+        value: Real,
+    },
+    Neumann {
+        flux: Real,
+    },
 
     // --- 可压缩 NS (v0.3+) ---
     Farfield {
@@ -62,7 +66,11 @@ impl BoundaryKind {
     }
 
     /// 扩散 TOML 解析（向后兼容）。
-    pub fn from_diffusion_toml(kind: &str, value: Option<Real>, flux: Option<Real>) -> Option<Self> {
+    pub fn from_diffusion_toml(
+        kind: &str,
+        value: Option<Real>,
+        flux: Option<Real>,
+    ) -> Option<Self> {
         match kind {
             "dirichlet" => value.map(Self::dirichlet),
             "neumann" => flux.map(Self::neumann),

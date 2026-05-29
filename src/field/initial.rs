@@ -87,11 +87,7 @@ impl InitialSet {
     }
 
     /// 未指定时返回全零场。
-    pub fn build_scalar_or_zero(
-        &self,
-        name: &str,
-        mesh: &StructuredMesh1d,
-    ) -> Result<ScalarField> {
+    pub fn build_scalar_or_zero(&self, name: &str, mesh: &StructuredMesh1d) -> Result<ScalarField> {
         match self.find(name) {
             Some(initial) => initial.build_on_mesh(mesh),
             None => ScalarField::uniform(mesh.num_cells(), 0.0),

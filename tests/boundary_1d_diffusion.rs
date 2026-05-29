@@ -19,13 +19,7 @@ fn one_d_diffusion_with_dirichlet_matches_analytical() {
     let n = mesh.num_cells();
     let mut system = LinearSystem::zeros(n).expect("system");
     assemble_diffusion_1d(mesh, &mut system, case.diffusivity()).expect("assemble");
-    apply_boundary_conditions(
-        mesh,
-        &case.boundary,
-        &mut system,
-        case.diffusivity(),
-    )
-    .expect("bc");
+    apply_boundary_conditions(mesh, &case.boundary, &mut system, case.diffusivity()).expect("bc");
 
     let solution = system.solve_tridiagonal().expect("solve");
     let dx = mesh.dx();
@@ -48,7 +42,10 @@ fn case_boundary_patches_are_dirichlet() {
     let case = load_case(Path::new(CASE_PATH)).expect("load case");
     let left = case.boundary.find("left").expect("left patch");
     let right = case.boundary.find("right").expect("right patch");
-    assert!(matches!(left.kind, asimu::boundary::BoundaryKind::Dirichlet { value: 0.0 }));
+    assert!(matches!(
+        left.kind,
+        asimu::boundary::BoundaryKind::Dirichlet { value: 0.0 }
+    ));
     assert!(matches!(
         right.kind,
         asimu::boundary::BoundaryKind::Dirichlet { value: 1.0 }
