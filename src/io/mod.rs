@@ -1,14 +1,28 @@
-//! 输入/输出适配层（占位：后续支持 case 文件与 VTK 等格式）。
+//! 输入/输出适配层。
+//!
+//! - 遗留单行 case：`load_mesh_from_case`
+//! - VTK VTS（二进制 appended）：feature `io-vtk` → [`vtk::load_vts`]
+
+mod limits;
+
+#[cfg(feature = "io-vtk")]
+pub mod vtk;
 
 use std::path::Path;
 
 use crate::error::{AsimuError, Result};
 use crate::mesh::Mesh;
 
+pub use limits::{validate_cell_count, validate_file_size, validate_input_path};
+
+#[cfg(feature = "io-vtk")]
+pub use vtk::{VtsLoadResult, load_vts};
+
 /// 从占位 case 文件加载网格元数据。
 ///
 /// 格式约定：`name=<mesh_name>;cells=<count>`
 pub fn load_mesh_from_case(path: &Path) -> Result<Mesh> {
+    validate_input_path(path)?;
     let content = std::fs::read_to_string(path)?;
     parse_case_content(&content)
 }
@@ -37,6 +51,7 @@ fn parse_case_content(content: &str) -> Result<Mesh> {
         ))
     })?;
 
+    validate_cell_count(cell_count as u64)?;
     Mesh::new(name, cell_count)
 }
 

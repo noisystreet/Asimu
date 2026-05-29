@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<VTKFile type="StructuredGrid" version="1.0" byte_order="LittleEndian" header_type="UInt32">
+  <StructuredGrid WholeExtent="0 2 0 2 0 0">
+    <Piece Extent="0 2 0 2 0 0">
+      <Points>
+        <DataArray type="Float32" Name="Points" NumberOfComponents="3" format="appended" offset="0"/>
+      </Points>
+    </Piece>
+  </StructuredGrid>
+  <AppendedData encoding="base64">
+_bAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAIA/AAAAAAAAgD8AAIA/AAAAAAAAAEAAAIA/AAAAAAAAAAAAAABAAAAAAAAAgD8AAABAAAAAAAAAAEAAAABAAAAAAA==</AppendedData>
+</VTKFile>

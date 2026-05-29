@@ -1,4 +1,8 @@
-//! 网格数据结构（占位模块，后续实现结构化/非结构化网格）。
+//! 2D 结构化网格（FVM 首版）。
+
+mod structured;
+
+pub use structured::{StructuredMesh, StructuredMesh2d, StructuredMesh3d};
 
 use crate::error::{AsimuError, Result};
 

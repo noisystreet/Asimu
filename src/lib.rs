@@ -22,8 +22,11 @@ pub mod prelude {
     pub use crate::core::{CellId, Real, Vector3, approx_eq};
     pub use crate::error::{AsimuError, Result};
     pub use crate::field::ScalarField;
-    pub use crate::mesh::Mesh;
+    pub use crate::mesh::{Mesh, StructuredMesh, StructuredMesh2d, StructuredMesh3d};
     pub use crate::solver::{
         SolveResult, Solver, SolverState, SteadyStateIntegrator, TimeIntegrator,
     };
+
+    #[cfg(feature = "io-vtk")]
+    pub use crate::io::{VtsLoadResult, load_vts};
 }

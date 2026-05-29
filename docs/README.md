@@ -24,5 +24,6 @@
 | [0004](adr/0004-mcp-integration.md) | MCP（Model Context Protocol）集成规划 |
 | [0005](adr/0005-time-integration.md) | 时间推进与稳态/瞬态统一模型 |
 | [0006](adr/0006-ffi-interop.md) | FFI / Python 互操作原则 |
+| [0007](adr/0007-vts-binary-io.md) | VTK VTS 二进制读入（feature `io-vtk`） |
 
 维护策略：修改中文架构/数据模型文档时，同步更新 `docs/en/` 对应摘要（见 [AGENTS.md](../AGENTS.md)）。

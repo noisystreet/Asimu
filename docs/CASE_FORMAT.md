@@ -60,6 +60,23 @@ lx = 1.0
 ly = 1.0
 ```
 
+### 3.3 外部 VTK VTS（v0.3.x，二进制 appended）
+
+```toml
+[mesh]
+kind = "vts"
+path = "mesh/cavity.vts"
+```
+
+| 项 | 约定 |
+|----|------|
+| 格式 | VTK XML StructuredGrid，**仅** `format="appended"` + base64 `AppendedData` |
+| 不支持 | ASCII、inline binary、多 Piece |
+| Feature | 库集成须启用 `io-vtk` |
+| API | `asimu::io::load_vts(&path)` → `StructuredMesh`（2D/3D） |
+
+详见 [adr/0007-vts-binary-io.md](adr/0007-vts-binary-io.md)。
+
 ---
 
 ## 4. `[physics]`

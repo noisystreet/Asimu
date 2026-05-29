@@ -2,6 +2,7 @@
 
 CARGO := cargo
 PYTHON := python3
+CARGO_FLAGS := --features io-vtk
 
 .PHONY: help build run test lint fmt complexity check clean setup audit doc
 
@@ -9,17 +10,17 @@ help:
 	@echo "Targets: build run test lint complexity fmt check clean setup audit doc"
 
 build:
-	$(CARGO) build
+	$(CARGO) build $(CARGO_FLAGS)
 
 run: build
-	$(CARGO) run --
+	$(CARGO) run $(CARGO_FLAGS) --
 
 test:
-	$(CARGO) test
+	$(CARGO) test $(CARGO_FLAGS)
 
 lint:
 	$(CARGO) fmt --check
-	$(CARGO) clippy --all-targets -- -D warnings
+	$(CARGO) clippy --all-targets $(CARGO_FLAGS) -- -D warnings
 	$(MAKE) complexity
 
 complexity:
@@ -44,3 +45,7 @@ audit:
 
 doc:
 	$(CARGO) doc --no-deps --open
+
+probe-vts:
+	@test -n "$(FILE)" || { echo "用法: make probe-vts FILE=/path/to/mesh.vts"; exit 1; }
+	$(CARGO) run --example probe_vts $(CARGO_FLAGS) -- $(FILE)

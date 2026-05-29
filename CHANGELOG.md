@@ -7,6 +7,7 @@
 
 ### Added
 
+- VTK VTS **二进制 appended** 读入：`io::load_vts`（feature `io-vtk`）；支持 zlib + 3D；ADR 0007；`StructuredMesh`
 - v0.2 启动准备：`agent_workflow.md`、`docs/CASE_FORMAT.md`；`docs/theory/fvm_diffusion.md`
 - v0.2 模块骨架：`field`、`discretization`、`linalg`、`solver/time`；`core::Real` 与 ID newtype
 - 首个 V&V 算例目录 `tests/benchmarks/1d_diffusion_analytical/`（case + expected + README）

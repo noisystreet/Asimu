@@ -89,6 +89,18 @@ let result = solver.run(&mesh)?;
 |------|------|
 | `load_mesh_from_case(&Path) -> Result<Mesh>` | 从占位 case 文件加载网格 |
 
+#### VTK VTS 读入（feature `io-vtk`）
+
+启用：`cargo build --features io-vtk`（`make check` 默认已启用）。
+
+| 函数 / 类型 | 说明 |
+|-------------|------|
+| `load_vts(&Path) -> Result<VtsLoadResult>` | 读取 **二进制 appended** `.vts` |
+| `VtsLoadResult` | `{ mesh: StructuredMesh }`（`D2` / `D3`） |
+| `StructuredMesh2d` / `StructuredMesh3d` | 2D/3D 结构化网格（`nx`, `ny`[, `nz`]，节点坐标） |
+
+**不支持**：ASCII VTS、非 zlib 压缩器、`.vtu`。见 [adr/0007-vts-binary-io.md](adr/0007-vts-binary-io.md)。
+
 #### Case 文件格式（临时）
 
 ```
