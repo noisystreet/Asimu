@@ -1,5 +1,10 @@
 //! 结构化 / CGNS / VTS / case 网格探测与诊断报告。
 //!
+//! 完整预检请使用独立工具 `mesh_check`：
+//! ```bash
+//! cargo run --bin mesh_check --features io-cgns-vts -- case_cylinder/case.toml
+//! ```
+//!
 //! ```bash
 //! cargo run --example mesh_probe --features io-cgns-vts -- cylinder.cgns
 //! cargo run --example mesh_probe --features io-cgns-vts -- mesh.vts

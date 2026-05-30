@@ -87,4 +87,22 @@ unsafe extern "C" {
         boco: c_int,
         family_name: *mut c_char,
     ) -> c_int;
+    #[allow(dead_code)]
+    pub fn asimu_cg_write_structured_flow(
+        filename: *const c_char,
+        basename: *const c_char,
+        zonename: *const c_char,
+        nx: c_int,
+        ny: c_int,
+        nz: c_int,
+        points_x: *const f64,
+        points_y: *const f64,
+        points_z: *const f64,
+        rho: *const f64,
+        u: *const f64,
+        v: *const f64,
+        w: *const f64,
+        p: *const f64,
+        physical_time: f64,
+    ) -> c_int;
 }

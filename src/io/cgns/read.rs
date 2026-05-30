@@ -19,7 +19,7 @@ use super::ffi::{
 use super::zonebc::{CgnsPointRange, boundary_set_from_cgns, patch_from_cgns};
 
 /// CGNS MLL 非线程安全，全局串行化所有调用。
-static CGNS_LOCK: Mutex<()> = Mutex::new(());
+pub(crate) static CGNS_LOCK: Mutex<()> = Mutex::new(());
 
 /// CGNS zone 元数据。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -617,7 +617,7 @@ mod tests {
                 .iter()
                 .map(|patch| patch.face_ids.len())
                 .sum::<usize>(),
-            20_700
+            19_899
         );
         assert_eq!(
             loaded

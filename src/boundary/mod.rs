@@ -7,6 +7,8 @@
 //!
 //! 理论：[`docs/theory/boundary_conditions.md`](../../docs/theory/boundary_conditions.md)
 
+mod freestream;
+mod inviscid;
 mod kind;
 mod patch;
 mod registry;

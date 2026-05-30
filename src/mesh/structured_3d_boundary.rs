@@ -38,6 +38,18 @@ impl LogicalFace3d {
         self as u32
     }
 
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::IMin => "i_min",
+            Self::IMax => "i_max",
+            Self::JMin => "j_min",
+            Self::JMax => "j_max",
+            Self::KMin => "k_min",
+            Self::KMax => "k_max",
+        }
+    }
+
     pub fn encode(self, local_index: u32) -> FaceId {
         FaceId(self.tag() * 1_000_000 + local_index)
     }
@@ -131,6 +143,356 @@ impl StructuredMesh3d {
         (self.points_z[i1] - self.points_z[i0]).abs()
     }
 
+    #[must_use]
+    pub fn cell_dx_at(&self, i: usize, j: usize, k: usize) -> Real {
+        (self.node_x(i + 1, j, k) - self.node_x(i, j, k)).abs()
+    }
+
+    #[must_use]
+    pub fn cell_dy_at(&self, i: usize, j: usize, k: usize) -> Real {
+        (self.node_y(i, j + 1, k) - self.node_y(i, j, k)).abs()
+    }
+
+    #[must_use]
+    pub fn cell_dz_at(&self, i: usize, j: usize, k: usize) -> Real {
+        (self.node_z(i, j, k + 1) - self.node_z(i, j, k)).abs()
+    }
+
+    #[must_use]
+    pub fn cell_volume_at(&self, i: usize, j: usize, k: usize) -> Real {
+        self.cell_dx_at(i, j, k) * self.cell_dy_at(i, j, k) * self.cell_dz_at(i, j, k)
+    }
+
+    /// i-方向内界面（cell `i` 与 `i+1` 之间）面积。
+    #[must_use]
+    pub fn i_face_area_between(&self, i: usize, j: usize, k: usize) -> Real {
+        let x = i + 1;
+        let dy = (self.node_y(x, j + 1, k) - self.node_y(x, j, k)).abs();
+        let dz = (self.node_z(x, j, k + 1) - self.node_z(x, j, k)).abs();
+        dy * dz
+    }
+
+    /// j-方向内界面（cell `j` 与 `j+1` 之间）面积。
+    #[must_use]
+    pub fn j_face_area_between(&self, i: usize, j: usize, k: usize) -> Real {
+        let y = j + 1;
+        let dx = (self.node_x(i + 1, y, k) - self.node_x(i, y, k)).abs();
+        let dz = (self.node_z(i, y, k + 1) - self.node_z(i, y, k)).abs();
+        dx * dz
+    }
+
+    /// k-方向内界面（cell `k` 与 `k+1` 之间）面积。
+    #[must_use]
+    pub fn k_face_area_between(&self, i: usize, j: usize, k: usize) -> Real {
+        let z = k + 1;
+        let dx = (self.node_x(i + 1, j, z) - self.node_x(i, j, z)).abs();
+        let dy = (self.node_y(i, j + 1, z) - self.node_y(i, j, z)).abs();
+        dx * dy
+    }
+
+    /// 逻辑边界面面积与法向间距（用于 BC ghost / 边界通量）。
+    pub fn boundary_face_geometry(
+        &self,
+        face: LogicalFace3d,
+        i: usize,
+        j: usize,
+        k: usize,
+    ) -> (Vector3, Real, Real) {
+        match face {
+            LogicalFace3d::IMin => (
+                Vector3::new(-1.0, 0.0, 0.0),
+                {
+                    let dy = (self.node_y(0, j + 1, k) - self.node_y(0, j, k)).abs();
+                    let dz = (self.node_z(0, j, k + 1) - self.node_z(0, j, k)).abs();
+                    dy * dz
+                },
+                self.cell_dx_at(i, j, k) * 0.5,
+            ),
+            LogicalFace3d::IMax => (
+                Vector3::new(1.0, 0.0, 0.0),
+                {
+                    let x = self.nx;
+                    let dy = (self.node_y(x, j + 1, k) - self.node_y(x, j, k)).abs();
+                    let dz = (self.node_z(x, j, k + 1) - self.node_z(x, j, k)).abs();
+                    dy * dz
+                },
+                self.cell_dx_at(i, j, k) * 0.5,
+            ),
+            LogicalFace3d::JMin => (
+                Vector3::new(0.0, -1.0, 0.0),
+                {
+                    let dx = (self.node_x(i + 1, 0, k) - self.node_x(i, 0, k)).abs();
+                    let dz = (self.node_z(i, 0, k + 1) - self.node_z(i, 0, k)).abs();
+                    dx * dz
+                },
+                self.cell_dy_at(i, j, k) * 0.5,
+            ),
+            LogicalFace3d::JMax => (
+                Vector3::new(0.0, 1.0, 0.0),
+                {
+                    let y = self.ny;
+                    let dx = (self.node_x(i + 1, y, k) - self.node_x(i, y, k)).abs();
+                    let dz = (self.node_z(i, y, k + 1) - self.node_z(i, y, k)).abs();
+                    dx * dz
+                },
+                self.cell_dy_at(i, j, k) * 0.5,
+            ),
+            LogicalFace3d::KMin => (
+                Vector3::new(0.0, 0.0, -1.0),
+                {
+                    let dx = (self.node_x(i + 1, j, 0) - self.node_x(i, j, 0)).abs();
+                    let dy = (self.node_y(i, j + 1, 0) - self.node_y(i, j, 0)).abs();
+                    dx * dy
+                },
+                self.cell_dz_at(i, j, k) * 0.5,
+            ),
+            LogicalFace3d::KMax => (
+                Vector3::new(0.0, 0.0, 1.0),
+                {
+                    let z = self.nz;
+                    let dx = (self.node_x(i + 1, j, z) - self.node_x(i, j, z)).abs();
+                    let dy = (self.node_y(i, j + 1, z) - self.node_y(i, j, z)).abs();
+                    dx * dy
+                },
+                self.cell_dz_at(i, j, k) * 0.5,
+            ),
+        }
+    }
+
+    /// 各单元 CFL 特征长度：相邻面间距的最小值。
+    pub fn cell_cfl_lengths(&self) -> Result<Vec<Real>> {
+        let n = self.num_cells();
+        let mut lengths = vec![Real::INFINITY; n];
+        if self.uses_curvilinear_metrics() {
+            self.accumulate_curvilinear_face_lengths(&mut lengths)?;
+        } else {
+            self.accumulate_cartesian_face_lengths(&mut lengths);
+        }
+        for h in &mut lengths {
+            if !h.is_finite() || *h <= Real::EPSILON {
+                return Err(crate::error::AsimuError::Mesh(
+                    "单元 CFL 特征长度无效".to_string(),
+                ));
+            }
+        }
+        Ok(lengths)
+    }
+
+    fn accumulate_cartesian_face_lengths(&self, lengths: &mut [Real]) {
+        for k in 0..self.nz {
+            for j in 0..self.ny {
+                for i in 0..self.nx {
+                    let idx = self.cell_index(i, j, k);
+                    let hx = self.cell_dx_at(i, j, k);
+                    let hy = self.cell_dy_at(i, j, k);
+                    let hz = self.cell_dz_at(i, j, k);
+                    lengths[idx] = lengths[idx].min(hx).min(hy).min(hz);
+                }
+            }
+        }
+    }
+
+    fn accumulate_curvilinear_face_lengths(&self, lengths: &mut [Real]) -> Result<()> {
+        let mut track = |owner: usize, neighbor: usize, h: Real| {
+            if h > Real::EPSILON && h.is_finite() {
+                lengths[owner] = lengths[owner].min(h);
+                lengths[neighbor] = lengths[neighbor].min(h);
+            }
+        };
+        for k in 0..self.nz {
+            for j in 0..self.ny {
+                for i in 0..self.nx.saturating_sub(1) {
+                    let face = self.i_face_metric(i, j, k);
+                    let h = face_spacing(
+                        self.cell_metric(i, j, k).volume,
+                        self.cell_metric(i + 1, j, k).volume,
+                        face.area,
+                    );
+                    track(self.cell_index(i, j, k), self.cell_index(i + 1, j, k), h);
+                }
+            }
+        }
+        for k in 0..self.nz {
+            for j in 0..self.ny.saturating_sub(1) {
+                for i in 0..self.nx {
+                    let face = self.j_face_metric(i, j, k);
+                    let h = face_spacing(
+                        self.cell_metric(i, j, k).volume,
+                        self.cell_metric(i, j + 1, k).volume,
+                        face.area,
+                    );
+                    track(self.cell_index(i, j, k), self.cell_index(i, j + 1, k), h);
+                }
+            }
+        }
+        for k in 0..self.nz.saturating_sub(1) {
+            for j in 0..self.ny {
+                for i in 0..self.nx {
+                    let face = self.k_face_metric(i, j, k);
+                    let h = face_spacing(
+                        self.cell_metric(i, j, k).volume,
+                        self.cell_metric(i, j, k + 1).volume,
+                        face.area,
+                    );
+                    track(self.cell_index(i, j, k), self.cell_index(i, j, k + 1), h);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// 全场最小正单元间距（CFL 用；忽略数值零间距）。
+    pub fn min_positive_spacing(&self) -> Result<Real> {
+        if self.uses_curvilinear_metrics() {
+            return self.min_positive_face_spacing();
+        }
+        let max_sp = self.cartesian_max_axis_step()?;
+        let floor = (max_sp * 1.0e-6).max(1.0e-12);
+        let min_sp = self
+            .min_cartesian_dx_above(floor)?
+            .min(self.min_cartesian_dy_above(floor)?)
+            .min(self.min_cartesian_dz_above(floor)?);
+        if !min_sp.is_finite() || min_sp <= 0.0 {
+            return Err(crate::error::AsimuError::Mesh(
+                "网格不存在正单元间距".to_string(),
+            ));
+        }
+        Ok(min_sp)
+    }
+
+    fn cartesian_max_axis_step(&self) -> Result<Real> {
+        let mut max_sp = 0.0_f64;
+        for k in 0..=self.nz {
+            for j in 0..=self.ny {
+                for i in 0..self.nx {
+                    max_sp = max_sp.max(self.cell_dx_at(i, j, k));
+                }
+            }
+        }
+        for k in 0..=self.nz {
+            for j in 0..self.ny {
+                for i in 0..=self.nx {
+                    let step = (self.node_y(i, j + 1, k) - self.node_y(i, j, k)).abs();
+                    max_sp = max_sp.max(step);
+                }
+            }
+        }
+        for k in 0..self.nz {
+            for j in 0..=self.ny {
+                for i in 0..self.nx {
+                    max_sp = max_sp.max(self.cell_dz_at(i, j, k));
+                }
+            }
+        }
+        Ok(max_sp)
+    }
+
+    fn min_cartesian_dx_above(&self, floor: Real) -> Result<Real> {
+        let mut min_sp = Real::INFINITY;
+        for k in 0..=self.nz {
+            for j in 0..=self.ny {
+                for i in 0..self.nx {
+                    let step = self.cell_dx_at(i, j, k);
+                    if step >= floor {
+                        min_sp = min_sp.min(step);
+                    }
+                }
+            }
+        }
+        Ok(min_sp)
+    }
+
+    fn min_cartesian_dy_above(&self, floor: Real) -> Result<Real> {
+        let mut min_sp = Real::INFINITY;
+        for k in 0..=self.nz {
+            for j in 0..self.ny {
+                for i in 0..self.nx {
+                    let step = (self.node_y(i, j + 1, k) - self.node_y(i, j, k)).abs();
+                    if step >= floor {
+                        min_sp = min_sp.min(step);
+                    }
+                }
+            }
+        }
+        Ok(min_sp)
+    }
+
+    fn min_cartesian_dz_above(&self, floor: Real) -> Result<Real> {
+        let mut min_sp = Real::INFINITY;
+        for k in 0..self.nz {
+            for j in 0..=self.ny {
+                for i in 0..self.nx {
+                    let step = self.cell_dz_at(i, j, k);
+                    if step >= floor {
+                        min_sp = min_sp.min(step);
+                    }
+                }
+            }
+        }
+        Ok(min_sp)
+    }
+
+    /// 曲线网格：用 \(h_f = (V_{\mathrm{ow}}+V_{\mathrm{nb}})/(2A)\) 估计最小正面间距。
+    pub fn min_positive_face_spacing(&self) -> Result<Real> {
+        if let Some(spacing) = self.cached_min_face_spacing() {
+            return Ok(spacing);
+        }
+        let hs = self.collect_internal_face_spacings()?;
+        let max_h = hs.iter().copied().fold(0.0_f64, Real::max);
+        let floor = (max_h * 1.0e-6).max(1.0e-12);
+        let min_h = hs
+            .into_iter()
+            .filter(|h| *h >= floor)
+            .fold(Real::INFINITY, Real::min);
+        if !min_h.is_finite() || min_h <= 0.0 {
+            return Err(crate::error::AsimuError::Mesh(
+                "曲线网格不存在正面间距".to_string(),
+            ));
+        }
+        Ok(min_h)
+    }
+
+    fn collect_internal_face_spacings(&self) -> Result<Vec<Real>> {
+        let mut hs = Vec::new();
+        for k in 0..self.nz {
+            for j in 0..self.ny {
+                for i in 0..self.nx.saturating_sub(1) {
+                    let face = self.i_face_metric(i, j, k);
+                    hs.push(face_spacing(
+                        self.cell_metric(i, j, k).volume,
+                        self.cell_metric(i + 1, j, k).volume,
+                        face.area,
+                    ));
+                }
+            }
+        }
+        for k in 0..self.nz {
+            for j in 0..self.ny.saturating_sub(1) {
+                for i in 0..self.nx {
+                    let face = self.j_face_metric(i, j, k);
+                    hs.push(face_spacing(
+                        self.cell_metric(i, j, k).volume,
+                        self.cell_metric(i, j + 1, k).volume,
+                        face.area,
+                    ));
+                }
+            }
+        }
+        for k in 0..self.nz.saturating_sub(1) {
+            for j in 0..self.ny {
+                for i in 0..self.nx {
+                    let face = self.k_face_metric(i, j, k);
+                    hs.push(face_spacing(
+                        self.cell_metric(i, j, k).volume,
+                        self.cell_metric(i, j, k + 1).volume,
+                        face.area,
+                    ));
+                }
+            }
+        }
+        Ok(hs)
+    }
+
     fn face_count(&self, face: LogicalFace3d) -> usize {
         match face {
             LogicalFace3d::IMin | LogicalFace3d::IMax => self.ny * self.nz,
@@ -188,6 +550,15 @@ impl StructuredMesh3d {
     }
 }
 
+#[must_use]
+fn face_spacing(owner_volume: Real, neighbor_volume: Real, area: Real) -> Real {
+    if area <= Real::EPSILON {
+        Real::INFINITY
+    } else {
+        (owner_volume + neighbor_volume) / (2.0 * area)
+    }
+}
+
 impl BoundaryMesh for StructuredMesh3d {
     fn num_cells(&self) -> usize {
         self.num_cells()
@@ -232,43 +603,18 @@ impl BoundaryMesh3d for StructuredMesh3d {
     }
 
     fn face_geometry_3d(&self, face: FaceId) -> Result<FaceGeometry3d> {
-        let (logical, _) = LogicalFace3d::decode(face)?;
-        let (normal, area, spacing) = match logical {
-            LogicalFace3d::IMin => (
-                Vector3::new(-1.0, 0.0, 0.0),
-                self.cell_dy() * self.cell_dz(),
-                self.cell_dx() * 0.5,
-            ),
-            LogicalFace3d::IMax => (
-                Vector3::new(1.0, 0.0, 0.0),
-                self.cell_dy() * self.cell_dz(),
-                self.cell_dx() * 0.5,
-            ),
-            LogicalFace3d::JMin => (
-                Vector3::new(0.0, -1.0, 0.0),
-                self.cell_dx() * self.cell_dz(),
-                self.cell_dy() * 0.5,
-            ),
-            LogicalFace3d::JMax => (
-                Vector3::new(0.0, 1.0, 0.0),
-                self.cell_dx() * self.cell_dz(),
-                self.cell_dy() * 0.5,
-            ),
-            LogicalFace3d::KMin => (
-                Vector3::new(0.0, 0.0, -1.0),
-                self.cell_dx() * self.cell_dy(),
-                self.cell_dz() * 0.5,
-            ),
-            LogicalFace3d::KMax => (
-                Vector3::new(0.0, 0.0, 1.0),
-                self.cell_dx() * self.cell_dy(),
-                self.cell_dz() * 0.5,
-            ),
+        let (logical, local) = LogicalFace3d::decode(face)?;
+        let (i, j, k) = self.face_ij(logical, local)?;
+        let metric = self.boundary_face_metric(logical, i, j, k);
+        let spacing = match logical {
+            LogicalFace3d::IMin | LogicalFace3d::IMax => self.cell_dx_at(i, j, k) * 0.5,
+            LogicalFace3d::JMin | LogicalFace3d::JMax => self.cell_dy_at(i, j, k) * 0.5,
+            LogicalFace3d::KMin | LogicalFace3d::KMax => self.cell_dz_at(i, j, k) * 0.5,
         };
         Ok(FaceGeometry3d {
-            normal,
+            normal: metric.normal,
             spacing,
-            area,
+            area: metric.area,
         })
     }
 }

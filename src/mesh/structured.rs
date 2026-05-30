@@ -1,8 +1,12 @@
 //! 结构化网格（2D / 3D），用于 VTS 读入与 FVM。
 
+use crate::core::Real;
 use crate::error::{AsimuError, Result};
 
+use super::metrics::{MeshMetricMode, MetricCache3d};
+
 /// 2D 或 3D 结构化网格。
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum StructuredMesh {
     D2(StructuredMesh2d),
@@ -112,6 +116,8 @@ pub struct StructuredMesh3d {
     pub points_x: Vec<f64>,
     pub points_y: Vec<f64>,
     pub points_z: Vec<f64>,
+    pub(crate) metric_mode: MeshMetricMode,
+    pub(crate) metric_cache: Option<MetricCache3d>,
 }
 
 impl StructuredMesh3d {
@@ -144,6 +150,8 @@ impl StructuredMesh3d {
             points_x,
             points_y,
             points_z,
+            metric_mode: MeshMetricMode::Cartesian,
+            metric_cache: None,
         })
     }
 
@@ -188,6 +196,23 @@ impl StructuredMesh3d {
         let dy = self.points_y[self.node_index(0, 1, 0)] - self.points_y[self.node_index(0, 0, 0)];
         let dz = self.points_z[self.node_index(0, 0, 1)] - self.points_z[self.node_index(0, 0, 0)];
         dx.abs() * dy.abs() * dz.abs()
+    }
+
+    /// 将所有节点坐标乘以 `factor`（仅缩放几何，不改变拓扑）。
+    pub fn scale_coordinates(&mut self, factor: Real) {
+        if (factor - 1.0).abs() <= Real::EPSILON {
+            return;
+        }
+        for x in &mut self.points_x {
+            *x *= factor;
+        }
+        for y in &mut self.points_y {
+            *y *= factor;
+        }
+        for z in &mut self.points_z {
+            *z *= factor;
+        }
+        self.metric_cache = None;
     }
 }
 

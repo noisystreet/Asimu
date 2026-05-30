@@ -1,16 +1,23 @@
 //! 结构化网格（1D / 2D / 3D FVM）。
 
 mod boundary;
+mod check;
 mod diagnostics;
+mod metrics;
 mod structured;
 mod structured_1d;
 mod structured_3d_boundary;
 
 pub use boundary::BoundaryMesh;
+pub use check::{
+    BoundaryPatchReport, CheckFinding, CheckSeverity, MeshCheckOptions, MeshCheckReport,
+    MeshCheckReportDisplay, check_mesh1d, check_mesh2d, check_mesh3d, write_mesh_check_report,
+};
 pub use diagnostics::{
     CoordRange, MeshBounds, MeshDiagnostics, SpacingStats, mesh1d_diagnostics, mesh2d_diagnostics,
     mesh3d_diagnostics, structured_mesh_diagnostics,
 };
+pub use metrics::{CellMetric, FaceMetric, MeshMetricMode, MetricCache3d};
 pub use structured::{StructuredMesh, StructuredMesh2d, StructuredMesh3d};
 pub use structured_1d::StructuredMesh1d;
 pub use structured_3d_boundary::{BoundaryMesh3d, FaceGeometry3d, LogicalFace3d};

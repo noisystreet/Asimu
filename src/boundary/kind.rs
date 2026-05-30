@@ -33,9 +33,13 @@ pub enum BoundaryKind {
         total_pressure: Real,
         total_temperature: Real,
         velocity_direction: [Real; 3],
+        /// 设计 Mach（`apply_freestream` 写入；\(M\ge 1\) 时按超声速入口处理）。
+        mach: Real,
     },
     Outlet {
         static_pressure: Real,
+        /// 超声速出口：零梯度外推 owner（CGNS `BCOutflowSupersonic`）。
+        supersonic: bool,
     },
     Wall {
         no_slip: bool,
@@ -123,11 +127,13 @@ impl BoundaryKind {
                     total_pressure,
                     total_temperature,
                     velocity_direction,
+                    mach: fields.mach.unwrap_or(0.0),
                 })
             }
-            "outlet" => fields
-                .static_pressure
-                .map(|static_pressure| Self::Outlet { static_pressure }),
+            "outlet" => fields.static_pressure.map(|static_pressure| Self::Outlet {
+                static_pressure,
+                supersonic: fields.mach.is_some_and(|m| m >= 1.0),
+            }),
             "wall" => {
                 let no_slip = fields.no_slip.unwrap_or(true);
                 let heat = match fields.heat.unwrap_or("adiabatic") {
@@ -171,6 +177,86 @@ impl BoundaryKind {
     fn with_cgns_name_note(self, _name: &str) -> Self {
         self
     }
+
+    /// 边界类型短标签（报告 / 日志用）。
+    #[must_use]
+    pub fn summary_label(&self) -> &'static str {
+        match self {
+            Self::Dirichlet { .. } => "Dirichlet",
+            Self::Neumann { .. } => "Neumann",
+            Self::Farfield { .. } => "Farfield",
+            Self::Inlet { .. } => "Inlet",
+            Self::Outlet {
+                supersonic: true, ..
+            } => "Outlet(supersonic)",
+            Self::Outlet { .. } => "Outlet",
+            Self::Wall { no_slip: true, .. } => "Wall(no-slip)",
+            Self::Wall { no_slip: false, .. } => "Wall(slip)",
+            Self::Symmetry => "Symmetry",
+            Self::Periodic { .. } => "Periodic",
+            Self::TurbulentInlet { .. } => "TurbInlet",
+        }
+    }
+
+    /// 边界条件参数详情（人类可读）。
+    #[must_use]
+    pub fn detail_label(&self) -> String {
+        match self {
+            Self::Dirichlet { value } => format!("φ = {value}"),
+            Self::Neumann { flux } => format!("∂φ/∂n = {flux}"),
+            Self::Farfield {
+                mach,
+                pressure,
+                temperature,
+                alpha,
+                beta,
+            } => format!("M={mach}, p={pressure}, T={temperature}, α={alpha}, β={beta}"),
+            Self::Inlet {
+                total_pressure,
+                total_temperature,
+                velocity_direction,
+                mach,
+            } => format!(
+                "M={mach}, p₀={total_pressure:.6e}, T₀={total_temperature:.6e}, n=[{:.4}, {:.4}, {:.4}]",
+                velocity_direction[0], velocity_direction[1], velocity_direction[2]
+            ),
+            Self::Outlet {
+                static_pressure,
+                supersonic,
+            } => {
+                if *supersonic {
+                    format!("p={static_pressure:.6e}, supersonic extrapolation")
+                } else {
+                    format!("p={static_pressure:.6e}")
+                }
+            }
+            Self::Wall { no_slip, heat } => {
+                let slip = if *no_slip { "no-slip" } else { "slip" };
+                let heat_label = match heat {
+                    WallHeat::Adiabatic => "adiabatic",
+                    WallHeat::Isothermal { temperature } => {
+                        return format!("{slip}, isothermal T={temperature}");
+                    }
+                    WallHeat::HeatFlux { flux } => {
+                        return format!("{slip}, heat_flux={flux}");
+                    }
+                };
+                format!("{slip}, {heat_label}")
+            }
+            Self::Symmetry => "symmetry plane".to_string(),
+            Self::Periodic { partner } => format!("partner={partner}"),
+            Self::TurbulentInlet {
+                total_pressure,
+                total_temperature,
+                velocity_direction,
+                turbulent_k,
+                turbulent_omega,
+            } => format!(
+                "p₀={total_pressure:.6e}, T₀={total_temperature:.6e}, n=[{:.4}, {:.4}, {:.4}], k={turbulent_k:.6e}, ω={turbulent_omega:.6e}",
+                velocity_direction[0], velocity_direction[1], velocity_direction[2]
+            ),
+        }
+    }
 }
 
 fn map_cgns_bctype(bctype: i32) -> BoundaryKind {
@@ -184,7 +270,7 @@ fn map_cgns_bctype(bctype: i32) -> BoundaryKind {
         };
     }
     if bctype == cgns_bc::BC_EXTRAPOLATE || is_outflow(bctype) {
-        return default_outlet();
+        return default_outflow(bctype == cgns_bc::BC_OUTFLOW_SUPERSONIC);
     }
     if is_inflow(bctype) {
         return default_inlet();
@@ -206,12 +292,14 @@ fn default_inlet() -> BoundaryKind {
         total_pressure: 101_325.0,
         total_temperature: 300.0,
         velocity_direction: [1.0, 0.0, 0.0],
+        mach: 0.0,
     }
 }
 
-fn default_outlet() -> BoundaryKind {
+fn default_outflow(supersonic: bool) -> BoundaryKind {
     BoundaryKind::Outlet {
         static_pressure: 101_325.0,
+        supersonic,
     }
 }
 

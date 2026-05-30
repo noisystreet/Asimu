@@ -195,6 +195,7 @@ fn apply_patch_compressible(
                     total_pressure,
                     total_temperature,
                     velocity_direction,
+                    ..
                 },
             ) => inlet_ghost(
                 &owner,
@@ -218,9 +219,12 @@ fn apply_patch_compressible(
                 *velocity_direction,
                 eos,
             )?,
-            (BcHandler::Outlet, BoundaryKind::Outlet { static_pressure }) => {
-                outlet_ghost(&owner, *static_pressure, eos)?
-            }
+            (
+                BcHandler::Outlet,
+                BoundaryKind::Outlet {
+                    static_pressure, ..
+                },
+            ) => outlet_ghost(&owner, *static_pressure, eos)?,
             (BcHandler::Symmetry, BoundaryKind::Symmetry) => symmetry_ghost(&owner, &geom, eos)?,
             (BcHandler::Periodic, BoundaryKind::Periodic { .. }) => {
                 GhostCellState { conserved: owner }

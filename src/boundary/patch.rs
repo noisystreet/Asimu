@@ -39,6 +39,10 @@ impl BoundarySet {
         &self.patches
     }
 
+    pub fn patches_mut(&mut self) -> &mut [BoundaryPatch] {
+        &mut self.patches
+    }
+
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.patches.is_empty()

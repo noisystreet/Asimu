@@ -27,24 +27,30 @@ impl CgnsPointRange {
         let mut faces = Vec::new();
         match face {
             LogicalFace3d::IMin | LogicalFace3d::IMax => {
-                for k in self.kmin..=self.kmax {
-                    for j in self.jmin..=self.jmax {
+                let j_end = cell_index_end(self.jmax, ny);
+                let k_end = cell_index_end(self.kmax, nz);
+                for k in self.kmin..=k_end {
+                    for j in self.jmin..=j_end {
                         let local = (j - 1) + (k - 1) * ny;
                         faces.push(face.encode(local as u32));
                     }
                 }
             }
             LogicalFace3d::JMin | LogicalFace3d::JMax => {
-                for k in self.kmin..=self.kmax {
-                    for i in self.imin..=self.imax {
+                let i_end = cell_index_end(self.imax, nx);
+                let k_end = cell_index_end(self.kmax, nz);
+                for k in self.kmin..=k_end {
+                    for i in self.imin..=i_end {
                         let local = (i - 1) + (k - 1) * nx;
                         faces.push(face.encode(local as u32));
                     }
                 }
             }
             LogicalFace3d::KMin | LogicalFace3d::KMax => {
-                for j in self.jmin..=self.jmax {
-                    for i in self.imin..=self.imax {
+                let i_end = cell_index_end(self.imax, nx);
+                let j_end = cell_index_end(self.jmax, ny);
+                for j in self.jmin..=j_end {
+                    for i in self.imin..=i_end {
                         let local = (i - 1) + (j - 1) * nx;
                         faces.push(face.encode(local as u32));
                     }
@@ -57,6 +63,15 @@ impl CgnsPointRange {
             ));
         }
         Ok(faces)
+    }
+}
+
+/// CGNS PointRange 上界可能是 `n+1`（顶点）或 `n`（单元）；统一为单元索引上界。
+fn cell_index_end(max_index: i32, n_cells: i32) -> i32 {
+    if max_index == n_cells + 1 {
+        n_cells
+    } else {
+        max_index.min(n_cells)
     }
 }
 

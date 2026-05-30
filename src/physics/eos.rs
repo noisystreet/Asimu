@@ -72,6 +72,45 @@ impl IdealGasEoS {
         Ok(density * e + ke)
     }
 
+    /// 等熵滞止压 \(p_0 = p \left(1 + \frac{\gamma-1}{2} M^2\right)^{\gamma/(\gamma-1)}\)。
+    pub fn stagnation_pressure(&self, static_pressure: Real, mach: Real) -> Result<Real> {
+        if static_pressure <= 0.0 {
+            return Err(AsimuError::Config("静压必须大于 0".to_string()));
+        }
+        if mach < 0.0 {
+            return Err(AsimuError::Config("Mach 数不能为负".to_string()));
+        }
+        let factor =
+            (1.0 + 0.5 * (self.gamma - 1.0) * mach * mach).powf(self.gamma / (self.gamma - 1.0));
+        Ok(static_pressure * factor)
+    }
+
+    /// 等熵滞止温 \(T_0 = T \left(1 + \frac{\gamma-1}{2} M^2\right)\)。
+    #[must_use]
+    pub fn stagnation_temperature(&self, static_temperature: Real, mach: Real) -> Real {
+        static_temperature * (1.0 + 0.5 * (self.gamma - 1.0) * mach * mach)
+    }
+
+    /// 由 Mach 与滞止参数反算静压、静温（等熵）。
+    pub fn static_from_stagnation(
+        &self,
+        mach: Real,
+        stagnation_pressure: Real,
+        stagnation_temperature: Real,
+    ) -> Result<(Real, Real)> {
+        if mach < 0.0 {
+            return Err(AsimuError::Config("Mach 数不能为负".to_string()));
+        }
+        if stagnation_pressure <= 0.0 || stagnation_temperature <= 0.0 {
+            return Err(AsimuError::Config("滞止压力与温度必须大于 0".to_string()));
+        }
+        let factor = 1.0 + 0.5 * (self.gamma - 1.0) * mach * mach;
+        Ok((
+            stagnation_pressure / factor.powf(self.gamma / (self.gamma - 1.0)),
+            stagnation_temperature / factor,
+        ))
+    }
+
     /// 由 Mach 数与静参数构造来流原始变量。
     pub fn freestream_primitive(
         &self,
@@ -196,6 +235,19 @@ mod tests {
             .expect("fs");
         assert!(prim.velocity.iter().all(|&v| v.abs() < 1.0e-12));
         assert!((prim.density - 101_325.0 / (287.052_871_936_417 * 300.0)).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn static_from_stagnation_roundtrips() {
+        let eos = IdealGasEoS::AIR_STANDARD;
+        let mach = 8.0;
+        let p = 1000.0;
+        let t = 300.0;
+        let p0 = eos.stagnation_pressure(p, mach).expect("p0");
+        let t0 = eos.stagnation_temperature(t, mach);
+        let (p_back, t_back) = eos.static_from_stagnation(mach, p0, t0).expect("static");
+        assert!((p_back - p).abs() / p < 1.0e-10);
+        assert!((t_back - t).abs() / t < 1.0e-10);
     }
 
     #[test]

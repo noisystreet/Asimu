@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use crate::boundary::{BoundaryKind, BoundarySet};
+use crate::boundary::BoundarySet;
 use crate::mesh::{
     MeshDiagnostics, StructuredMesh, StructuredMesh1d, StructuredMesh3d, mesh1d_diagnostics,
     mesh3d_diagnostics, structured_mesh_diagnostics,
@@ -174,26 +174,12 @@ fn summarize_boundary(boundary: Option<&BoundarySet>) -> Vec<BoundaryPatchSummar
                 .iter()
                 .map(|patch| BoundaryPatchSummary {
                     name: patch.name.clone(),
-                    kind: boundary_kind_label(&patch.kind).to_string(),
+                    kind: patch.kind.summary_label().to_string(),
                     faces: patch.face_ids.len(),
                 })
                 .collect()
         })
         .unwrap_or_default()
-}
-
-fn boundary_kind_label(kind: &BoundaryKind) -> &'static str {
-    match kind {
-        BoundaryKind::Dirichlet { .. } => "Dirichlet",
-        BoundaryKind::Neumann { .. } => "Neumann",
-        BoundaryKind::Farfield { .. } => "Farfield",
-        BoundaryKind::Inlet { .. } => "Inlet",
-        BoundaryKind::Outlet { .. } => "Outlet",
-        BoundaryKind::Wall { .. } => "Wall",
-        BoundaryKind::Symmetry => "Symmetry",
-        BoundaryKind::Periodic { .. } => "Periodic",
-        BoundaryKind::TurbulentInlet { .. } => "TurbInlet",
-    }
 }
 
 fn write_axis(
