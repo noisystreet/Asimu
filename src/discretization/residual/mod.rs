@@ -4,6 +4,7 @@
 
 mod assembly_1d;
 mod assembly_3d;
+mod muscl_stencil_3d;
 
 use crate::core::Real;
 use crate::discretization::InviscidFlux;

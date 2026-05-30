@@ -139,7 +139,7 @@ impl StructuredMesh3d {
         }
     }
 
-    fn face_ij(&self, face: LogicalFace3d, local: u32) -> Result<(usize, usize, usize)> {
+    pub(crate) fn face_ij(&self, face: LogicalFace3d, local: u32) -> Result<(usize, usize, usize)> {
         let local = local as usize;
         match face {
             LogicalFace3d::IMin | LogicalFace3d::IMax => {

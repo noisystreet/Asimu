@@ -2,14 +2,16 @@
 
 use crate::boundary::BoundarySet;
 use crate::core::Vector3;
-use crate::discretization::{
-    BoundaryGhostBuffer, FaceFluxInput, InviscidFluxConfig, face_inviscid_flux,
-};
+use crate::discretization::{BoundaryGhostBuffer, InviscidFluxConfig};
 use crate::error::{AsimuError, Result};
 use crate::field::{ConservedFields, ConservedResidual};
 use crate::mesh::{BoundaryMesh3d, StructuredMesh3d};
 use crate::physics::IdealGasEoS;
 
+use super::muscl_stencil_3d::{
+    BoundaryFaceFlux3d, InteriorFaceFlux3d, flux_at_boundary_face, flux_at_i_face, flux_at_j_face,
+    flux_at_k_face,
+};
 use super::{accumulate_boundary_face, accumulate_interior_face};
 
 struct BoundaryAssembly3d<'a> {
@@ -71,19 +73,19 @@ fn assemble_i_faces(
     let nz = mesh.nz;
     let area = mesh.cell_dy() * mesh.cell_dz();
     let normal = Vector3::new(1.0, 0.0, 0.0);
+    let ctx = InteriorFaceFlux3d {
+        fields,
+        mesh,
+        eos,
+        config,
+        normal,
+    };
     for k in 0..nz {
         for j in 0..ny {
             for i in 0..nx.saturating_sub(1) {
                 let owner = mesh.cell_index(i, j, k);
                 let neighbor = mesh.cell_index(i + 1, j, k);
-                let left = fields.cell_state(owner)?;
-                let right = fields.cell_state(neighbor)?;
-                let flux = face_inviscid_flux(
-                    FaceFluxInput::first_order(&left, &right),
-                    normal,
-                    eos,
-                    config,
-                )?;
+                let flux = flux_at_i_face(&ctx, i, j, k)?;
                 accumulate_interior_face(residual, owner, neighbor, &flux, area, volume, volume)?;
             }
         }
@@ -104,19 +106,19 @@ fn assemble_j_faces(
     let nz = mesh.nz;
     let area = mesh.cell_dx() * mesh.cell_dz();
     let normal = Vector3::new(0.0, 1.0, 0.0);
+    let ctx = InteriorFaceFlux3d {
+        fields,
+        mesh,
+        eos,
+        config,
+        normal,
+    };
     for k in 0..nz {
         for j in 0..ny.saturating_sub(1) {
             for i in 0..nx {
                 let owner = mesh.cell_index(i, j, k);
                 let neighbor = mesh.cell_index(i, j + 1, k);
-                let left = fields.cell_state(owner)?;
-                let right = fields.cell_state(neighbor)?;
-                let flux = face_inviscid_flux(
-                    FaceFluxInput::first_order(&left, &right),
-                    normal,
-                    eos,
-                    config,
-                )?;
+                let flux = flux_at_j_face(&ctx, i, j, k)?;
                 accumulate_interior_face(residual, owner, neighbor, &flux, area, volume, volume)?;
             }
         }
@@ -137,19 +139,19 @@ fn assemble_k_faces(
     let nz = mesh.nz;
     let area = mesh.cell_dx() * mesh.cell_dy();
     let normal = Vector3::new(0.0, 0.0, 1.0);
+    let ctx = InteriorFaceFlux3d {
+        fields,
+        mesh,
+        eos,
+        config,
+        normal,
+    };
     for k in 0..nz.saturating_sub(1) {
         for j in 0..ny {
             for i in 0..nx {
                 let owner = mesh.cell_index(i, j, k);
                 let neighbor = mesh.cell_index(i, j, k + 1);
-                let left = fields.cell_state(owner)?;
-                let right = fields.cell_state(neighbor)?;
-                let flux = face_inviscid_flux(
-                    FaceFluxInput::first_order(&left, &right),
-                    normal,
-                    eos,
-                    config,
-                )?;
+                let flux = flux_at_k_face(&ctx, i, j, k)?;
                 accumulate_interior_face(residual, owner, neighbor, &flux, area, volume, volume)?;
             }
         }
@@ -162,21 +164,22 @@ fn assemble_boundary_faces_3d(
     residual: &mut ConservedResidual,
     ctx: &BoundaryAssembly3d<'_>,
 ) -> Result<()> {
+    let mesh = ctx.mesh.structured_3d()?;
+    let flux_ctx = BoundaryFaceFlux3d {
+        fields,
+        mesh,
+        eos: ctx.eos,
+        config: ctx.config,
+    };
     for patch in ctx.boundaries.patches() {
         for &face in &patch.face_ids {
             let owner_id = ctx.mesh.face_owner(face)?;
             let owner = owner_id.index() as usize;
-            let owner_state = fields.cell_state(owner)?;
             let geom = ctx.mesh.face_geometry_3d(face)?;
             let ghost = ctx.ghosts.get_face(face).ok_or_else(|| {
                 AsimuError::Boundary(format!("边界面 FaceId({}) 缺少 ghost 状态", face.index()))
             })?;
-            let flux = face_inviscid_flux(
-                FaceFluxInput::first_order(&owner_state, &ghost.conserved),
-                geom.normal,
-                ctx.eos,
-                ctx.config,
-            )?;
+            let flux = flux_at_boundary_face(&flux_ctx, face, ghost.conserved, geom.normal)?;
             accumulate_boundary_face(residual, owner, &flux, geom.area, ctx.volume)?;
         }
     }
@@ -191,8 +194,7 @@ mod tests {
     use crate::mesh::BoundaryMesh;
     use crate::physics::FreestreamParams;
 
-    #[test]
-    fn uniform_freestream_with_farfield_has_near_zero_rhs() {
+    fn assemble_uniform_freestream(config: &InviscidFluxConfig) -> ConservedResidual {
         let mesh = StructuredMesh3d::uniform_box("box", 3, 3, 3, 1.0, 1.0, 1.0).expect("mesh");
         let eos = IdealGasEoS::AIR_STANDARD;
         let fs = FreestreamParams {
@@ -232,11 +234,25 @@ mod tests {
             &fields,
             &mut rhs,
             &eos,
-            &InviscidFluxConfig::default(),
+            config,
             &boundary_set,
             &ghosts,
         )
         .expect("assemble");
+        rhs
+    }
+
+    #[test]
+    fn uniform_freestream_with_farfield_has_near_zero_rhs() {
+        let rhs = assemble_uniform_freestream(&InviscidFluxConfig::default());
+        assert!(rhs.density.values().iter().all(|&v| v.abs() < 1.0e-8));
+        assert!(rhs.momentum_x.values().iter().all(|&v| v.abs() < 1.0e-6));
+        assert!(rhs.total_energy.values().iter().all(|&v| v.abs() < 1.0e-6));
+    }
+
+    #[test]
+    fn uniform_freestream_with_muscl_hllc_has_near_zero_rhs() {
+        let rhs = assemble_uniform_freestream(&InviscidFluxConfig::muscl_hllc());
         assert!(rhs.density.values().iter().all(|&v| v.abs() < 1.0e-8));
         assert!(rhs.momentum_x.values().iter().all(|&v| v.abs() < 1.0e-6));
         assert!(rhs.total_energy.values().iter().all(|&v| v.abs() < 1.0e-6));

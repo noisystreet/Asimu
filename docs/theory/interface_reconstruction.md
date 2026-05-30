@@ -41,6 +41,10 @@ $$
 
 1D 内部面：`normal = (1,0,0)`，owner 在左；左边界 `normal = (-1,0,0)`，owner 仍为域内单元。
 
+3D 结构化内部面：MUSCL 宽模板**沿面法向**取四点，切向 \((j,k)\) 等索引固定。例如 \(i\)-面 \((i,j,k)\mid(i+1,j,k)\) 使用 \((i-1,j,k), (i,j,k), (i+1,j,k), (i+2,j,k)\)；域内缺邻点时自动退化为单侧/一阶。
+
+3D 边界面：owner 为边界单元，neighbor 为 ghost；宽模板沿法向向域内延伸，ghost 侧用 `right_of_neighbor` 取第二内层单元（如 `i_min` 面取 \((i,j,k)\) 的 \((1,j,k)\) 与 \((2,j,k)\)）。仅一层单元时退化为 owner 侧 MUSCL / 一阶。
+
 ---
 
 ## 4. 边界 ghost 与重构衔接
@@ -66,11 +70,12 @@ F̂ ← roe_flux(U_L, U_R, n)
 | 式 / 步骤 | 代码位置 | 状态 |
 |-----------|----------|------|
 | (1) 一阶重构 | `reconstruct_first_order` | **已实现** |
-| MUSCL + minmod / van Leer / van Albada | `reconstruct_muscl_1d` | **已实现**（1D 内部面） |
+| MUSCL + minmod / van Leer / van Albada | `reconstruct_muscl_1d` | **已实现**（1D/3D 内部面 + 3D 边界面，沿法向宽模板） |
 | 面通量入口 | `face_inviscid_flux`（重构 + Roe/HLLC dispatch） | **已实现** |
 | 1D 内部面 | `assemble_interior_faces_1d`（四点 MUSCL 模板） | **已实现** |
-| 1D 边界面 | `assemble_boundary_faces_1d` | **已实现** |
-| 3D MUSCL 宽模板 | — | **规划**（当前 3D 仅 owner/neighbor） |
+| 3D 内部面 | `muscl_stencil_3d`（i/j/k 法向四点模板） | **已实现** |
+| 3D 边界面 | `flux_at_boundary_face`（ghost + 域内宽模板） | **已实现** |
+| 1D 边界面 | 一阶 owner/ghost | **已实现** |
 
 ---
 
@@ -79,7 +84,7 @@ F̂ ← roe_flux(U_L, U_R, n)
 | 格式 | 界面值 | 状态 |
 |------|--------|------|
 | 一阶 PC | 式 (1) | **已实现** |
-| MUSCL + minmod / van Leer / van Albada | 线性外推 + 限制 | **已实现**（1D） |
+| MUSCL + minmod / van Leer / van Albada | 线性外推 + 限制 | **已实现**（1D/3D 内部面 + 3D 边界面） |
 | WENO | 高阶多项式 | 远期 |
 
 配置：`InviscidFluxConfig { reconstruction, limiter, scheme }`；预设 `muscl_hllc()`。
