@@ -25,10 +25,11 @@ pub mod prelude {
     pub use crate::config::{AppConfig, SolverConfig};
     pub use crate::core::{CellId, FaceId, Real, Vector3, approx_eq};
     pub use crate::discretization::{
-        BoundaryGhosts1d, InterfaceStates, InviscidFlux, RoeFluxConfig, apply_boundary_conditions,
+        BoundaryGhosts1d, FaceFluxInput, FluxScheme, InviscidFlux, InviscidFluxConfig,
+        ReconstructionKind, RoeFluxConfig, SlopeLimiter, apply_boundary_conditions,
         apply_compressible_boundary_conditions, apply_dirichlet, apply_neumann,
         assemble_diffusion_1d, assemble_inviscid_residual_1d, assemble_inviscid_residual_3d,
-        face_inviscid_flux, reconstruct_first_order, roe_flux,
+        face_inviscid_flux, hllc_flux, reconstruct_face_states, reconstruct_first_order, roe_flux,
     };
     pub use crate::error::{AsimuError, Result};
     pub use crate::field::{

@@ -66,20 +66,23 @@ F̂ ← roe_flux(U_L, U_R, n)
 | 式 / 步骤 | 代码位置 | 状态 |
 |-----------|----------|------|
 | (1) 一阶重构 | `reconstruct_first_order` | **已实现** |
-| 面通量入口 | `face_inviscid_flux`（内部调用重构 + Roe） | **已实现** |
-| 1D 内部面 | `assemble_interior_faces_1d` | **已实现** |
+| MUSCL + minmod / van Leer / van Albada | `reconstruct_muscl_1d` | **已实现**（1D 内部面） |
+| 面通量入口 | `face_inviscid_flux`（重构 + Roe/HLLC dispatch） | **已实现** |
+| 1D 内部面 | `assemble_interior_faces_1d`（四点 MUSCL 模板） | **已实现** |
 | 1D 边界面 | `assemble_boundary_faces_1d` | **已实现** |
-| MUSCL / 限制器 | — | **规划**（ADR 0009） |
+| 3D MUSCL 宽模板 | — | **规划**（当前 3D 仅 owner/neighbor） |
 
 ---
 
-## 6. 高阶扩展（规划）
+## 6. 高阶扩展
 
 | 格式 | 界面值 | 状态 |
 |------|--------|------|
 | 一阶 PC | 式 (1) | **已实现** |
-| MUSCL + minmod / van Leer | 线性外推 + 限制 | 规划 |
+| MUSCL + minmod / van Leer / van Albada | 线性外推 + 限制 | **已实现**（1D） |
 | WENO | 高阶多项式 | 远期 |
+
+配置：`InviscidFluxConfig { reconstruction, limiter, scheme }`；预设 `muscl_hllc()`。
 
 新增格式时：扩展 `reconstruction.rs`，保持 `InterfaceStates` 接口不变，由 `face_inviscid_flux` 或策略枚举 dispatch。
 

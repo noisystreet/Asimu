@@ -22,6 +22,7 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
     let mesh = case.mesh.as_1d()?;
     let sod_section = case
         .sod
+        .as_ref()
         .ok_or_else(|| AsimuError::Config("Sod 算例缺少 [sod] 段".to_string()))?;
     let _eos = case.physics.eos()?;
     let config = SodBenchmarkConfig {
@@ -31,6 +32,7 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         final_time: sod_section.final_time,
         cfl: sod_section.cfl,
         sod: SodProblem::CLASSIC,
+        inviscid: sod_section.inviscid(),
     };
     let result = run_sod_benchmark(&config)?;
     let metrics = SodRunMetrics {

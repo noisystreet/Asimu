@@ -2,7 +2,9 @@
 
 use crate::boundary::BoundarySet;
 use crate::core::Vector3;
-use crate::discretization::{BoundaryGhostBuffer, RoeFluxConfig, face_inviscid_flux};
+use crate::discretization::{
+    BoundaryGhostBuffer, FaceFluxInput, InviscidFluxConfig, face_inviscid_flux,
+};
 use crate::error::{AsimuError, Result};
 use crate::field::{ConservedFields, ConservedResidual};
 use crate::mesh::{BoundaryMesh3d, StructuredMesh3d};
@@ -13,7 +15,7 @@ use super::{accumulate_boundary_face, accumulate_interior_face};
 struct BoundaryAssembly3d<'a> {
     mesh: &'a dyn BoundaryMesh3d,
     eos: &'a IdealGasEoS,
-    config: &'a RoeFluxConfig,
+    config: &'a InviscidFluxConfig,
     boundaries: &'a BoundarySet,
     ghosts: &'a BoundaryGhostBuffer,
     volume: crate::core::Real,
@@ -25,7 +27,7 @@ pub fn assemble_inviscid_residual_3d(
     fields: &ConservedFields,
     residual: &mut ConservedResidual,
     eos: &IdealGasEoS,
-    config: &RoeFluxConfig,
+    config: &InviscidFluxConfig,
     boundaries: &BoundarySet,
     ghosts: &BoundaryGhostBuffer,
 ) -> Result<()> {
@@ -61,7 +63,7 @@ fn assemble_i_faces(
     fields: &ConservedFields,
     residual: &mut ConservedResidual,
     eos: &IdealGasEoS,
-    config: &RoeFluxConfig,
+    config: &InviscidFluxConfig,
     volume: crate::core::Real,
 ) -> Result<()> {
     let nx = mesh.nx;
@@ -76,7 +78,12 @@ fn assemble_i_faces(
                 let neighbor = mesh.cell_index(i + 1, j, k);
                 let left = fields.cell_state(owner)?;
                 let right = fields.cell_state(neighbor)?;
-                let flux = face_inviscid_flux(&left, &right, normal, eos, config)?;
+                let flux = face_inviscid_flux(
+                    FaceFluxInput::first_order(&left, &right),
+                    normal,
+                    eos,
+                    config,
+                )?;
                 accumulate_interior_face(residual, owner, neighbor, &flux, area, volume, volume)?;
             }
         }
@@ -89,7 +96,7 @@ fn assemble_j_faces(
     fields: &ConservedFields,
     residual: &mut ConservedResidual,
     eos: &IdealGasEoS,
-    config: &RoeFluxConfig,
+    config: &InviscidFluxConfig,
     volume: crate::core::Real,
 ) -> Result<()> {
     let nx = mesh.nx;
@@ -104,7 +111,12 @@ fn assemble_j_faces(
                 let neighbor = mesh.cell_index(i, j + 1, k);
                 let left = fields.cell_state(owner)?;
                 let right = fields.cell_state(neighbor)?;
-                let flux = face_inviscid_flux(&left, &right, normal, eos, config)?;
+                let flux = face_inviscid_flux(
+                    FaceFluxInput::first_order(&left, &right),
+                    normal,
+                    eos,
+                    config,
+                )?;
                 accumulate_interior_face(residual, owner, neighbor, &flux, area, volume, volume)?;
             }
         }
@@ -117,7 +129,7 @@ fn assemble_k_faces(
     fields: &ConservedFields,
     residual: &mut ConservedResidual,
     eos: &IdealGasEoS,
-    config: &RoeFluxConfig,
+    config: &InviscidFluxConfig,
     volume: crate::core::Real,
 ) -> Result<()> {
     let nx = mesh.nx;
@@ -132,7 +144,12 @@ fn assemble_k_faces(
                 let neighbor = mesh.cell_index(i, j, k + 1);
                 let left = fields.cell_state(owner)?;
                 let right = fields.cell_state(neighbor)?;
-                let flux = face_inviscid_flux(&left, &right, normal, eos, config)?;
+                let flux = face_inviscid_flux(
+                    FaceFluxInput::first_order(&left, &right),
+                    normal,
+                    eos,
+                    config,
+                )?;
                 accumulate_interior_face(residual, owner, neighbor, &flux, area, volume, volume)?;
             }
         }
@@ -155,8 +172,7 @@ fn assemble_boundary_faces_3d(
                 AsimuError::Boundary(format!("边界面 FaceId({}) 缺少 ghost 状态", face.index()))
             })?;
             let flux = face_inviscid_flux(
-                &owner_state,
-                &ghost.conserved,
+                FaceFluxInput::first_order(&owner_state, &ghost.conserved),
                 geom.normal,
                 ctx.eos,
                 ctx.config,
@@ -216,7 +232,7 @@ mod tests {
             &fields,
             &mut rhs,
             &eos,
-            &RoeFluxConfig::default(),
+            &InviscidFluxConfig::default(),
             &boundary_set,
             &ghosts,
         )

@@ -1,7 +1,9 @@
 //! 1D 结构化网格无粘残差装配。
 
 use crate::core::Vector3;
-use crate::discretization::{RoeFluxConfig, face_inviscid_flux};
+use crate::discretization::{
+    FaceFluxInput, InviscidFluxConfig, MusclStencil1d, face_inviscid_flux,
+};
 use crate::error::Result;
 use crate::field::{ConservedFields, ConservedResidual};
 use crate::mesh::StructuredMesh1d;
@@ -11,7 +13,7 @@ use super::{accumulate_boundary_face, accumulate_interior_face};
 
 struct InviscidFaceParams<'a> {
     eos: &'a IdealGasEoS,
-    config: &'a RoeFluxConfig,
+    config: &'a InviscidFluxConfig,
     area: crate::core::Real,
     volume: crate::core::Real,
 }
@@ -57,7 +59,7 @@ pub fn assemble_inviscid_residual_1d(
     fields: &ConservedFields,
     residual: &mut ConservedResidual,
     eos: &IdealGasEoS,
-    config: &RoeFluxConfig,
+    config: &InviscidFluxConfig,
     boundaries: &BoundaryGhosts1d,
 ) -> Result<()> {
     let n = mesh.num_cells();
@@ -88,9 +90,30 @@ fn assemble_interior_faces_1d(
     let n = mesh.num_cells();
     let normal = Vector3::new(1.0, 0.0, 0.0);
     for i in 0..n.saturating_sub(1) {
-        let left = fields.cell_state(i)?;
-        let right = fields.cell_state(i + 1)?;
-        let flux = face_inviscid_flux(&left, &right, normal, params.eos, params.config)?;
+        let left_of_owner = if i > 0 {
+            Some(fields.cell_state(i - 1)?)
+        } else {
+            None
+        };
+        let owner = fields.cell_state(i)?;
+        let neighbor = fields.cell_state(i + 1)?;
+        let right_of_neighbor = if i + 2 < n {
+            Some(fields.cell_state(i + 2)?)
+        } else {
+            None
+        };
+        let stencil = MusclStencil1d {
+            left_of_owner: left_of_owner.as_ref(),
+            owner: &owner,
+            neighbor: &neighbor,
+            right_of_neighbor: right_of_neighbor.as_ref(),
+        };
+        let flux = face_inviscid_flux(
+            FaceFluxInput::from_stencil(stencil),
+            normal,
+            params.eos,
+            params.config,
+        )?;
         accumulate_interior_face(
             residual,
             i,
@@ -114,13 +137,23 @@ fn assemble_boundary_faces_1d(
     if let Some(ghost) = boundaries.left {
         let owner = fields.cell_state(0)?;
         let normal = Vector3::new(-1.0, 0.0, 0.0);
-        let flux = face_inviscid_flux(&owner, &ghost, normal, params.eos, params.config)?;
+        let flux = face_inviscid_flux(
+            FaceFluxInput::first_order(&owner, &ghost),
+            normal,
+            params.eos,
+            params.config,
+        )?;
         accumulate_boundary_face(residual, 0, &flux, params.area, params.volume)?;
     }
     if let Some(ghost) = boundaries.right {
         let owner = fields.cell_state(mesh.num_cells() - 1)?;
         let normal = Vector3::new(1.0, 0.0, 0.0);
-        let flux = face_inviscid_flux(&owner, &ghost, normal, params.eos, params.config)?;
+        let flux = face_inviscid_flux(
+            FaceFluxInput::first_order(&owner, &ghost),
+            normal,
+            params.eos,
+            params.config,
+        )?;
         let last = mesh.num_cells() - 1;
         accumulate_boundary_face(residual, last, &flux, params.area, params.volume)?;
     }
@@ -131,6 +164,7 @@ fn assemble_boundary_faces_1d(
 mod tests {
     use super::*;
     use crate::core::approx_eq;
+    use crate::discretization::InviscidFluxConfig;
     use crate::physics::{ConservedState, PrimitiveState};
 
     use crate::physics::FreestreamParams;
@@ -148,7 +182,7 @@ mod tests {
             &fields,
             &mut rhs,
             &eos,
-            &RoeFluxConfig::default(),
+            &InviscidFluxConfig::default(),
             &boundaries,
         )
         .expect("assemble");
@@ -191,7 +225,7 @@ mod tests {
             &fields,
             &mut rhs,
             &eos,
-            &RoeFluxConfig::default(),
+            &InviscidFluxConfig::default(),
             &BoundaryGhosts1d::default(),
         )
         .expect("assemble");

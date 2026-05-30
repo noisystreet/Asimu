@@ -6,8 +6,8 @@
 use crate::boundary::BoundarySet;
 use crate::core::Real;
 use crate::discretization::{
-    BoundaryGhostBuffer, RoeFluxConfig, apply_compressible_boundary_conditions,
-    assemble_inviscid_residual_1d, assemble_inviscid_residual_3d,
+    BoundaryGhostBuffer, apply_compressible_boundary_conditions, assemble_inviscid_residual_1d,
+    assemble_inviscid_residual_3d,
 };
 use crate::error::Result;
 use crate::field::{ConservedFields, ConservedResidual};
@@ -22,7 +22,7 @@ use crate::solver::time::{
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompressibleEulerConfig {
     pub time: RungeKutta4Config,
-    pub roe: RoeFluxConfig,
+    pub inviscid: crate::discretization::InviscidFluxConfig,
     pub cfl: Real,
 }
 
@@ -30,7 +30,7 @@ impl Default for CompressibleEulerConfig {
     fn default() -> Self {
         Self {
             time: RungeKutta4Config::default(),
-            roe: RoeFluxConfig::default(),
+            inviscid: crate::discretization::InviscidFluxConfig::default(),
             cfl: 0.4,
         }
     }
@@ -88,7 +88,14 @@ impl CompressibleEulerSolver {
         integrator.config.dt = dt;
         let evaluate = |u: &ConservedFields, r: &mut ConservedResidual| {
             let boundaries = ctx.boundary.resolve(u)?;
-            assemble_inviscid_residual_1d(ctx.mesh, u, r, ctx.eos, &self.config.roe, &boundaries)
+            assemble_inviscid_residual_1d(
+                ctx.mesh,
+                u,
+                r,
+                ctx.eos,
+                &self.config.inviscid,
+                &boundaries,
+            )
         };
         rk4_step(fields, storage, dt, evaluate)?;
         let boundaries = ctx.boundary.resolve(fields)?;
@@ -97,7 +104,7 @@ impl CompressibleEulerSolver {
             fields,
             &mut storage.k1,
             ctx.eos,
-            &self.config.roe,
+            &self.config.inviscid,
             &boundaries,
         )?;
         let last_residual = storage.k1.density_l2_norm();
@@ -122,7 +129,7 @@ impl CompressibleEulerSolver {
     ) -> Result<CompressibleStepInfo> {
         let dt = self.suggest_dt_3d(ctx.structured, fields, ctx.eos)?;
         integrator.config.dt = dt;
-        let roe = self.config.roe;
+        let inviscid = self.config.inviscid;
         let evaluate = |u: &ConservedFields, r: &mut ConservedResidual| {
             apply_compressible_boundary_conditions(
                 ctx.mesh,
@@ -137,7 +144,7 @@ impl CompressibleEulerSolver {
                 u,
                 r,
                 ctx.eos,
-                &roe,
+                &inviscid,
                 ctx.patches,
                 ctx.ghosts,
             )
@@ -156,7 +163,7 @@ impl CompressibleEulerSolver {
             fields,
             &mut storage.k1,
             ctx.eos,
-            &roe,
+            &inviscid,
             ctx.patches,
             ctx.ghosts,
         )?;

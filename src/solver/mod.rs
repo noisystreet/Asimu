@@ -18,7 +18,7 @@ pub use compressible::{
 };
 pub use sod::{
     SodBenchmarkConfig, SodBenchmarkResult, run_sod_benchmark, sod_initial_fields,
-    write_sod_profile,
+    write_sod_compare_profile, write_sod_profile,
 };
 pub use state::SolverState;
 pub use time::{

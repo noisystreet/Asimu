@@ -116,16 +116,16 @@ $$
 ## 5. 面通量管线
 
 ```text
-owner, neighbor (或 ghost)
-    ↓ reconstruct_first_order   ← 见 interface_reconstruction.md
+owner, neighbor (± MUSCL 模板点)
+    ↓ reconstruct_face_states   ← 见 interface_reconstruction.md
 InterfaceStates { left, right }
-    ↓ roe_flux(n, eos, config)
+    ↓ roe_flux / hllc_flux (InviscidFluxConfig)
 InviscidFlux
     ↓ accumulate_*_face
 ConservedResidual  (= dU/dt)
 ```
 
-入口函数：`face_inviscid_flux`（一阶重构 + Roe）。
+入口函数：`face_inviscid_flux`（`FaceFluxInput` + `InviscidFluxConfig`）。
 
 ---
 
@@ -138,8 +138,12 @@ ConservedResidual  (= dU/dt)
 | (5) Roe 平均 | `roe_averages` | **已实现** |
 | (6) 波强度 | `wave_strengths` | **已实现** |
 | (7) 熵修正 | `harten_entropy_fix`、`fixed_eigenvalue` | **已实现** |
+| HLLC（Toro §10） | `hllc_flux` | **已实现** |
+| 面 dispatch | `face_inviscid_flux` | **已实现** |
 | (3) 1D/3D 装配 | `assemble_inviscid_residual_1d` / `_3d` | **已实现** |
-| HLLC / AUSM+ | — | **规划** |
+| AUSM+ | — | **规划** |
+
+配置：`InviscidFluxConfig`（`reconstruction` / `limiter` / `scheme`）；`CompressibleEulerConfig::inviscid`。
 
 ---
 
@@ -156,6 +160,7 @@ ConservedResidual  (= dU/dt)
 
 - `tests/benchmarks/sod_1d/` — Sod 激波管，100 单元，\(t=0.2\)
 - `discretization::roe::tests::sod_interface_roe_flux_matches_reference_values`
+- `discretization::hllc::tests::sod_interface_hllc_flux_matches_reference_values`
 - `discretization::residual::assembly_1d::tests::two_cell_discontinuity_has_opposing_mass_rhs`
 
 精确解采样：相对隔膜坐标 \(x' = x - x_{\mathrm{diaphragm}}\)（`sample_exact(problem, x', t)`）。

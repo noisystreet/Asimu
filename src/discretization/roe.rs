@@ -327,18 +327,6 @@ fn combine_fluxes(flux_l: InviscidFlux, flux_r: InviscidFlux, diss: Dissipation)
     }
 }
 
-/// 面数值通量：一阶重构 + Roe（含熵修正）。
-pub fn face_inviscid_flux(
-    owner: &ConservedState,
-    neighbor: &ConservedState,
-    normal: Vector3,
-    eos: &IdealGasEoS,
-    config: &RoeFluxConfig,
-) -> Result<InviscidFlux> {
-    let iface = super::reconstruction::reconstruct_first_order(*owner, *neighbor);
-    roe_flux(&iface.left, &iface.right, normal, eos, config)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

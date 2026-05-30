@@ -7,6 +7,10 @@
 pub mod bc;
 pub mod bc_compressible;
 pub mod diffusion_1d;
+pub mod face_flux;
+pub mod flux_common;
+pub mod flux_config;
+pub mod hllc;
 pub mod inviscid;
 pub mod reconstruction;
 pub mod residual;
@@ -24,13 +28,18 @@ pub use bc_compressible::{
     inlet_ghost, outlet_ghost, symmetry_ghost, wall_ghost,
 };
 pub use diffusion_1d::assemble_diffusion_1d;
+pub use face_flux::{FaceFluxInput, face_inviscid_flux};
+pub use flux_config::{FluxScheme, InviscidFluxConfig, ReconstructionKind, SlopeLimiter};
+pub use hllc::hllc_flux;
 pub use inviscid::{InviscidFlux, physical_inviscid_flux};
-pub use reconstruction::{InterfaceStates, reconstruct_first_order};
+pub use reconstruction::{
+    InterfaceStates, MusclStencil1d, reconstruct_face_states, reconstruct_first_order,
+};
 pub use residual::{
     BoundaryGhosts1d, InviscidBoundary1d, accumulate_boundary_face, accumulate_interior_face,
     assemble_inviscid_residual_1d, assemble_inviscid_residual_3d, zero_gradient_ghosts_1d,
 };
-pub use roe::{RoeFluxConfig, face_inviscid_flux, roe_flux};
+pub use roe::{RoeFluxConfig, roe_flux};
 
 /// 占位装配入口：验证 field / mesh / system 尺寸一致。
 ///

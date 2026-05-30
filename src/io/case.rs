@@ -96,11 +96,49 @@ impl Default for CaseTimeConfig {
 }
 
 /// Sod 激波管专用段（`[sod]`）。
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SodCaseConfig {
     pub diaphragm: Real,
     pub final_time: Real,
     pub cfl: Real,
+    pub reconstruction: Option<String>,
+    pub flux: Option<String>,
+    pub limiter: Option<String>,
+}
+
+impl SodCaseConfig {
+    pub fn inviscid(&self) -> crate::discretization::InviscidFluxConfig {
+        use crate::discretization::{
+            FluxScheme, InviscidFluxConfig, ReconstructionKind, RoeFluxConfig, SlopeLimiter,
+        };
+        let mut config = InviscidFluxConfig::default();
+        if let Some(name) = self.reconstruction.as_deref() {
+            config.reconstruction = match name {
+                "first_order" | "first-order" => ReconstructionKind::FirstOrder,
+                "muscl" => ReconstructionKind::Muscl,
+                _ => ReconstructionKind::FirstOrder,
+            };
+        }
+        if let Some(name) = self.limiter.as_deref() {
+            config.limiter = match name {
+                "minmod" => SlopeLimiter::Minmod,
+                "van_leer" | "vanleer" => SlopeLimiter::VanLeer,
+                "van_albada" | "vanalbada" | "van-albada" => SlopeLimiter::VanAlbada,
+                _ => SlopeLimiter::Minmod,
+            };
+        }
+        if let Some(name) = self.flux.as_deref() {
+            config.scheme = match name {
+                "roe" => FluxScheme::Roe(RoeFluxConfig::default()),
+                "hllc" => FluxScheme::Hllc,
+                _ => FluxScheme::Roe(RoeFluxConfig::default()),
+            };
+            if self.reconstruction.is_none() {
+                config.reconstruction = ReconstructionKind::Muscl;
+            }
+        }
+        config
+    }
 }
 
 impl CaseSpec {
@@ -246,6 +284,9 @@ struct SodToml {
     diaphragm: Option<Real>,
     final_time: Option<Real>,
     cfl: Option<Real>,
+    reconstruction: Option<String>,
+    flux: Option<String>,
+    limiter: Option<String>,
 }
 
 /// 从字符串解析算例（测试与集成用）。
@@ -502,6 +543,9 @@ fn parse_sod_config(raw: &SodToml) -> SodCaseConfig {
         diaphragm: raw.diaphragm.unwrap_or(0.5),
         final_time: raw.final_time.unwrap_or(0.2),
         cfl: raw.cfl.unwrap_or(0.4),
+        reconstruction: raw.reconstruction.clone(),
+        flux: raw.flux.clone(),
+        limiter: raw.limiter.clone(),
     }
 }
 

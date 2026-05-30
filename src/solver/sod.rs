@@ -1,6 +1,7 @@
 //! Sod 激波管 benchmark 辅助（初值、误差、运行至指定时刻）。
 
 use crate::core::Real;
+use crate::discretization::InviscidFluxConfig;
 use crate::error::Result;
 use crate::field::ConservedFields;
 use crate::mesh::StructuredMesh1d;
@@ -22,6 +23,7 @@ pub struct SodBenchmarkConfig {
     pub final_time: Real,
     pub cfl: Real,
     pub sod: SodProblem,
+    pub inviscid: InviscidFluxConfig,
 }
 
 impl Default for SodBenchmarkConfig {
@@ -33,6 +35,7 @@ impl Default for SodBenchmarkConfig {
             final_time: 0.2,
             cfl: 0.4,
             sod: SodProblem::CLASSIC,
+            inviscid: InviscidFluxConfig::default(),
         }
     }
 }
@@ -102,8 +105,8 @@ pub fn run_sod_benchmark(config: &SodBenchmarkConfig) -> Result<SodBenchmarkResu
             dt: config.final_time / (config.ncells as Real * 2.0),
             max_steps: u64::MAX,
         },
+        inviscid: config.inviscid,
         cfl: config.cfl,
-        ..CompressibleEulerConfig::default()
     });
     let history = run_until_time(&solver, &ctx, &mut fields, config.final_time)?;
     let final_time = history.last().map(|s| s.physical_time).unwrap_or(0.0);
@@ -144,12 +147,13 @@ pub fn write_sod_profile(
     writeln!(file, "# asimu sod_1d benchmark profile")?;
     writeln!(
         file,
-        "# ncells={} length={} diaphragm={} final_time={} steps={} l1_density={:.8} l2_density={:.8}",
+        "# ncells={} length={} diaphragm={} final_time={} steps={} scheme={} l1_density={:.8} l2_density={:.8}",
         config.ncells,
         config.length,
         config.diaphragm,
         result.final_time,
         result.steps,
+        config.inviscid.short_label(),
         result.l1_density,
         result.l2_density
     )?;
@@ -161,6 +165,75 @@ pub fn write_sod_profile(
             file,
             "{:.8} {:.8} {:.8} {:.8}",
             result.cell_centers[i], result.density_numeric[i], result.density_exact[i], err
+        )?;
+    }
+    Ok(())
+}
+
+/// 将 MUSCL+Roe 与 MUSCL+HLLC 数值解及精确解写入同一对比文件。
+pub fn write_sod_compare_profile(
+    path: &std::path::Path,
+    base: &SodBenchmarkConfig,
+    roe: (&SodBenchmarkConfig, &SodBenchmarkResult),
+    muscl_hllc: (&SodBenchmarkConfig, &SodBenchmarkResult),
+) -> Result<()> {
+    use std::io::Write;
+
+    let (roe_config, roe_result) = roe;
+    let (muscl_config, muscl_result) = muscl_hllc;
+    if roe_result.cell_centers.len() != muscl_result.cell_centers.len() {
+        return Err(crate::error::AsimuError::Field(
+            "MUSCL+Roe 与 MUSCL+HLLC 剖面长度不一致".to_string(),
+        ));
+    }
+
+    let mut file = std::fs::File::create(path).map_err(crate::error::AsimuError::from)?;
+    writeln!(file, "# asimu sod_1d benchmark compare")?;
+    writeln!(file, "# format=compare")?;
+    writeln!(
+        file,
+        "# ncells={} length={} diaphragm={} final_time={}",
+        base.ncells, base.length, base.diaphragm, roe_result.final_time
+    )?;
+    writeln!(
+        file,
+        "# roe_steps={} roe_l1={:.8} roe_l2={:.8}",
+        roe_result.steps, roe_result.l1_density, roe_result.l2_density
+    )?;
+    writeln!(
+        file,
+        "# muscl_hllc_steps={} muscl_hllc_l1={:.8} muscl_hllc_l2={:.8}",
+        muscl_result.steps, muscl_result.l1_density, muscl_result.l2_density
+    )?;
+    writeln!(
+        file,
+        "# scheme_roe={} scheme_muscl_hllc={} limiter={}",
+        roe_config.inviscid.short_label(),
+        muscl_config.inviscid.short_label(),
+        roe_config.inviscid.limiter_label()
+    )?;
+    writeln!(
+        file,
+        "# columns: x rho_roe rho_muscl_hllc rho_exact rho_err_roe rho_err_muscl_hllc"
+    )?;
+    writeln!(
+        file,
+        "x rho_roe rho_muscl_hllc rho_exact rho_err_roe rho_err_muscl_hllc"
+    )?;
+    for i in 0..roe_result.cell_centers.len() {
+        let x = roe_result.cell_centers[i];
+        let rho_roe = roe_result.density_numeric[i];
+        let rho_muscl = muscl_result.density_numeric[i];
+        let rho_exact = roe_result.density_exact[i];
+        writeln!(
+            file,
+            "{:.8} {:.8} {:.8} {:.8} {:.8} {:.8}",
+            x,
+            rho_roe,
+            rho_muscl,
+            rho_exact,
+            rho_roe - rho_exact,
+            rho_muscl - rho_exact
         )?;
     }
     Ok(())
@@ -258,5 +331,17 @@ mod tests {
         .expect("benchmark");
         assert!(result.l1_density < 0.025);
         assert!(result.l2_density < 0.04);
+    }
+
+    #[test]
+    fn sod_benchmark_muscl_hllc_100_cells_l1_below_threshold() {
+        let result = run_sod_benchmark(&SodBenchmarkConfig {
+            ncells: 100,
+            inviscid: InviscidFluxConfig::muscl_hllc(),
+            ..SodBenchmarkConfig::default()
+        })
+        .expect("benchmark");
+        assert!(result.l1_density < 0.04);
+        assert!(result.l2_density < 0.06);
     }
 }

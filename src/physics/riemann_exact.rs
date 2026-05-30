@@ -76,6 +76,16 @@ pub fn sod_sample(x: Real, t: Real) -> Result<RiemannPrimitive1d> {
     sample_exact(&SodProblem::CLASSIC.riemann_problem(), x, t)
 }
 
+/// 求解 1D Riemann 星区压力与速度（供 HLLC 等近似求解器复用）。
+pub fn solve_star_pressure_velocity(
+    left: RiemannPrimitive1d,
+    right: RiemannPrimitive1d,
+    gamma: Real,
+) -> Result<(Real, Real)> {
+    let star = solve_star_state(&RiemannProblem1d { gamma, left, right })?;
+    Ok((star.pressure, star.velocity))
+}
+
 fn solve_star_state(problem: &RiemannProblem1d) -> Result<StarState> {
     let g = problem.gamma;
     let left = problem.left;
