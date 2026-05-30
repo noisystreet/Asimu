@@ -1,4 +1,4 @@
-//! 可压缩无粘 Euler 显式求解（RK4 + FVM 残差）。
+//! 可压缩无粘 Euler 显式求解（RK4 / 一阶 Euler + FVM 残差）。
 //!
 //! 理论：[`docs/theory/time_integration.md`](../../docs/theory/time_integration.md)、
 //! [`inviscid_flux.md`](../../docs/theory/inviscid_flux.md)
@@ -15,8 +15,9 @@ use crate::mesh::{BoundaryMesh3d, StructuredMesh1d, StructuredMesh3d};
 use crate::physics::{FreestreamParams, IdealGasEoS, PrimitiveState};
 use crate::solver::state::SolverState;
 use crate::solver::time::{
-    CflSchedule, Rk4Storage, RungeKutta4Config, RungeKutta4Integrator, TimeIntegrator,
-    local_dt_cfl, min_positive_dt, rk4_step, rk4_step_local,
+    CflSchedule, Rk4Storage, RungeKutta4Config, RungeKutta4Integrator, TimeIntegrationScheme,
+    TimeIntegrator, euler_step, euler_step_local, local_dt_cfl, min_positive_dt, rk4_step,
+    rk4_step_local,
 };
 use tracing::info;
 
@@ -35,6 +36,8 @@ pub struct CompressibleEulerConfig {
     pub cfl_schedule: CflSchedule,
     pub time_mode: CompressibleTimeMode,
     pub local_time_step: bool,
+    /// 时间积分格式（`rk4` 默认；`euler` 用于排除 RK 多阶段 bug）。
+    pub time_scheme: TimeIntegrationScheme,
 }
 
 impl Default for CompressibleEulerConfig {
@@ -45,6 +48,7 @@ impl Default for CompressibleEulerConfig {
             cfl_schedule: CflSchedule::constant(0.4),
             time_mode: CompressibleTimeMode::Transient,
             local_time_step: false,
+            time_scheme: TimeIntegrationScheme::Rk4,
         }
     }
 }
@@ -118,7 +122,7 @@ impl CompressibleEulerSolver {
                 &boundaries,
             )
         };
-        rk4_step(fields, storage, dt, evaluate)?;
+        self.advance_explicit_step(fields, storage, dt, None, evaluate, None)?;
         let boundaries = ctx.boundary.resolve(fields)?;
         assemble_inviscid_residual_1d(
             ctx.mesh,
@@ -153,6 +157,7 @@ impl CompressibleEulerSolver {
     ) -> Result<CompressibleStepInfo> {
         let cfl = self.cfl_for_step(state);
         let p_floor = Self::positivity_pressure_floor(ctx.freestream);
+        fields.enforce_positivity(ctx.eos, p_floor);
         let cell_dts = self.suggest_cell_dts_3d(ctx.structured, fields, ctx.eos, cfl, p_floor)?;
         let dt = min_positive_dt(&cell_dts);
         integrator.config.dt = dt;
@@ -194,19 +199,20 @@ impl CompressibleEulerSolver {
                 ctx.ghosts,
             )
         };
-        if self.config.local_time_step {
-            rk4_step_local(
-                fields,
-                storage,
-                &cell_dts,
-                evaluate,
-                Some(ctx.eos),
-                Self::positivity_pressure_floor(ctx.freestream),
-            )?;
+        let cell_dts_arg = if self.config.local_time_step {
+            Some(cell_dts.as_slice())
         } else {
-            rk4_step(fields, storage, dt, evaluate)?;
-        }
-        fields.enforce_positivity(ctx.eos, Self::positivity_pressure_floor(ctx.freestream));
+            None
+        };
+        self.advance_explicit_step(
+            fields,
+            storage,
+            dt,
+            cell_dts_arg,
+            evaluate,
+            Some((ctx.eos, p_floor)),
+        )?;
+        fields.enforce_positivity(ctx.eos, p_floor);
         let time_info = integrator.advance(state)?;
         Ok(CompressibleStepInfo {
             dt: time_info.dt,
@@ -290,7 +296,39 @@ impl CompressibleEulerSolver {
     }
 
     fn positivity_pressure_floor(freestream: &FreestreamParams) -> Real {
-        (freestream.pressure * 1.0e-2).max(1.0e-6)
+        crate::field::positivity_pressure_floor(freestream.pressure)
+    }
+
+    fn advance_explicit_step<F>(
+        &self,
+        fields: &mut ConservedFields,
+        storage: &mut Rk4Storage,
+        dt_global: Real,
+        cell_dts: Option<&[Real]>,
+        evaluate_rhs: F,
+        positivity: Option<(&IdealGasEoS, Real)>,
+    ) -> Result<()>
+    where
+        F: FnMut(&ConservedFields, &mut ConservedResidual) -> Result<()>,
+    {
+        let (eos, min_pressure) = match positivity {
+            Some((eos, p)) => (Some(eos), p),
+            None => (None, 1.0e-6),
+        };
+        match (self.config.time_scheme, cell_dts) {
+            (TimeIntegrationScheme::Rk4, Some(dt)) => {
+                rk4_step_local(fields, storage, dt, evaluate_rhs, eos, min_pressure)
+            }
+            (TimeIntegrationScheme::Rk4, None) => {
+                rk4_step(fields, storage, dt_global, evaluate_rhs)
+            }
+            (TimeIntegrationScheme::Euler, Some(dt)) => {
+                euler_step_local(fields, storage, dt, evaluate_rhs, eos, min_pressure)
+            }
+            (TimeIntegrationScheme::Euler, None) => {
+                euler_step(fields, storage, dt_global, evaluate_rhs, eos, min_pressure)
+            }
+        }
     }
 
     fn suggest_dt_1d(
@@ -534,6 +572,7 @@ mod tests {
             },
             time_mode: CompressibleTimeMode::Steady,
             local_time_step: true,
+            ..CompressibleEulerConfig::default()
         });
         let mut ctx = CompressibleAdvanceContext3d {
             mesh,
@@ -635,7 +674,7 @@ mod tests {
         for _ in 0..steps {
             let cfl = cfl_schedule.at_step(state.time_step.saturating_add(1), steps);
             let lengths = mesh.cell_cfl_lengths().expect("lengths");
-            let speeds = per_cell_wave_speeds(&fields, &eos).expect("speeds");
+            let speeds = cell_wave_speeds(&fields, &eos, fs.pressure * 1.0e-3).expect("speeds");
             let cell_dts = local_dt_cfl(&lengths, &speeds, cfl).expect("dt");
 
             let evaluate = |u: &ConservedFields, r: &mut ConservedResidual| {
@@ -742,24 +781,5 @@ mod tests {
         } else {
             (sum_sq / count as f64).sqrt()
         }
-    }
-
-    fn per_cell_wave_speeds(fields: &ConservedFields, eos: &IdealGasEoS) -> Result<Vec<f64>> {
-        let mut speeds = Vec::with_capacity(fields.num_cells());
-        for i in 0..fields.num_cells() {
-            let prim = crate::field::primitive_from_conserved_relaxed(
-                eos,
-                &fields.cell_state(i)?,
-                1.0e-6,
-            )?;
-            let rho = prim.density.max(1.0e-12);
-            let pressure = prim.pressure.max(1.0e-6);
-            let speed = (prim.velocity[0] * prim.velocity[0]
-                + prim.velocity[1] * prim.velocity[1]
-                + prim.velocity[2] * prim.velocity[2])
-                .sqrt();
-            speeds.push(speed + (eos.gamma * pressure / rho).sqrt());
-        }
-        Ok(speeds)
     }
 }

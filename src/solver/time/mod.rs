@@ -2,7 +2,10 @@
 //!
 //! 理论：[`docs/theory/time_integration.md`](../../../docs/theory/time_integration.md)
 
+mod common;
+pub mod euler;
 pub mod rk4;
+pub mod scheme;
 
 use crate::core::Real;
 use crate::error::Result;
@@ -30,7 +33,9 @@ pub trait TimeIntegrator {
     fn advance(&mut self, state: &mut SolverState) -> Result<TimeStepInfo>;
 }
 
+pub use euler::{euler_step, euler_step_local};
 pub use rk4::{Rk4Storage, RungeKutta4Config, RungeKutta4Integrator, rk4_step, rk4_step_local};
+pub use scheme::TimeIntegrationScheme;
 
 /// CFL 调度：在指定步数区间内从 `initial` 线性增至 `max`，之后保持 `max`。
 #[derive(Debug, Clone, Copy, PartialEq)]

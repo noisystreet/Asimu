@@ -302,6 +302,7 @@ mod tests {
             cfl_schedule: case.cfl_schedule().expect("cfl"),
             local_time_step: true,
             time_mode: crate::solver::CompressibleTimeMode::Steady,
+            ..CompressibleEulerConfig::default()
         });
         let mut storage = Rk4Storage::new(mesh.num_cells()).expect("storage");
         let mut state = SolverState::default();
@@ -415,6 +416,7 @@ mod tests {
             cfl_schedule: case.cfl_schedule().expect("cfl"),
             local_time_step: true,
             time_mode: crate::solver::CompressibleTimeMode::Steady,
+            ..CompressibleEulerConfig::default()
         });
         let mut storage = Rk4Storage::new(mesh.num_cells()).expect("storage");
         let mut state = SolverState::default();

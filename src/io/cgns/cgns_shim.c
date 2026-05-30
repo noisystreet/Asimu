@@ -10,7 +10,7 @@ int asimu_cg_read_boco_family_name(int fn, int B, int Z, int BC, char *family_na
     return cg_famname_read(family_name);
 }
 
-/* 写出结构化网格 + 单元中心原始变量（ρ, u, v, w, p @ CellCenter）。 */
+/* 写出结构化网格 + 顶点原始变量（ρ, u, v, w, p @ Vertex，便于 ParaView Volume 显示）。 */
 int asimu_cg_write_structured_flow(
     const char *filename,
     const char *basename,
@@ -84,7 +84,7 @@ int asimu_cg_write_structured_flow(
         return err;
     }
 
-    err = cg_sol_write(fn, base, zone, "FlowSolution", CGNS_ENUMV(CellCenter), &sol);
+    err = cg_sol_write(fn, base, zone, "FlowSolution", CGNS_ENUMV(Vertex), &sol);
     if (err != CG_OK) {
         cg_close(fn);
         return err;

@@ -19,6 +19,8 @@ pub struct CaseOutputConfig {
     pub residual_plot: Option<String>,
     pub solution_cgns: Option<String>,
     pub solution_every: Option<u64>,
+    /// 与 CGNS 同主文件名写出 `.vtu` / `.vts`（默认关闭）。
+    pub solution_vtk: bool,
 }
 
 impl CaseOutputConfig {
@@ -146,6 +148,7 @@ pub(super) struct OutputToml {
     residual_plot: Option<String>,
     solution_cgns: Option<String>,
     solution_every: Option<u64>,
+    solution_vtk: Option<bool>,
 }
 
 pub(super) fn parse_euler_config(raw: &EulerToml) -> Result<EulerCaseConfig> {
@@ -170,6 +173,7 @@ pub(super) fn parse_output(raw: &OutputToml) -> CaseOutputConfig {
         residual_plot: raw.residual_plot.clone(),
         solution_cgns: raw.solution_cgns.clone(),
         solution_every: raw.solution_every,
+        solution_vtk: raw.solution_vtk.unwrap_or(false),
     }
 }
 

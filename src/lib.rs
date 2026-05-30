@@ -48,15 +48,17 @@ pub mod prelude {
         CompressibleAdvanceContext1d, CompressibleAdvanceContext3d, CompressibleEulerConfig,
         CompressibleEulerSolver, CompressibleStepInfo, Rk4Storage, RungeKutta4Config,
         RungeKutta4Integrator, SolveResult, Solver, SolverState, SteadyStateIntegrator,
-        TimeIntegrator, max_wave_speed, rk4_step,
+        TimeIntegrationScheme, TimeIntegrator, euler_step, max_wave_speed, rk4_step,
     };
 
     #[cfg(feature = "io-vtk")]
     pub use crate::io::{VtmBlock, VtsLoadResult, load_vts, write_vtm, write_vts};
 
+    #[cfg(feature = "io-cgns-vts")]
+    pub use crate::io::export_cgns_to_vtm;
     #[cfg(feature = "io-cgns")]
     pub use crate::io::{
-        CgnsLoadResult, CgnsMultiLoadResult, CgnsZoneInfo, export_cgns_to_vtm, export_cgns_to_vts,
+        CgnsLoadResult, CgnsMultiLoadResult, CgnsZoneInfo, export_cgns_to_vts,
         export_cgns_zone_to_vts, list_cgns_zones, load_cgns_all_zones, load_cgns_zone,
     };
 }

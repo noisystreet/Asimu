@@ -1,0 +1,50 @@
+//! 显式时间积分格式选择。
+
+use crate::error::{AsimuError, Result};
+
+/// 可压缩显式时间推进格式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TimeIntegrationScheme {
+    /// 经典四阶 Runge-Kutta（默认）。
+    #[default]
+    Rk4,
+    /// 一阶前向 Euler（排错对照用，稳定性比 RK4 差）。
+    Euler,
+}
+
+impl TimeIntegrationScheme {
+    pub fn parse(name: &str) -> Result<Self> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "" | "rk4" | "runge_kutta_4" | "runge-kutta-4" | "rk4_4" => Ok(Self::Rk4),
+            "euler" | "forward_euler" | "euler1" | "rk1" | "euler_1" => Ok(Self::Euler),
+            other => Err(AsimuError::Config(format!(
+                "不支持的 time.scheme \"{other}\"（可用 rk4、euler）"
+            ))),
+        }
+    }
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Rk4 => "rk4",
+            Self::Euler => "euler",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_euler_aliases() {
+        assert_eq!(
+            TimeIntegrationScheme::parse("forward_euler").expect("euler"),
+            TimeIntegrationScheme::Euler
+        );
+        assert_eq!(
+            TimeIntegrationScheme::parse("RK4").expect("rk4"),
+            TimeIntegrationScheme::Rk4
+        );
+    }
+}

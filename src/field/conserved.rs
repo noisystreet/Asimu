@@ -58,43 +58,78 @@ impl ConservedFields {
         })
     }
 
-    pub fn primitive_at(&self, index: usize, eos: &IdealGasEoS) -> Result<PrimitiveState> {
-        primitive_from_conserved(eos, &self.cell_state(index)?)
+    pub fn primitive_at(
+        &self,
+        index: usize,
+        eos: &IdealGasEoS,
+        min_pressure: crate::core::Real,
+    ) -> Result<PrimitiveState> {
+        primitive_from_conserved_relaxed(eos, &self.cell_state(index)?, min_pressure)
     }
 
     /// 保证 \(\rho>0\) 且 \(E>\mathrm{KE}+p_\mathrm{floor}/(\gamma-1)\)（显式 RK 步后调用）。
     pub fn enforce_positivity(&mut self, eos: &IdealGasEoS, min_pressure: crate::core::Real) {
-        let gamma = eos.gamma;
-        let min_internal = min_pressure / (gamma - 1.0);
-        let rho_min = 1.0e-12;
         for i in 0..self.num_cells() {
-            let rho_old = self.density.values()[i];
-            let rho = if rho_old.is_finite() && rho_old > 0.0 {
-                rho_old.max(rho_min)
-            } else {
-                rho_min
+            let mut state = ConservedState {
+                density: self.density.values()[i],
+                momentum: [
+                    self.momentum_x.values()[i],
+                    self.momentum_y.values()[i],
+                    self.momentum_z.values()[i],
+                ],
+                total_energy: self.total_energy.values()[i],
             };
-            if rho_old.is_finite() && rho_old > 0.0 && rho_old < rho_min {
-                let scale = rho / rho_old;
-                self.momentum_x.values_mut()[i] *= scale;
-                self.momentum_y.values_mut()[i] *= scale;
-                self.momentum_z.values_mut()[i] *= scale;
-            } else if !(rho_old.is_finite() && rho_old > 0.0) {
-                self.momentum_x.values_mut()[i] = 0.0;
-                self.momentum_y.values_mut()[i] = 0.0;
-                self.momentum_z.values_mut()[i] = 0.0;
-            }
-            self.density.values_mut()[i] = rho;
-            let mx = self.momentum_x.values()[i];
-            let my = self.momentum_y.values()[i];
-            let mz = self.momentum_z.values()[i];
-            let ke = 0.5 * (mx * mx + my * my + mz * mz) / rho;
-            let e_min = ke + min_internal;
-            let energy = self.total_energy.values_mut();
-            if !energy[i].is_finite() || energy[i] < e_min {
-                energy[i] = e_min;
-            }
+            clamp_conserved_positivity(&mut state, eos.gamma, min_pressure);
+            self.write_cell_state(i, &state);
         }
+    }
+
+    fn write_cell_state(&mut self, index: usize, state: &ConservedState) {
+        self.density.values_mut()[index] = state.density;
+        self.momentum_x.values_mut()[index] = state.momentum[0];
+        self.momentum_y.values_mut()[index] = state.momentum[1];
+        self.momentum_z.values_mut()[index] = state.momentum[2];
+        self.total_energy.values_mut()[index] = state.total_energy;
+    }
+}
+
+/// 来流静压的 1%（下限 1e-6 Pa），与求解器 CFL/正性保持一致。
+#[must_use]
+pub fn positivity_pressure_floor(freestream_pressure: crate::core::Real) -> crate::core::Real {
+    (freestream_pressure * 1.0e-2).max(1.0e-6)
+}
+
+/// 单单元守恒量正性钳制（RK 阶段态与边界 owner 共用）。
+pub fn clamp_conserved_positivity(
+    state: &mut ConservedState,
+    gamma: crate::core::Real,
+    min_pressure: crate::core::Real,
+) {
+    let min_internal = min_pressure / (gamma - 1.0);
+    let rho_min = 1.0e-12;
+    let rho_old = state.density;
+    let rho = if rho_old.is_finite() && rho_old > 0.0 {
+        rho_old.max(rho_min)
+    } else {
+        rho_min
+    };
+    if rho_old.is_finite() && rho_old > 0.0 && rho_old < rho_min {
+        let scale = rho / rho_old;
+        state.momentum[0] *= scale;
+        state.momentum[1] *= scale;
+        state.momentum[2] *= scale;
+    } else if !(rho_old.is_finite() && rho_old > 0.0) {
+        state.momentum = [0.0, 0.0, 0.0];
+    }
+    state.density = rho;
+    let ke = 0.5
+        * (state.momentum[0] * state.momentum[0]
+            + state.momentum[1] * state.momentum[1]
+            + state.momentum[2] * state.momentum[2])
+        / rho;
+    let e_min = ke + min_internal;
+    if !state.total_energy.is_finite() || state.total_energy < e_min {
+        state.total_energy = e_min;
     }
 }
 
@@ -115,11 +150,12 @@ pub fn primitive_from_conserved(
     let ke = 0.5
         * rho
         * (velocity[0] * velocity[0] + velocity[1] * velocity[1] + velocity[2] * velocity[2]);
-    let e = cons.total_energy / rho - ke / rho;
-    if e <= 0.0 {
-        return Err(AsimuError::Field("内能必须大于 0".to_string()));
+    let internal = cons.total_energy - ke;
+    if internal <= 0.0 {
+        // RK 中间态或输出阶段：回退到压力下限，避免中断时间步进。
+        return primitive_from_conserved_relaxed(eos, cons, 1.0e-6);
     }
-    let pressure = (eos.gamma - 1.0) * rho * e;
+    let pressure = (eos.gamma - 1.0) * internal;
     let temperature = pressure / (rho * eos.gas_constant);
     Ok(PrimitiveState {
         density: rho,
@@ -162,6 +198,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn clamp_allows_strict_primitive_recovery() {
+        let eos = IdealGasEoS::new(1.4, 287.0).expect("eos");
+        let mut state = ConservedState {
+            density: 1.0e-11,
+            momentum: [1.0, 0.0, 0.0],
+            total_energy: 0.5,
+        };
+        clamp_conserved_positivity(&mut state, eos.gamma, 10.0);
+        primitive_from_conserved(&eos, &state).expect("strict primitive after clamp");
+    }
+
+    #[test]
     fn freestream_uniform_field_has_correct_density() {
         let eos = IdealGasEoS::AIR_STANDARD;
         let params = FreestreamParams {
@@ -172,7 +220,9 @@ mod tests {
         };
         let fields = ConservedFields::from_freestream(16, &eos, &params).expect("fields");
         assert_eq!(fields.num_cells(), 16);
-        let prim = fields.primitive_at(0, &eos).expect("prim");
+        let prim = fields
+            .primitive_at(0, &eos, positivity_pressure_floor(params.pressure))
+            .expect("prim");
         assert!((prim.density - fields.density.values()[0]).abs() < 1.0e-10);
     }
 }

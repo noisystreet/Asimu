@@ -126,6 +126,7 @@ fn build_compressible_solver(
         cfl_schedule: case.cfl_schedule()?,
         time_mode: solver_time_mode(case.time.mode),
         local_time_step: case.time.uses_local_time_step(),
+        time_scheme: case.time.resolved_time_scheme(),
     }))
 }
 
@@ -207,6 +208,7 @@ fn run_transient_3d_with_snapshots(
             t = %format_log_sci4(step_info.physical_time),
             log10_residual = %format_log_fixed4(step_info.residual_log10),
             cfl = step_info.cfl,
+            time_scheme = solver.config.time_scheme.label(),
             local_time_step,
             is_final = stop,
             converged,

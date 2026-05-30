@@ -33,7 +33,9 @@ pub enum BoundaryKind {
         total_pressure: Real,
         total_temperature: Real,
         velocity_direction: [Real; 3],
-        /// 设计 Mach（`apply_freestream` 写入；\(M\ge 1\) 时按超声速入口处理）。
+        /// 超声速入口（CGNS `BCInflowSupersonic` 或 TOML `supersonic = true`）：ghost 用 `[freestream]` 静参数。
+        supersonic: bool,
+        /// 设计 Mach（`apply_freestream` 写入，仅报告用）。
         mach: Real,
     },
     Outlet {
@@ -105,6 +107,7 @@ pub struct BoundaryTomlFields<'a> {
     pub partner: Option<&'a str>,
     pub turbulent_k: Option<Real>,
     pub turbulent_omega: Option<Real>,
+    pub supersonic: Option<bool>,
 }
 
 impl BoundaryKind {
@@ -127,6 +130,7 @@ impl BoundaryKind {
                     total_pressure,
                     total_temperature,
                     velocity_direction,
+                    supersonic: fields.supersonic.unwrap_or(false),
                     mach: fields.mach.unwrap_or(0.0),
                 })
             }
@@ -185,6 +189,9 @@ impl BoundaryKind {
             Self::Dirichlet { .. } => "Dirichlet",
             Self::Neumann { .. } => "Neumann",
             Self::Farfield { .. } => "Farfield",
+            Self::Inlet {
+                supersonic: true, ..
+            } => "Inlet(supersonic)",
             Self::Inlet { .. } => "Inlet",
             Self::Outlet {
                 supersonic: true, ..
@@ -215,11 +222,19 @@ impl BoundaryKind {
                 total_pressure,
                 total_temperature,
                 velocity_direction,
+                supersonic,
                 mach,
-            } => format!(
-                "M={mach}, p₀={total_pressure:.6e}, T₀={total_temperature:.6e}, n=[{:.4}, {:.4}, {:.4}]",
-                velocity_direction[0], velocity_direction[1], velocity_direction[2]
-            ),
+            } => {
+                let mode = if *supersonic {
+                    "supersonic freestream"
+                } else {
+                    "subsonic total"
+                };
+                format!(
+                    "M={mach}, {mode}, p₀={total_pressure:.6e}, T₀={total_temperature:.6e}, n=[{:.4}, {:.4}, {:.4}]",
+                    velocity_direction[0], velocity_direction[1], velocity_direction[2]
+                )
+            }
             Self::Outlet {
                 static_pressure,
                 supersonic,
@@ -272,8 +287,11 @@ fn map_cgns_bctype(bctype: i32) -> BoundaryKind {
     if bctype == cgns_bc::BC_EXTRAPOLATE || is_outflow(bctype) {
         return default_outflow(bctype == cgns_bc::BC_OUTFLOW_SUPERSONIC);
     }
-    if is_inflow(bctype) {
-        return default_inlet();
+    if bctype == cgns_bc::BC_INFLOW_SUPERSONIC {
+        return default_inlet(true);
+    }
+    if bctype == cgns_bc::BC_INFLOW_SUBSONIC || bctype == cgns_bc::BC_INFLOW {
+        return default_inlet(false);
     }
     if bctype == cgns_bc::BC_SYMMETRY_PLANE || bctype == cgns_bc::BC_SYMMETRY_POLAR {
         return BoundaryKind::Symmetry;
@@ -287,11 +305,12 @@ fn map_cgns_bctype(bctype: i32) -> BoundaryKind {
     default_wall(true)
 }
 
-fn default_inlet() -> BoundaryKind {
+fn default_inlet(supersonic: bool) -> BoundaryKind {
     BoundaryKind::Inlet {
         total_pressure: 101_325.0,
         total_temperature: 300.0,
         velocity_direction: [1.0, 0.0, 0.0],
+        supersonic,
         mach: 0.0,
     }
 }
@@ -308,13 +327,6 @@ fn default_wall(no_slip: bool) -> BoundaryKind {
         no_slip,
         heat: WallHeat::Adiabatic,
     }
-}
-
-fn is_inflow(bctype: i32) -> bool {
-    matches!(
-        bctype,
-        cgns_bc::BC_INFLOW | cgns_bc::BC_INFLOW_SUBSONIC | cgns_bc::BC_INFLOW_SUPERSONIC
-    )
 }
 
 fn is_outflow(bctype: i32) -> bool {
@@ -352,4 +364,35 @@ pub mod cgns_bc {
     pub const BC_WALL_VISCOUS_HEAT_FLUX: i32 = 23;
     pub const BC_WALL_VISCOUS_ISOTHERMAL: i32 = 24;
     pub const BC_FAMILY_SPECIFIED: i32 = 25;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cgns_supersonic_inlet_sets_supersonic_flag() {
+        let kind = BoundaryKind::from_cgns_bctype(cgns_bc::BC_INFLOW_SUPERSONIC, "Inlet");
+        assert!(matches!(
+            kind,
+            BoundaryKind::Inlet {
+                supersonic: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn cgns_subsonic_inlet_clears_supersonic_flag() {
+        for bctype in [cgns_bc::BC_INFLOW, cgns_bc::BC_INFLOW_SUBSONIC] {
+            let kind = BoundaryKind::from_cgns_bctype(bctype, "Inlet");
+            assert!(matches!(
+                kind,
+                BoundaryKind::Inlet {
+                    supersonic: false,
+                    ..
+                }
+            ));
+        }
+    }
 }

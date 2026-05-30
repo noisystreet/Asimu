@@ -14,7 +14,10 @@ use crate::error::{AsimuError, Result};
 use crate::mesh::StructuredMesh1d;
 use crate::physics::IdealGasEoS;
 
-pub use conserved::{ConservedFields, primitive_from_conserved, primitive_from_conserved_relaxed};
+pub use conserved::{
+    ConservedFields, clamp_conserved_positivity, positivity_pressure_floor,
+    primitive_from_conserved, primitive_from_conserved_relaxed,
+};
 pub use initial::{
     FluidInitialConfig, InitialKind, InitialSet, ScalarInitial, build_scalar_initial,
 };

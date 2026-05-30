@@ -114,12 +114,19 @@ pub struct CaseTimeConfig {
     pub tolerance: Option<Real>,
     pub local_time_step: bool,
     pub cfl_ramp_steps: Option<u64>,
+    /// 时间积分格式：`rk4`（默认）或 `euler`（一阶前向 Euler，排错对照）。
+    pub scheme: Option<crate::solver::time::TimeIntegrationScheme>,
 }
 
 impl CaseTimeConfig {
     #[must_use]
     pub fn uses_local_time_step(&self) -> bool {
         self.local_time_step
+    }
+
+    #[must_use]
+    pub fn resolved_time_scheme(&self) -> crate::solver::time::TimeIntegrationScheme {
+        self.scheme.unwrap_or_default()
     }
 }
 
@@ -135,6 +142,7 @@ impl Default for CaseTimeConfig {
             tolerance: None,
             local_time_step: false,
             cfl_ramp_steps: None,
+            scheme: None,
         }
     }
 }
@@ -259,6 +267,7 @@ struct BoundaryToml {
     partner: Option<String>,
     turbulent_k: Option<Real>,
     turbulent_omega: Option<Real>,
+    supersonic: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -296,6 +305,7 @@ struct TimeToml {
     tolerance: Option<Real>,
     local_time_step: Option<bool>,
     cfl_ramp_steps: Option<u64>,
+    scheme: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -496,6 +506,7 @@ fn resolve_boundary_set(
             partner: bc.partner.as_deref(),
             turbulent_k: bc.turbulent_k,
             turbulent_omega: bc.turbulent_omega,
+            supersonic: bc.supersonic,
         };
         let kind = BoundaryKind::from_toml(&fields).ok_or_else(|| {
             AsimuError::Boundary(format!(
@@ -540,6 +551,7 @@ fn apply_boundary_overrides(
             partner: bc.partner.as_deref(),
             turbulent_k: bc.turbulent_k,
             turbulent_omega: bc.turbulent_omega,
+            supersonic: bc.supersonic,
         };
         let kind = BoundaryKind::from_toml(&fields).ok_or_else(|| {
             AsimuError::Boundary(format!("边界覆盖 \"{name}\" 无效：kind=\"{}\"", bc.kind))
@@ -576,6 +588,11 @@ fn parse_time_config(raw: Option<&TimeToml>, has_sod: bool) -> Result<CaseTimeCo
             )));
         }
     };
+    let scheme = raw
+        .scheme
+        .as_deref()
+        .map(crate::solver::time::TimeIntegrationScheme::parse)
+        .transpose()?;
     Ok(CaseTimeConfig {
         mode,
         dt: raw.dt,
@@ -586,6 +603,7 @@ fn parse_time_config(raw: Option<&TimeToml>, has_sod: bool) -> Result<CaseTimeCo
         tolerance: raw.tolerance,
         local_time_step: raw.local_time_step.unwrap_or(false),
         cfl_ramp_steps: raw.cfl_ramp_steps,
+        scheme,
     })
 }
 

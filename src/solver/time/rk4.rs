@@ -6,6 +6,7 @@ use crate::core::Real;
 use crate::error::Result;
 use crate::field::{ConservedFields, ConservedResidual};
 use crate::solver::state::SolverState;
+use crate::solver::time::common::maybe_enforce_positivity;
 use crate::solver::time::{TimeIntegrator, TimeMode, TimeStepInfo};
 
 /// RK4 时间步配置。
@@ -108,41 +109,40 @@ where
         )));
     }
     storage.u0.copy_from(fields)?;
+    maybe_enforce_positivity(fields, eos, min_pressure);
+    let gamma = eos.map(|e| e.gamma).unwrap_or(1.4);
     evaluate_rhs(fields, &mut storage.k1)?;
     storage
         .stage
-        .assign_axpy_dt(&storage.u0, &storage.k1, dt, 0.5)?;
+        .assign_axpy_dt(&storage.u0, &storage.k1, dt, 0.5, gamma, min_pressure)?;
     maybe_enforce_positivity(&mut storage.stage, eos, min_pressure);
     evaluate_rhs(&storage.stage, &mut storage.k2)?;
     storage
         .stage
-        .assign_axpy_dt(&storage.u0, &storage.k2, dt, 0.5)?;
+        .assign_axpy_dt(&storage.u0, &storage.k2, dt, 0.5, gamma, min_pressure)?;
     maybe_enforce_positivity(&mut storage.stage, eos, min_pressure);
     evaluate_rhs(&storage.stage, &mut storage.k3)?;
     storage
         .stage
-        .assign_axpy_dt(&storage.u0, &storage.k3, dt, 1.0)?;
+        .assign_axpy_dt(&storage.u0, &storage.k3, dt, 1.0, gamma, min_pressure)?;
     maybe_enforce_positivity(&mut storage.stage, eos, min_pressure);
     evaluate_rhs(&storage.stage, &mut storage.k4)?;
     storage
         .increment
         .assign_rk4_increment(&storage.k1, &storage.k2, &storage.k3, &storage.k4)?;
-    fields.assign_axpy_dt(&storage.u0, &storage.increment, dt, 1.0)?;
+    fields.assign_axpy_dt(
+        &storage.u0,
+        &storage.increment,
+        dt,
+        1.0,
+        gamma,
+        min_pressure,
+    )?;
     maybe_enforce_positivity(fields, eos, min_pressure);
     Ok(())
 }
 
-fn maybe_enforce_positivity(
-    fields: &mut ConservedFields,
-    eos: Option<&crate::physics::IdealGasEoS>,
-    min_pressure: Real,
-) {
-    if let Some(eos) = eos {
-        fields.enforce_positivity(eos, min_pressure);
-    }
-}
-
-/// RK4 工作区（阶段态与四个斜率）。
+/// RK4 工作区（阶段态与四个斜率）；Euler 步进复用 `k1`/`u0`。
 #[derive(Debug, Clone, PartialEq)]
 pub struct Rk4Storage {
     pub u0: ConservedFields,
@@ -167,7 +167,7 @@ impl Rk4Storage {
         })
     }
 
-    fn ensure_capacity(&mut self, num_cells: usize) -> Result<()> {
+    pub(crate) fn ensure_capacity(&mut self, num_cells: usize) -> Result<()> {
         if self.u0.num_cells() != num_cells {
             *self = Self::new(num_cells)?;
         }

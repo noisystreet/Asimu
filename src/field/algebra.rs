@@ -3,7 +3,8 @@
 use crate::core::Real;
 use crate::error::{AsimuError, Result};
 
-use super::{ConservedFields, ConservedResidual};
+use super::{ConservedFields, ConservedResidual, clamp_conserved_positivity};
+use crate::physics::ConservedState;
 
 impl ConservedFields {
     /// `self ← src`。
@@ -34,6 +35,8 @@ impl ConservedFields {
         residual: &ConservedResidual,
         dt: &[Real],
         factor: Real,
+        gamma: Real,
+        min_pressure: Real,
     ) -> Result<()> {
         ensure_same_size(self.num_cells(), base.num_cells())?;
         ensure_residual_size(self.num_cells(), residual.num_cells())?;
@@ -66,11 +69,18 @@ impl ConservedFields {
                 mz = 0.0;
             }
             rho = rho_clamped;
-            self.density.values_mut()[i] = rho;
-            self.momentum_x.values_mut()[i] = mx;
-            self.momentum_y.values_mut()[i] = my;
-            self.momentum_z.values_mut()[i] = mz;
-            self.total_energy.values_mut()[i] = energy;
+            let mut state = ConservedState {
+                density: rho,
+                momentum: [mx, my, mz],
+                total_energy: energy,
+            };
+            // 与 RK 后 enforce 一致：避免 E < KE 导致边界 primitive 恢复失败。
+            clamp_conserved_positivity(&mut state, gamma, min_pressure);
+            self.density.values_mut()[i] = state.density;
+            self.momentum_x.values_mut()[i] = state.momentum[0];
+            self.momentum_y.values_mut()[i] = state.momentum[1];
+            self.momentum_z.values_mut()[i] = state.momentum[2];
+            self.total_energy.values_mut()[i] = state.total_energy;
         }
         Ok(())
     }

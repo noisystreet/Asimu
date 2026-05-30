@@ -47,8 +47,9 @@ pub fn wall_ghost(
     no_slip: bool,
     _heat: WallHeat,
     eos: &IdealGasEoS,
+    min_pressure: Real,
 ) -> Result<GhostCellState> {
-    let prim = crate::field::primitive_from_conserved(eos, owner)?;
+    let prim = crate::field::primitive_from_conserved_relaxed(eos, owner, min_pressure)?;
     let n = geom.normal;
     let un = prim.velocity[0] * n.x + prim.velocity[1] * n.y + prim.velocity[2] * n.z;
     let mut velocity = prim.velocity;
@@ -88,9 +89,34 @@ pub fn farfield_ghost(
     })
 }
 
-/// 入口 ghost：给定总压/总温方向（简化为静参数 + 方向速度）。
+/// 入口 ghost：超声速入口（`supersonic`）直接使用 `[freestream]` 静参数；亚声速用总压/总温简化模型。
+#[allow(clippy::too_many_arguments)]
 pub fn inlet_ghost(
-    _owner: &ConservedState,
+    owner: &ConservedState,
+    geom: &FaceGeometry3d,
+    supersonic: bool,
+    velocity_direction: [Real; 3],
+    case_freestream: &FreestreamParams,
+    eos: &IdealGasEoS,
+    total_pressure: Real,
+    total_temperature: Real,
+) -> Result<GhostCellState> {
+    if supersonic {
+        let fs = FreestreamParams {
+            mach: case_freestream.mach,
+            pressure: case_freestream.pressure,
+            temperature: case_freestream.temperature,
+            alpha: case_freestream.alpha,
+            beta: case_freestream.beta,
+            velocity_direction,
+        };
+        return farfield_ghost(owner, geom, &fs, eos);
+    }
+    subsonic_inlet_ghost(total_pressure, total_temperature, velocity_direction, eos)
+}
+
+/// 亚声速入口：总压/总温 + 方向（简化静参数恢复）。
+fn subsonic_inlet_ghost(
     total_pressure: Real,
     total_temperature: Real,
     velocity_direction: [Real; 3],
@@ -120,8 +146,9 @@ pub fn outlet_ghost(
     owner: &ConservedState,
     static_pressure: Real,
     eos: &IdealGasEoS,
+    min_pressure: Real,
 ) -> Result<GhostCellState> {
-    let prim = crate::field::primitive_from_conserved(eos, owner)?;
+    let prim = crate::field::primitive_from_conserved_relaxed(eos, owner, min_pressure)?;
     let ghost_prim = PrimitiveState {
         pressure: static_pressure,
         ..prim
@@ -136,8 +163,9 @@ pub fn symmetry_ghost(
     owner: &ConservedState,
     geom: &FaceGeometry3d,
     eos: &IdealGasEoS,
+    min_pressure: Real,
 ) -> Result<GhostCellState> {
-    wall_ghost(owner, geom, false, WallHeat::Adiabatic, eos)
+    wall_ghost(owner, geom, false, WallHeat::Adiabatic, eos, min_pressure)
 }
 
 fn normalize(v: [Real; 3]) -> Result<[Real; 3]> {
@@ -158,6 +186,7 @@ fn apply_patch_compressible(
     eos: &IdealGasEoS,
     freestream: &FreestreamParams,
 ) -> Result<()> {
+    let p_floor = crate::field::positivity_pressure_floor(freestream.pressure);
     let handler = BoundaryRegistry::handler_for(&patch.kind);
     for &face in &patch.face_ids {
         let owner_id = mesh.face_owner(face)?;
@@ -165,7 +194,7 @@ fn apply_patch_compressible(
         let geom = mesh.face_geometry_3d(face)?;
         let ghost = match (&handler, &patch.kind) {
             (BcHandler::Wall, BoundaryKind::Wall { no_slip, heat }) => {
-                wall_ghost(&owner, &geom, *no_slip, *heat, eos)?
+                wall_ghost(&owner, &geom, *no_slip, *heat, eos, p_floor)?
             }
             (
                 BcHandler::Farfield,
@@ -195,14 +224,18 @@ fn apply_patch_compressible(
                     total_pressure,
                     total_temperature,
                     velocity_direction,
+                    supersonic,
                     ..
                 },
             ) => inlet_ghost(
                 &owner,
+                &geom,
+                *supersonic,
+                *velocity_direction,
+                freestream,
+                eos,
                 *total_pressure,
                 *total_temperature,
-                *velocity_direction,
-                eos,
             )?,
             (
                 BcHandler::TurbulentInlet,
@@ -214,18 +247,23 @@ fn apply_patch_compressible(
                 },
             ) => inlet_ghost(
                 &owner,
+                &geom,
+                false,
+                *velocity_direction,
+                freestream,
+                eos,
                 *total_pressure,
                 *total_temperature,
-                *velocity_direction,
-                eos,
             )?,
             (
                 BcHandler::Outlet,
                 BoundaryKind::Outlet {
                     static_pressure, ..
                 },
-            ) => outlet_ghost(&owner, *static_pressure, eos)?,
-            (BcHandler::Symmetry, BoundaryKind::Symmetry) => symmetry_ghost(&owner, &geom, eos)?,
+            ) => outlet_ghost(&owner, *static_pressure, eos, p_floor)?,
+            (BcHandler::Symmetry, BoundaryKind::Symmetry) => {
+                symmetry_ghost(&owner, &geom, eos, p_floor)?
+            }
             (BcHandler::Periodic, BoundaryKind::Periodic { .. }) => {
                 GhostCellState { conserved: owner }
             }
@@ -273,9 +311,83 @@ mod tests {
             spacing: 0.5,
             area: 1.0,
         };
-        let ghost = wall_ghost(&owner, &geom, true, WallHeat::Adiabatic, &eos).expect("ghost");
+        let p_floor = crate::field::positivity_pressure_floor(params.pressure);
+        let ghost =
+            wall_ghost(&owner, &geom, true, WallHeat::Adiabatic, &eos, p_floor).expect("ghost");
         let prim = crate::field::primitive_from_conserved(&eos, &ghost.conserved).expect("prim");
         assert!(prim.velocity.iter().all(|&v| v.abs() < 1.0e-12));
+    }
+
+    #[test]
+    fn supersonic_inlet_ghost_uses_freestream_static_state() {
+        let eos = IdealGasEoS::AIR_STANDARD;
+        let fs = FreestreamParams {
+            mach: 8.0,
+            pressure: 714.0,
+            temperature: 139.0,
+            ..FreestreamParams::default()
+        };
+        let owner = ConservedFields::from_freestream(1, &eos, &fs)
+            .expect("fields")
+            .cell_state(0)
+            .expect("cell");
+        let geom = FaceGeometry3d {
+            normal: Vector3::new(1.0, 0.0, 0.0),
+            spacing: 0.5,
+            area: 1.0,
+        };
+        let ghost = inlet_ghost(
+            &owner,
+            &geom,
+            true,
+            [1.0, 0.0, 0.0],
+            &fs,
+            &eos,
+            1.0e9,
+            1.0e4,
+        )
+        .expect("ghost");
+        let prim = crate::field::primitive_from_conserved(&eos, &ghost.conserved).expect("prim");
+        let ref_prim = eos
+            .freestream_primitive(fs.mach, fs.pressure, fs.temperature, [1.0, 0.0, 0.0])
+            .expect("ref");
+        assert!((prim.density - ref_prim.density).abs() / ref_prim.density < 1.0e-6);
+    }
+
+    #[test]
+    fn subsonic_inlet_ghost_ignores_high_mach_freestream() {
+        let eos = IdealGasEoS::AIR_STANDARD;
+        let fs = FreestreamParams {
+            mach: 8.0,
+            pressure: 714.0,
+            temperature: 139.0,
+            ..FreestreamParams::default()
+        };
+        let owner = ConservedFields::from_freestream(1, &eos, &fs)
+            .expect("fields")
+            .cell_state(0)
+            .expect("cell");
+        let geom = FaceGeometry3d {
+            normal: Vector3::new(1.0, 0.0, 0.0),
+            spacing: 0.5,
+            area: 1.0,
+        };
+        let ghost = inlet_ghost(
+            &owner,
+            &geom,
+            false,
+            [1.0, 0.0, 0.0],
+            &fs,
+            &eos,
+            200_000.0,
+            300.0,
+        )
+        .expect("ghost");
+        let prim = crate::field::primitive_from_conserved(&eos, &ghost.conserved).expect("prim");
+        let ref_prim = eos
+            .freestream_primitive(fs.mach, fs.pressure, fs.temperature, [1.0, 0.0, 0.0])
+            .expect("ref");
+        assert!(prim.density > ref_prim.density * 10.0);
     }
 
     #[test]

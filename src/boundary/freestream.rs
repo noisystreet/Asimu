@@ -21,10 +21,11 @@ impl BoundarySet {
                     alpha: fs.alpha,
                     beta: fs.beta,
                 },
-                BoundaryKind::Inlet { .. } => BoundaryKind::Inlet {
+                BoundaryKind::Inlet { supersonic, .. } => BoundaryKind::Inlet {
                     total_pressure,
                     total_temperature,
                     velocity_direction: direction,
+                    supersonic: *supersonic,
                     mach: fs.mach,
                 },
                 BoundaryKind::TurbulentInlet {
@@ -64,6 +65,7 @@ mod tests {
                     total_pressure: 101_325.0,
                     total_temperature: 300.0,
                     velocity_direction: [1.0, 0.0, 0.0],
+                    supersonic: false,
                     mach: 0.0,
                 },
             ),
@@ -91,6 +93,7 @@ mod tests {
             BoundaryKind::Inlet {
                 total_pressure,
                 total_temperature,
+                supersonic: false,
                 ..
             } if *total_pressure > 100_000.0 && *total_temperature > 3000.0
         ));
@@ -99,6 +102,35 @@ mod tests {
             BoundaryKind::Outlet {
                 static_pressure: 1000.0,
                 supersonic: false,
+            }
+        ));
+    }
+
+    #[test]
+    fn apply_freestream_preserves_supersonic_inlet_flag() {
+        let mut set = BoundarySet::new(vec![BoundaryPatch::new(
+            "in",
+            vec![],
+            BoundaryKind::Inlet {
+                total_pressure: 101_325.0,
+                total_temperature: 300.0,
+                velocity_direction: [1.0, 0.0, 0.0],
+                supersonic: true,
+                mach: 0.0,
+            },
+        )]);
+        let eos = IdealGasEoS::AIR_STANDARD;
+        let fs = FreestreamParams {
+            mach: 8.0,
+            ..FreestreamParams::default()
+        };
+        set.apply_freestream(&fs, &eos).expect("apply");
+        assert!(matches!(
+            set.patches()[0].kind,
+            BoundaryKind::Inlet {
+                supersonic: true,
+                mach: 8.0,
+                ..
             }
         ));
     }

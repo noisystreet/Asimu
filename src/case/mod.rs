@@ -53,6 +53,7 @@ pub fn run_case(case: &CaseSpec) -> Result<CaseRunResult> {
         ?kind,
         "开始算例编排"
     );
+    case.boundary.log_patches();
     match kind {
         CaseRunKind::Diffusion1dSteady => diffusion::run(case),
         CaseRunKind::Sod1dTransient => sod::run(case),
@@ -262,8 +263,9 @@ mod tests {
                 fields_step.density.values()[i].is_finite()
                     && fields_step.density.values()[i] > 0.0
             );
+            let p_floor = crate::field::positivity_pressure_floor(fs.pressure);
             let _ = fields_step
-                .primitive_at(i, &eos)
+                .primitive_at(i, &eos, p_floor)
                 .expect("primitive after step1");
         }
     }

@@ -37,6 +37,7 @@ fn report_lists_boundary_patches() {
             total_pressure: 200_000.0,
             total_temperature: 300.0,
             velocity_direction: [1.0, 0.0, 0.0],
+            supersonic: true,
             mach: 2.0,
         },
     )]);

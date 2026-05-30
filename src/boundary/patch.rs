@@ -1,5 +1,7 @@
 //! 边界 patch 数据（CFL3D 每面分段 BC 的 asimu 等价物）。
 
+use tracing::info;
+
 use crate::core::FaceId;
 
 use super::kind::BoundaryKind;
@@ -54,5 +56,28 @@ impl BoundarySet {
 
     pub fn find(&self, name: &str) -> Option<&BoundaryPatch> {
         self.patches.iter().find(|p| p.name == name)
+    }
+
+    /// 将各边界 patch 名称与边界条件写入日志（`info` 级别）。
+    pub fn log_patches(&self) {
+        let patches = self.patches();
+        if patches.is_empty() {
+            info!("边界条件：无 patch");
+            return;
+        }
+        info!(
+            count = patches.len(),
+            "边界条件：{} 个 patch",
+            patches.len()
+        );
+        for patch in patches {
+            info!(
+                patch = %patch.name,
+                faces = patch.face_ids.len(),
+                kind = %patch.kind.summary_label(),
+                detail = %patch.kind.detail_label(),
+                "边界 patch"
+            );
+        }
     }
 }

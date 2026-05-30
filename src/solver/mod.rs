@@ -23,8 +23,8 @@ pub use sod::{
 pub use state::SolverState;
 pub use time::{
     CflSchedule, Rk4Storage, RungeKutta4Config, RungeKutta4Integrator, SteadyStateIntegrator,
-    TimeIntegrator, TimeMode, TimeStepInfo, local_dt_cfl, min_positive_dt, rk4_step,
-    rk4_step_local,
+    TimeIntegrationScheme, TimeIntegrator, TimeMode, TimeStepInfo, euler_step, euler_step_local,
+    local_dt_cfl, min_positive_dt, rk4_step, rk4_step_local,
 };
 
 /// 求解结果摘要。

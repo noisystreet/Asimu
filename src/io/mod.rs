@@ -8,6 +8,7 @@ mod limits;
 mod mesh_report;
 mod residual;
 mod restart;
+mod vertex_field;
 
 pub use case::{
     CaseMesh, CaseOutputConfig, CaseSpec, CaseTimeConfig, CaseTimeMode, SodCaseConfig, load_case,
@@ -40,12 +41,16 @@ pub use mesh_report::report_cgns_zone;
 pub use mesh_report::report_vts;
 
 #[cfg(feature = "io-vtk")]
-pub use vtk::{VtmBlock, VtsLoadResult, load_vts, write_vtm, write_vts};
+pub use vtk::{
+    VtmBlock, VtsLoadResult, load_vts, write_flow_vts, write_flow_vtu, write_vtm, write_vts,
+};
 
+#[cfg(feature = "io-cgns-vts")]
+pub use cgns::export_cgns_to_vtm;
 #[cfg(feature = "io-cgns")]
 pub use cgns::{
-    CgnsLoadResult, CgnsMultiLoadResult, CgnsZoneInfo, export_cgns_to_vtm, export_cgns_to_vts,
-    export_cgns_zone_to_vts, list_cgns_zones, load_cgns_all_zones, load_cgns_zone, write_flow_cgns,
+    CgnsLoadResult, CgnsMultiLoadResult, CgnsZoneInfo, export_cgns_to_vts, export_cgns_zone_to_vts,
+    list_cgns_zones, load_cgns_all_zones, load_cgns_zone, write_flow_cgns,
 };
 
 /// 从占位 case 文件加载网格元数据。
