@@ -173,12 +173,30 @@ API：`CaseSpec::build_initial_fields()` / `initial_scalar("phi")`。
 
 ```toml
 [time]
-mode = "steady"       # steady | transient（v0.4 transient）
+mode = "steady"       # steady | transient
 # dt = 1.0e-3
-# cfl_max = 0.5
+# cfl = 0.4
+# final_time = 0.2
+# max_steps = 1000
 ```
 
-v0.2 仅实现 `steady`；`transient` 解析应返回明确配置错误。
+| `mode` | 说明 |
+|--------|------|
+| `steady` | 稳态（v0.2 扩散） |
+| `transient` | 瞬态；须配合 `[sod]` 或可压缩求解器 |
+
+含 `[sod]` 段时若省略 `[time]`，默认 `mode = "transient"`。
+
+### 6.1 `[sod]`（Sod 激波管 benchmark）
+
+```toml
+[sod]
+diaphragm = 0.5
+final_time = 0.2
+cfl = 0.4
+```
+
+须配合 `structured_1d` 网格与 `[physics] gamma/gas_constant`。CLI：`asimu --case tests/benchmarks/sod_1d/case.toml`。
 
 ---
 

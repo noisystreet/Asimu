@@ -63,6 +63,44 @@ pub struct CaseSpec {
     pub freestream: Option<FreestreamParams>,
     pub restart: Option<PathBuf>,
     pub solver: SolverConfig,
+    pub time: CaseTimeConfig,
+    pub sod: Option<SodCaseConfig>,
+}
+
+/// 算例时间推进配置（`[time]`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaseTimeMode {
+    Steady,
+    Transient,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CaseTimeConfig {
+    pub mode: CaseTimeMode,
+    pub dt: Option<Real>,
+    pub cfl: Option<Real>,
+    pub final_time: Option<Real>,
+    pub max_steps: Option<u64>,
+}
+
+impl Default for CaseTimeConfig {
+    fn default() -> Self {
+        Self {
+            mode: CaseTimeMode::Steady,
+            dt: None,
+            cfl: None,
+            final_time: None,
+            max_steps: None,
+        }
+    }
+}
+
+/// Sod 激波管专用段（`[sod]`）。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SodCaseConfig {
+    pub diaphragm: Real,
+    pub final_time: Real,
+    pub cfl: Real,
 }
 
 impl CaseSpec {
@@ -110,12 +148,15 @@ struct CaseToml {
     freestream: Option<FreestreamToml>,
     restart: Option<RestartToml>,
     solver: Option<SolverToml>,
+    time: Option<TimeToml>,
+    sod: Option<SodToml>,
 }
 
 #[derive(Debug, Deserialize)]
 struct MeshToml {
     kind: String,
     cells: Option<usize>,
+    ncells: Option<usize>,
     length: Option<Real>,
     origin: Option<Real>,
     nx: Option<usize>,
@@ -190,6 +231,23 @@ struct SolverToml {
     tolerance: Real,
 }
 
+#[derive(Debug, Deserialize)]
+struct TimeToml {
+    mode: Option<String>,
+    dt: Option<Real>,
+    cfl: Option<Real>,
+    cfl_max: Option<Real>,
+    final_time: Option<Real>,
+    max_steps: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SodToml {
+    diaphragm: Option<Real>,
+    final_time: Option<Real>,
+    cfl: Option<Real>,
+}
+
 /// 从字符串解析算例（测试与集成用）。
 pub fn parse_case_str(content: &str) -> Result<CaseSpec> {
     parse_case_toml(content, None)
@@ -225,6 +283,8 @@ fn parse_case_toml(content: &str, case_dir: Option<&Path>) -> Result<CaseSpec> {
             max_iterations: 1000,
             tolerance: 1.0e-8,
         });
+    let time = parse_time_config(raw.time.as_ref(), raw.sod.is_some())?;
+    let sod = raw.sod.as_ref().map(parse_sod_config);
 
     Ok(CaseSpec {
         name: raw.name,
@@ -237,6 +297,8 @@ fn parse_case_toml(content: &str, case_dir: Option<&Path>) -> Result<CaseSpec> {
         freestream,
         restart,
         solver,
+        time,
+        sod,
     })
 }
 
@@ -264,9 +326,9 @@ fn parse_physics(raw: &PhysicsToml) -> Result<PhysicsConfig> {
 fn parse_mesh(raw: &MeshToml, name: &str, case_dir: Option<&Path>) -> Result<CaseMesh> {
     match raw.kind.as_str() {
         "structured_1d" => {
-            let cells = raw
-                .cells
-                .ok_or_else(|| AsimuError::Config("structured_1d 缺少 cells".to_string()))?;
+            let cells = raw.cells.or(raw.ncells).ok_or_else(|| {
+                AsimuError::Config("structured_1d 缺少 cells（或 ncells）".to_string())
+            })?;
             let mesh = StructuredMesh1d::new(
                 name,
                 cells,
@@ -406,6 +468,43 @@ fn resolve_boundary_set(
     Ok(BoundarySet::new(patches))
 }
 
+fn parse_time_config(raw: Option<&TimeToml>, has_sod: bool) -> Result<CaseTimeConfig> {
+    let Some(raw) = raw else {
+        return Ok(if has_sod {
+            CaseTimeConfig {
+                mode: CaseTimeMode::Transient,
+                ..CaseTimeConfig::default()
+            }
+        } else {
+            CaseTimeConfig::default()
+        });
+    };
+    let mode = match raw.mode.as_deref().unwrap_or("steady") {
+        "steady" => CaseTimeMode::Steady,
+        "transient" => CaseTimeMode::Transient,
+        other => {
+            return Err(AsimuError::Config(format!(
+                "不支持的 time.mode \"{other}\""
+            )));
+        }
+    };
+    Ok(CaseTimeConfig {
+        mode,
+        dt: raw.dt,
+        cfl: raw.cfl.or(raw.cfl_max),
+        final_time: raw.final_time,
+        max_steps: raw.max_steps,
+    })
+}
+
+fn parse_sod_config(raw: &SodToml) -> SodCaseConfig {
+    SodCaseConfig {
+        diaphragm: raw.diaphragm.unwrap_or(0.5),
+        final_time: raw.final_time.unwrap_or(0.2),
+        cfl: raw.cfl.unwrap_or(0.4),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -465,6 +564,17 @@ static_pressure = 100000.0
         assert_eq!(case.boundary.patches().len(), 6);
         let fields = case.build_conserved_fields().expect("ic");
         assert_eq!(fields.num_cells(), 64);
+    }
+
+    #[test]
+    fn parses_sod_benchmark_case() {
+        let content = include_str!("../../tests/benchmarks/sod_1d/case.toml");
+        let case = parse_case_toml(content, None).expect("parse");
+        assert_eq!(case.benchmark_id.as_deref(), Some("sod_1d"));
+        assert_eq!(case.mesh.as_1d().expect("1d").num_cells(), 100);
+        assert!(case.is_compressible());
+        assert!(case.sod.is_some());
+        assert_eq!(case.time.mode, CaseTimeMode::Transient);
     }
 
     #[test]

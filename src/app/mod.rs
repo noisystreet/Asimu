@@ -1,37 +1,35 @@
 //! CLI 应用编排层。
 //!
 //! 负责配置加载、日志初始化与算例驱动；**不属于**稳定数值 library API。
-//! v0.3+ 可演进为 `case` 模块（见 `docs/ARCHITECTURE.md`）。
+//! v0.3+ 算例编排见 [`crate::case`]（见 `docs/ARCHITECTURE.md`）。
 
 use tracing::info;
 
+use crate::case;
 use crate::config::{AppConfig, Cli};
-use crate::error::Result;
-use crate::mesh::Mesh;
-use crate::solver::Solver;
+use crate::error::{AsimuError, Result};
 
-/// CLI 应用主流程：加载配置 → 构建占位网格 → 运行求解器。
+/// CLI 应用主流程：加载配置 → 运行算例或提示用法。
 pub fn run(cli: Cli) -> Result<()> {
+    let case_path = cli.case.clone();
     let config = cli.load_config()?;
     crate::config::init_tracing(&config.logging.level)?;
 
+    info!(version = env!("CARGO_PKG_VERSION"), "asimu 启动");
+
+    let Some(case_path) = case_path else {
+        return Err(AsimuError::Config(
+            "请指定算例：asimu --case path/to/case.toml".to_string(),
+        ));
+    };
+
+    let result = case::run_case_path(&case_path)?;
     info!(
-        version = env!("CARGO_PKG_VERSION"),
-        max_iterations = config.solver.max_iterations,
-        "asimu 启动"
+        name = %result.name,
+        benchmark_id = ?result.benchmark_id,
+        summary = %result.summary,
+        "算例完成"
     );
-
-    let mesh = Mesh::new("demo", 64)?;
-    let solver = Solver::new(config.solver);
-    let result = solver.run(&mesh)?;
-
-    info!(
-        iterations = result.iterations,
-        residual = result.residual,
-        converged = result.converged,
-        "求解完成"
-    );
-
     Ok(())
 }
 
@@ -39,4 +37,22 @@ pub fn run(cli: Cli) -> Result<()> {
 #[must_use]
 pub fn demo_config() -> AppConfig {
     AppConfig::default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn run_diffusion_case_via_cli_path() {
+        let cli = Cli {
+            config: None,
+            max_iterations: None,
+            tolerance: None,
+            log_level: Some("warn".to_string()),
+            case: Some(Path::new("tests/benchmarks/1d_diffusion_analytical/case.toml").into()),
+        };
+        run(cli).expect("run");
+    }
 }

@@ -13,7 +13,15 @@
 
 ## 运行
 
-集成测试 `tests/sod_benchmark.rs` 调用 `solver::run_sod_benchmark`，对比 \(t=0.2\) 时单元中心密度。
+```bash
+# CLI（与集成测试同一路径）
+asimu --case tests/benchmarks/sod_1d/case.toml
+
+# 或
+make run-case CASE=tests/benchmarks/sod_1d/case.toml
+```
+
+集成测试 `tests/sod_benchmark.rs` / `tests/case_run.rs` 调用 `case::run_case_path` 或 `solver::run_sod_benchmark`。
 
 精确解采样使用 **相对隔膜坐标** \(x' = x - x_{\mathrm{diaphragm}}\)（Riemann 求解器默认间断位于 \(x'=0\)）。
 

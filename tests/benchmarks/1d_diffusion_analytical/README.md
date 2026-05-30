@@ -20,12 +20,12 @@
 1. 解析解直接由式 (1) 积分得到（见 [docs/theory/fvm_diffusion.md](../../docs/theory/fvm_diffusion.md)）。
 2. Patankar (1980) Ch. 5 — FVM 离散参考。
 
-## 运行（规划）
+## 运行
 
 ```bash
-# v0.2+ 实现后
-cargo test --test benchmark_1d_diffusion -- --ignored
-# 或 make bench
+asimu --case tests/benchmarks/1d_diffusion_analytical/case.toml
+cargo test --test case_run
+cargo test --test boundary_1d_diffusion
 ```
 
 ## 文件

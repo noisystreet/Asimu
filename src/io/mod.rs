@@ -7,7 +7,9 @@ mod case;
 mod limits;
 mod restart;
 
-pub use case::{CaseMesh, CaseSpec, load_case, parse_case_str};
+pub use case::{
+    CaseMesh, CaseSpec, CaseTimeConfig, CaseTimeMode, SodCaseConfig, load_case, parse_case_str,
+};
 pub use restart::{load_conserved_fields, write_conserved_fields};
 
 #[cfg(feature = "io-cgns")]

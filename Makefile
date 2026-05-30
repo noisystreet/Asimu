@@ -15,6 +15,10 @@ build:
 run: build
 	$(CARGO) run $(CARGO_FLAGS) --
 
+run-case:
+	@test -n "$(CASE)" || { echo "用法: make run-case CASE=tests/benchmarks/sod_1d/case.toml"; exit 1; }
+	$(CARGO) run $(CARGO_FLAGS) -- --case $(CASE)
+
 test:
 	$(CARGO) test $(CARGO_FLAGS)
 

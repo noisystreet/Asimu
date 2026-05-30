@@ -63,6 +63,10 @@ pub struct Cli {
     /// 日志级别: error | warn | info | debug | trace
     #[arg(long, env = "ASIMU_LOG_LEVEL")]
     pub log_level: Option<String>,
+
+    /// 算例文件（TOML）
+    #[arg(long, env = "ASIMU_CASE", value_name = "CASE_TOML")]
+    pub case: Option<PathBuf>,
 }
 
 impl Cli {
@@ -134,6 +138,7 @@ mod tests {
             max_iterations: Some(42),
             tolerance: Some(1.0e-4),
             log_level: Some("debug".to_string()),
+            case: None,
         };
         let config = cli.load_config().expect("load config");
         assert_eq!(config.solver.max_iterations, 42);
