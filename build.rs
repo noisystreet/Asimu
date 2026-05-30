@@ -5,5 +5,9 @@ fn main() {
         return;
     }
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_IO_CGNS");
+    println!("cargo:rerun-if-changed=src/io/cgns/cgns_shim.c");
+    cc::Build::new()
+        .file("src/io/cgns/cgns_shim.c")
+        .compile("asimu_cgns_shim");
     println!("cargo:rustc-link-lib=cgns");
 }

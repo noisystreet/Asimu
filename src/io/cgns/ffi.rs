@@ -9,7 +9,8 @@ pub const CG_OK: c_int = 0;
 
 pub const ZONE_STRUCTURED: ZoneType = 2;
 pub const REAL_DOUBLE: DataType = 4;
-pub const BC_POINT_RANGE: PointSetType = 2;
+/// CGNS 3.4 `PointSetType_t::PointRange`（旧版枚举值为 2）。
+pub const BC_POINT_RANGE: PointSetType = 4;
 
 pub type ZoneType = c_int;
 pub type DataType = c_int;
@@ -38,6 +39,23 @@ unsafe extern "C" {
         rmax: *const CgSize,
         data: *mut c_void,
     ) -> c_int;
+    pub fn cg_nfamilies(fn_: c_int, base: c_int, nfamilies: *mut c_int) -> c_int;
+    pub fn cg_family_read(
+        fn_: c_int,
+        base: c_int,
+        family: c_int,
+        family_name: *mut c_char,
+        nbocos: *mut c_int,
+        ngeos: *mut c_int,
+    ) -> c_int;
+    pub fn cg_fambc_read(
+        fn_: c_int,
+        base: c_int,
+        family: c_int,
+        bc: c_int,
+        fambc_name: *mut c_char,
+        bocotype: *mut c_int,
+    ) -> c_int;
     pub fn cg_nbocos(fn_: c_int, base: c_int, zone: c_int, nbocos: *mut c_int) -> c_int;
     pub fn cg_boco_info(
         fn_: c_int,
@@ -62,4 +80,11 @@ unsafe extern "C" {
         normal_list: *mut c_void,
     ) -> c_int;
     pub fn cg_get_error() -> *const c_char;
+    pub fn asimu_cg_read_boco_family_name(
+        fn_: c_int,
+        base: c_int,
+        zone: c_int,
+        boco: c_int,
+        family_name: *mut c_char,
+    ) -> c_int;
 }

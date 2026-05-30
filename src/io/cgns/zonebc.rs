@@ -5,7 +5,7 @@ use crate::core::FaceId;
 use crate::error::{AsimuError, Result};
 use crate::mesh::{LogicalFace3d, StructuredMesh3d};
 
-/// CGNS PointRange 为 1-based 索引。
+/// CGNS PointRange 为 1-based 顶点索引，顺序 `(imin,jmin,kmin,imax,jmax,kmax)`。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CgnsPointRange {
     pub imin: i32,

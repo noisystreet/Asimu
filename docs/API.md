@@ -75,6 +75,9 @@ let result = solver.run(&mesh)?;
 | `Mesh` | 网格元数据（`name`, `cell_count`） |
 | `StructuredMesh1d` | 1D 均匀网格 + `BoundaryMesh` |
 | `BoundaryMesh` | 逻辑边界名 → 面 ID |
+| `MeshDiagnostics` | 坐标范围、间距统计、简单警告 |
+| `structured_mesh_diagnostics(&StructuredMesh) -> MeshDiagnostics` | 2D/3D 结构化网格诊断 |
+| `mesh1d_diagnostics` / `mesh3d_diagnostics` | 1D / 3D 专用诊断 |
 | `Mesh::new(name, cell_count) -> Result<Mesh>` | 构造；`cell_count == 0` 返回错误 |
 
 ### `asimu::solver`
@@ -120,6 +123,15 @@ let result = solver.run(&mesh)?;
 | `export_cgns_zone_to_vts(input, zone, output) -> Result<CgnsLoadResult>` | CGNS zone → VTS |
 
 见 [adr/0008-cgns-io.md](adr/0008-cgns-io.md)。
+
+#### 网格诊断报告
+
+| 函数 / 类型 | 说明 |
+|-------------|------|
+| `MeshReport` | 可读摘要（`Display`）：范围、间距、BC patch |
+| `report_structured_mesh` / `report_cgns_zone` / `report_vts` / `report_case_mesh` | 由网格或读入结果生成报告 |
+
+CLI 示例：`cargo run --example mesh_probe --features io-cgns-vts -- mesh.cgns`
 
 #### Case 文件格式（临时）
 

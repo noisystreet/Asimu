@@ -29,6 +29,9 @@ io-vtk = ["dep:quick-xml", "dep:base64", "dep:flate2"]
 io-cgns = []
 io-cgns-vts = ["io-cgns", "io-vtk"]
 
+[build-dependencies]
+cc = "1"
+
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"
@@ -40,6 +43,10 @@ required-features = ["io-cgns-vts"]
 [[example]]
 name = "probe_vts"
 required-features = ["io-vtk"]
+
+[[example]]
+name = "mesh_probe"
+required-features = ["io-cgns-vts"]
 
 [profile.release]
 lto = true

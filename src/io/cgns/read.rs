@@ -1,17 +1,19 @@
 //! CGNS 结构化 zone 读取。
 
+use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::path::Path;
 use std::sync::Mutex;
 
-use crate::boundary::BoundarySet;
+use crate::boundary::{BoundarySet, cgns_bc};
 use crate::error::{AsimuError, Result};
 use crate::io::limits::{io_error, validate_cell_count, validate_file_size, validate_input_path};
 use crate::mesh::{StructuredMesh, StructuredMesh3d};
 
 use super::ffi::{
-    BC_POINT_RANGE, CG_MODE_READ, CG_OK, CgSize, REAL_DOUBLE, ZONE_STRUCTURED, cg_boco_info,
-    cg_boco_read, cg_close, cg_coord_read, cg_get_error, cg_nbocos, cg_nzones, cg_open,
+    BC_POINT_RANGE, CG_MODE_READ, CG_OK, CgSize, REAL_DOUBLE, ZONE_STRUCTURED,
+    asimu_cg_read_boco_family_name, cg_boco_info, cg_boco_read, cg_close, cg_coord_read,
+    cg_fambc_read, cg_family_read, cg_get_error, cg_nbocos, cg_nfamilies, cg_nzones, cg_open,
     cg_zone_read, cg_zone_type,
 };
 use super::zonebc::{CgnsPointRange, boundary_set_from_cgns, patch_from_cgns};
@@ -151,12 +153,95 @@ impl CgnsFile {
         Ok((points_x, points_y, points_z))
     }
 
+    fn read_family_bc_map(&self, base: i32) -> Result<HashMap<String, i32>> {
+        let mut nfamilies = 0;
+        check_cg(unsafe { cg_nfamilies(self.index, base, &mut nfamilies) })?;
+        let mut map = HashMap::with_capacity(nfamilies as usize);
+        for family in 1..=nfamilies {
+            let mut name = [0i8; 33];
+            let mut nbocos = 0;
+            let mut ngeos = 0;
+            check_cg(unsafe {
+                cg_family_read(
+                    self.index,
+                    base,
+                    family,
+                    name.as_mut_ptr(),
+                    &mut nbocos,
+                    &mut ngeos,
+                )
+            })?;
+            if nbocos < 1 {
+                continue;
+            }
+            let mut fambc_name = [0i8; 33];
+            let mut bctype = 0;
+            check_cg(unsafe {
+                cg_fambc_read(
+                    self.index,
+                    base,
+                    family,
+                    1,
+                    fambc_name.as_mut_ptr(),
+                    &mut bctype,
+                )
+            })?;
+            map.insert(c_str_to_string(&name)?, bctype);
+        }
+        Ok(map)
+    }
+
+    fn resolve_boco_type(
+        &self,
+        base: i32,
+        zone: i32,
+        boco: i32,
+        bocotype: i32,
+        families: &HashMap<String, i32>,
+    ) -> Result<i32> {
+        if bocotype != cgns_bc::BC_FAMILY_SPECIFIED {
+            return Ok(bocotype);
+        }
+        let mut family_name = [0i8; 33];
+        check_cg(unsafe {
+            asimu_cg_read_boco_family_name(self.index, base, zone, boco, family_name.as_mut_ptr())
+        })?;
+        let family = c_str_to_string(&family_name)?;
+        families
+            .get(&family)
+            .copied()
+            .ok_or_else(|| AsimuError::Boundary(format!("CGNS BC 引用未知 Family \"{family}\"")))
+    }
+
+    fn read_boco_point_range(&self, base: i32, zone: i32, boco: i32) -> Result<CgnsPointRange> {
+        let mut pnts = [0i32; 6];
+        check_cg(unsafe {
+            cg_boco_read(
+                self.index,
+                base,
+                zone,
+                boco,
+                pnts.as_mut_ptr().cast(),
+                std::ptr::null_mut(),
+            )
+        })?;
+        Ok(CgnsPointRange {
+            imin: pnts[0],
+            imax: pnts[3],
+            jmin: pnts[1],
+            jmax: pnts[4],
+            kmin: pnts[2],
+            kmax: pnts[5],
+        })
+    }
+
     fn read_zone_bocos(
         &self,
         base: i32,
         zone: i32,
         mesh: &StructuredMesh3d,
     ) -> Result<BoundarySet> {
+        let families = self.read_family_bc_map(base)?;
         let mut nbocos = 0;
         check_cg(unsafe { cg_nbocos(self.index, base, zone, &mut nbocos) })?;
         let mut patches = Vec::with_capacity(nbocos as usize);
@@ -186,31 +271,13 @@ impl CgnsFile {
                 )
             };
             check_cg(err)?;
-            if ptset_type != BC_POINT_RANGE || npnts < 6 {
+            if ptset_type != BC_POINT_RANGE {
                 continue;
             }
-            let mut pnts = vec![0i32; npnts as usize];
-            let err = unsafe {
-                cg_boco_read(
-                    self.index,
-                    base,
-                    zone,
-                    boco,
-                    pnts.as_mut_ptr().cast(),
-                    std::ptr::null_mut(),
-                )
-            };
-            check_cg(err)?;
-            let range = CgnsPointRange {
-                imin: pnts[0],
-                imax: pnts[1],
-                jmin: pnts[2],
-                jmax: pnts[3],
-                kmin: pnts[4],
-                kmax: pnts[5],
-            };
+            let range = self.read_boco_point_range(base, zone, boco)?;
             let boco_name = c_str_to_string(&name)?;
-            patches.push(patch_from_cgns(boco_name, bocotype, range, mesh)?);
+            let resolved = self.resolve_boco_type(base, zone, boco, bocotype, &families)?;
+            patches.push(patch_from_cgns(boco_name, resolved, range, mesh)?);
         }
         Ok(boundary_set_from_cgns(patches))
     }
@@ -466,6 +533,13 @@ mod tests {
             })
     }
 
+    fn cylinder_cgns_path() -> Option<PathBuf> {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .map(|dir| dir.join("cylinder.cgns"))
+            .filter(|p| p.is_file())
+    }
+
     #[test]
     fn lists_dlr_f6_zones_when_present() {
         let Some(path) = dlr_f6_path() else {
@@ -492,6 +566,95 @@ mod tests {
         assert_eq!(mesh.ny, 24);
         assert_eq!(mesh.nz, 48);
         assert_eq!(mesh.num_nodes(), 17 * 25 * 49);
+    }
+
+    #[test]
+    fn loads_dlr_f6_zone1_boundaries_when_present() {
+        use crate::boundary::BoundaryKind;
+
+        let Some(path) = dlr_f6_path() else {
+            return;
+        };
+        let loaded = load_cgns_zone(&path, 1).expect("load zone 1");
+        assert_eq!(loaded.boundary.patches().len(), 4);
+        assert!(
+            loaded
+                .boundary
+                .patches()
+                .iter()
+                .all(|patch| !patch.face_ids.is_empty())
+        );
+        assert!(
+            loaded
+                .boundary
+                .patches()
+                .iter()
+                .any(|patch| { matches!(patch.kind, BoundaryKind::Farfield { .. }) })
+        );
+    }
+
+    #[test]
+    fn loads_cylinder_cgns_boundaries_when_present() {
+        use crate::boundary::BoundaryKind;
+
+        let Some(path) = cylinder_cgns_path() else {
+            return;
+        };
+        let loaded = load_cgns_zone(&path, 1).expect("load cylinder");
+        assert_eq!(loaded.zone.name, "blk-1");
+        assert_eq!(loaded.boundary.patches().len(), 9);
+        assert!(
+            loaded
+                .boundary
+                .patches()
+                .iter()
+                .all(|patch| !patch.face_ids.is_empty())
+        );
+        assert_eq!(
+            loaded
+                .boundary
+                .patches()
+                .iter()
+                .map(|patch| patch.face_ids.len())
+                .sum::<usize>(),
+            20_700
+        );
+        assert_eq!(
+            loaded
+                .boundary
+                .patches()
+                .iter()
+                .filter(|patch| matches!(patch.kind, BoundaryKind::Symmetry))
+                .count(),
+            3
+        );
+        assert_eq!(
+            loaded
+                .boundary
+                .patches()
+                .iter()
+                .filter(|patch| matches!(patch.kind, BoundaryKind::Inlet { .. }))
+                .count(),
+            2
+        );
+        assert_eq!(
+            loaded
+                .boundary
+                .patches()
+                .iter()
+                .filter(|patch| matches!(patch.kind, BoundaryKind::Outlet { .. }))
+                .count(),
+            2
+        );
+        assert_eq!(
+            loaded
+                .boundary
+                .patches()
+                .iter()
+                .filter(|patch| matches!(patch.kind, BoundaryKind::Wall { .. }))
+                .count(),
+            2
+        );
     }
 
     #[cfg(feature = "io-vtk")]

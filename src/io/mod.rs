@@ -5,6 +5,7 @@
 
 mod case;
 mod limits;
+mod mesh_report;
 mod restart;
 
 pub use case::{
@@ -24,6 +25,16 @@ use crate::error::{AsimuError, Result};
 use crate::mesh::Mesh;
 
 pub use limits::{validate_cell_count, validate_file_size, validate_input_path};
+pub use mesh_report::{
+    BoundaryPatchSummary, MeshReport, report_case_mesh, report_mesh1d, report_mesh3d,
+    report_structured_mesh,
+};
+
+#[cfg(feature = "io-cgns")]
+pub use mesh_report::report_cgns_zone;
+
+#[cfg(feature = "io-vtk")]
+pub use mesh_report::report_vts;
 
 #[cfg(feature = "io-vtk")]
 pub use vtk::{VtmBlock, VtsLoadResult, load_vts, write_vtm, write_vts};

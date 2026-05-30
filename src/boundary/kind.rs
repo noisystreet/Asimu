@@ -165,33 +165,7 @@ impl BoundaryKind {
 
     /// 由 CGNS `BCType_t` 映射（见 `io::cgns::zonebc`）。
     pub fn from_cgns_bctype(bctype: i32, name: &str) -> Self {
-        match bctype {
-            x if x == cgns_bc::BC_WALL => Self::Wall {
-                no_slip: true,
-                heat: WallHeat::Adiabatic,
-            },
-            x if x == cgns_bc::BC_FARFIELD => Self::Farfield {
-                mach: 0.0,
-                pressure: 101_325.0,
-                temperature: 288.15,
-                alpha: 0.0,
-                beta: 0.0,
-            },
-            x if x == cgns_bc::BC_SYMMETRY_PLANE => Self::Symmetry,
-            x if x == cgns_bc::BC_INFLOW => Self::Inlet {
-                total_pressure: 101_325.0,
-                total_temperature: 300.0,
-                velocity_direction: [1.0, 0.0, 0.0],
-            },
-            x if x == cgns_bc::BC_OUTFLOW => Self::Outlet {
-                static_pressure: 101_325.0,
-            },
-            _ => Self::Wall {
-                no_slip: true,
-                heat: WallHeat::Adiabatic,
-            },
-        }
-        .with_cgns_name_note(name)
+        map_cgns_bctype(bctype).with_cgns_name_note(name)
     }
 
     fn with_cgns_name_note(self, _name: &str) -> Self {
@@ -199,11 +173,95 @@ impl BoundaryKind {
     }
 }
 
+fn map_cgns_bctype(bctype: i32) -> BoundaryKind {
+    if bctype == cgns_bc::BC_FARFIELD {
+        return BoundaryKind::Farfield {
+            mach: 0.0,
+            pressure: 101_325.0,
+            temperature: 288.15,
+            alpha: 0.0,
+            beta: 0.0,
+        };
+    }
+    if bctype == cgns_bc::BC_EXTRAPOLATE || is_outflow(bctype) {
+        return default_outlet();
+    }
+    if is_inflow(bctype) {
+        return default_inlet();
+    }
+    if bctype == cgns_bc::BC_SYMMETRY_PLANE || bctype == cgns_bc::BC_SYMMETRY_POLAR {
+        return BoundaryKind::Symmetry;
+    }
+    if bctype == cgns_bc::BC_WALL_INVISCID {
+        return default_wall(false);
+    }
+    if is_viscous_wall(bctype) {
+        return default_wall(true);
+    }
+    default_wall(true)
+}
+
+fn default_inlet() -> BoundaryKind {
+    BoundaryKind::Inlet {
+        total_pressure: 101_325.0,
+        total_temperature: 300.0,
+        velocity_direction: [1.0, 0.0, 0.0],
+    }
+}
+
+fn default_outlet() -> BoundaryKind {
+    BoundaryKind::Outlet {
+        static_pressure: 101_325.0,
+    }
+}
+
+fn default_wall(no_slip: bool) -> BoundaryKind {
+    BoundaryKind::Wall {
+        no_slip,
+        heat: WallHeat::Adiabatic,
+    }
+}
+
+fn is_inflow(bctype: i32) -> bool {
+    matches!(
+        bctype,
+        cgns_bc::BC_INFLOW | cgns_bc::BC_INFLOW_SUBSONIC | cgns_bc::BC_INFLOW_SUPERSONIC
+    )
+}
+
+fn is_outflow(bctype: i32) -> bool {
+    matches!(
+        bctype,
+        cgns_bc::BC_OUTFLOW | cgns_bc::BC_OUTFLOW_SUBSONIC | cgns_bc::BC_OUTFLOW_SUPERSONIC
+    )
+}
+
+fn is_viscous_wall(bctype: i32) -> bool {
+    matches!(
+        bctype,
+        cgns_bc::BC_WALL
+            | cgns_bc::BC_WALL_VISCOUS
+            | cgns_bc::BC_WALL_VISCOUS_HEAT_FLUX
+            | cgns_bc::BC_WALL_VISCOUS_ISOTHERMAL
+    )
+}
+
 /// CGNS BCType 常量（与 `cgnslib.h` 一致子集）。
 pub mod cgns_bc {
+    pub const BC_EXTRAPOLATE: i32 = 6;
+    pub const BC_FARFIELD: i32 = 7;
+    pub const BC_INFLOW: i32 = 9;
+    pub const BC_INFLOW_SUBSONIC: i32 = 10;
+    pub const BC_INFLOW_SUPERSONIC: i32 = 11;
+    pub const BC_OUTFLOW: i32 = 13;
+    pub const BC_OUTFLOW_SUBSONIC: i32 = 14;
+    pub const BC_OUTFLOW_SUPERSONIC: i32 = 15;
+    pub const BC_SYMMETRY_PLANE: i32 = 16;
+    pub const BC_SYMMETRY_POLAR: i32 = 17;
     pub const BC_WALL: i32 = 20;
-    pub const BC_FARFIELD: i32 = 21;
-    pub const BC_SYMMETRY_PLANE: i32 = 22;
-    pub const BC_INFLOW: i32 = 23;
-    pub const BC_OUTFLOW: i32 = 24;
+    pub const BC_WALL_INVISCID: i32 = 21;
+    pub const BC_WALL_VISCOUS: i32 = 22;
+    pub const BC_WALL_VISCOUS_HEAT_FLUX: i32 = 23;
+    pub const BC_WALL_VISCOUS_ISOTHERMAL: i32 = 24;
+    pub const BC_FAMILY_SPECIFIED: i32 = 25;
 }
