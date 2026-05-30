@@ -26,6 +26,7 @@ pub enum FluxScheme {
     Hllc,
     VanLeer,
     HanelVanLeer,
+    Slau2,
 }
 
 impl Default for FluxScheme {
@@ -111,6 +112,24 @@ impl InviscidFluxConfig {
         }
     }
 
+    #[must_use]
+    pub const fn slau2_first_order() -> Self {
+        Self {
+            reconstruction: ReconstructionKind::FirstOrder,
+            limiter: SlopeLimiter::Minmod,
+            scheme: FluxScheme::Slau2,
+        }
+    }
+
+    #[must_use]
+    pub const fn muscl_slau2() -> Self {
+        Self {
+            reconstruction: ReconstructionKind::Muscl,
+            limiter: SlopeLimiter::Minmod,
+            scheme: FluxScheme::Slau2,
+        }
+    }
+
     /// 限制器简短标识（导出元数据用）。
     #[must_use]
     pub const fn limiter_label(self) -> &'static str {
@@ -140,6 +159,8 @@ impl InviscidFluxConfig {
                 "hanel_van_leer_first_order"
             }
             (ReconstructionKind::Muscl, FluxScheme::HanelVanLeer) => "muscl_hanel_van_leer",
+            (ReconstructionKind::FirstOrder, FluxScheme::Slau2) => "slau2_first_order",
+            (ReconstructionKind::Muscl, FluxScheme::Slau2) => "muscl_slau2",
         }
     }
 }

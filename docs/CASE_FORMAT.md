@@ -212,7 +212,7 @@ final_time = 0.2     # 物理终止时刻
 cfl = 0.4            # CFL 数（固定 dt 时可在 [time] 指定 dt）
 
 # 可选：无粘离散（省略时为一阶 Roe）
-flux = "roe"              # roe | hllc
+flux = "roe"              # roe | hllc | van_leer | hanel_van_leer | slau2
 reconstruction = "muscl"  # first_order | muscl
 limiter = "van_albada"    # minmod | van_leer | van_albada
 ```

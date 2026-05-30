@@ -112,12 +112,14 @@ pub fn maybe_write_flow_snapshot(
 }
 
 /// 与 CGNS 流场文件同目录、同主文件名的 `.vts` 路径。
+#[cfg(feature = "io-vtk")]
 #[must_use]
 pub fn flow_vts_path(cgns: &Path) -> PathBuf {
     cgns.with_extension("vts")
 }
 
 /// 与 CGNS 流场文件同目录、同主文件名的 `.vtu` 路径（ParaView 推荐）。
+#[cfg(feature = "io-vtk")]
 #[must_use]
 pub fn flow_vtu_path(cgns: &Path) -> PathBuf {
     cgns.with_extension("vtu")

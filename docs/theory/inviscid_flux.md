@@ -139,9 +139,11 @@ ConservedResidual  (= dU/dt)
 | (6) 波强度 | `wave_strengths` | **已实现** |
 | (7) 熵修正 | `harten_entropy_fix`、`fixed_eigenvalue` | **已实现** |
 | HLLC（Toro §10） | `hllc_flux` | **已实现** |
+| SLAU2（Kitamura & Shima 2013） | `slau2_flux` | **已实现** |
+| Van Leer / Hanel FVS | `van_leer_flux` / `hanel_van_leer_flux` | **已实现** |
 | 面 dispatch | `face_inviscid_flux` | **已实现** |
 | (3) 1D/3D 装配 | `assemble_inviscid_residual_1d` / `_3d` | **已实现** |
-| AUSM+ | — | **规划** |
+| AUSM+ / SLAU | — | **规划**（SLAU2 已提供） |
 
 配置：`InviscidFluxConfig`（`reconstruction` / `limiter` / `scheme`）；`CompressibleEulerConfig::inviscid`。
 

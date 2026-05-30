@@ -80,6 +80,7 @@ pub(super) fn inviscid_from_toml(
             "hllc" => FluxScheme::Hllc,
             "van_leer" | "vanleer" => FluxScheme::VanLeer,
             "hanel_van_leer" | "hanel-van-leer" | "hanelvanleer" => FluxScheme::HanelVanLeer,
+            "slau2" | "slau_2" | "slau-2" => FluxScheme::Slau2,
             _ => FluxScheme::Roe(RoeFluxConfig::default()),
         };
         if reconstruction.is_none() {

@@ -9,6 +9,7 @@ use super::hllc::hllc_flux;
 use super::inviscid::InviscidFlux;
 use super::reconstruction::{MusclStencil1d, reconstruct_face_states};
 use super::roe::roe_flux;
+use super::slau2::slau2_flux;
 use super::van_leer::{hanel_van_leer_flux, van_leer_flux};
 
 /// 面通量输入：owner/neighbor 及可选 MUSCL 模板点。
@@ -61,5 +62,6 @@ pub fn face_inviscid_flux(
         FluxScheme::Hllc => hllc_flux(&iface.left, &iface.right, normal, eos),
         FluxScheme::VanLeer => van_leer_flux(&iface.left, &iface.right, normal, eos),
         FluxScheme::HanelVanLeer => hanel_van_leer_flux(&iface.left, &iface.right, normal, eos),
+        FluxScheme::Slau2 => slau2_flux(&iface.left, &iface.right, normal, eos),
     }
 }

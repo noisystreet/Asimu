@@ -1,17 +1,23 @@
 //! 单元中心场 → 顶点场（ParaView / CGNS Vertex 写出共用）。
 
+#[cfg(any(feature = "io-vtk", feature = "io-cgns"))]
 use crate::error::Result;
+#[cfg(any(feature = "io-vtk", feature = "io-cgns"))]
 use crate::field::ConservedFields;
+#[cfg(any(feature = "io-vtk", feature = "io-cgns", test))]
 use crate::mesh::StructuredMesh3d;
+#[cfg(any(feature = "io-vtk", feature = "io-cgns"))]
 use crate::physics::{IdealGasEoS, PrimitiveState};
 
 /// 单元中心原始变量（ρ, u, v, w, p），长度 = `mesh.num_cells()`，VTK 顺序 k–j–i。
+#[cfg(any(feature = "io-vtk", feature = "io-cgns"))]
 pub type CellPrimitiveArrays = (Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>);
 
 /// 顶点原始变量数组（ρ, u, v, w, p），长度 = `mesh.num_nodes()`。
 #[cfg(feature = "io-cgns")]
 pub type VertexPrimitiveArrays = (Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>, Vec<f64>);
 
+#[cfg(any(feature = "io-vtk", feature = "io-cgns"))]
 pub fn gather_cell_primitives(
     mesh: &StructuredMesh3d,
     fields: &ConservedFields,
@@ -82,6 +88,7 @@ pub fn scatter_cell_scalar_to_vertices(mesh: &StructuredMesh3d, cell: &[f64]) ->
     node
 }
 
+#[cfg(any(feature = "io-vtk", feature = "io-cgns"))]
 fn push_primitive(
     rho: &mut Vec<f64>,
     u: &mut Vec<f64>,
