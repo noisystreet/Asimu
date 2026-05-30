@@ -6,11 +6,14 @@
 mod case;
 mod limits;
 mod mesh_report;
+mod residual;
 mod restart;
 
 pub use case::{
-    CaseMesh, CaseSpec, CaseTimeConfig, CaseTimeMode, SodCaseConfig, load_case, parse_case_str,
+    CaseMesh, CaseOutputConfig, CaseSpec, CaseTimeConfig, CaseTimeMode, SodCaseConfig, load_case,
+    parse_case_str, resolve_case_output_path,
 };
+pub use residual::write_residual_csv;
 pub use restart::{load_conserved_fields, write_conserved_fields};
 
 #[cfg(feature = "io-cgns")]
@@ -42,7 +45,7 @@ pub use vtk::{VtmBlock, VtsLoadResult, load_vts, write_vtm, write_vts};
 #[cfg(feature = "io-cgns")]
 pub use cgns::{
     CgnsLoadResult, CgnsMultiLoadResult, CgnsZoneInfo, export_cgns_to_vtm, export_cgns_to_vts,
-    export_cgns_zone_to_vts, list_cgns_zones, load_cgns_all_zones, load_cgns_zone,
+    export_cgns_zone_to_vts, list_cgns_zones, load_cgns_all_zones, load_cgns_zone, write_flow_cgns,
 };
 
 /// 从占位 case 文件加载网格元数据。

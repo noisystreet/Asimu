@@ -72,5 +72,6 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         ),
         diffusion: None,
         sod: Some(metrics),
+        compressible_3d: None,
     })
 }

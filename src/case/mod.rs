@@ -2,7 +2,9 @@
 //!
 //! 应用层（`app`）与集成测试共用本模块，避免在 CLI 中重复装配逻辑。
 
+mod compressible_3d;
 mod diffusion;
+mod output_3d;
 mod sod;
 
 use std::path::Path;
@@ -12,6 +14,7 @@ use tracing::info;
 use crate::error::{AsimuError, Result};
 use crate::io::{CaseSpec, load_case};
 
+pub use compressible_3d::Compressible3dRunMetrics;
 pub use diffusion::DiffusionRunMetrics;
 pub use sod::SodRunMetrics;
 
@@ -20,6 +23,7 @@ pub use sod::SodRunMetrics;
 pub enum CaseRunKind {
     Diffusion1dSteady,
     Sod1dTransient,
+    Compressible3dTransient,
 }
 
 /// 算例运行结果摘要（写入日志 / 后续 manifest）。
@@ -31,6 +35,7 @@ pub struct CaseRunResult {
     pub summary: String,
     pub diffusion: Option<DiffusionRunMetrics>,
     pub sod: Option<SodRunMetrics>,
+    pub compressible_3d: Option<Compressible3dRunMetrics>,
 }
 
 /// 从 `case.toml` 路径加载并运行。
@@ -51,6 +56,7 @@ pub fn run_case(case: &CaseSpec) -> Result<CaseRunResult> {
     match kind {
         CaseRunKind::Diffusion1dSteady => diffusion::run(case),
         CaseRunKind::Sod1dTransient => sod::run(case),
+        CaseRunKind::Compressible3dTransient => compressible_3d::run(case),
     }
 }
 
@@ -60,8 +66,11 @@ fn detect_run_kind(case: &CaseSpec) -> Result<CaseRunKind> {
         return Ok(CaseRunKind::Sod1dTransient);
     }
     if case.is_compressible() {
+        if case.mesh.as_3d().is_ok() && case.euler.is_some() {
+            return Ok(CaseRunKind::Compressible3dTransient);
+        }
         return Err(AsimuError::Config(
-            "可压缩算例须包含 [sod] 段，或等待通用瞬态编排实现".to_string(),
+            "3D 可压缩算例须包含 [euler] 段且 mesh 为 3D".to_string(),
         ));
     }
     case.mesh.as_1d()?;
@@ -97,5 +106,165 @@ mod tests {
         assert_eq!(metrics.scheme, "muscl_roe");
         assert_eq!(metrics.limiter, "van_albada");
         assert!(metrics.l1_density < 0.02);
+    }
+
+    #[cfg(feature = "io-cgns")]
+    #[test]
+    fn runs_cylinder_mach8_when_cgns_present() {
+        let mesh_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("cylinder.cgns");
+        if !mesh_path.is_file() {
+            return;
+        }
+        let path = Path::new("tests/benchmarks/cylinder_mach8/case.toml");
+        let result = run_case_path(path).expect("run");
+        assert_eq!(result.kind, CaseRunKind::Compressible3dTransient);
+        let metrics = result.compressible_3d.expect("metrics");
+        assert_eq!(metrics.steps, 10);
+        assert!(metrics.final_time > 0.0);
+        assert!(metrics.final_time < 5.0);
+        assert!(metrics.residual_rms.is_finite() && metrics.residual_rms > 0.0);
+        assert_eq!(metrics.scheme, "first_order_hllc");
+    }
+
+    #[cfg(feature = "io-cgns")]
+    #[test]
+    fn debug_cylinder_step1_nan_root_cause() {
+        use crate::core::Real;
+        use crate::discretization::{
+            BoundaryGhostBuffer, apply_compressible_boundary_conditions,
+            assemble_inviscid_residual_3d,
+        };
+        use crate::field::ConservedResidual;
+        use crate::solver::max_wave_speed;
+
+        let mesh_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("cylinder.cgns");
+        if !mesh_path.is_file() {
+            return;
+        }
+        let case = load_case(Path::new("tests/benchmarks/cylinder_mach8/case.toml")).expect("case");
+        let mesh = case.mesh.as_3d().expect("3d");
+        let eos = case.physics.eos().expect("eos");
+        let fs = case.freestream.expect("fs");
+        let fields = case.build_conserved_fields().expect("fields");
+        let i0 = mesh.node_index(0, 0, 0);
+        let i1 = mesh.node_index(1, 0, 0);
+        eprintln!(
+            "dx(0,0,0)={} cartesian_cell_volume={} metric={:?} min_spacing={:?} max_wave={:?}",
+            (mesh.points_x[i1] - mesh.points_x[i0]).abs(),
+            mesh.cell_volume(),
+            mesh.metric_mode(),
+            mesh.min_positive_spacing(),
+            max_wave_speed(&fields, &eos, 1.0e-6)
+        );
+        assert!(
+            mesh.uses_curvilinear_metrics(),
+            "CGNS cylinder 算例应默认启用 curvilinear metric"
+        );
+        assert!(
+            mesh.metric_cache().is_some(),
+            "CGNS 算例加载后应预构建 MetricCache"
+        );
+        let mut zero_vol_cart = 0usize;
+        let mut zero_vol_curv = 0usize;
+        for k in 0..mesh.nz {
+            for j in 0..mesh.ny {
+                for i in 0..mesh.nx {
+                    if mesh.cell_volume_at(i, j, k) <= Real::EPSILON {
+                        zero_vol_cart += 1;
+                    }
+                    if mesh.cell_metric(i, j, k).volume <= Real::EPSILON {
+                        zero_vol_curv += 1;
+                    }
+                }
+            }
+        }
+        eprintln!("zero_volume_cells cartesian={zero_vol_cart} curvilinear={zero_vol_curv}");
+        assert_eq!(zero_vol_curv, 0, "贴体 metric 不应产生零体积单元");
+        let mut ghosts = BoundaryGhostBuffer::new();
+        apply_compressible_boundary_conditions(
+            mesh,
+            &case.boundary,
+            &fields,
+            &mut ghosts,
+            &eos,
+            &fs,
+        )
+        .expect("bc");
+        let inviscid = case.euler.as_ref().expect("euler").inviscid();
+        let mut rhs = ConservedResidual::zeros(mesh.num_cells()).expect("rhs");
+        assemble_inviscid_residual_3d(
+            mesh,
+            &fields,
+            &mut rhs,
+            &eos,
+            &inviscid,
+            &case.boundary,
+            &ghosts,
+        )
+        .expect("asm");
+        let nan_cells = rhs
+            .density
+            .values()
+            .iter()
+            .filter(|v| !v.is_finite())
+            .count();
+        eprintln!(
+            "initial rhs RMS(rho_dot)={} log10={} nan_cells={}",
+            rhs.density_rms_norm(),
+            crate::core::log10_positive(rhs.density_rms_norm()),
+            nan_cells
+        );
+        assert!(
+            rhs.density_rms_norm().is_finite(),
+            "uniform freestream initial residual must be finite"
+        );
+
+        let solver =
+            crate::solver::CompressibleEulerSolver::new(crate::solver::CompressibleEulerConfig {
+                time: crate::solver::RungeKutta4Config {
+                    dt: 0.0,
+                    max_steps: 1,
+                },
+                inviscid: inviscid.clone(),
+                cfl_schedule: crate::solver::time::CflSchedule::constant(0.05),
+                ..crate::solver::CompressibleEulerConfig::default()
+            });
+        let mut fields_step = fields.clone();
+        let mut storage = crate::solver::Rk4Storage::new(mesh.num_cells()).expect("storage");
+        let mut state = crate::solver::SolverState::default();
+        let mut integrator = crate::solver::RungeKutta4Integrator::new(solver.config.time);
+        let mut ctx = crate::solver::CompressibleAdvanceContext3d {
+            mesh,
+            structured: mesh,
+            patches: &case.boundary,
+            ghosts: &mut ghosts,
+            eos: &eos,
+            freestream: &fs,
+        };
+        let step1 = solver
+            .advance_step_3d(
+                &mut ctx,
+                &mut fields_step,
+                &mut storage,
+                &mut state,
+                &mut integrator,
+            )
+            .expect("step1");
+        assert!(step1.residual_rms.is_finite());
+        for i in 0..mesh.num_cells() {
+            assert!(
+                fields_step.density.values()[i].is_finite()
+                    && fields_step.density.values()[i] > 0.0
+            );
+            let _ = fields_step
+                .primitive_at(i, &eos)
+                .expect("primitive after step1");
+        }
     }
 }

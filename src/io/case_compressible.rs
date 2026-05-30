@@ -1,0 +1,203 @@
+//! 可压缩算例段解析（`[euler]` / `[output]` / CFL 调度）。
+
+use std::path::{Path, PathBuf};
+
+use serde::Deserialize;
+use tracing::warn;
+
+use crate::core::Real;
+use crate::error::{AsimuError, Result};
+
+use super::CaseSpec;
+use super::validate_input_path;
+
+/// 算例输出配置（`[output]`）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct CaseOutputConfig {
+    pub dir: PathBuf,
+    pub residual_csv: Option<String>,
+    pub residual_plot: Option<String>,
+    pub solution_cgns: Option<String>,
+    pub solution_every: Option<u64>,
+}
+
+impl CaseOutputConfig {
+    #[must_use]
+    pub fn wants_interval_flow(&self) -> bool {
+        self.solution_cgns.is_some() && self.solution_every.is_some_and(|n| n > 0)
+    }
+}
+
+/// 3D 可压缩 Euler 算例段（`[euler]`，离散格式；CFL 见 `[time].cfl`）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct EulerCaseConfig {
+    pub final_time: Option<Real>,
+    pub max_steps: Option<u64>,
+    pub reconstruction: Option<String>,
+    pub flux: Option<String>,
+    pub limiter: Option<String>,
+}
+
+impl EulerCaseConfig {
+    pub fn inviscid(&self) -> crate::discretization::InviscidFluxConfig {
+        inviscid_from_toml(
+            self.reconstruction.as_deref(),
+            self.flux.as_deref(),
+            self.limiter.as_deref(),
+        )
+    }
+}
+
+pub(super) fn inviscid_from_toml(
+    reconstruction: Option<&str>,
+    flux: Option<&str>,
+    limiter: Option<&str>,
+) -> crate::discretization::InviscidFluxConfig {
+    use crate::discretization::{
+        FluxScheme, InviscidFluxConfig, ReconstructionKind, RoeFluxConfig, SlopeLimiter,
+    };
+    let mut config = InviscidFluxConfig::default();
+    if let Some(name) = reconstruction {
+        config.reconstruction = match name {
+            "first_order" | "first-order" => ReconstructionKind::FirstOrder,
+            "muscl" => ReconstructionKind::Muscl,
+            _ => ReconstructionKind::FirstOrder,
+        };
+    }
+    if let Some(name) = limiter {
+        config.limiter = match name {
+            "minmod" => SlopeLimiter::Minmod,
+            "van_leer" | "vanleer" => SlopeLimiter::VanLeer,
+            "van_albada" | "vanalbada" | "van-albada" => SlopeLimiter::VanAlbada,
+            _ => SlopeLimiter::Minmod,
+        };
+    }
+    if let Some(name) = flux {
+        config.scheme = match name {
+            "roe" => FluxScheme::Roe(RoeFluxConfig::default()),
+            "hllc" => FluxScheme::Hllc,
+            "van_leer" | "vanleer" => FluxScheme::VanLeer,
+            "hanel_van_leer" | "hanel-van-leer" | "hanelvanleer" => FluxScheme::HanelVanLeer,
+            _ => FluxScheme::Roe(RoeFluxConfig::default()),
+        };
+        if reconstruction.is_none() {
+            config.reconstruction = ReconstructionKind::Muscl;
+        }
+    }
+    config
+}
+
+impl CaseSpec {
+    /// 时间推进步数上限：`[time].max_steps`，其次 `[euler].max_steps`，默认 100。
+    pub fn resolved_max_steps(&self) -> u64 {
+        self.time
+            .max_steps
+            .or_else(|| self.euler.as_ref().and_then(|e| e.max_steps))
+            .unwrap_or(100)
+    }
+
+    /// log₁₀(RMS(ρ̇)) 早停容差（`[time].tolerance`）。
+    pub fn resolved_tolerance(&self) -> Option<Real> {
+        self.time.tolerance.filter(|t| t.is_finite())
+    }
+
+    /// CFL 初值：仅 `[time].cfl`，默认 0.4（Sod 算例见 `[sod].cfl`）。
+    pub fn resolved_cfl(&self) -> Real {
+        self.time.cfl.unwrap_or(0.4)
+    }
+
+    /// CFL 调度：从 `[time].cfl` 线性增至 `[time].cfl_max`（未设则恒定）。
+    pub fn cfl_schedule(&self) -> Result<crate::solver::time::CflSchedule> {
+        use crate::solver::time::CflSchedule;
+        let initial = self.time.cfl.unwrap_or(0.4);
+        let max = self.time.cfl_max.unwrap_or(initial);
+        if initial <= 0.0 || max <= 0.0 {
+            return Err(AsimuError::Config(
+                "[time].cfl 与 cfl_max 须为正".to_string(),
+            ));
+        }
+        Ok(CflSchedule {
+            initial,
+            max,
+            ramp_steps: self.time.cfl_ramp_steps,
+        })
+    }
+
+    /// 解析后配置自检（告警，不中断加载）。
+    pub fn warn_config_inconsistencies(&self) {
+        warn_if_output_interval_exceeds_max_steps(self);
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct EulerToml {
+    cfl: Option<Real>,
+    final_time: Option<Real>,
+    max_steps: Option<u64>,
+    reconstruction: Option<String>,
+    flux: Option<String>,
+    limiter: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct OutputToml {
+    dir: Option<PathBuf>,
+    residual_csv: Option<String>,
+    residual_plot: Option<String>,
+    solution_cgns: Option<String>,
+    solution_every: Option<u64>,
+}
+
+pub(super) fn parse_euler_config(raw: &EulerToml) -> Result<EulerCaseConfig> {
+    if raw.cfl.is_some() {
+        return Err(AsimuError::Config(
+            "[euler].cfl 已移除，请在 [time] 段设置 cfl".to_string(),
+        ));
+    }
+    Ok(EulerCaseConfig {
+        final_time: raw.final_time,
+        max_steps: raw.max_steps,
+        reconstruction: raw.reconstruction.clone(),
+        flux: raw.flux.clone(),
+        limiter: raw.limiter.clone(),
+    })
+}
+
+pub(super) fn parse_output(raw: &OutputToml) -> CaseOutputConfig {
+    CaseOutputConfig {
+        dir: raw.dir.clone().unwrap_or_else(|| PathBuf::from("output")),
+        residual_csv: raw.residual_csv.clone(),
+        residual_plot: raw.residual_plot.clone(),
+        solution_cgns: raw.solution_cgns.clone(),
+        solution_every: raw.solution_every,
+    }
+}
+
+/// 将 `[output]` 相对路径解析为绝对路径（相对算例目录 + output.dir）。
+pub fn resolve_case_output_path(
+    case_dir: Option<&Path>,
+    output_dir: &Path,
+    rel: &str,
+) -> Result<PathBuf> {
+    let rel_path = PathBuf::from(rel);
+    validate_input_path(&rel_path)?;
+    let base = case_dir.unwrap_or_else(|| Path::new(".")).join(output_dir);
+    Ok(base.join(rel_path))
+}
+
+fn warn_if_output_interval_exceeds_max_steps(case: &CaseSpec) {
+    let Some(output) = &case.output else {
+        return;
+    };
+    if !output.wants_interval_flow() {
+        return;
+    }
+    let every = output.solution_every.expect("wants_interval_flow");
+    let max_steps = case.resolved_max_steps();
+    if every > max_steps {
+        warn!(
+            solution_every = every,
+            max_steps, "[output].solution_every 大于 [time].max_steps，间隔流场 CGNS 不会写出"
+        );
+    }
+}

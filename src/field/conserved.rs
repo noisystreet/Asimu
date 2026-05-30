@@ -61,6 +61,41 @@ impl ConservedFields {
     pub fn primitive_at(&self, index: usize, eos: &IdealGasEoS) -> Result<PrimitiveState> {
         primitive_from_conserved(eos, &self.cell_state(index)?)
     }
+
+    /// 保证 \(\rho>0\) 且 \(E>\mathrm{KE}+p_\mathrm{floor}/(\gamma-1)\)（显式 RK 步后调用）。
+    pub fn enforce_positivity(&mut self, eos: &IdealGasEoS, min_pressure: crate::core::Real) {
+        let gamma = eos.gamma;
+        let min_internal = min_pressure / (gamma - 1.0);
+        let rho_min = 1.0e-12;
+        for i in 0..self.num_cells() {
+            let rho_old = self.density.values()[i];
+            let rho = if rho_old.is_finite() && rho_old > 0.0 {
+                rho_old.max(rho_min)
+            } else {
+                rho_min
+            };
+            if rho_old.is_finite() && rho_old > 0.0 && rho_old < rho_min {
+                let scale = rho / rho_old;
+                self.momentum_x.values_mut()[i] *= scale;
+                self.momentum_y.values_mut()[i] *= scale;
+                self.momentum_z.values_mut()[i] *= scale;
+            } else if !(rho_old.is_finite() && rho_old > 0.0) {
+                self.momentum_x.values_mut()[i] = 0.0;
+                self.momentum_y.values_mut()[i] = 0.0;
+                self.momentum_z.values_mut()[i] = 0.0;
+            }
+            self.density.values_mut()[i] = rho;
+            let mx = self.momentum_x.values()[i];
+            let my = self.momentum_y.values()[i];
+            let mz = self.momentum_z.values()[i];
+            let ke = 0.5 * (mx * mx + my * my + mz * mz) / rho;
+            let e_min = ke + min_internal;
+            let energy = self.total_energy.values_mut();
+            if !energy[i].is_finite() || energy[i] < e_min {
+                energy[i] = e_min;
+            }
+        }
+    }
 }
 
 /// 守恒变量 → 原始变量（理想气体）。
@@ -85,6 +120,34 @@ pub fn primitive_from_conserved(
         return Err(AsimuError::Field("内能必须大于 0".to_string()));
     }
     let pressure = (eos.gamma - 1.0) * rho * e;
+    let temperature = pressure / (rho * eos.gas_constant);
+    Ok(PrimitiveState {
+        density: rho,
+        velocity,
+        pressure,
+        temperature,
+    })
+}
+
+/// 通量/边界装配用的宽松 primitive 恢复（RK 中间态对压力做下限）。
+pub fn primitive_from_conserved_relaxed(
+    eos: &IdealGasEoS,
+    cons: &ConservedState,
+    min_pressure: crate::core::Real,
+) -> Result<PrimitiveState> {
+    let rho = cons.density;
+    if rho <= 0.0 {
+        return Err(AsimuError::Field("密度必须大于 0".to_string()));
+    }
+    let velocity = [
+        cons.momentum[0] / rho,
+        cons.momentum[1] / rho,
+        cons.momentum[2] / rho,
+    ];
+    let ke = 0.5
+        * rho
+        * (velocity[0] * velocity[0] + velocity[1] * velocity[1] + velocity[2] * velocity[2]);
+    let pressure = ((eos.gamma - 1.0) * (cons.total_energy - ke)).max(min_pressure);
     let temperature = pressure / (rho * eos.gas_constant);
     Ok(PrimitiveState {
         density: rho,

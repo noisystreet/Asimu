@@ -24,6 +24,8 @@ pub enum SlopeLimiter {
 pub enum FluxScheme {
     Roe(RoeFluxConfig),
     Hllc,
+    VanLeer,
+    HanelVanLeer,
 }
 
 impl Default for FluxScheme {
@@ -74,6 +76,41 @@ impl InviscidFluxConfig {
         }
     }
 
+    #[must_use]
+    pub const fn van_leer_first_order() -> Self {
+        Self {
+            reconstruction: ReconstructionKind::FirstOrder,
+            limiter: SlopeLimiter::Minmod,
+            scheme: FluxScheme::VanLeer,
+        }
+    }
+
+    pub const fn hanel_van_leer_first_order() -> Self {
+        Self {
+            reconstruction: ReconstructionKind::FirstOrder,
+            limiter: SlopeLimiter::Minmod,
+            scheme: FluxScheme::HanelVanLeer,
+        }
+    }
+
+    #[must_use]
+    pub const fn muscl_hanel_van_leer() -> Self {
+        Self {
+            reconstruction: ReconstructionKind::Muscl,
+            limiter: SlopeLimiter::Minmod,
+            scheme: FluxScheme::HanelVanLeer,
+        }
+    }
+
+    #[must_use]
+    pub const fn muscl_van_leer() -> Self {
+        Self {
+            reconstruction: ReconstructionKind::Muscl,
+            limiter: SlopeLimiter::Minmod,
+            scheme: FluxScheme::VanLeer,
+        }
+    }
+
     /// 限制器简短标识（导出元数据用）。
     #[must_use]
     pub const fn limiter_label(self) -> &'static str {
@@ -97,6 +134,12 @@ impl InviscidFluxConfig {
             (ReconstructionKind::Muscl, FluxScheme::Hllc) => "muscl_hllc",
             (ReconstructionKind::Muscl, FluxScheme::Roe(_)) => "muscl_roe",
             (ReconstructionKind::FirstOrder, FluxScheme::Hllc) => "first_order_hllc",
+            (ReconstructionKind::FirstOrder, FluxScheme::VanLeer) => "van_leer_first_order",
+            (ReconstructionKind::Muscl, FluxScheme::VanLeer) => "muscl_van_leer",
+            (ReconstructionKind::FirstOrder, FluxScheme::HanelVanLeer) => {
+                "hanel_van_leer_first_order"
+            }
+            (ReconstructionKind::Muscl, FluxScheme::HanelVanLeer) => "muscl_hanel_van_leer",
         }
     }
 }

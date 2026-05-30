@@ -87,6 +87,61 @@ where
     fields.assign_axpy(&storage.u0, &storage.increment, dt)
 }
 
+/// 逐单元 \(\Delta t_i\) 的 RK4 步进（稳态当地时间步）。
+pub fn rk4_step_local<F>(
+    fields: &mut ConservedFields,
+    storage: &mut Rk4Storage,
+    dt: &[Real],
+    mut evaluate_rhs: F,
+    eos: Option<&crate::physics::IdealGasEoS>,
+    min_pressure: Real,
+) -> Result<()>
+where
+    F: FnMut(&ConservedFields, &mut ConservedResidual) -> Result<()>,
+{
+    let n = fields.num_cells();
+    storage.ensure_capacity(n)?;
+    if dt.len() != n {
+        return Err(crate::error::AsimuError::Solver(format!(
+            "rk4_step_local: dt 长度 {} 与单元数 {n} 不一致",
+            dt.len()
+        )));
+    }
+    storage.u0.copy_from(fields)?;
+    evaluate_rhs(fields, &mut storage.k1)?;
+    storage
+        .stage
+        .assign_axpy_dt(&storage.u0, &storage.k1, dt, 0.5)?;
+    maybe_enforce_positivity(&mut storage.stage, eos, min_pressure);
+    evaluate_rhs(&storage.stage, &mut storage.k2)?;
+    storage
+        .stage
+        .assign_axpy_dt(&storage.u0, &storage.k2, dt, 0.5)?;
+    maybe_enforce_positivity(&mut storage.stage, eos, min_pressure);
+    evaluate_rhs(&storage.stage, &mut storage.k3)?;
+    storage
+        .stage
+        .assign_axpy_dt(&storage.u0, &storage.k3, dt, 1.0)?;
+    maybe_enforce_positivity(&mut storage.stage, eos, min_pressure);
+    evaluate_rhs(&storage.stage, &mut storage.k4)?;
+    storage
+        .increment
+        .assign_rk4_increment(&storage.k1, &storage.k2, &storage.k3, &storage.k4)?;
+    fields.assign_axpy_dt(&storage.u0, &storage.increment, dt, 1.0)?;
+    maybe_enforce_positivity(fields, eos, min_pressure);
+    Ok(())
+}
+
+fn maybe_enforce_positivity(
+    fields: &mut ConservedFields,
+    eos: Option<&crate::physics::IdealGasEoS>,
+    min_pressure: Real,
+) {
+    if let Some(eos) = eos {
+        fields.enforce_positivity(eos, min_pressure);
+    }
+}
+
 /// RK4 工作区（阶段态与四个斜率）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct Rk4Storage {

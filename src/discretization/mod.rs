@@ -15,6 +15,7 @@ pub mod inviscid;
 pub mod reconstruction;
 pub mod residual;
 pub mod roe;
+pub mod van_leer;
 
 use crate::core::Real;
 use crate::error::Result;
@@ -40,6 +41,7 @@ pub use residual::{
     assemble_inviscid_residual_1d, assemble_inviscid_residual_3d, zero_gradient_ghosts_1d,
 };
 pub use roe::{RoeFluxConfig, roe_flux};
+pub use van_leer::{hanel_van_leer_flux, van_leer_flux};
 
 /// 占位装配入口：验证 field / mesh / system 尺寸一致。
 ///

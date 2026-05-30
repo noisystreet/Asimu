@@ -2,8 +2,7 @@
 # 详见 docs/ARCHITECTURE.md
 
 [solver]
-max_iterations = 100
-tolerance = 1.0e-6
+max_steps = 100
 
 [logging]
 level = "info"

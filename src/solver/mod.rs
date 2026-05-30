@@ -14,7 +14,7 @@ use crate::mesh::Mesh;
 
 pub use compressible::{
     CompressibleAdvanceContext1d, CompressibleAdvanceContext3d, CompressibleEulerConfig,
-    CompressibleEulerSolver, CompressibleStepInfo, max_wave_speed,
+    CompressibleEulerSolver, CompressibleStepInfo, CompressibleTimeMode, max_wave_speed,
 };
 pub use sod::{
     SodBenchmarkConfig, SodBenchmarkResult, run_sod_benchmark, sod_initial_fields,
@@ -22,8 +22,9 @@ pub use sod::{
 };
 pub use state::SolverState;
 pub use time::{
-    Rk4Storage, RungeKutta4Config, RungeKutta4Integrator, SteadyStateIntegrator, TimeIntegrator,
-    TimeMode, TimeStepInfo, rk4_step,
+    CflSchedule, Rk4Storage, RungeKutta4Config, RungeKutta4Integrator, SteadyStateIntegrator,
+    TimeIntegrator, TimeMode, TimeStepInfo, local_dt_cfl, min_positive_dt, rk4_step,
+    rk4_step_local,
 };
 
 /// 求解结果摘要。
@@ -47,15 +48,12 @@ impl Solver {
 
     #[instrument(skip(self, mesh), fields(mesh = %mesh.name, cells = mesh.cell_count))]
     pub fn run(&self, mesh: &Mesh) -> Result<SolveResult> {
-        info!(
-            max_iterations = self.config.max_iterations,
-            tolerance = self.config.tolerance,
-            "开始占位求解"
-        );
+        info!(max_steps = self.config.max_steps, "开始占位求解");
 
-        let iterations = self.config.max_iterations.min(10);
-        let residual = self.config.tolerance * 0.1;
-        let converged = residual <= self.config.tolerance;
+        const PLACEHOLDER_TOLERANCE: f64 = 1.0e-6;
+        let iterations = self.config.max_steps.min(10) as u32;
+        let residual = PLACEHOLDER_TOLERANCE * 0.1;
+        let converged = residual <= PLACEHOLDER_TOLERANCE;
 
         Ok(SolveResult {
             iterations,
@@ -73,10 +71,7 @@ mod tests {
     #[test]
     fn placeholder_solver_converges() {
         let mesh = Mesh::new("unit-cube", 8).expect("mesh");
-        let solver = Solver::new(SolverConfig {
-            max_iterations: 5,
-            tolerance: 1.0e-3,
-        });
+        let solver = Solver::new(SolverConfig { max_steps: 5 });
         let result = solver.run(&mesh).expect("run");
         assert!(result.converged);
         assert_eq!(result.iterations, 5);

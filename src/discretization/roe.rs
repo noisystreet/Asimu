@@ -4,7 +4,7 @@
 
 use crate::core::{Real, Vector3};
 use crate::error::{AsimuError, Result};
-use crate::field::primitive_from_conserved;
+use crate::field::{primitive_from_conserved, primitive_from_conserved_relaxed};
 use crate::physics::{ConservedState, IdealGasEoS, PrimitiveState};
 
 use super::inviscid::{InviscidFlux, physical_inviscid_flux, velocity_dot_normal};
@@ -41,6 +41,42 @@ pub fn roe_flux(
     let flux_l = physical_inviscid_flux(left, &prim_l, n);
     let flux_r = physical_inviscid_flux(right, &prim_r, n);
     let roe = roe_averages(&prim_l, &prim_r, left, right, eos.gamma, n)?;
+    let (t1, t2) = face_tangent_basis(n);
+    let waves = wave_strengths(&prim_l, &prim_r, &roe, n, t1, t2)?;
+    let delta = entropy_delta(&roe, config);
+    let l1 = fixed_eigenvalue(roe.un - roe.a, delta, config.entropy_fix);
+    let l5 = fixed_eigenvalue(roe.un + roe.a, delta, config.entropy_fix);
+    let l_mid = roe.un.abs();
+    let diss = dissipation_vector(
+        n,
+        t1,
+        t2,
+        &RoeDissipation {
+            roe: &roe,
+            waves: &waves,
+            l1,
+            l_mid,
+            l5,
+        },
+    );
+    Ok(combine_fluxes(flux_l, flux_r, diss))
+}
+
+/// Roe 通量（RK 中间态对左右状态用压力下限恢复 primitive）。
+pub fn roe_flux_relaxed(
+    left: &ConservedState,
+    right: &ConservedState,
+    normal: Vector3,
+    eos: &IdealGasEoS,
+    config: &RoeFluxConfig,
+    min_pressure: Real,
+) -> Result<InviscidFlux> {
+    let n = normalize_or_error(normal)?;
+    let prim_l = primitive_from_conserved_relaxed(eos, left, min_pressure)?;
+    let prim_r = primitive_from_conserved_relaxed(eos, right, min_pressure)?;
+    let flux_l = physical_inviscid_flux(left, &prim_l, n);
+    let flux_r = physical_inviscid_flux(right, &prim_r, n);
+    let roe = roe_averages_relaxed(&prim_l, &prim_r, left, right, eos.gamma, n)?;
     let (t1, t2) = face_tangent_basis(n);
     let waves = wave_strengths(&prim_l, &prim_r, &roe, n, t1, t2)?;
     let delta = entropy_delta(&roe, config);
@@ -120,6 +156,39 @@ fn roe_averages(
     if gamma_term <= 0.0 {
         return Err(AsimuError::Field("Roe 平均焓导致非物理解".to_string()));
     }
+    let a = ((gamma - 1.0) * gamma_term).sqrt();
+    let rho = sqrt_dl * sqrt_dr;
+    let un = velocity_dot_normal(velocity, normal);
+    Ok(RoeAverages {
+        rho,
+        velocity,
+        enthalpy,
+        un,
+        a,
+    })
+}
+
+fn roe_averages_relaxed(
+    prim_l: &PrimitiveState,
+    prim_r: &PrimitiveState,
+    left: &ConservedState,
+    right: &ConservedState,
+    gamma: Real,
+    normal: Vector3,
+) -> Result<RoeAverages> {
+    let sqrt_dl = prim_l.density.sqrt();
+    let sqrt_dr = prim_r.density.sqrt();
+    let inv = 1.0 / (sqrt_dl + sqrt_dr);
+    let h_l = specific_enthalpy(left, prim_l);
+    let h_r = specific_enthalpy(right, prim_r);
+    let velocity = [
+        (sqrt_dl * prim_l.velocity[0] + sqrt_dr * prim_r.velocity[0]) * inv,
+        (sqrt_dl * prim_l.velocity[1] + sqrt_dr * prim_r.velocity[1]) * inv,
+        (sqrt_dl * prim_l.velocity[2] + sqrt_dr * prim_r.velocity[2]) * inv,
+    ];
+    let enthalpy = (sqrt_dl * h_l + sqrt_dr * h_r) * inv;
+    let vel2 = velocity[0] * velocity[0] + velocity[1] * velocity[1] + velocity[2] * velocity[2];
+    let gamma_term = (enthalpy - 0.5 * vel2).max(1.0e-6);
     let a = ((gamma - 1.0) * gamma_term).sqrt();
     let rho = sqrt_dl * sqrt_dr;
     let un = velocity_dot_normal(velocity, normal);

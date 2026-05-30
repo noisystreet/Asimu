@@ -27,6 +27,54 @@ impl ConservedFields {
         Ok(())
     }
 
+    /// `self ← base + factor * dt[i] * residual[i]`。
+    pub fn assign_axpy_dt(
+        &mut self,
+        base: &Self,
+        residual: &ConservedResidual,
+        dt: &[Real],
+        factor: Real,
+    ) -> Result<()> {
+        ensure_same_size(self.num_cells(), base.num_cells())?;
+        ensure_residual_size(self.num_cells(), residual.num_cells())?;
+        ensure_dt_size(self.num_cells(), dt.len())?;
+        let rho_min = 1.0e-12;
+        for (i, &dt_i) in dt.iter().enumerate() {
+            let mut rho = base.density.values()[i] + factor * dt_i * residual.density.values()[i];
+            let mut mx =
+                base.momentum_x.values()[i] + factor * dt_i * residual.momentum_x.values()[i];
+            let mut my =
+                base.momentum_y.values()[i] + factor * dt_i * residual.momentum_y.values()[i];
+            let mut mz =
+                base.momentum_z.values()[i] + factor * dt_i * residual.momentum_z.values()[i];
+            let energy =
+                base.total_energy.values()[i] + factor * dt_i * residual.total_energy.values()[i];
+            let rho_old = rho;
+            let rho_clamped = if rho_old.is_finite() && rho_old > 0.0 {
+                rho_old.max(rho_min)
+            } else {
+                rho_min
+            };
+            if rho_old.is_finite() && rho_old > 0.0 && rho_old < rho_min {
+                let scale = rho_clamped / rho_old;
+                mx *= scale;
+                my *= scale;
+                mz *= scale;
+            } else if !(rho_old.is_finite() && rho_old > 0.0) {
+                mx = 0.0;
+                my = 0.0;
+                mz = 0.0;
+            }
+            rho = rho_clamped;
+            self.density.values_mut()[i] = rho;
+            self.momentum_x.values_mut()[i] = mx;
+            self.momentum_y.values_mut()[i] = my;
+            self.momentum_z.values_mut()[i] = mz;
+            self.total_energy.values_mut()[i] = energy;
+        }
+        Ok(())
+    }
+
     /// `self ← base + scale * residual`。
     pub fn assign_axpy(
         &mut self,
@@ -178,16 +226,50 @@ impl ConservedResidual {
         Ok(())
     }
 
-    /// 残差 L2 范数（密度分量，用于收敛监测）。
+    /// 全场密度残差 L2 范数：\(\|\dot\rho\|_2 = \sqrt{\sum_i \dot\rho_i^2}\)（随网格单元数增大）。
     #[must_use]
     pub fn density_l2_norm(&self) -> Real {
-        self.density
-            .values()
-            .iter()
-            .map(|v| v * v)
-            .sum::<Real>()
-            .sqrt()
+        l2_norm(self.density.values())
     }
+
+    /// 全场密度残差 RMS：\(\mathrm{RMS}(\dot\rho)=\|\dot\rho\|_2/\sqrt{N}\)（可与不同规模网格对比）。
+    #[must_use]
+    pub fn density_rms_norm(&self) -> Real {
+        rms_norm(self.density.values())
+    }
+
+    /// 五方程守恒残差 RMS（所有单元、所有分量）：\(\sqrt{\sum|\dot U|^2 / (5N)}\)。
+    #[must_use]
+    pub fn conserved_rms_norm(&self) -> Real {
+        let n = self.num_cells();
+        if n == 0 {
+            return 0.0;
+        }
+        let mut sum_sq = 0.0;
+        for values in [
+            self.density.values(),
+            self.momentum_x.values(),
+            self.momentum_y.values(),
+            self.momentum_z.values(),
+            self.total_energy.values(),
+        ] {
+            sum_sq += values.iter().map(|v| v * v).sum::<Real>();
+        }
+        (sum_sq / (5.0 * n as Real)).sqrt()
+    }
+}
+
+#[must_use]
+fn l2_norm(values: &[Real]) -> Real {
+    values.iter().map(|v| v * v).sum::<Real>().sqrt()
+}
+
+#[must_use]
+fn rms_norm(values: &[Real]) -> Real {
+    if values.is_empty() {
+        return 0.0;
+    }
+    l2_norm(values) / (values.len() as Real).sqrt()
 }
 
 fn ensure_same_size(left: usize, right: usize) -> Result<()> {
@@ -203,6 +285,15 @@ fn ensure_residual_size(fields: usize, residual: usize) -> Result<()> {
     if fields != residual {
         return Err(AsimuError::Field(format!(
             "场/残差尺寸不一致: {fields} vs {residual}"
+        )));
+    }
+    Ok(())
+}
+
+fn ensure_dt_size(fields: usize, dt_len: usize) -> Result<()> {
+    if fields != dt_len {
+        return Err(AsimuError::Field(format!(
+            "逐单元 dt 长度 {dt_len} 与场单元数 {fields} 不一致"
         )));
     }
     Ok(())
@@ -240,6 +331,16 @@ fn combine_rk4_component(dst: &mut [Real], k1: &[Real], k2: &[Real], k3: &[Real]
 mod tests {
     use super::*;
     use crate::core::approx_eq;
+
+    #[test]
+    fn rms_norm_scales_with_cell_count() {
+        let mut rhs = ConservedResidual::zeros(4).expect("rhs");
+        for v in rhs.density.values_mut() {
+            *v = 3.0;
+        }
+        assert!((rhs.density_l2_norm() - 6.0).abs() < 1.0e-12);
+        assert!((rhs.density_rms_norm() - 3.0).abs() < 1.0e-12);
+    }
 
     #[test]
     fn assign_axpy_updates_all_components() {

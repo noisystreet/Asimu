@@ -6,7 +6,10 @@ pub mod id;
 pub mod real;
 
 pub use id::{CellId, FaceId, NodeId};
-pub use real::{Real, RealOps, approx_eq};
+pub use real::{
+    Real, RealOps, approx_eq, format_log_fixed4, format_log_sci4, log10_positive,
+    residual_converged,
+};
 
 /// 三维向量（占位，后续扩展为 SIMD 友好布局）。
 #[derive(Debug, Clone, Copy, PartialEq)]

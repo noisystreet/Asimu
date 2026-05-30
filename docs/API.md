@@ -37,8 +37,7 @@ use asimu::config::SolverConfig;
 
 let mesh = Mesh::new("channel", 128)?;
 let solver = Solver::new(SolverConfig {
-    max_iterations: 100,
-    tolerance: 1.0e-6,
+    max_steps: 100,
 });
 let result = solver.run(&mesh)?;
 ```
@@ -48,7 +47,7 @@ let result = solver.run(&mesh)?;
 | 类型 | 说明 |
 |------|------|
 | `AppConfig` | 全局配置（solver + logging） |
-| `SolverConfig` | `max_iterations`, `tolerance` |
+| `SolverConfig` | `max_steps` |
 | `LoggingConfig` | `level` |
 | `Cli` | clap 命令行解析（CLI / 应用层使用） |
 | `init_tracing(&str) -> Result<()>` | 初始化 tracing（应用层调用） |
@@ -248,10 +247,9 @@ asimu [OPTIONS]
 
 Options:
       --config <PATH>           配置文件（TOML）
-      --max-iterations <N>      最大迭代步数
-      --tolerance <FLOAT>       收敛容差
+      --max-steps <N>           最大时间步数（占位求解器）
       --log-level <LEVEL>       日志级别
   -h, --help                    帮助
 ```
 
-环境变量：`ASIMU_CONFIG`、`ASIMU_MAX_ITERATIONS`、`ASIMU_TOLERANCE`、`ASIMU_LOG_LEVEL`。
+环境变量：`ASIMU_CONFIG`、`ASIMU_MAX_STEPS`、`ASIMU_LOG_LEVEL`。

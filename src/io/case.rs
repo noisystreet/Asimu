@@ -1,7 +1,11 @@
 //! TOML 算例解析（扩散 1D + 可压缩 3D NS）。
 
+#[path = "case_compressible.rs"]
+mod case_compressible;
 #[path = "mesh_load.rs"]
 mod mesh_load;
+
+pub use case_compressible::{CaseOutputConfig, EulerCaseConfig, resolve_case_output_path};
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -11,7 +15,6 @@ use serde::Deserialize;
 use crate::boundary::{
     BoundaryKind, BoundaryPatch, BoundaryRegistry, BoundarySet, BoundaryTomlFields,
 };
-use crate::config::SolverConfig;
 use crate::core::Real;
 use crate::error::{AsimuError, Result};
 use crate::field::{
@@ -21,6 +24,7 @@ use crate::mesh::{BoundaryMesh, StructuredMesh1d, StructuredMesh3d};
 use crate::physics::{FreestreamParams, IdealGasEoS, PhysicsConfig};
 
 use super::validate_input_path;
+use case_compressible::{EulerToml, OutputToml, parse_euler_config, parse_output};
 
 /// 算例网格（1D 扩散 / 3D 可压缩）。
 #[allow(clippy::large_enum_variant)]
@@ -84,9 +88,11 @@ pub struct CaseSpec {
     pub fluid_initial: FluidInitialConfig,
     pub freestream: Option<FreestreamParams>,
     pub restart: Option<PathBuf>,
-    pub solver: SolverConfig,
     pub time: CaseTimeConfig,
     pub sod: Option<SodCaseConfig>,
+    pub euler: Option<EulerCaseConfig>,
+    pub output: Option<CaseOutputConfig>,
+    pub case_dir: Option<PathBuf>,
 }
 
 /// 算例时间推进配置（`[time]`）。
@@ -101,8 +107,20 @@ pub struct CaseTimeConfig {
     pub mode: CaseTimeMode,
     pub dt: Option<Real>,
     pub cfl: Option<Real>,
+    pub cfl_max: Option<Real>,
     pub final_time: Option<Real>,
     pub max_steps: Option<u64>,
+    /// log₁₀(RMS(ρ̇)) 收敛容差；设有限值时与 `max_steps` 成对用于残差早停。
+    pub tolerance: Option<Real>,
+    pub local_time_step: bool,
+    pub cfl_ramp_steps: Option<u64>,
+}
+
+impl CaseTimeConfig {
+    #[must_use]
+    pub fn uses_local_time_step(&self) -> bool {
+        self.local_time_step
+    }
 }
 
 impl Default for CaseTimeConfig {
@@ -111,8 +129,12 @@ impl Default for CaseTimeConfig {
             mode: CaseTimeMode::Steady,
             dt: None,
             cfl: None,
+            cfl_max: None,
             final_time: None,
             max_steps: None,
+            tolerance: None,
+            local_time_step: false,
+            cfl_ramp_steps: None,
         }
     }
 }
@@ -130,36 +152,11 @@ pub struct SodCaseConfig {
 
 impl SodCaseConfig {
     pub fn inviscid(&self) -> crate::discretization::InviscidFluxConfig {
-        use crate::discretization::{
-            FluxScheme, InviscidFluxConfig, ReconstructionKind, RoeFluxConfig, SlopeLimiter,
-        };
-        let mut config = InviscidFluxConfig::default();
-        if let Some(name) = self.reconstruction.as_deref() {
-            config.reconstruction = match name {
-                "first_order" | "first-order" => ReconstructionKind::FirstOrder,
-                "muscl" => ReconstructionKind::Muscl,
-                _ => ReconstructionKind::FirstOrder,
-            };
-        }
-        if let Some(name) = self.limiter.as_deref() {
-            config.limiter = match name {
-                "minmod" => SlopeLimiter::Minmod,
-                "van_leer" | "vanleer" => SlopeLimiter::VanLeer,
-                "van_albada" | "vanalbada" | "van-albada" => SlopeLimiter::VanAlbada,
-                _ => SlopeLimiter::Minmod,
-            };
-        }
-        if let Some(name) = self.flux.as_deref() {
-            config.scheme = match name {
-                "roe" => FluxScheme::Roe(RoeFluxConfig::default()),
-                "hllc" => FluxScheme::Hllc,
-                _ => FluxScheme::Roe(RoeFluxConfig::default()),
-            };
-            if self.reconstruction.is_none() {
-                config.reconstruction = ReconstructionKind::Muscl;
-            }
-        }
-        config
+        case_compressible::inviscid_from_toml(
+            self.reconstruction.as_deref(),
+            self.flux.as_deref(),
+            self.limiter.as_deref(),
+        )
     }
 }
 
@@ -207,10 +204,10 @@ struct CaseToml {
     initial: BTreeMap<String, InitialToml>,
     freestream: Option<FreestreamToml>,
     restart: Option<RestartToml>,
-    solver: Option<SolverToml>,
     time: Option<TimeToml>,
     sod: Option<SodToml>,
     euler: Option<EulerToml>,
+    output: Option<OutputToml>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -233,9 +230,6 @@ struct MeshToml {
     scale: Option<Real>,
     metric: Option<String>,
 }
-
-#[derive(Debug, Deserialize)]
-struct EulerToml {}
 
 #[derive(Debug, Deserialize)]
 struct PhysicsToml {
@@ -292,12 +286,6 @@ struct RestartToml {
 }
 
 #[derive(Debug, Deserialize)]
-struct SolverToml {
-    max_iterations: u32,
-    tolerance: Real,
-}
-
-#[derive(Debug, Deserialize)]
 struct TimeToml {
     mode: Option<String>,
     dt: Option<Real>,
@@ -305,6 +293,9 @@ struct TimeToml {
     cfl_max: Option<Real>,
     final_time: Option<Real>,
     max_steps: Option<u64>,
+    tolerance: Option<Real>,
+    local_time_step: Option<bool>,
+    cfl_ramp_steps: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -350,20 +341,11 @@ fn parse_case_toml(content: &str, case_dir: Option<&Path>) -> Result<CaseSpec> {
     };
     let restart = raw.restart.map(|r| resolve_restart_path(r.path, case_dir));
 
-    let solver = raw
-        .solver
-        .map(|s| SolverConfig {
-            max_iterations: s.max_iterations,
-            tolerance: s.tolerance,
-        })
-        .unwrap_or(SolverConfig {
-            max_iterations: 1000,
-            tolerance: 1.0e-8,
-        });
+    let euler = raw.euler.as_ref().map(parse_euler_config).transpose()?;
     let time = parse_time_config(raw.time.as_ref(), raw.sod.is_some())?;
     let sod = raw.sod.as_ref().map(parse_sod_config);
 
-    Ok(CaseSpec {
+    let case = CaseSpec {
         name: raw.name,
         benchmark_id: raw.benchmark_id,
         mesh: parsed.mesh,
@@ -373,10 +355,14 @@ fn parse_case_toml(content: &str, case_dir: Option<&Path>) -> Result<CaseSpec> {
         fluid_initial,
         freestream,
         restart,
-        solver,
         time,
         sod,
-    })
+        euler,
+        output: raw.output.as_ref().map(parse_output),
+        case_dir: case_dir.map(Path::to_path_buf),
+    };
+    case.warn_config_inconsistencies();
+    Ok(case)
 }
 
 fn mesh_toml_fields(raw: &MeshToml) -> mesh_load::MeshTomlFields {
@@ -593,9 +579,13 @@ fn parse_time_config(raw: Option<&TimeToml>, has_sod: bool) -> Result<CaseTimeCo
     Ok(CaseTimeConfig {
         mode,
         dt: raw.dt,
-        cfl: raw.cfl.or(raw.cfl_max),
+        cfl: raw.cfl,
+        cfl_max: raw.cfl_max,
         final_time: raw.final_time,
         max_steps: raw.max_steps,
+        tolerance: raw.tolerance,
+        local_time_step: raw.local_time_step.unwrap_or(false),
+        cfl_ramp_steps: raw.cfl_ramp_steps,
     })
 }
 

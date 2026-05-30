@@ -345,7 +345,7 @@ pub trait FluxScheme {
 
 - 残差范数定义统一放在 `core`（如 L2 norm）
 - `solver` 每步记录残差，`tracing` 输出 `DEBUG` 级别
-- 收敛判据：`residual < tolerance` 且迭代次数 `< max_iterations`
+- 收敛判据：log₁₀(RMS(ρ̇)) ≤ `[time].tolerance` 或步数达到 `[time].max_steps`
 
 ### 8.4 多精度与执行后端（规划）
 

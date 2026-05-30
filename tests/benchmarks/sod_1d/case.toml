@@ -18,7 +18,3 @@ cfl = 0.4
 flux = "roe"
 reconstruction = "muscl"
 limiter = "van_albada"
-
-[solver]
-max_iterations = 1
-tolerance = 1.0e-6

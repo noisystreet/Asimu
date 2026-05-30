@@ -24,7 +24,6 @@
 | `physics` | table | 是 | 物性（§4） |
 | `boundary` | table | 是 | 边界条件（§5） |
 | `initial` | table | 否 | 初始条件（§5.5）；缺省为全零 |
-| `solver` | table | 否 | 覆盖 `config/default.toml` 的 `[solver]` |
 | `time` | table | 否 | 时间推进（§6）；默认 `mode = "steady"` |
 
 ---
@@ -136,6 +135,13 @@ value = 1.0
 
 1D 默认映射：`left` → 首端面，`right` → 末端面。
 
+含 `[euler]` 段时，所有 `wall` patch 自动改为**无粘滑移壁**（`no_slip = false`），即使 CGNS 映射为有滑移壁。可用同名 `[boundary.<patch>]` 覆盖 CGNS patch 的其他参数，但 `[euler]` 仍会在解析末将壁面设为滑移。
+
+| `wall` 字段 | 说明 |
+|-------------|------|
+| `no_slip` | `true` 无滑移（粘性）；`false` 滑移（无粘 Euler 默认） |
+| `heat` | `adiabatic` / `isothermal` / `heat_flux` |
+
 ---
 
 ## 5.5 `[initial]`（可选）
@@ -177,13 +183,21 @@ mode = "steady"       # steady | transient
 # dt = 1.0e-3
 # cfl = 0.4
 # final_time = 0.2
-# max_steps = 1000
+max_steps = 1000      # 时间推进步数上限（稳态伪时间 / 瞬态物理时间共用）
+# tolerance = -6.0    # 可选；log₁₀(RMS(ρ̇)) 阈值，满足则早停
 ```
 
-| `mode` | 说明 |
-|--------|------|
-| `steady` | 稳态（v0.2 扩散） |
-| `transient` | 瞬态；须配合 `[sod]` 或可压缩求解器 |
+| 字段 | 说明 |
+|------|------|
+| `mode` | `steady` 稳态伪时间推进；`transient` 瞬态物理时间推进 |
+| `local_time_step` | 可选；`true` 时逐单元 CFL 时间步（稳态加速，默认 `false` 为全局最小间距） |
+| `max_steps` | 最大推进步数（稳态与瞬态共用，不再使用 `max_iterations`） |
+| `cfl` | CFL 初值（3D Euler 时间步控制；默认 0.4） |
+| `cfl_max` | 可选；CFL 终值，从 `cfl` 线性增至 `cfl_max` |
+| `cfl_ramp_steps` | 可选；线性爬升步数（第 1 步…`cfl_ramp_steps`）；未设则在 `max_steps` 全程爬升；爬升结束后保持 `cfl_max` |
+| `tolerance` | 可选；log₁₀(RMS(ρ̇)) 阈值，与 `max_steps` 成对用于残差早停 |
+| `dt` | 固定时间步（设正数时覆盖 CFL 估算） |
+| `final_time` | 可选物理终止时刻（Sod 等算例亦可在 `[sod]` 指定） |
 
 含 `[sod]` 段时若省略 `[time]`，默认 `mode = "transient"`。
 
@@ -213,15 +227,16 @@ HLLC 变体示例：`tests/benchmarks/sod_1d/case_muscl_hllc.toml`。
 
 ---
 
-## 7. `[solver]`（可选）
+## 7. 全局 `[solver]`（`config/default.toml`，非算例）
+
+算例时间推进与收敛见 `[time].max_steps` / `[time].tolerance`。全局 `config/default.toml` 的 `[solver]` 仅保留 CLI 占位求解器步数：
 
 ```toml
 [solver]
-max_iterations = 1000
-tolerance = 1.0e-8
+max_steps = 100
 ```
 
-与全局 `config/default.toml` 合并；CLI / 环境变量优先级更高（见 ARCHITECTURE §12）。
+CLI：`--max-steps` / `ASIMU_MAX_STEPS`。
 
 ---
 

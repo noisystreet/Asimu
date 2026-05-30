@@ -16,6 +16,13 @@ pub use assembly_1d::{
 };
 pub use assembly_3d::assemble_inviscid_residual_3d;
 
+/// 忽略退化（零体积）控制体的体积下限。
+const DEGENERATE_VOLUME: Real = 1.0e-30;
+
+pub(crate) fn is_degenerate_volume(volume: Real) -> bool {
+    volume <= DEGENERATE_VOLUME
+}
+
 fn add_inviscid_flux(
     residual: &mut ConservedResidual,
     cell: usize,

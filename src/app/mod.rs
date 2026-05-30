@@ -48,8 +48,7 @@ mod tests {
     fn run_diffusion_case_via_cli_path() {
         let cli = Cli {
             config: None,
-            max_iterations: None,
-            tolerance: None,
+            max_steps: None,
             log_level: Some("warn".to_string()),
             case: Some(Path::new("tests/benchmarks/1d_diffusion_analytical/case.toml").into()),
         };

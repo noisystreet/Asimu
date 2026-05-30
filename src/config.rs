@@ -17,11 +17,10 @@ pub struct AppConfig {
     pub logging: LoggingConfig,
 }
 
-/// 求解器相关配置。
+/// 求解器相关配置（全局 default.toml / CLI 占位；算例见 `case.toml` `[time]`）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SolverConfig {
-    pub max_iterations: u32,
-    pub tolerance: f64,
+    pub max_steps: u64,
 }
 
 /// 日志相关配置。
@@ -33,10 +32,7 @@ pub struct LoggingConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            solver: SolverConfig {
-                max_iterations: 100,
-                tolerance: 1.0e-6,
-            },
+            solver: SolverConfig { max_steps: 100 },
             logging: LoggingConfig {
                 level: "info".to_string(),
             },
@@ -52,13 +48,9 @@ pub struct Cli {
     #[arg(long, env = "ASIMU_CONFIG")]
     pub config: Option<PathBuf>,
 
-    /// 最大迭代步数
-    #[arg(long, env = "ASIMU_MAX_ITERATIONS")]
-    pub max_iterations: Option<u32>,
-
-    /// 收敛容差
-    #[arg(long, env = "ASIMU_TOLERANCE")]
-    pub tolerance: Option<f64>,
+    /// 最大时间步数（稳态伪时间 / 瞬态物理时间共用）
+    #[arg(long, env = "ASIMU_MAX_STEPS")]
+    pub max_steps: Option<u64>,
 
     /// 日志级别: error | warn | info | debug | trace
     #[arg(long, env = "ASIMU_LOG_LEVEL")]
@@ -83,11 +75,8 @@ impl Cli {
             }
         };
 
-        if let Some(max_iterations) = self.max_iterations {
-            config.solver.max_iterations = max_iterations;
-        }
-        if let Some(tolerance) = self.tolerance {
-            config.solver.tolerance = tolerance;
+        if let Some(max_steps) = self.max_steps {
+            config.solver.max_steps = max_steps;
         }
         if let Some(level) = self.log_level {
             config.logging.level = level;
@@ -127,22 +116,19 @@ mod tests {
     #[test]
     fn default_config_is_valid() {
         let config = AppConfig::default();
-        assert!(config.solver.max_iterations > 0);
-        assert!(config.solver.tolerance > 0.0);
+        assert!(config.solver.max_steps > 0);
     }
 
     #[test]
     fn cli_overrides_config_values() {
         let cli = Cli {
             config: None,
-            max_iterations: Some(42),
-            tolerance: Some(1.0e-4),
+            max_steps: Some(42),
             log_level: Some("debug".to_string()),
             case: None,
         };
         let config = cli.load_config().expect("load config");
-        assert_eq!(config.solver.max_iterations, 42);
-        assert!((config.solver.tolerance - 1.0e-4).abs() < f64::EPSILON);
+        assert_eq!(config.solver.max_steps, 42);
         assert_eq!(config.logging.level, "debug");
     }
 }

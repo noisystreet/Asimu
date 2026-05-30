@@ -12,7 +12,7 @@ use crate::solver::compressible::{
     CompressibleAdvanceContext1d, CompressibleEulerConfig, CompressibleEulerSolver,
     CompressibleStepInfo,
 };
-use crate::solver::time::{RungeKutta4Config, RungeKutta4Integrator};
+use crate::solver::time::{CflSchedule, RungeKutta4Config, RungeKutta4Integrator};
 
 /// Sod benchmark 配置（与 `tests/benchmarks/sod_1d/expected.json` 对齐）。
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -106,7 +106,8 @@ pub fn run_sod_benchmark(config: &SodBenchmarkConfig) -> Result<SodBenchmarkResu
             max_steps: u64::MAX,
         },
         inviscid: config.inviscid,
-        cfl: config.cfl,
+        cfl_schedule: CflSchedule::constant(config.cfl),
+        ..CompressibleEulerConfig::default()
     });
     let history = run_until_time(&solver, &ctx, &mut fields, config.final_time)?;
     let final_time = history.last().map(|s| s.physical_time).unwrap_or(0.0);
