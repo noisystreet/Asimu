@@ -1,4 +1,6 @@
 //! Roe 近似 Riemann 求解器 + Harten 熵修正。
+//!
+//! 理论：[`docs/theory/inviscid_flux.md`](../../docs/theory/inviscid_flux.md) §4
 
 use crate::core::{Real, Vector3};
 use crate::error::{AsimuError, Result};

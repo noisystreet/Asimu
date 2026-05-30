@@ -1,4 +1,6 @@
 //! 可压缩 Euler 无粘残差装配（FVM 控制体积分）。
+//!
+//! 理论：[`docs/theory/inviscid_flux.md`](../../docs/theory/inviscid_flux.md) §3
 
 mod assembly_1d;
 mod assembly_3d;

@@ -1,6 +1,8 @@
-//! 空间离散算子（v0.2）。
+//! 空间离散算子（v0.2 扩散 + v1.x 可压缩无粘）。
 //!
-//! 理论：[`docs/theory/fvm_diffusion.md`](../../docs/theory/fvm_diffusion.md)
+//! 理论：[`docs/theory/fvm_diffusion.md`](../../docs/theory/fvm_diffusion.md)（扩散）、
+//! [`interface_reconstruction.md`](../../docs/theory/interface_reconstruction.md)、
+//! [`inviscid_flux.md`](../../docs/theory/inviscid_flux.md)（Euler FVM）。
 
 pub mod bc;
 pub mod bc_compressible;

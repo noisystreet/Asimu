@@ -1,6 +1,6 @@
 //! 时间推进抽象（ADR 0005）。
 //!
-//! 理论：[`docs/theory/time_integration.md`](../../../docs/theory/time_integration.md)（规划）
+//! 理论：[`docs/theory/time_integration.md`](../../../docs/theory/time_integration.md)
 
 pub mod rk4;
 

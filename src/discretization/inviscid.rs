@@ -1,4 +1,6 @@
 //! 无粘 Euler 物理通量 \( \mathbf{F}(\mathbf{U}) \cdot \mathbf{n} \)。
+//!
+//! 理论：[`docs/theory/inviscid_flux.md`](../../docs/theory/inviscid_flux.md) §2
 
 use crate::core::{Real, Vector3};
 use crate::physics::{ConservedState, PrimitiveState};

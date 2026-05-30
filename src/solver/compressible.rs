@@ -1,4 +1,7 @@
 //! 可压缩无粘 Euler 显式求解（RK4 + FVM 残差）。
+//!
+//! 理论：[`docs/theory/time_integration.md`](../../docs/theory/time_integration.md)、
+//! [`inviscid_flux.md`](../../docs/theory/inviscid_flux.md)
 
 use crate::boundary::BoundarySet;
 use crate::core::Real;

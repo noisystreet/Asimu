@@ -1,6 +1,6 @@
 # 数值理论手册
 
-> 与代码实现一一对应的理论说明与参考文献。  
+> 与代码实现一一对应的理论说明与参考文献。
 > Agent 约束见 [AGENTS.md](../../AGENTS.md)「数值理论与参考文献」；算例级文献见 [BENCHMARKS.md](../BENCHMARKS.md)。
 
 ## 用途
@@ -20,12 +20,14 @@
 | 文档 | 模块 | 版本 | 状态 | 主要参考 |
 |------|------|------|------|----------|
 | [fvm_diffusion.md](fvm_diffusion.md) | `discretization` | v0.2 | **骨架** | Patankar (1980) Ch. 5 |
+| [interface_reconstruction.md](interface_reconstruction.md) | `discretization/reconstruction` | v1.x | **已实现（一阶）** | LeVeque (2002) Ch. 4；Toro (2009) |
+| [inviscid_flux.md](inviscid_flux.md) | `discretization/roe` | v1.x | **已实现（Roe + 熵修正）** | Roe (1981)；Toro (2009) Ch. 10–11 |
 | *(待建)* `fvm_convection_diffusion.md` | `discretization` | v0.2 | 规划 | Patankar (1980) Ch. 5–6 |
-| `boundary_conditions.md` | `discretization` / BC | v0.2–v0.3 | **已实现（v0.2 Dirichlet/Neumann）** | [boundary_conditions.md](boundary_conditions.md) |
-| *(待建)* `time_integration.md` | `solver/time` | v0.2+ | 规划 | ADR 0005；Ferziger et al. |
+| [boundary_conditions.md](boundary_conditions.md) | `discretization` / BC | v0.2–v0.3 | **已实现（v0.2 Dirichlet/Neumann）** | [boundary_conditions.md](boundary_conditions.md) |
+| [time_integration.md](time_integration.md) | `solver/time` | v1.x | **已实现（RK4 + CFL）** | ADR 0005；Ferziger et al. Ch. 6 |
 | *(待建)* `linear_cg.md` | `linalg` | v0.2 | 规划 | Saad (2003) Ch. 6 |
 | *(待建)* `incompressible_simple.md` | `solver` | v0.3 | 规划 | Patankar (1980) Ch. 6 |
-| *(待建)* `compressible_ns.md` | `discretization` / `physics` | v1.x | 规划 | [adr/0009](../adr/0009-compressible-navier-stokes.md)；Toro (2009) |
+| *(待建)* `compressible_ns.md` | `discretization` / `physics` | v1.x | 部分（Euler 无粘见上表） | [adr/0009](../adr/0009-compressible-navier-stokes.md)；Toro (2009) |
 
 实现对应功能时：将「规划」改为链接，并从索引表移除 *(待建)* 前缀。
 

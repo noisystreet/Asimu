@@ -1,4 +1,6 @@
 //! 界面状态重构（v0.3 首版：一阶分段常数）。
+//!
+//! 理论：[`docs/theory/interface_reconstruction.md`](../../docs/theory/interface_reconstruction.md)
 
 use crate::physics::ConservedState;
 

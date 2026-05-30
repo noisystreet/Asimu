@@ -29,6 +29,14 @@ python3 scripts/plot_sod_benchmark.py sod_profile.txt -o sod_compare.png
 
 文本格式：`#` 元数据行 + 列 `x rho_numeric rho_exact rho_error`。
 
+## 数值方法
+
+| 环节 | 理论 |
+|------|------|
+| 一阶界面重构 | [interface_reconstruction.md](../../../docs/theory/interface_reconstruction.md) |
+| Roe + Harten 熵修正 | [inviscid_flux.md](../../../docs/theory/inviscid_flux.md) |
+| RK4 + CFL=0.4 | [time_integration.md](../../../docs/theory/time_integration.md) |
+
 ## 参考文献
 
 - Sod, G. A. (1978). *A Survey of Several Finite Difference Methods for Systems of Nonlinear Hyperbolic Conservation Laws.*

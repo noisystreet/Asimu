@@ -1,4 +1,6 @@
 //! 四阶 Runge-Kutta 显式时间推进。
+//!
+//! 理论：[`docs/theory/time_integration.md`](../../../docs/theory/time_integration.md) §3
 
 use crate::core::Real;
 use crate::error::Result;
