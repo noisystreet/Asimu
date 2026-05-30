@@ -1,5 +1,5 @@
-name = "sod_1d"
-benchmark_id = "sod_1d"
+name = "sod_1d_muscl_hllc"
+benchmark_id = "sod_1d_muscl_hllc"
 
 [mesh]
 kind = "structured_1d"
@@ -15,7 +15,7 @@ gas_constant = 1.0
 diaphragm = 0.5
 final_time = 0.2
 cfl = 0.4
-flux = "roe"
+flux = "hllc"
 reconstruction = "muscl"
 limiter = "van_albada"
 

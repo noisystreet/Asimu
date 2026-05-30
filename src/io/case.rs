@@ -617,8 +617,21 @@ static_pressure = 100000.0
         assert_eq!(case.benchmark_id.as_deref(), Some("sod_1d"));
         assert_eq!(case.mesh.as_1d().expect("1d").num_cells(), 100);
         assert!(case.is_compressible());
-        assert!(case.sod.is_some());
+        let sod = case.sod.expect("sod");
         assert_eq!(case.time.mode, CaseTimeMode::Transient);
+        let inviscid = sod.inviscid();
+        assert_eq!(inviscid.short_label(), "muscl_roe");
+        assert_eq!(inviscid.limiter_label(), "van_albada");
+    }
+
+    #[test]
+    fn parses_sod_muscl_hllc_case() {
+        let content = include_str!("../../tests/benchmarks/sod_1d/case_muscl_hllc.toml");
+        let case = parse_case_toml(content, None).expect("parse");
+        let sod = case.sod.expect("sod");
+        let inviscid = sod.inviscid();
+        assert_eq!(inviscid.short_label(), "muscl_hllc");
+        assert_eq!(inviscid.limiter_label(), "van_albada");
     }
 
     #[test]

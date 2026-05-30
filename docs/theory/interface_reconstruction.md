@@ -26,7 +26,7 @@ $$
 
 （法向指向域外时，ghost 在 owner 外侧；通量求解器用法向 \(\mathbf{n}\) 统一投影。）
 
-**精度**：一阶，激波/接触间断 smear 为 \(O(\Delta x)\)；Sod 算例 100 单元 L1(ρ) ≈ 0.02（见 `tests/benchmarks/sod_1d/`）。
+**精度**：一阶 Roe 100 单元 L1(ρ) ≈ 0.02；MUSCL+van Albada+Roe ≈ 0.012（见 `tests/benchmarks/sod_1d/`）。
 
 ---
 

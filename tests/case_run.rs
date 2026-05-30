@@ -19,5 +19,19 @@ fn sod_benchmark_via_case_runner() {
     let result = run_case_path(Path::new("tests/benchmarks/sod_1d/case.toml")).expect("run");
     assert_eq!(result.kind, CaseRunKind::Sod1dTransient);
     let metrics = result.sod.expect("sod metrics");
-    assert!(metrics.l1_density < 0.04);
+    assert_eq!(metrics.scheme, "muscl_roe");
+    assert_eq!(metrics.limiter, "van_albada");
+    assert!(metrics.l1_density < 0.02);
+    assert!(result.summary.contains("van_albada/muscl_roe"));
+}
+
+#[test]
+fn sod_muscl_hllc_via_case_runner() {
+    let result =
+        run_case_path(Path::new("tests/benchmarks/sod_1d/case_muscl_hllc.toml")).expect("run");
+    assert_eq!(result.kind, CaseRunKind::Sod1dTransient);
+    let metrics = result.sod.expect("sod metrics");
+    assert_eq!(metrics.scheme, "muscl_hllc");
+    assert_eq!(metrics.limiter, "van_albada");
+    assert!(metrics.l1_density < 0.02);
 }

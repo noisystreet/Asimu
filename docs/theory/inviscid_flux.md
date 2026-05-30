@@ -158,7 +158,7 @@ ConservedResidual  (= dU/dt)
 
 ## 8. 相关算例
 
-- `tests/benchmarks/sod_1d/` — Sod 激波管，100 单元，\(t=0.2\)
+- `tests/benchmarks/sod_1d/` — MUSCL+van Albada+Roe/HLLC，100 单元，\(t=0.2\)
 - `discretization::roe::tests::sod_interface_roe_flux_matches_reference_values`
 - `discretization::hllc::tests::sod_interface_hllc_flux_matches_reference_values`
 - `discretization::residual::assembly_1d::tests::two_cell_discontinuity_has_opposing_mass_rhs`

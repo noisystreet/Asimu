@@ -191,12 +191,25 @@ mode = "steady"       # steady | transient
 
 ```toml
 [sod]
-diaphragm = 0.5
-final_time = 0.2
-cfl = 0.4
+diaphragm = 0.5      # 间断位置（域坐标）
+final_time = 0.2     # 物理终止时刻
+cfl = 0.4            # CFL 数（固定 dt 时可在 [time] 指定 dt）
+
+# 可选：无粘离散（省略时为一阶 Roe）
+flux = "roe"              # roe | hllc
+reconstruction = "muscl"  # first_order | muscl
+limiter = "van_albada"    # minmod | van_leer | van_albada
 ```
 
+| 字段 | 默认 | 说明 |
+|------|------|------|
+| `flux` | `roe`（一阶） | 指定 `roe`/`hllc` 且未写 `reconstruction` 时默认 **MUSCL** 重构 |
+| `reconstruction` | 随 `flux` | `first_order` 强制一阶分段常数 |
+| `limiter` | `minmod` | 仅 `reconstruction = "muscl"` 时生效 |
+
 须配合 `structured_1d` 网格与 `[physics] gamma/gas_constant`。CLI：`asimu --case tests/benchmarks/sod_1d/case.toml`。
+
+HLLC 变体示例：`tests/benchmarks/sod_1d/case_muscl_hllc.toml`。
 
 ---
 

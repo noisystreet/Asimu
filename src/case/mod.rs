@@ -94,6 +94,8 @@ mod tests {
         let result = run_case_path(path).expect("run");
         assert_eq!(result.kind, CaseRunKind::Sod1dTransient);
         let metrics = result.sod.expect("metrics");
-        assert!(metrics.l1_density < 0.04);
+        assert_eq!(metrics.scheme, "muscl_roe");
+        assert_eq!(metrics.limiter, "van_albada");
+        assert!(metrics.l1_density < 0.02);
     }
 }
