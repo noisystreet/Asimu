@@ -29,6 +29,9 @@ default = []
 io-vtk = ["dep:quick-xml", "dep:base64", "dep:flate2"]
 io-cgns = []
 io-cgns-vts = ["io-cgns", "io-vtk"]
+# 圆柱 CGNS 多步时间推进、端到端算例、DLR 全 zone 导出等（读 case_cylinder/cylinder.cgns）。
+# 默认关闭；本地/CI 长跑：cargo test --features io-cgns,slow-tests
+slow-tests = []
 
 [build-dependencies]
 cc = "1"

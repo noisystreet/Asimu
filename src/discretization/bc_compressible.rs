@@ -4,10 +4,13 @@ use crate::boundary::{
     BcHandler, BoundaryKind, BoundaryPatch, BoundaryRegistry, BoundarySet, WallHeat,
 };
 use crate::core::Real;
+use crate::discretization::wall_thermal::wall_ghost_temperature;
 use crate::error::Result;
 use crate::field::ConservedFields;
 use crate::mesh::{BoundaryMesh3d, FaceGeometry3d};
-use crate::physics::{ConservedState, FreestreamParams, IdealGasEoS, PrimitiveState};
+use crate::physics::{
+    ConservedState, FreestreamParams, IdealGasEoS, PrimitiveState, ViscousPhysicsConfig,
+};
 
 /// 单面 ghost 守恒状态。
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -40,14 +43,15 @@ impl BoundaryGhostBuffer {
     }
 }
 
-/// 壁面 ghost：反射法向动量，无滑移置零切向速度。
+/// 壁面 ghost：反射法向动量，无滑移置零切向速度；热 BC 设置 ghost 温度（NS）。
 pub fn wall_ghost(
     owner: &ConservedState,
     geom: &FaceGeometry3d,
     no_slip: bool,
-    _heat: WallHeat,
+    heat: WallHeat,
     eos: &IdealGasEoS,
     min_pressure: Real,
+    viscous: Option<&ViscousPhysicsConfig>,
 ) -> Result<GhostCellState> {
     let prim = crate::field::primitive_from_conserved_relaxed(eos, owner, min_pressure)?;
     let n = geom.normal;
@@ -59,11 +63,13 @@ pub fn wall_ghost(
     if no_slip {
         velocity = [0.0, 0.0, 0.0];
     }
+    let t_owner = prim.pressure / (prim.density.max(1.0e-30) * eos.gas_constant);
+    let t_ghost = wall_ghost_temperature(t_owner, heat, geom.spacing, viscous, eos)?;
     let ghost_prim = PrimitiveState {
-        density: prim.density,
+        density: prim.pressure / (eos.gas_constant * t_ghost.max(1.0e-30)),
         velocity,
         pressure: prim.pressure,
-        temperature: prim.temperature,
+        temperature: t_ghost,
     };
     Ok(GhostCellState {
         conserved: ConservedState::from_primitive(eos, &ghost_prim)?,
@@ -164,8 +170,17 @@ pub fn symmetry_ghost(
     geom: &FaceGeometry3d,
     eos: &IdealGasEoS,
     min_pressure: Real,
+    viscous: Option<&ViscousPhysicsConfig>,
 ) -> Result<GhostCellState> {
-    wall_ghost(owner, geom, false, WallHeat::Adiabatic, eos, min_pressure)
+    wall_ghost(
+        owner,
+        geom,
+        false,
+        WallHeat::Adiabatic,
+        eos,
+        min_pressure,
+        viscous,
+    )
 }
 
 fn normalize(v: [Real; 3]) -> Result<[Real; 3]> {
@@ -185,6 +200,7 @@ fn apply_patch_compressible(
     ghosts: &mut BoundaryGhostBuffer,
     eos: &IdealGasEoS,
     freestream: &FreestreamParams,
+    viscous: Option<&ViscousPhysicsConfig>,
 ) -> Result<()> {
     let p_floor = crate::field::positivity_pressure_floor(freestream.pressure);
     let handler = BoundaryRegistry::handler_for(&patch.kind);
@@ -194,7 +210,7 @@ fn apply_patch_compressible(
         let geom = mesh.face_geometry_3d(face)?;
         let ghost = match (&handler, &patch.kind) {
             (BcHandler::Wall, BoundaryKind::Wall { no_slip, heat }) => {
-                wall_ghost(&owner, &geom, *no_slip, *heat, eos, p_floor)?
+                wall_ghost(&owner, &geom, *no_slip, *heat, eos, p_floor, viscous)?
             }
             (
                 BcHandler::Farfield,
@@ -262,7 +278,7 @@ fn apply_patch_compressible(
                 },
             ) => outlet_ghost(&owner, *static_pressure, eos, p_floor)?,
             (BcHandler::Symmetry, BoundaryKind::Symmetry) => {
-                symmetry_ghost(&owner, &geom, eos, p_floor)?
+                symmetry_ghost(&owner, &geom, eos, p_floor, viscous)?
             }
             (BcHandler::Periodic, BoundaryKind::Periodic { .. }) => {
                 GhostCellState { conserved: owner }
@@ -283,10 +299,11 @@ pub fn apply_compressible_boundary_conditions(
     ghosts: &mut BoundaryGhostBuffer,
     eos: &IdealGasEoS,
     freestream: &FreestreamParams,
+    viscous: Option<&ViscousPhysicsConfig>,
 ) -> Result<()> {
     BoundaryRegistry::validate_patches(patches.patches())?;
     for patch in patches.patches() {
-        apply_patch_compressible(mesh, patch, fields, ghosts, eos, freestream)?;
+        apply_patch_compressible(mesh, patch, fields, ghosts, eos, freestream, viscous)?;
     }
     Ok(())
 }
@@ -297,6 +314,27 @@ mod tests {
     use crate::boundary::{BoundaryKind, BoundaryPatch};
     use crate::core::Vector3;
     use crate::mesh::{BoundaryMesh, StructuredMesh3d};
+
+    #[test]
+    fn isothermal_wall_ghost_temperature_matches_face_value() {
+        let eos = IdealGasEoS::AIR_STANDARD;
+        let viscous = crate::physics::ViscousPhysicsConfig::default();
+        let t_owner = 400.0;
+        let t_wall = 300.0;
+        let spacing = 0.25;
+        let t_ghost = crate::discretization::wall_ghost_temperature(
+            t_owner,
+            WallHeat::Isothermal {
+                temperature: t_wall,
+            },
+            spacing,
+            Some(&viscous),
+            &eos,
+        )
+        .expect("t_ghost");
+        let t_face = 0.5 * (t_owner + t_ghost);
+        assert!((t_face - t_wall).abs() < 1.0e-10);
+    }
 
     #[test]
     fn wall_no_slip_zeros_velocity() {
@@ -313,8 +351,16 @@ mod tests {
             area: 1.0,
         };
         let p_floor = crate::field::positivity_pressure_floor(params.pressure);
-        let ghost =
-            wall_ghost(&owner, &geom, true, WallHeat::Adiabatic, &eos, p_floor).expect("ghost");
+        let ghost = wall_ghost(
+            &owner,
+            &geom,
+            true,
+            WallHeat::Adiabatic,
+            &eos,
+            p_floor,
+            None,
+        )
+        .expect("ghost");
         let prim = crate::field::primitive_from_conserved(&eos, &ghost.conserved).expect("prim");
         assert!(prim.velocity.iter().all(|&v| v.abs() < 1.0e-12));
     }
@@ -411,8 +457,16 @@ mod tests {
             },
         )]);
         let mut ghosts = BoundaryGhostBuffer::new();
-        apply_compressible_boundary_conditions(&mesh, &patches, &fields, &mut ghosts, &eos, &fs)
-            .expect("bc");
+        apply_compressible_boundary_conditions(
+            &mesh,
+            &patches,
+            &fields,
+            &mut ghosts,
+            &eos,
+            &fs,
+            None,
+        )
+        .expect("bc");
         assert!(ghosts.get_face(first_face).is_some());
     }
 }

@@ -85,6 +85,128 @@ impl ConservedFields {
         Ok(())
     }
 
+    /// 对角 LU-SGS：`self ← self + ω·Δt·R / (1 + Δt·σ)`（全局 Δt；\(\sigma\) 为 \((|u|+a)/h\)）。
+    #[allow(clippy::too_many_arguments)]
+    pub fn assign_lusgs_diagonal_increment(
+        &mut self,
+        residual: &ConservedResidual,
+        sigma: &[Real],
+        volumes: &[Real],
+        dt: Real,
+        omega: Real,
+        gamma: Real,
+        min_pressure: Real,
+    ) -> Result<()> {
+        let n = self.num_cells();
+        ensure_residual_size(n, residual.num_cells())?;
+        if sigma.len() != n || volumes.len() != n {
+            return Err(AsimuError::Field(format!(
+                "lu_sgs: sigma/volume 长度 {}/{} 与场单元数 {n} 不一致",
+                sigma.len(),
+                volumes.len()
+            )));
+        }
+        if !(dt > 0.0 && omega > 0.0) {
+            return Err(AsimuError::Field("lu_sgs: dt 与 omega 须为正".to_string()));
+        }
+        let _ = volumes;
+        for (i, &sig) in sigma.iter().enumerate().take(n) {
+            let denom = 1.0 + dt * sig;
+            let scale = omega * dt / denom;
+            apply_lusgs_component_update(self, i, residual, scale, gamma, min_pressure);
+        }
+        Ok(())
+    }
+
+    /// 对角 LU-SGS：`self ← base + ω·Δt_i·R / (1 + Δt_i·σ_i)`。
+    #[allow(clippy::too_many_arguments)]
+    pub fn assign_lusgs_diagonal_update(
+        &mut self,
+        base: &Self,
+        residual: &ConservedResidual,
+        sigma: &[Real],
+        dt: &[Real],
+        omega: Real,
+        gamma: Real,
+        min_pressure: Real,
+    ) -> Result<()> {
+        ensure_same_size(self.num_cells(), base.num_cells())?;
+        ensure_residual_size(base.num_cells(), residual.num_cells())?;
+        ensure_dt_size(base.num_cells(), dt.len())?;
+        if sigma.len() != base.num_cells() {
+            return Err(AsimuError::Field(
+                "lu_sgs: sigma 与场单元数不一致".to_string(),
+            ));
+        }
+        if omega <= 0.0 {
+            return Err(AsimuError::Field("lu_sgs: omega 须为正".to_string()));
+        }
+        for i in 0..base.num_cells() {
+            let dt_i = dt[i];
+            if dt_i <= 0.0 {
+                return Err(AsimuError::Field(format!("lu_sgs: 单元 {i} 的 Δt 须为正")));
+            }
+            let denom = 1.0 + dt_i * sigma[i];
+            let scale = omega * dt_i / denom;
+            let state = lusgs_updated_state(base, residual, i, scale, gamma, min_pressure);
+            self.density.values_mut()[i] = state.density;
+            self.momentum_x.values_mut()[i] = state.momentum[0];
+            self.momentum_y.values_mut()[i] = state.momentum[1];
+            self.momentum_z.values_mut()[i] = state.momentum[2];
+            self.total_energy.values_mut()[i] = state.total_energy;
+        }
+        Ok(())
+    }
+
+    /// `self[cell] += scale * increment`（守恒分量，带正性夹紧）。
+    pub fn add_conserved_increment(
+        &mut self,
+        cell: usize,
+        scale: Real,
+        increment: [Real; 5],
+        gamma: Real,
+        min_pressure: Real,
+    ) -> Result<()> {
+        if cell >= self.num_cells() {
+            return Err(AsimuError::Field(format!("单元索引越界: {cell}")));
+        }
+        let rho_min = 1.0e-12;
+        let mut rho = self.density.values()[cell] + scale * increment[0];
+        let mut mx = self.momentum_x.values()[cell] + scale * increment[1];
+        let mut my = self.momentum_y.values()[cell] + scale * increment[2];
+        let mut mz = self.momentum_z.values()[cell] + scale * increment[3];
+        let energy = self.total_energy.values()[cell] + scale * increment[4];
+        let rho_old = rho;
+        let rho_clamped = if rho_old.is_finite() && rho_old > 0.0 {
+            rho_old.max(rho_min)
+        } else {
+            rho_min
+        };
+        if rho_old.is_finite() && rho_old > 0.0 && rho_old < rho_min {
+            let s = rho_clamped / rho_old;
+            mx *= s;
+            my *= s;
+            mz *= s;
+        } else if !(rho_old.is_finite() && rho_old > 0.0) {
+            mx = 0.0;
+            my = 0.0;
+            mz = 0.0;
+        }
+        rho = rho_clamped;
+        let mut state = ConservedState {
+            density: rho,
+            momentum: [mx, my, mz],
+            total_energy: energy,
+        };
+        clamp_conserved_positivity(&mut state, gamma, min_pressure);
+        self.density.values_mut()[cell] = state.density;
+        self.momentum_x.values_mut()[cell] = state.momentum[0];
+        self.momentum_y.values_mut()[cell] = state.momentum[1];
+        self.momentum_z.values_mut()[cell] = state.momentum[2];
+        self.total_energy.values_mut()[cell] = state.total_energy;
+        Ok(())
+    }
+
     /// `self ← base + scale * residual`。
     pub fn assign_axpy(
         &mut self,
@@ -325,6 +447,62 @@ fn scale_component(dst: &mut [Real], src: &[Real], scale: Real) {
     for (d, &s) in dst.iter_mut().zip(src.iter()) {
         *d = scale * s;
     }
+}
+
+fn apply_lusgs_component_update(
+    fields: &mut ConservedFields,
+    i: usize,
+    residual: &ConservedResidual,
+    scale: Real,
+    gamma: Real,
+    min_pressure: Real,
+) {
+    let state = lusgs_updated_state(fields, residual, i, scale, gamma, min_pressure);
+    fields.density.values_mut()[i] = state.density;
+    fields.momentum_x.values_mut()[i] = state.momentum[0];
+    fields.momentum_y.values_mut()[i] = state.momentum[1];
+    fields.momentum_z.values_mut()[i] = state.momentum[2];
+    fields.total_energy.values_mut()[i] = state.total_energy;
+}
+
+fn lusgs_updated_state(
+    base: &ConservedFields,
+    residual: &ConservedResidual,
+    i: usize,
+    scale: Real,
+    gamma: Real,
+    min_pressure: Real,
+) -> ConservedState {
+    let rho_min = 1.0e-12;
+    let mut rho = base.density.values()[i] + scale * residual.density.values()[i];
+    let mut mx = base.momentum_x.values()[i] + scale * residual.momentum_x.values()[i];
+    let mut my = base.momentum_y.values()[i] + scale * residual.momentum_y.values()[i];
+    let mut mz = base.momentum_z.values()[i] + scale * residual.momentum_z.values()[i];
+    let energy = base.total_energy.values()[i] + scale * residual.total_energy.values()[i];
+    let rho_old = rho;
+    let rho_clamped = if rho_old.is_finite() && rho_old > 0.0 {
+        rho_old.max(rho_min)
+    } else {
+        rho_min
+    };
+    if rho_old.is_finite() && rho_old > 0.0 && rho_old < rho_min {
+        let s = rho_clamped / rho_old;
+        mx *= s;
+        my *= s;
+        mz *= s;
+    } else if !(rho_old.is_finite() && rho_old > 0.0) {
+        mx = 0.0;
+        my = 0.0;
+        mz = 0.0;
+    }
+    rho = rho_clamped;
+    let mut state = ConservedState {
+        density: rho,
+        momentum: [mx, my, mz],
+        total_energy: energy,
+    };
+    clamp_conserved_positivity(&mut state, gamma, min_pressure);
+    state
 }
 
 fn combine_rk4_component(dst: &mut [Real], k1: &[Real], k2: &[Real], k3: &[Real], k4: &[Real]) {

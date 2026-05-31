@@ -95,6 +95,8 @@ pub struct CaseSpec {
     pub time: CaseTimeConfig,
     pub sod: Option<SodCaseConfig>,
     pub euler: Option<EulerCaseConfig>,
+    /// 3D 可压缩 Navier-Stokes（`[navier_stokes]`，与 `[euler]` 二选一）。
+    pub navier_stokes: Option<EulerCaseConfig>,
     pub output: Option<CaseOutputConfig>,
     pub observability: Option<CaseObservabilityConfig>,
     pub case_dir: Option<PathBuf>,
@@ -119,8 +121,12 @@ pub struct CaseTimeConfig {
     pub tolerance: Option<Real>,
     pub local_time_step: bool,
     pub cfl_ramp_steps: Option<u64>,
-    /// 时间积分格式：`rk4`（默认）或 `euler`（一阶前向 Euler，排错对照）。
+    /// 时间积分格式：`rk4`（默认）、`euler` 或 `lu_sgs`。
     pub scheme: Option<crate::solver::time::TimeIntegrationScheme>,
+    /// `lu_sgs` 松弛因子 \(\omega\in(0,1]\)（默认 1）。
+    pub lusgs_omega: Option<Real>,
+    /// `lu_sgs` 双扫（默认 true）；`false` 为阶段 C 对角隐式。
+    pub lusgs_sweep: Option<bool>,
 }
 
 impl CaseTimeConfig {
@@ -132,6 +138,10 @@ impl CaseTimeConfig {
     #[must_use]
     pub fn resolved_time_scheme(&self) -> crate::solver::time::TimeIntegrationScheme {
         self.scheme.unwrap_or_default()
+    }
+
+    pub fn resolved_lusgs_config(&self) -> Result<crate::solver::time::LuSgsConfig> {
+        crate::solver::time::LuSgsConfig::parse(self.lusgs_omega, self.lusgs_sweep)
     }
 }
 
@@ -148,6 +158,8 @@ impl Default for CaseTimeConfig {
             local_time_step: false,
             cfl_ramp_steps: None,
             scheme: None,
+            lusgs_omega: None,
+            lusgs_sweep: None,
         }
     }
 }
@@ -200,6 +212,20 @@ impl CaseSpec {
         self.physics.eos.is_some()
     }
 
+    /// 3D 可压缩离散段：`[navier_stokes]` 优先，否则 `[euler]`。
+    pub fn compressible_discretization(&self) -> Result<&EulerCaseConfig> {
+        if let Some(ns) = &self.navier_stokes {
+            return Ok(ns);
+        }
+        self.euler.as_ref().ok_or_else(|| {
+            AsimuError::Config("3D 可压缩算例须包含 [euler] 或 [navier_stokes]".to_string())
+        })
+    }
+
+    pub fn is_navier_stokes(&self) -> bool {
+        self.physics.is_navier_stokes()
+    }
+
     pub fn diffusivity(&self) -> Real {
         self.physics.diffusivity.unwrap_or(1.0)
     }
@@ -220,6 +246,7 @@ struct CaseToml {
     time: Option<TimeToml>,
     sod: Option<SodToml>,
     euler: Option<EulerToml>,
+    navier_stokes: Option<EulerToml>,
     output: Option<OutputToml>,
     observability: Option<ObservabilityToml>,
 }
@@ -250,6 +277,12 @@ struct PhysicsToml {
     diffusivity: Option<Real>,
     gamma: Option<Real>,
     gas_constant: Option<Real>,
+    /// 动力粘度 Pa·s（`viscosity = "constant"` 时必填）。
+    mu: Option<Real>,
+    /// Prandtl 数（默认 0.72）。
+    prandtl: Option<Real>,
+    /// `sutherland`（默认）或 `constant`。
+    viscosity: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -312,6 +345,8 @@ struct TimeToml {
     local_time_step: Option<bool>,
     cfl_ramp_steps: Option<u64>,
     scheme: Option<String>,
+    lusgs_omega: Option<Real>,
+    lusgs_sweep: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -338,7 +373,7 @@ pub fn load_case(path: &Path) -> Result<CaseSpec> {
 
 fn parse_case_toml(content: &str, case_dir: Option<&Path>) -> Result<CaseSpec> {
     let raw: CaseToml = toml::from_str(content)?;
-    let physics = parse_physics(&raw.physics)?;
+    let physics = parse_physics(&raw.physics, raw.navier_stokes.is_some())?;
     let parsed =
         mesh_load::parse_mesh_from_toml(&mesh_toml_fields(&raw.mesh), &raw.name, case_dir)?;
     let boundary = resolve_case_boundary(
@@ -347,7 +382,7 @@ fn parse_case_toml(content: &str, case_dir: Option<&Path>) -> Result<CaseSpec> {
         &raw.boundary,
         raw.freestream.as_ref().map(parse_freestream),
         &physics,
-        raw.euler.is_some(),
+        raw.euler.is_some() && raw.navier_stokes.is_none(),
     )?;
     let initial = resolve_initial_set(&raw.initial)?;
     let freestream = raw.freestream.as_ref().map(parse_freestream);
@@ -357,7 +392,17 @@ fn parse_case_toml(content: &str, case_dir: Option<&Path>) -> Result<CaseSpec> {
     };
     let restart = raw.restart.map(|r| resolve_restart_path(r.path, case_dir));
 
+    if raw.euler.is_some() && raw.navier_stokes.is_some() {
+        return Err(AsimuError::Config(
+            "算例不能同时包含 [euler] 与 [navier_stokes]".to_string(),
+        ));
+    }
     let euler = raw.euler.as_ref().map(parse_euler_config).transpose()?;
+    let navier_stokes = raw
+        .navier_stokes
+        .as_ref()
+        .map(parse_euler_config)
+        .transpose()?;
     let time = parse_time_config(raw.time.as_ref(), raw.sod.is_some())?;
     let sod = raw.sod.as_ref().map(parse_sod_config);
 
@@ -374,6 +419,7 @@ fn parse_case_toml(content: &str, case_dir: Option<&Path>) -> Result<CaseSpec> {
         time,
         sod,
         euler,
+        navier_stokes,
         output: raw.output.as_ref().map(parse_output),
         observability: raw.observability.as_ref().map(parse_observability),
         case_dir: case_dir.map(Path::to_path_buf),
@@ -431,7 +477,8 @@ fn resolve_case_boundary(
     Ok(boundary)
 }
 
-fn parse_physics(raw: &PhysicsToml) -> Result<PhysicsConfig> {
+fn parse_physics(raw: &PhysicsToml, navier_stokes: bool) -> Result<PhysicsConfig> {
+    use crate::physics::{ViscosityModel, ViscousPhysicsConfig};
     let eos = match (raw.gamma, raw.gas_constant) {
         (Some(gamma), Some(gas_constant)) => Some(IdealGasEoS::new(gamma, gas_constant)?),
         (None, None) => None,
@@ -446,9 +493,32 @@ fn parse_physics(raw: &PhysicsToml) -> Result<PhysicsConfig> {
             return Err(AsimuError::Config("diffusivity 不能为负".to_string()));
         }
     }
+    let viscous = if navier_stokes {
+        let prandtl = raw.prandtl.unwrap_or(0.72);
+        let model = match raw.viscosity.as_deref() {
+            Some("constant") => {
+                let mu = raw.mu.ok_or_else(|| {
+                    AsimuError::Config(
+                        "viscosity = \"constant\" 时须在 [physics] 指定 mu".to_string(),
+                    )
+                })?;
+                ViscosityModel::constant(mu)?
+            }
+            Some("sutherland") | None => ViscosityModel::AIR_SUTHERLAND,
+            Some(other) => {
+                return Err(AsimuError::Config(format!(
+                    "未知粘度模型 \"{other}\"（支持 sutherland / constant）"
+                )));
+            }
+        };
+        Some(ViscousPhysicsConfig::new(model, prandtl)?)
+    } else {
+        None
+    };
     Ok(PhysicsConfig {
         diffusivity: raw.diffusivity,
         eos,
+        viscous,
     })
 }
 
@@ -600,6 +670,9 @@ fn parse_time_config(raw: Option<&TimeToml>, has_sod: bool) -> Result<CaseTimeCo
         .as_deref()
         .map(crate::solver::time::TimeIntegrationScheme::parse)
         .transpose()?;
+    let lusgs_omega = raw.lusgs_omega;
+    let lusgs_sweep = raw.lusgs_sweep;
+    let _ = crate::solver::time::LuSgsConfig::parse(lusgs_omega, lusgs_sweep)?;
     Ok(CaseTimeConfig {
         mode,
         dt: raw.dt,
@@ -611,6 +684,8 @@ fn parse_time_config(raw: Option<&TimeToml>, has_sod: bool) -> Result<CaseTimeCo
         local_time_step: raw.local_time_step.unwrap_or(false),
         cfl_ramp_steps: raw.cfl_ramp_steps,
         scheme,
+        lusgs_omega,
+        lusgs_sweep,
     })
 }
 
@@ -626,125 +701,5 @@ fn parse_sod_config(raw: &SodToml) -> SodCaseConfig {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    const BENCHMARK_CASE: &str =
-        include_str!("../../tests/benchmarks/1d_diffusion_analytical/case.toml");
-
-    #[test]
-    fn parses_diffusion_benchmark() {
-        let case = parse_case_toml(BENCHMARK_CASE, None).expect("parse");
-        assert_eq!(case.name, "1d_diffusion_analytical");
-        assert_eq!(case.mesh.as_1d().expect("1d").num_cells(), 32);
-        assert!(!case.is_compressible());
-    }
-
-    #[test]
-    fn parses_compressible_3d_case() {
-        let content = r#"
-name = "box_cns"
-[mesh]
-kind = "structured_3d"
-nx = 4
-ny = 4
-nz = 4
-lx = 1.0
-ly = 1.0
-lz = 1.0
-[physics]
-gamma = 1.4
-gas_constant = 287.0
-[freestream]
-mach = 0.3
-pressure = 101325.0
-temperature = 288.15
-[boundary.i_min]
-kind = "wall"
-no_slip = true
-heat = "adiabatic"
-[boundary.i_max]
-kind = "farfield"
-mach = 0.3
-pressure = 101325.0
-temperature = 288.15
-[boundary.j_min]
-kind = "symmetry"
-[boundary.j_max]
-kind = "symmetry"
-[boundary.k_min]
-kind = "wall"
-[boundary.k_max]
-kind = "outlet"
-static_pressure = 100000.0
-"#;
-        let case = parse_case_toml(content, None).expect("parse");
-        assert!(case.is_compressible());
-        assert_eq!(case.mesh.num_cells(), 64);
-        assert_eq!(case.boundary.patches().len(), 6);
-        let fields = case.build_conserved_fields().expect("ic");
-        assert_eq!(fields.num_cells(), 64);
-    }
-
-    #[test]
-    fn parses_sod_benchmark_case() {
-        let content = include_str!("../../tests/benchmarks/sod_1d/case.toml");
-        let case = parse_case_toml(content, None).expect("parse");
-        assert_eq!(case.benchmark_id.as_deref(), Some("sod_1d"));
-        assert_eq!(case.mesh.as_1d().expect("1d").num_cells(), 100);
-        assert!(case.is_compressible());
-        let sod = case.sod.expect("sod");
-        assert_eq!(case.time.mode, CaseTimeMode::Transient);
-        let inviscid = sod.inviscid();
-        assert_eq!(inviscid.short_label(), "muscl_roe");
-        assert_eq!(inviscid.limiter_label(), "van_albada");
-    }
-
-    #[test]
-    fn parses_sod_muscl_hllc_case() {
-        let content = include_str!("../../tests/benchmarks/sod_1d/case_muscl_hllc.toml");
-        let case = parse_case_toml(content, None).expect("parse");
-        let sod = case.sod.expect("sod");
-        let inviscid = sod.inviscid();
-        assert_eq!(inviscid.short_label(), "muscl_hllc");
-        assert_eq!(inviscid.limiter_label(), "van_albada");
-    }
-
-    #[test]
-    fn parses_inlet_and_turbulent_inlet() {
-        let content = r#"
-name = "inlet_test"
-[mesh]
-kind = "structured_3d"
-nx = 2
-ny = 2
-nz = 2
-[physics]
-gamma = 1.4
-gas_constant = 287.0
-[freestream]
-mach = 0.1
-[boundary.i_min]
-kind = "turbulent_inlet"
-total_pressure = 110000.0
-total_temperature = 320.0
-turbulent_k = 1.0
-turbulent_omega = 100.0
-velocity_direction = [1.0, 0.0, 0.0]
-[boundary.i_max]
-kind = "inlet"
-total_pressure = 105000.0
-total_temperature = 300.0
-[boundary.j_min]
-kind = "wall"
-[boundary.j_max]
-kind = "wall"
-[boundary.k_min]
-kind = "wall"
-[boundary.k_max]
-kind = "wall"
-"#;
-        let case = parse_case_toml(content, None).expect("parse");
-        assert!(case.boundary.find("i_min").is_some());
-    }
-}
+#[path = "case_tests.rs"]
+mod case_tests;

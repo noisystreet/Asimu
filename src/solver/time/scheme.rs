@@ -10,6 +10,8 @@ pub enum TimeIntegrationScheme {
     Rk4,
     /// 一阶前向 Euler（排错对照用，稳定性比 RK4 差）。
     Euler,
+    /// LU-SGS 隐式伪时间（默认双扫；`lusgs_sweep=false` 为对角隐式）。
+    LuSgs,
 }
 
 impl TimeIntegrationScheme {
@@ -17,8 +19,9 @@ impl TimeIntegrationScheme {
         match name.trim().to_ascii_lowercase().as_str() {
             "" | "rk4" | "runge_kutta_4" | "runge-kutta-4" | "rk4_4" => Ok(Self::Rk4),
             "euler" | "forward_euler" | "euler1" | "rk1" | "euler_1" => Ok(Self::Euler),
+            "lu_sgs" | "lusgs" | "lu-sgs" => Ok(Self::LuSgs),
             other => Err(AsimuError::Config(format!(
-                "不支持的 time.scheme \"{other}\"（可用 rk4、euler）"
+                "不支持的 time.scheme \"{other}\"（可用 rk4、euler、lu_sgs）"
             ))),
         }
     }
@@ -28,13 +31,27 @@ impl TimeIntegrationScheme {
         match self {
             Self::Rk4 => "rk4",
             Self::Euler => "euler",
+            Self::LuSgs => "lu_sgs",
         }
+    }
+
+    #[must_use]
+    pub const fn is_implicit_pseudo_time(self) -> bool {
+        matches!(self, Self::LuSgs)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_lu_sgs_aliases() {
+        assert_eq!(
+            TimeIntegrationScheme::parse("lusgs").expect("lu_sgs"),
+            TimeIntegrationScheme::LuSgs
+        );
+    }
 
     #[test]
     fn parses_euler_aliases() {

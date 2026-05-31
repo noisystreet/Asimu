@@ -103,6 +103,8 @@ unsafe extern "C" {
         v: *const f64,
         w: *const f64,
         p: *const f64,
+        mach: *const f64,
+        temperature: *const f64,
         physical_time: f64,
     ) -> c_int;
 }

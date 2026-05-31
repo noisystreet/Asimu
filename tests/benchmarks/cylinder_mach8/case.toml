@@ -25,4 +25,3 @@ max_steps = 10
 [euler]
 flux = "hllc"
 reconstruction = "first_order"
-limiter = "van_albada"

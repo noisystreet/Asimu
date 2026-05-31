@@ -259,6 +259,20 @@ impl StructuredMesh3d {
         }
     }
 
+    /// 各单元体积（与 `cell_metric` 一致，曲网格亦可用）。
+    pub fn cell_volumes(&self) -> Vec<Real> {
+        let n = self.num_cells();
+        let mut volumes = Vec::with_capacity(n);
+        for k in 0..self.nz {
+            for j in 0..self.ny {
+                for i in 0..self.nx {
+                    volumes.push(self.cell_metric(i, j, k).volume);
+                }
+            }
+        }
+        volumes
+    }
+
     /// 各单元 CFL 特征长度：相邻面间距的最小值。
     pub fn cell_cfl_lengths(&self) -> Result<Vec<Real>> {
         let n = self.num_cells();

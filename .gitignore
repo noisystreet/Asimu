@@ -31,3 +31,6 @@ __pycache__/
 
 # 默认运行产物
 /output/
+
+# 本地圆柱算例目录（含 CGNS 网格与运行产物，不纳入版本库）
+/case_cylinder/

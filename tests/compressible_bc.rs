@@ -41,7 +41,7 @@ static_pressure = 100000.0
     let fs = case.freestream.unwrap_or_default();
     let patches = &case.boundary;
     let mut ghosts = BoundaryGhostBuffer::new();
-    apply_compressible_boundary_conditions(mesh, patches, &fields, &mut ghosts, &eos, &fs)
+    apply_compressible_boundary_conditions(mesh, patches, &fields, &mut ghosts, &eos, &fs, None)
         .expect("bc");
 }
 

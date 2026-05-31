@@ -10,6 +10,7 @@ pub mod diffusion_1d;
 pub mod face_flux;
 pub mod flux_common;
 pub mod flux_config;
+pub mod gradient;
 pub mod hllc;
 pub mod inviscid;
 pub mod reconstruction;
@@ -17,6 +18,8 @@ pub mod residual;
 pub mod roe;
 pub mod slau2;
 pub mod van_leer;
+pub mod viscous;
+pub mod wall_thermal;
 
 use crate::core::Real;
 use crate::error::Result;
@@ -32,6 +35,7 @@ pub use bc_compressible::{
 pub use diffusion_1d::assemble_diffusion_1d;
 pub use face_flux::{FaceFluxInput, face_inviscid_flux};
 pub use flux_config::{FluxScheme, InviscidFluxConfig, ReconstructionKind, SlopeLimiter};
+pub use gradient::{GradientFields, VelocityGradient, compute_green_gauss_gradients_3d};
 pub use hllc::hllc_flux;
 pub use inviscid::{InviscidFlux, physical_inviscid_flux};
 pub use reconstruction::{
@@ -39,12 +43,16 @@ pub use reconstruction::{
     reconstruct_face_primitives, reconstruct_first_order,
 };
 pub use residual::{
-    BoundaryGhosts1d, InviscidBoundary1d, accumulate_boundary_face, accumulate_interior_face,
-    assemble_inviscid_residual_1d, assemble_inviscid_residual_3d, zero_gradient_ghosts_1d,
+    BoundaryGhosts1d, InviscidBoundary1d, ViscousAssembly3dInput, ViscousAssembly3dParams,
+    accumulate_boundary_face, accumulate_interior_face, assemble_inviscid_residual_1d,
+    assemble_inviscid_residual_3d, assemble_viscous_residual_3d,
+    compute_gradients_and_assemble_viscous_3d, zero_gradient_ghosts_1d,
 };
 pub use roe::{RoeFluxConfig, roe_flux};
 pub use slau2::slau2_flux;
 pub use van_leer::{hanel_van_leer_flux, van_leer_flux};
+pub use viscous::{ViscousFlux, face_transport_coefficients, viscous_face_flux};
+pub use wall_thermal::{wall_face_conduction, wall_ghost_temperature};
 
 /// 占位装配入口：验证 field / mesh / system 尺寸一致。
 ///

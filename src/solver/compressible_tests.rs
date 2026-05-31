@@ -1,7 +1,7 @@
 use super::*;
 use crate::core::approx_eq;
 use crate::physics::ConservedState;
-use crate::solver::time::TimeIntegrator;
+#[cfg(all(feature = "io-cgns", feature = "slow-tests"))]
 use std::collections::HashSet;
 
 #[test]
@@ -85,6 +85,7 @@ fn sod_like_disturbance_evolve_with_rk4() {
 }
 
 /// 圆柱网格、无边界 patch：均匀来流时间推进（`--nocapture` 打印逐步指标）。
+#[cfg(all(feature = "io-cgns", feature = "slow-tests"))]
 #[test]
 fn cylinder_uniform_freestream_no_bc_time_advance_when_present() {
     use std::path::PathBuf;
@@ -139,6 +140,9 @@ fn cylinder_uniform_freestream_no_bc_time_advance_when_present() {
         freestream: &fs,
         primitive_scratch: crate::field::PrimitiveFields::zeros(mesh.num_cells())
             .expect("primitives"),
+        gradient_scratch: crate::discretization::GradientFields::zeros(mesh.num_cells())
+            .expect("gradients"),
+        viscous: None,
     };
 
     eprintln!("=== 圆柱网格 无 BC 均匀来流 时间推进 ({} 步) ===", steps);
@@ -175,7 +179,114 @@ fn cylinder_uniform_freestream_no_bc_time_advance_when_present() {
     );
 }
 
+/// 圆柱 + LU-SGS：合理 CFL 下更新后残差应随步变化（回归：勿用更新前 k1 作监控）。
+#[cfg(all(feature = "io-cgns", feature = "slow-tests"))]
+#[test]
+fn cylinder_lusgs_post_residual_changes_with_cfl1_when_present() {
+    use std::path::PathBuf;
+
+    use crate::discretization::BoundaryGhostBuffer;
+    use crate::field::PrimitiveFields;
+    use crate::io::{CaseMesh, load_case};
+    use crate::solver::time::{
+        CflSchedule, LuSgsConfig, RungeKutta4Integrator, TimeIntegrationScheme,
+    };
+
+    let case_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("case_cylinder/case.toml");
+    if !case_path.is_file() {
+        return;
+    }
+    let case = load_case(&case_path).expect("load case");
+    let CaseMesh::Structured3d(mesh) = &case.mesh else {
+        panic!("expected 3d");
+    };
+    let eos = case.physics.eos().expect("eos");
+    let fs = case.freestream.expect("freestream");
+    let inviscid = case.euler.as_ref().expect("euler").inviscid();
+    let mut fields = ConservedFields::from_freestream(mesh.num_cells(), &eos, &fs).expect("fields");
+    let mut ghosts = BoundaryGhostBuffer::new();
+    let mut storage = Rk4Storage::new(mesh.num_cells()).expect("storage");
+    let mut state = SolverState::default();
+    let mut integrator = RungeKutta4Integrator::new(RungeKutta4Config {
+        dt: 0.0,
+        max_steps: 3,
+    });
+    let solver = CompressibleEulerSolver::new(CompressibleEulerConfig {
+        time: RungeKutta4Config {
+            dt: 0.0,
+            max_steps: 3,
+        },
+        inviscid,
+        cfl_schedule: CflSchedule {
+            initial: 1.0,
+            max: 1.0,
+            ramp_steps: None,
+        },
+        time_mode: CompressibleTimeMode::Steady,
+        local_time_step: true,
+        time_scheme: TimeIntegrationScheme::LuSgs,
+        lu_sgs: LuSgsConfig {
+            sweep: false,
+            ..LuSgsConfig::default()
+        },
+        ..CompressibleEulerConfig::default()
+    });
+    let mut ctx = CompressibleAdvanceContext3d {
+        mesh,
+        structured: mesh,
+        patches: &case.boundary,
+        ghosts: &mut ghosts,
+        eos: &eos,
+        freestream: &fs,
+        primitive_scratch: PrimitiveFields::zeros(mesh.num_cells()).expect("primitives"),
+        gradient_scratch: crate::discretization::GradientFields::zeros(mesh.num_cells())
+            .expect("gradients"),
+        viscous: None,
+    };
+    let rho_ref = fields.density.values().to_vec();
+    let info1 = solver
+        .advance_step_3d(
+            &mut ctx,
+            &mut fields,
+            &mut storage,
+            &mut state,
+            &mut integrator,
+        )
+        .expect("step1");
+    let max_rho_delta1 = fields
+        .density
+        .values()
+        .iter()
+        .zip(rho_ref.iter())
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0_f64, f64::max);
+    let info2 = solver
+        .advance_step_3d(
+            &mut ctx,
+            &mut fields,
+            &mut storage,
+            &mut state,
+            &mut integrator,
+        )
+        .expect("step2");
+    eprintln!(
+        "lusgs cfl=1: step1 log10_res={:.6} step2 log10_res={:.6} dt1={:.6e} max|Δrho|1={:.6e}",
+        info1.residual_log10, info2.residual_log10, info1.dt, max_rho_delta1
+    );
+    assert!(
+        max_rho_delta1 > 1.0e-12,
+        "一步 LU-SGS 后密度应有可观变化，max|Δrho|={max_rho_delta1:.6e}"
+    );
+    assert!(
+        (info1.residual_rms - info2.residual_rms).abs() > 1.0e-12,
+        "两步更新后残差应不同: r1={} r2={}",
+        info1.residual_rms,
+        info2.residual_rms
+    );
+}
+
 /// 圆柱网格：仅内部面通量 + 边界单元 RHS 清零（不参与更新）。
+#[cfg(all(feature = "io-cgns", feature = "slow-tests"))]
 #[test]
 fn cylinder_uniform_freestream_interior_only_advance_when_present() {
     use std::path::PathBuf;
@@ -233,6 +344,7 @@ fn cylinder_uniform_freestream_interior_only_advance_when_present() {
         let cfl = cfl_schedule.at_step(state.time_step.saturating_add(1), steps);
         let lengths = mesh.cell_cfl_lengths().expect("lengths");
         let speeds = cell_wave_speeds(&fields, &eos, fs.pressure * 1.0e-3).expect("speeds");
+        use crate::solver::local_dt_cfl;
         let cell_dts = local_dt_cfl(&lengths, &speeds, cfl).expect("dt");
 
         let p_floor = fs.pressure * 1.0e-3;
@@ -320,6 +432,7 @@ fn cylinder_uniform_freestream_interior_only_advance_when_present() {
 }
 
 /// 贴体结构化网格的边界层单元（准 2D：`nz==1` 时不计 K 面）。
+#[cfg(all(feature = "io-cgns", feature = "slow-tests"))]
 fn structured_3d_boundary_cell_indices(mesh: &StructuredMesh3d) -> Vec<usize> {
     let mut cells = Vec::new();
     let include_k = mesh.nz > 1;
@@ -338,6 +451,7 @@ fn structured_3d_boundary_cell_indices(mesh: &StructuredMesh3d) -> Vec<usize> {
     cells
 }
 
+#[cfg(all(feature = "io-cgns", feature = "slow-tests"))]
 fn zero_residual_on_cells(residual: &mut ConservedResidual, cells: &[usize]) {
     for &c in cells {
         residual.density.values_mut()[c] = 0.0;
@@ -348,6 +462,7 @@ fn zero_residual_on_cells(residual: &mut ConservedResidual, cells: &[usize]) {
     }
 }
 
+#[cfg(all(feature = "io-cgns", feature = "slow-tests"))]
 fn interior_density_rms(residual: &ConservedResidual, boundary: &HashSet<usize>) -> f64 {
     let mut sum_sq = 0.0_f64;
     let mut count = 0_usize;

@@ -2,12 +2,14 @@
 
 mod eos;
 mod riemann_exact;
+mod viscosity;
 
 pub use eos::{ConservedState, FreestreamParams, IdealGasEoS, PrimitiveState};
 pub use riemann_exact::{
     RiemannPrimitive1d, RiemannProblem1d, SodProblem, sample_exact, sod_sample,
     solve_star_pressure_velocity,
 };
+pub use viscosity::{ViscosityModel, ViscousPhysicsConfig};
 
 use crate::core::Real;
 use crate::error::{AsimuError, Result};
@@ -17,6 +19,8 @@ use crate::error::{AsimuError, Result};
 pub struct PhysicsConfig {
     pub diffusivity: Option<Real>,
     pub eos: Option<IdealGasEoS>,
+    /// 层流粘性（`[navier_stokes]` 算例启用）。
+    pub viscous: Option<ViscousPhysicsConfig>,
 }
 
 impl PhysicsConfig {
@@ -25,6 +29,7 @@ impl PhysicsConfig {
         Self {
             diffusivity: Some(diffusivity),
             eos: None,
+            viscous: None,
         }
     }
 
@@ -33,7 +38,13 @@ impl PhysicsConfig {
         Self {
             diffusivity: None,
             eos: Some(eos),
+            viscous: None,
         }
+    }
+
+    #[must_use]
+    pub fn is_navier_stokes(&self) -> bool {
+        self.viscous.is_some()
     }
 
     pub fn eos(&self) -> Result<IdealGasEoS> {

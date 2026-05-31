@@ -5,20 +5,31 @@
 
 #[path = "compressible_rhs.rs"]
 mod compressible_rhs;
+#[path = "lu_sgs_sweep_3d.rs"]
+mod lu_sgs_sweep_3d;
 
+use crate::solver::spectral_radius::{
+    SpectralRadius3dParams, cell_local_dt_spectral, cell_lusgs_spacing_timestep,
+    cell_spectral_radius_3d,
+};
 use compressible_rhs::EvaluateRhs3d;
+use lu_sgs_sweep_3d::{LuSgsSweep3dParams, lu_sgs_sweep_3d, sweep_first_order_config};
 
 use crate::boundary::BoundarySet;
 use crate::core::{Real, format_log_fixed4, format_log_sci4, log10_positive};
-use crate::discretization::{BoundaryGhostBuffer, assemble_inviscid_residual_1d};
+use crate::discretization::{
+    BoundaryGhostBuffer, GradientFields, apply_compressible_boundary_conditions,
+    assemble_inviscid_residual_1d,
+};
 use crate::error::Result;
 use crate::field::{ConservedFields, ConservedResidual, PrimitiveFields};
 use crate::mesh::{BoundaryMesh3d, StructuredMesh1d, StructuredMesh3d};
+use crate::physics::ViscousPhysicsConfig;
 use crate::physics::{FreestreamParams, IdealGasEoS, PrimitiveState};
 use crate::solver::state::SolverState;
 use crate::solver::time::{
-    CflSchedule, Rk4Storage, RungeKutta4Config, RungeKutta4Integrator, TimeIntegrationScheme,
-    TimeIntegrator, euler_step, euler_step_local, local_dt_cfl, min_positive_dt, rk4_step,
+    CflSchedule, LuSgsConfig, Rk4Storage, RungeKutta4Config, RungeKutta4Integrator,
+    TimeIntegrationScheme, TimeIntegrator, euler_step, euler_step_local, min_positive_dt, rk4_step,
     rk4_step_local,
 };
 use tracing::{info, info_span, instrument};
@@ -35,11 +46,15 @@ pub enum CompressibleTimeMode {
 pub struct CompressibleEulerConfig {
     pub time: RungeKutta4Config,
     pub inviscid: crate::discretization::InviscidFluxConfig,
+    /// `Some` 时叠加层流粘性通量（Navier-Stokes）。
+    pub viscous: Option<ViscousPhysicsConfig>,
     pub cfl_schedule: CflSchedule,
     pub time_mode: CompressibleTimeMode,
     pub local_time_step: bool,
-    /// 时间积分格式（`rk4` 默认；`euler` 用于排除 RK 多阶段 bug）。
+    /// 时间积分格式（`rk4` 默认；`euler` 排错；`lu_sgs` 对角隐式伪时间）。
     pub time_scheme: TimeIntegrationScheme,
+    /// `lu_sgs` 松弛因子等（显式格式下忽略）。
+    pub lu_sgs: LuSgsConfig,
 }
 
 impl Default for CompressibleEulerConfig {
@@ -47,10 +62,12 @@ impl Default for CompressibleEulerConfig {
         Self {
             time: RungeKutta4Config::default(),
             inviscid: crate::discretization::InviscidFluxConfig::default(),
+            viscous: None,
             cfl_schedule: CflSchedule::constant(0.4),
             time_mode: CompressibleTimeMode::Transient,
             local_time_step: false,
             time_scheme: TimeIntegrationScheme::Rk4,
+            lu_sgs: LuSgsConfig::default(),
         }
     }
 }
@@ -82,6 +99,10 @@ pub struct CompressibleAdvanceContext3d<'a> {
     pub freestream: &'a FreestreamParams,
     /// 每步 RHS 复用的原始变量缓冲（避免每 `evaluate_rhs` 重新分配）。
     pub primitive_scratch: PrimitiveFields,
+    /// 粘性梯度缓冲（仅 NS 算例使用）。
+    pub gradient_scratch: GradientFields,
+    /// NS 物性（谱半径 / CFL 粘性扩散项；与 `CompressibleEulerConfig::viscous` 一致）。
+    pub viscous: Option<&'a ViscousPhysicsConfig>,
 }
 
 /// 1D 多步推进上下文。
@@ -101,6 +122,27 @@ impl CompressibleEulerSolver {
     #[must_use]
     pub const fn new(config: CompressibleEulerConfig) -> Self {
         Self { config }
+    }
+
+    fn rhs_context_3d<'a>(
+        &'a self,
+        ctx: &'a mut CompressibleAdvanceContext3d<'_>,
+        inviscid: &'a crate::discretization::InviscidFluxConfig,
+        min_pressure: Real,
+    ) -> EvaluateRhs3d<'a> {
+        EvaluateRhs3d {
+            mesh: ctx.mesh,
+            structured: ctx.structured,
+            patches: ctx.patches,
+            ghosts: ctx.ghosts,
+            eos: ctx.eos,
+            freestream: ctx.freestream,
+            inviscid,
+            viscous: self.config.viscous.as_ref(),
+            min_pressure,
+            primitive_scratch: &mut ctx.primitive_scratch,
+            gradient_scratch: &mut ctx.gradient_scratch,
+        }
     }
 
     /// 1D 瞬态推进：每步刷新边界 ghost、装配残差、RK4 更新守恒量。
@@ -172,6 +214,24 @@ impl CompressibleEulerSolver {
             self.cfl_for_step(state)
         };
         let p_floor = Self::positivity_pressure_floor(ctx.freestream);
+        if self.config.time_scheme == TimeIntegrationScheme::LuSgs {
+            return self
+                .advance_lusgs_step_3d(ctx, fields, storage, state, integrator, cfl, p_floor);
+        }
+        self.advance_explicit_step_3d(ctx, fields, storage, state, integrator, cfl, p_floor)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn advance_explicit_step_3d(
+        &self,
+        ctx: &mut CompressibleAdvanceContext3d<'_>,
+        fields: &mut ConservedFields,
+        storage: &mut Rk4Storage,
+        state: &mut SolverState,
+        integrator: &mut RungeKutta4Integrator,
+        cfl: Real,
+        p_floor: Real,
+    ) -> Result<CompressibleStepInfo> {
         let inviscid = self.config.inviscid;
         let (dt, cell_dts) = {
             let _span = info_span!(
@@ -184,30 +244,15 @@ impl CompressibleEulerSolver {
                 let _span = info_span!("enforce_positivity_pre").entered();
                 fields.enforce_positivity(ctx.eos, p_floor);
             }
-            let cell_dts =
-                self.suggest_cell_dts_3d(ctx.structured, fields, ctx.eos, cfl, p_floor)?;
+            let cell_dts = self.compute_cell_dts_3d(ctx, fields, cfl, p_floor)?;
             (min_positive_dt(&cell_dts), cell_dts)
         };
         integrator.config.dt = dt;
-        let mesh = ctx.mesh;
-        let structured = ctx.structured;
-        let patches = ctx.patches;
-        let eos = ctx.eos;
-        let freestream = ctx.freestream;
-        let mut rhs_ctx = EvaluateRhs3d {
-            mesh,
-            structured,
-            patches,
-            ghosts: ctx.ghosts,
-            eos,
-            freestream,
-            inviscid: &inviscid,
-            min_pressure: p_floor,
-            primitive_scratch: &mut ctx.primitive_scratch,
-        };
+        let eos = *ctx.eos;
         let step_residual = {
             let _span = info_span!("rhs_monitor").entered();
-            rhs_ctx.run(fields, &mut storage.k1)?;
+            self.rhs_context_3d(ctx, &inviscid, p_floor)
+                .run(fields, &mut storage.k1)?;
             storage.k1.density_rms_norm()
         };
         let cell_dts_arg = if self.config.local_time_step {
@@ -223,18 +268,7 @@ impl CompressibleEulerSolver {
             )
             .entered();
             let evaluate = |u: &ConservedFields, r: &mut ConservedResidual| {
-                EvaluateRhs3d {
-                    mesh,
-                    structured,
-                    patches,
-                    ghosts: ctx.ghosts,
-                    eos,
-                    freestream,
-                    inviscid: &inviscid,
-                    min_pressure: p_floor,
-                    primitive_scratch: &mut ctx.primitive_scratch,
-                }
-                .run(u, r)
+                self.rhs_context_3d(ctx, &inviscid, p_floor).run(u, r)
             };
             self.advance_explicit_step(
                 fields,
@@ -242,17 +276,124 @@ impl CompressibleEulerSolver {
                 dt,
                 cell_dts_arg,
                 evaluate,
-                Some((eos, p_floor)),
+                Some((&eos, p_floor)),
             )?;
         }
         {
             let _span = info_span!("enforce_positivity_post").entered();
-            fields.enforce_positivity(ctx.eos, p_floor);
+            fields.enforce_positivity(&eos, p_floor);
         }
         let time_info = {
             let _span = info_span!("advance_clock").entered();
             integrator.advance(state)?
         };
+        Ok(CompressibleStepInfo {
+            dt: time_info.dt,
+            physical_time: time_info.physical_time,
+            step: time_info.step,
+            residual_rms: step_residual,
+            residual_log10: log10_positive(step_residual),
+            cfl,
+            is_final: time_info.is_final,
+            converged: false,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn advance_lusgs_step_3d(
+        &self,
+        ctx: &mut CompressibleAdvanceContext3d<'_>,
+        fields: &mut ConservedFields,
+        storage: &mut Rk4Storage,
+        state: &mut SolverState,
+        integrator: &mut RungeKutta4Integrator,
+        cfl: Real,
+        p_floor: Real,
+    ) -> Result<CompressibleStepInfo> {
+        if !self.config.local_time_step {
+            return Err(crate::error::AsimuError::Config(
+                "time.scheme = lu_sgs 须配合 [time].local_time_step = true（稳态伪时间）"
+                    .to_string(),
+            ));
+        }
+        let inviscid = self.config.inviscid;
+        let (dt, cell_dts, sigma) = {
+            let _span = info_span!(
+                "compute_dt",
+                cells = ctx.structured.num_cells(),
+                scheme = "lu_sgs",
+            )
+            .entered();
+            let (cell_dts, sigma) = self.prepare_lusgs_timestep_3d(ctx, fields, cfl, p_floor)?;
+            (min_positive_dt(&cell_dts), cell_dts, sigma)
+        };
+        integrator.config.dt = dt;
+        let mesh = ctx.mesh;
+        let structured = ctx.structured;
+        let patches = ctx.patches;
+        let eos = ctx.eos;
+        let volumes = structured.cell_volumes();
+        let lu_sgs = self.config.lu_sgs;
+        {
+            let _span = info_span!(
+                "time_integration",
+                scheme = "lu_sgs",
+                local_time_step = true,
+            )
+            .entered();
+            fields.enforce_positivity(eos, p_floor);
+            storage.u0.copy_from(fields)?;
+            {
+                let _span = info_span!("lu_sgs_rhs").entered();
+                self.rhs_context_3d(ctx, &inviscid, p_floor)
+                    .run(&storage.u0, &mut storage.k1)?;
+            }
+            if lu_sgs.sweep {
+                let sweep_cfg = sweep_first_order_config(&inviscid);
+                let mut sweep_params = LuSgsSweep3dParams {
+                    mesh: structured,
+                    boundary_mesh: mesh,
+                    eos,
+                    boundaries: patches,
+                    ghosts: ctx.ghosts,
+                    primitives: &mut ctx.primitive_scratch,
+                    min_pressure: p_floor,
+                    sweep_config: sweep_cfg,
+                };
+                let _span = info_span!("lu_sgs_sweep").entered();
+                lu_sgs_sweep_3d(
+                    fields,
+                    &storage.k1,
+                    &mut sweep_params,
+                    &cell_dts,
+                    &sigma,
+                    &volumes,
+                    lu_sgs.omega,
+                    eos.gamma,
+                )?;
+            } else {
+                storage.stage.assign_lusgs_diagonal_update(
+                    &storage.u0,
+                    &storage.k1,
+                    &sigma,
+                    &cell_dts,
+                    lu_sgs.omega,
+                    eos.gamma,
+                    p_floor,
+                )?;
+                fields.copy_from(&storage.stage)?;
+            }
+            fields.enforce_positivity(eos, p_floor);
+        }
+        // 稳态监控须用更新后场的 RHS；更新前 k1 在 dt 极小时几乎不变，会误判为“残差不下降”。
+        let step_residual = {
+            let _span = info_span!("lu_sgs_residual_post").entered();
+            self.rhs_context_3d(ctx, &inviscid, p_floor)
+                .run(fields, &mut storage.k1)?;
+            storage.k1.density_rms_norm()
+        };
+        fields.enforce_positivity(ctx.eos, p_floor);
+        let time_info = integrator.advance(state)?;
         Ok(CompressibleStepInfo {
             dt: time_info.dt,
             physical_time: time_info.physical_time,
@@ -373,6 +514,9 @@ impl CompressibleEulerSolver {
             (TimeIntegrationScheme::Euler, None) => {
                 euler_step(fields, storage, dt_global, evaluate_rhs, eos, min_pressure)
             }
+            (TimeIntegrationScheme::LuSgs, _) => Err(crate::error::AsimuError::Solver(
+                "advance_explicit_step 不支持 lu_sgs".to_string(),
+            )),
         }
     }
 
@@ -390,49 +534,104 @@ impl CompressibleEulerSolver {
         crate::solver::time::suggested_dt_cfl(mesh.dx(), max_speed, cfl)
     }
 
-    fn suggest_dt_3d(
+    /// Blazek 局部时间步（Ch. 9.1）：\(\Delta t_i=\mathrm{CFL}\,V_i/\sigma_i\)；RK4 / LU-SGS 共用。
+    fn compute_cell_dts_3d(
         &self,
-        mesh: &StructuredMesh3d,
-        fields: &ConservedFields,
-        eos: &IdealGasEoS,
+        ctx: &mut CompressibleAdvanceContext3d<'_>,
+        fields: &mut ConservedFields,
         cfl: Real,
-        min_pressure: Real,
-    ) -> Result<Real> {
-        if let Some(dt) = positive_fixed_dt(self.config.time.dt) {
-            return Ok(dt);
-        }
-        let min_spacing = mesh.min_positive_spacing()?;
-        let max_speed = max_wave_speed(fields, eos, min_pressure)?;
-        crate::solver::time::suggested_dt_cfl(min_spacing, max_speed, cfl)
-    }
-
-    fn suggest_cell_dts_3d(
-        &self,
-        mesh: &StructuredMesh3d,
-        fields: &ConservedFields,
-        eos: &IdealGasEoS,
-        cfl: Real,
-        min_pressure: Real,
+        p_floor: Real,
     ) -> Result<Vec<Real>> {
         let n = fields.num_cells();
         if let Some(dt) = positive_fixed_dt(self.config.time.dt) {
             return Ok(vec![dt; n]);
         }
+        let (cell_dts, _) = self.prepare_spectral_timestep_3d(ctx, fields, cfl, p_floor)?;
         if self.config.local_time_step {
-            let lengths = mesh.cell_cfl_lengths()?;
-            let speeds = cell_wave_speeds(fields, eos, min_pressure)?;
-            return local_dt_cfl(&lengths, &speeds, cfl);
+            Ok(cell_dts)
+        } else {
+            let dt = min_positive_dt(&cell_dts);
+            Ok(vec![dt; n])
         }
-        Ok(vec![
-            self.suggest_dt_3d(
-                mesh,
-                fields,
-                eos,
-                cfl,
-                min_pressure
-            )?;
-            n
-        ])
+    }
+
+    /// LU-SGS：面间距 CFL + \(\sigma_i=(|u|+a)_i/h_i\)（避免贴体单元 \(V/\sigma\) 冻结更新）。
+    fn prepare_lusgs_timestep_3d(
+        &self,
+        ctx: &mut CompressibleAdvanceContext3d<'_>,
+        fields: &mut ConservedFields,
+        cfl: Real,
+        p_floor: Real,
+    ) -> Result<(Vec<Real>, Vec<Real>)> {
+        fields.enforce_positivity(ctx.eos, p_floor);
+        apply_compressible_boundary_conditions(
+            ctx.mesh,
+            ctx.patches,
+            fields,
+            ctx.ghosts,
+            ctx.eos,
+            ctx.freestream,
+            ctx.viscous,
+        )?;
+        ctx.primitive_scratch
+            .fill_from_conserved(fields, ctx.eos, p_floor)?;
+        let lengths = ctx.structured.cell_cfl_lengths()?;
+        let wave_speeds = cell_wave_speeds(fields, ctx.eos, p_floor)?;
+        let viscous_diff = ctx
+            .viscous
+            .map(|v| {
+                crate::solver::spectral_radius::cell_viscous_diffusivity_max(
+                    &ctx.primitive_scratch,
+                    ctx.eos,
+                    v,
+                )
+            })
+            .transpose()?;
+        cell_lusgs_spacing_timestep(&lengths, &wave_speeds, cfl, viscous_diff.as_deref())
+    }
+
+    /// 刷新 BC ghost、原始变量，并计算 Blazek 体积谱半径 \((\Delta t_i,\sigma_i)\)（RK4）。
+    fn prepare_spectral_timestep_3d(
+        &self,
+        ctx: &mut CompressibleAdvanceContext3d<'_>,
+        fields: &mut ConservedFields,
+        cfl: Real,
+        p_floor: Real,
+    ) -> Result<(Vec<Real>, Vec<Real>)> {
+        fields.enforce_positivity(ctx.eos, p_floor);
+        apply_compressible_boundary_conditions(
+            ctx.mesh,
+            ctx.patches,
+            fields,
+            ctx.ghosts,
+            ctx.eos,
+            ctx.freestream,
+            ctx.viscous,
+        )?;
+        ctx.primitive_scratch
+            .fill_from_conserved(fields, ctx.eos, p_floor)?;
+        let params = self.spectral_radius_params(ctx, p_floor);
+        let sigma = cell_spectral_radius_3d(&params)?;
+        let volumes = params.mesh.cell_volumes();
+        let cell_dts = cell_local_dt_spectral(&volumes, &sigma, cfl)?;
+        Ok((cell_dts, sigma))
+    }
+
+    fn spectral_radius_params<'a>(
+        &self,
+        ctx: &'a CompressibleAdvanceContext3d<'_>,
+        p_floor: Real,
+    ) -> SpectralRadius3dParams<'a> {
+        SpectralRadius3dParams {
+            mesh: ctx.structured,
+            boundary_mesh: ctx.mesh,
+            boundaries: ctx.patches,
+            ghosts: ctx.ghosts,
+            primitives: &ctx.primitive_scratch,
+            eos: ctx.eos,
+            min_pressure: p_floor,
+            viscous: ctx.viscous,
+        }
     }
 }
 

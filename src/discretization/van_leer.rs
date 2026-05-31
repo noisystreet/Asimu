@@ -269,6 +269,7 @@ mod tests {
         assert!(approx_eq(fvs.energy, phys.energy, 1.0e-10));
     }
 
+    #[cfg(all(feature = "io-cgns", feature = "slow-tests"))]
     #[test]
     fn cylinder_van_leer_rk4_step2_when_present() {
         use std::path::PathBuf;
@@ -316,6 +317,9 @@ mod tests {
             freestream: &fs,
             primitive_scratch: crate::field::PrimitiveFields::zeros(mesh.num_cells())
                 .expect("primitives"),
+            gradient_scratch: crate::discretization::GradientFields::zeros(mesh.num_cells())
+                .expect("gradients"),
+            viscous: None,
         };
         for _ in 0..10 {
             solver
@@ -384,6 +388,7 @@ mod tests {
         assert!((vl.energy - hanel.energy).abs() > 1.0e-10);
     }
 
+    #[cfg(all(feature = "io-cgns", feature = "slow-tests"))]
     #[test]
     fn cylinder_hanel_van_leer_rk4_step10_when_present() {
         use std::path::PathBuf;
@@ -432,6 +437,9 @@ mod tests {
             freestream: &fs,
             primitive_scratch: crate::field::PrimitiveFields::zeros(mesh.num_cells())
                 .expect("primitives"),
+            gradient_scratch: crate::discretization::GradientFields::zeros(mesh.num_cells())
+                .expect("gradients"),
+            viscous: None,
         };
         for _ in 0..10 {
             solver

@@ -77,11 +77,11 @@ fn detect_run_kind(case: &CaseSpec) -> Result<CaseRunKind> {
         return Ok(CaseRunKind::Sod1dTransient);
     }
     if case.is_compressible() {
-        if case.mesh.as_3d().is_ok() && case.euler.is_some() {
+        if case.mesh.as_3d().is_ok() && (case.euler.is_some() || case.navier_stokes.is_some()) {
             return Ok(CaseRunKind::Compressible3dTransient);
         }
         return Err(AsimuError::Config(
-            "3D 可压缩算例须包含 [euler] 段且 mesh 为 3D".to_string(),
+            "3D 可压缩算例须包含 [euler] 或 [navier_stokes] 段且 mesh 为 3D".to_string(),
         ));
     }
     case.mesh.as_1d()?;
@@ -119,7 +119,7 @@ mod tests {
         assert!(metrics.l1_density < 0.02);
     }
 
-    #[cfg(feature = "io-cgns")]
+    #[cfg(all(feature = "io-cgns", feature = "slow-tests"))]
     #[test]
     fn runs_cylinder_mach8_when_cgns_present() {
         let mesh_path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -140,7 +140,7 @@ mod tests {
         assert_eq!(metrics.scheme, "first_order_hllc");
     }
 
-    #[cfg(feature = "io-cgns")]
+    #[cfg(all(feature = "io-cgns", feature = "slow-tests"))]
     #[test]
     fn debug_cylinder_step1_nan_root_cause() {
         use crate::core::Real;
@@ -205,6 +205,7 @@ mod tests {
             &mut ghosts,
             &eos,
             &fs,
+            None,
         )
         .expect("bc");
         let inviscid = case.euler.as_ref().expect("euler").inviscid();
@@ -268,6 +269,9 @@ mod tests {
             freestream: &fs,
             primitive_scratch: crate::field::PrimitiveFields::zeros(mesh.num_cells())
                 .expect("primitives"),
+            gradient_scratch: crate::discretization::GradientFields::zeros(mesh.num_cells())
+                .expect("gradients"),
+            viscous: None,
         };
         let step1 = solver
             .advance_step_3d(
@@ -279,14 +283,21 @@ mod tests {
             )
             .expect("step1");
         assert!(step1.residual_rms.is_finite());
+        assert_step1_fields_finite(mesh, &fields_step, &eos, fs.pressure);
+    }
+
+    #[cfg(all(feature = "io-cgns", feature = "slow-tests"))]
+    fn assert_step1_fields_finite(
+        mesh: &crate::mesh::StructuredMesh3d,
+        fields: &crate::field::ConservedFields,
+        eos: &crate::physics::IdealGasEoS,
+        reference_pressure: crate::core::Real,
+    ) {
+        let p_floor = crate::field::positivity_pressure_floor(reference_pressure);
         for i in 0..mesh.num_cells() {
-            assert!(
-                fields_step.density.values()[i].is_finite()
-                    && fields_step.density.values()[i] > 0.0
-            );
-            let p_floor = crate::field::positivity_pressure_floor(fs.pressure);
-            let _ = fields_step
-                .primitive_at(i, &eos, p_floor)
+            assert!(fields.density.values()[i].is_finite() && fields.density.values()[i] > 0.0);
+            let _ = fields
+                .primitive_at(i, eos, p_floor)
                 .expect("primitive after step1");
         }
     }

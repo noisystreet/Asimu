@@ -10,7 +10,7 @@ int asimu_cg_read_boco_family_name(int fn, int B, int Z, int BC, char *family_na
     return cg_famname_read(family_name);
 }
 
-/* 写出结构化网格 + 顶点原始变量（ρ, u, v, w, p @ Vertex，便于 ParaView Volume 显示）。 */
+/* 写出结构化网格 + 顶点原始变量（ρ, u, v, w, p, Mach, T @ Vertex）。 */
 int asimu_cg_write_structured_flow(
     const char *filename,
     const char *basename,
@@ -26,6 +26,8 @@ int asimu_cg_write_structured_flow(
     const double *v,
     const double *w,
     const double *p,
+    const double *mach,
+    const double *temperature,
     double physical_time
 ) {
     int fn = 0;
@@ -123,6 +125,18 @@ int asimu_cg_write_structured_flow(
     }
     err = cg_field_write(
         fn, base, zone, sol, CGNS_ENUMV(RealDouble), "Pressure", p, &field);
+    if (err != CG_OK) {
+        cg_close(fn);
+        return err;
+    }
+    err = cg_field_write(
+        fn, base, zone, sol, CGNS_ENUMV(RealDouble), "MachNumber", mach, &field);
+    if (err != CG_OK) {
+        cg_close(fn);
+        return err;
+    }
+    err = cg_field_write(
+        fn, base, zone, sol, CGNS_ENUMV(RealDouble), "Temperature", temperature, &field);
     if (err != CG_OK) {
         cg_close(fn);
         return err;

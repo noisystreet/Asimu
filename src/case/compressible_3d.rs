@@ -1,10 +1,10 @@
-//! 3D 可压缩 Euler 瞬态算例编排（case.toml `[euler]` + CGNS/结构化 3D 网格）。
+//! 3D 可压缩 Euler / Navier-Stokes 算例编排（`[euler]` / `[navier_stokes]` + CGNS/结构化 3D 网格）。
 
 use tracing::info;
 
 use crate::case::{CaseRunKind, CaseRunResult};
 use crate::core::{Real, format_log_fixed4, format_log_sci4, log10_positive, residual_converged};
-use crate::discretization::BoundaryGhostBuffer;
+use crate::discretization::{BoundaryGhostBuffer, GradientFields};
 use crate::error::{AsimuError, Result};
 use crate::field::PrimitiveFields;
 use crate::io::{CaseSpec, CaseTimeMode};
@@ -28,16 +28,13 @@ pub struct Compressible3dRunMetrics {
 
 pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
     let mesh = case.mesh.as_3d()?;
-    let euler_section = case
-        .euler
-        .as_ref()
-        .ok_or_else(|| AsimuError::Config("3D 可压缩算例缺少 [euler] 段".to_string()))?;
+    let disc = case.compressible_discretization()?;
     let eos = case.physics.eos()?;
     let freestream = case
         .freestream
         .or(case.fluid_initial.freestream)
         .ok_or_else(|| AsimuError::Field("3D 可压缩算例须指定 [freestream]".to_string()))?;
-    let inviscid = euler_section.inviscid();
+    let inviscid = disc.inviscid();
     let solver = build_compressible_solver(case, &inviscid)?;
     let mut fields = case.build_conserved_fields()?;
     let mut ghosts = BoundaryGhostBuffer::new();
@@ -49,6 +46,8 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         eos: &eos,
         freestream: &freestream,
         primitive_scratch: PrimitiveFields::zeros(mesh.num_cells())?,
+        gradient_scratch: GradientFields::zeros(mesh.num_cells())?,
+        viscous: solver.config.viscous.as_ref(),
     };
     let scheme = inviscid.short_label().to_string();
     let limiter = inviscid.limiter_label().to_string();
@@ -149,10 +148,12 @@ fn build_compressible_solver(
             max_steps: case.resolved_max_steps(),
         },
         inviscid: *inviscid,
+        viscous: case.physics.viscous.clone(),
         cfl_schedule: case.cfl_schedule()?,
         time_mode: solver_time_mode(case.time.mode),
         local_time_step: case.time.uses_local_time_step(),
         time_scheme: case.time.resolved_time_scheme(),
+        lu_sgs: case.time.resolved_lusgs_config()?,
     }))
 }
 

@@ -2,6 +2,7 @@
 
 pub mod compressible;
 pub mod sod;
+pub mod spectral_radius;
 pub mod state;
 pub mod time;
 
@@ -20,11 +21,17 @@ pub use sod::{
     SodBenchmarkConfig, SodBenchmarkResult, run_sod_benchmark, sod_initial_fields,
     write_sod_compare_profile, write_sod_profile,
 };
+pub use spectral_radius::{
+    SpectralRadius3dParams, cell_local_dt_cfl_3d, cell_local_dt_spectral,
+    cell_lusgs_spacing_timestep, cell_spectral_radius_3d, cell_viscous_diffusivity_max,
+    local_pseudo_dt_lusgs,
+};
 pub use state::SolverState;
 pub use time::{
-    CflSchedule, Rk4Storage, RungeKutta4Config, RungeKutta4Integrator, SteadyStateIntegrator,
-    TimeIntegrationScheme, TimeIntegrator, TimeMode, TimeStepInfo, euler_step, euler_step_local,
-    local_dt_cfl, min_positive_dt, rk4_step, rk4_step_local,
+    CflSchedule, LuSgsConfig, Rk4Storage, RungeKutta4Config, RungeKutta4Integrator,
+    SteadyStateIntegrator, TimeIntegrationScheme, TimeIntegrator, TimeMode, TimeStepInfo,
+    euler_step, euler_step_local, local_dt_cfl, lu_sgs_step, lu_sgs_step_local, min_positive_dt,
+    rk4_step, rk4_step_local,
 };
 
 /// 求解结果摘要。

@@ -130,9 +130,18 @@ impl InviscidFluxConfig {
         }
     }
 
-    /// 限制器简短标识（导出元数据用）。
+    /// 一阶分段常数重构不使用斜率限制器（Godunov 型格式本身单调）。
+    #[must_use]
+    pub const fn uses_limiter(self) -> bool {
+        matches!(self.reconstruction, ReconstructionKind::Muscl)
+    }
+
+    /// 限制器简短标识（导出元数据用）；一阶为 `"none"`。
     #[must_use]
     pub const fn limiter_label(self) -> &'static str {
+        if !self.uses_limiter() {
+            return "none";
+        }
         match self.limiter {
             SlopeLimiter::Minmod => "minmod",
             SlopeLimiter::VanLeer => "van_leer",

@@ -29,8 +29,16 @@ fn cylinder_boundary_flux_decomposition_when_present() {
     let fs = case.freestream.expect("freestream");
     let fields = ConservedFields::from_freestream(mesh.num_cells(), &eos, &fs).expect("fields");
     let mut ghosts = BoundaryGhostBuffer::new();
-    apply_compressible_boundary_conditions(mesh, &case.boundary, &fields, &mut ghosts, &eos, &fs)
-        .expect("bc");
+    apply_compressible_boundary_conditions(
+        mesh,
+        &case.boundary,
+        &fields,
+        &mut ghosts,
+        &eos,
+        &fs,
+        None,
+    )
+    .expect("bc");
     let mut primitives = crate::field::PrimitiveFields::zeros(mesh.num_cells()).expect("prim");
     primitives
         .fill_from_conserved(&fields, &eos, 1.0e-6)

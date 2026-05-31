@@ -657,7 +657,7 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "io-vtk")]
+    #[cfg(all(feature = "io-vtk", feature = "slow-tests"))]
     #[test]
     fn exports_dlr_f6_all_zones_to_vtm_when_present() {
         use std::env;
@@ -685,7 +685,7 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "io-vtk")]
+    #[cfg(all(feature = "io-vtk", feature = "slow-tests"))]
     #[test]
     fn exports_dlr_f6_zone_to_vts_when_present() {
         use std::env;

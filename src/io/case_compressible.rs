@@ -74,12 +74,14 @@ pub(super) fn inviscid_from_toml(
         };
     }
     if let Some(name) = limiter {
-        config.limiter = match name {
-            "minmod" => SlopeLimiter::Minmod,
-            "van_leer" | "vanleer" => SlopeLimiter::VanLeer,
-            "van_albada" | "vanalbada" | "van-albada" => SlopeLimiter::VanAlbada,
-            _ => SlopeLimiter::Minmod,
-        };
+        if config.reconstruction == ReconstructionKind::Muscl {
+            config.limiter = match name {
+                "minmod" => SlopeLimiter::Minmod,
+                "van_leer" | "vanleer" => SlopeLimiter::VanLeer,
+                "van_albada" | "vanalbada" | "van-albada" => SlopeLimiter::VanAlbada,
+                _ => SlopeLimiter::Minmod,
+            };
+        }
     }
     if let Some(name) = flux {
         config.scheme = match name {
@@ -136,6 +138,7 @@ impl CaseSpec {
     /// 解析后配置自检（告警，不中断加载）。
     pub fn warn_config_inconsistencies(&self) {
         warn_if_output_interval_exceeds_max_steps(self);
+        warn_if_limiter_ignored_with_first_order(self);
     }
 
     /// 解析 `[observability].chrome_trace` 为绝对路径（未配置则 `None`）。
@@ -259,6 +262,27 @@ pub fn resolve_case_output_path(
     Ok(base.join(rel_path))
 }
 
+fn is_first_order_reconstruction(name: &str) -> bool {
+    matches!(name, "first_order" | "first-order")
+}
+
+fn warn_if_limiter_ignored_with_first_order(case: &CaseSpec) {
+    let Ok(euler) = case.compressible_discretization() else {
+        return;
+    };
+    if euler.limiter.is_none() {
+        return;
+    }
+    let recon = euler.reconstruction.as_deref().unwrap_or("first_order");
+    if is_first_order_reconstruction(recon) {
+        warn!(
+            limiter = ?euler.limiter,
+            reconstruction = %recon,
+            "[euler].limiter 在一阶重构下无效（分段常数已单调），可省略该字段"
+        );
+    }
+}
+
 fn warn_if_output_interval_exceeds_max_steps(case: &CaseSpec) {
     let Some(output) = &case.output else {
         return;
@@ -273,5 +297,65 @@ fn warn_if_output_interval_exceeds_max_steps(case: &CaseSpec) {
             solution_every = every,
             max_steps, "[output].solution_every 大于 [time].max_steps，间隔流场 CGNS 不会写出"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::inviscid_from_toml;
+
+    #[test]
+    fn first_order_ignores_limiter_from_toml() {
+        let cfg = inviscid_from_toml(Some("first_order"), Some("hllc"), Some("van_albada"));
+        assert!(!cfg.uses_limiter());
+        assert_eq!(cfg.limiter_label(), "none");
+        assert_eq!(cfg.short_label(), "first_order_hllc");
+    }
+
+    #[test]
+    fn muscl_applies_limiter_from_toml() {
+        let cfg = inviscid_from_toml(Some("muscl"), Some("hllc"), Some("van_albada"));
+        assert!(cfg.uses_limiter());
+        assert_eq!(cfg.limiter_label(), "van_albada");
+    }
+
+    #[test]
+    fn parse_navier_stokes_enables_viscous_physics() {
+        let case = crate::io::parse_case_str(
+            r#"
+name = "ns_box"
+benchmark_id = "ns_box"
+
+[mesh]
+kind = "structured_3d"
+nx = 2
+ny = 2
+nz = 2
+lx = 1.0
+ly = 1.0
+lz = 1.0
+
+[physics]
+gamma = 1.4
+gas_constant = 287.0
+prandtl = 0.72
+
+[freestream]
+mach = 0.1
+pressure = 101325.0
+temperature = 300.0
+
+[time]
+mode = "steady"
+max_steps = 1
+
+[navier_stokes]
+flux = "roe"
+reconstruction = "first_order"
+"#,
+        )
+        .expect("parse");
+        assert!(case.is_navier_stokes());
+        assert!(case.physics.viscous.is_some());
     }
 }

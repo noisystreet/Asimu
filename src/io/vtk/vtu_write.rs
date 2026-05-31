@@ -26,7 +26,8 @@ pub fn write_flow_vtu(
     min_pressure: f64,
 ) -> Result<()> {
     validate_input_path(path)?;
-    let (rho, u, v, w, p) = gather_cell_primitives(mesh, fields, eos, min_pressure)?;
+    let (rho, u, v, w, p, mach, temperature) =
+        gather_cell_primitives(mesh, fields, eos, min_pressure)?;
     let npts = mesh.num_nodes();
     let ncells = mesh.num_cells();
 
@@ -59,6 +60,8 @@ pub fn write_flow_vtu(
         u: encode_f64_block(&u),
         v: encode_f64_block(&v),
         w: encode_f64_block(&w),
+        mach: encode_f64_block(&mach),
+        temperature: encode_f64_block(&temperature),
     };
     let topo = FlowVtuTopologyB64 {
         pts: encode_points_block(mesh),
@@ -121,6 +124,8 @@ struct FlowScalarsB64 {
     u: String,
     v: String,
     w: String,
+    mach: String,
+    temperature: String,
 }
 
 struct FlowVtuTopologyB64 {
@@ -149,6 +154,8 @@ fn format_flow_vtu_xml(
         <DataArray type="Float64" Name="VelocityX" format="binary">{}</DataArray>
         <DataArray type="Float64" Name="VelocityY" format="binary">{}</DataArray>
         <DataArray type="Float64" Name="VelocityZ" format="binary">{}</DataArray>
+        <DataArray type="Float64" Name="MachNumber" format="binary">{}</DataArray>
+        <DataArray type="Float64" Name="Temperature" format="binary">{}</DataArray>
       </CellData>
       <Points>
         <DataArray type="Float64" Name="Points" NumberOfComponents="3" format="binary">{}</DataArray>
@@ -167,6 +174,8 @@ fn format_flow_vtu_xml(
         scalars.u,
         scalars.v,
         scalars.w,
+        scalars.mach,
+        scalars.temperature,
         topo.pts,
         topo.conn,
         topo.off,

@@ -43,12 +43,15 @@ pub fn write_flow_cgns(
         )));
     }
 
-    let (rho, u, v, w, p) = gather_vertex_primitives(mesh, fields, eos, min_pressure)?;
+    let (rho, u, v, w, p, mach, temperature) =
+        gather_vertex_primitives(mesh, fields, eos, min_pressure)?;
     let npts = mesh.num_nodes();
     for (name, data) in [
         ("Density", rho.len()),
         ("VelocityX", u.len()),
         ("Pressure", p.len()),
+        ("MachNumber", mach.len()),
+        ("Temperature", temperature.len()),
     ] {
         if data != npts {
             return Err(AsimuError::Field(format!(
@@ -80,6 +83,8 @@ pub fn write_flow_cgns(
             v.as_ptr(),
             w.as_ptr(),
             p.as_ptr(),
+            mach.as_ptr(),
+            temperature.as_ptr(),
             physical_time,
         )
     };
@@ -135,10 +140,14 @@ with h5py.File(p, "r") as f:
             found["gl"] = name
         elif name.endswith("FlowSolution/Density/ data"):
             found["rho"] = name
+        elif name.endswith("FlowSolution/MachNumber/ data"):
+            found["mach"] = name
+        elif name.endswith("FlowSolution/Temperature/ data"):
+            found["temp"] = name
         elif name.endswith("GridCoordinates/CoordinateX/ data"):
             found["cx"] = name
     f.visititems(visit)
-    assert "rho" in found and "cx" in found, found
+    assert "rho" in found and "mach" in found and "temp" in found and "cx" in found, found
     rho = f[found["rho"]].shape
     cx = f[found["cx"]].shape
     assert rho == cx, (rho, cx)

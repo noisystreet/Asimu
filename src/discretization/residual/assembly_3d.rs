@@ -288,6 +288,7 @@ mod tests {
             &mut ghosts,
             &eos,
             &fs,
+            None,
         )
         .expect("bc");
         let mut primitives = PrimitiveFields::zeros(mesh.num_cells()).expect("prim");
@@ -380,6 +381,7 @@ mod tests {
             &mut ghosts,
             &eos,
             &fs,
+            None,
         )
         .expect("bc");
         let mut primitives = PrimitiveFields::zeros(mesh.num_cells()).expect("prim");

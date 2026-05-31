@@ -4,6 +4,8 @@
 
 mod assembly_1d;
 mod assembly_3d;
+mod assembly_3d_viscous;
+mod face_flux_3d;
 mod muscl_stencil_3d;
 
 use crate::core::Real;
@@ -15,6 +17,13 @@ pub use assembly_1d::{
     BoundaryGhosts1d, InviscidBoundary1d, assemble_inviscid_residual_1d, zero_gradient_ghosts_1d,
 };
 pub use assembly_3d::{InviscidAssembly3dParams, assemble_inviscid_residual_3d};
+pub use assembly_3d_viscous::{
+    ViscousAssembly3dInput, ViscousAssembly3dParams, assemble_viscous_residual_3d,
+    compute_gradients_and_assemble_viscous_3d,
+};
+pub use face_flux_3d::{
+    inviscid_boundary_face_flux, inviscid_i_face_flux, inviscid_j_face_flux, inviscid_k_face_flux,
+};
 
 /// 忽略退化（零体积）控制体的体积下限。
 const DEGENERATE_VOLUME: Real = 1.0e-30;

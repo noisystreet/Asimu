@@ -89,6 +89,8 @@ F̂ ← roe_flux(U_L, U_R, n)
 
 配置：`InviscidFluxConfig { reconstruction, limiter, scheme }`；预设 `muscl_hllc()`。
 
+**一阶**：`reconstruction = first_order` 时界面取 owner/neighbor 单元值，不调用 MUSCL 限制器（`limiter` 字段忽略，元数据记为 `none`）；单调性由 Godunov 型 Riemann 通量保证。
+
 新增格式时：扩展 `reconstruction.rs`，保持 `InterfaceStates` 接口不变，由 `face_inviscid_flux` 或策略枚举 dispatch。
 
 ---
