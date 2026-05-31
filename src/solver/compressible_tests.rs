@@ -137,6 +137,8 @@ fn cylinder_uniform_freestream_no_bc_time_advance_when_present() {
         ghosts: &mut ghosts,
         eos: &eos,
         freestream: &fs,
+        primitive_scratch: crate::field::PrimitiveFields::zeros(mesh.num_cells())
+            .expect("primitives"),
     };
 
     eprintln!("=== 圆柱网格 无 BC 均匀来流 时间推进 ({} 步) ===", steps);
@@ -225,6 +227,7 @@ fn cylinder_uniform_freestream_interior_only_advance_when_present() {
         mesh.num_cells()
     );
 
+    let mut primitives = crate::field::PrimitiveFields::zeros(mesh.num_cells()).expect("prim");
     let report_steps = [1_u64, 10, 50, 100, 200];
     for _ in 0..steps {
         let cfl = cfl_schedule.at_step(state.time_step.saturating_add(1), steps);
@@ -232,8 +235,19 @@ fn cylinder_uniform_freestream_interior_only_advance_when_present() {
         let speeds = cell_wave_speeds(&fields, &eos, fs.pressure * 1.0e-3).expect("speeds");
         let cell_dts = local_dt_cfl(&lengths, &speeds, cfl).expect("dt");
 
+        let p_floor = fs.pressure * 1.0e-3;
         let evaluate = |u: &ConservedFields, r: &mut ConservedResidual| {
-            assemble_inviscid_residual_3d(mesh, u, r, &eos, &inviscid, &empty_bc, &ghosts)?;
+            primitives.fill_from_conserved(u, &eos, p_floor)?;
+            let assembly = crate::discretization::residual::InviscidAssembly3dParams {
+                mesh,
+                eos: &eos,
+                config: &inviscid,
+                boundaries: &empty_bc,
+                ghosts: &ghosts,
+                primitives: &primitives,
+                min_pressure: p_floor,
+            };
+            assemble_inviscid_residual_3d(u, r, &assembly)?;
             zero_residual_on_cells(r, &boundary_cells);
             Ok(())
         };
@@ -261,7 +275,20 @@ fn cylinder_uniform_freestream_interior_only_advance_when_present() {
             let rmax = interior_rho.iter().copied().fold(0.0_f64, f64::max);
             let center = rho[mesh.cell_index(mesh.nx / 2, mesh.ny / 2, 0)];
 
-            evaluate(&fields, &mut storage.k1).expect("rhs");
+            primitives
+                .fill_from_conserved(&fields, &eos, p_floor)
+                .expect("fill");
+            let assembly = crate::discretization::residual::InviscidAssembly3dParams {
+                mesh,
+                eos: &eos,
+                config: &inviscid,
+                boundaries: &empty_bc,
+                ghosts: &ghosts,
+                primitives: &primitives,
+                min_pressure: p_floor,
+            };
+            assemble_inviscid_residual_3d(&fields, &mut storage.k1, &assembly).expect("rhs");
+            zero_residual_on_cells(&mut storage.k1, &boundary_cells);
             let int_res = interior_density_rms(&storage.k1, &boundary_set);
             let boundary_frozen = boundary_cells
                 .iter()

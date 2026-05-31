@@ -35,14 +35,27 @@ pub fn roe_flux(
     eos: &IdealGasEoS,
     config: &RoeFluxConfig,
 ) -> Result<InviscidFlux> {
-    let n = normalize_or_error(normal)?;
     let prim_l = primitive_from_conserved(eos, left)?;
     let prim_r = primitive_from_conserved(eos, right)?;
-    let flux_l = physical_inviscid_flux(left, &prim_l, n);
-    let flux_r = physical_inviscid_flux(right, &prim_r, n);
-    let roe = roe_averages(&prim_l, &prim_r, left, right, eos.gamma, n)?;
+    roe_flux_with_primitives(left, right, &prim_l, &prim_r, normal, eos, config)
+}
+
+/// 使用已恢复的原始变量（跳过守恒→原始）。
+pub fn roe_flux_with_primitives(
+    left: &ConservedState,
+    right: &ConservedState,
+    prim_l: &PrimitiveState,
+    prim_r: &PrimitiveState,
+    normal: Vector3,
+    eos: &IdealGasEoS,
+    config: &RoeFluxConfig,
+) -> Result<InviscidFlux> {
+    let n = normalize_or_error(normal)?;
+    let flux_l = physical_inviscid_flux(left, prim_l, n);
+    let flux_r = physical_inviscid_flux(right, prim_r, n);
+    let roe = roe_averages(prim_l, prim_r, left, right, eos.gamma, n)?;
     let (t1, t2) = face_tangent_basis(n);
-    let waves = wave_strengths(&prim_l, &prim_r, &roe, n, t1, t2)?;
+    let waves = wave_strengths(prim_l, prim_r, &roe, n, t1, t2)?;
     let delta = entropy_delta(&roe, config);
     let l1 = fixed_eigenvalue(roe.un - roe.a, delta, config.entropy_fix);
     let l5 = fixed_eigenvalue(roe.un + roe.a, delta, config.entropy_fix);
@@ -401,26 +414,26 @@ mod tests {
     use super::*;
     use crate::core::approx_eq;
     use crate::discretization::inviscid::physical_inviscid_flux;
-    use crate::discretization::reconstruction::reconstruct_first_order;
+    use crate::discretization::reconstruction::{
+        interface_conserved_pair, reconstruct_first_order,
+    };
 
-    fn sod_left_state(eos: &IdealGasEoS) -> ConservedState {
-        let prim = PrimitiveState {
+    fn sod_left_prim() -> PrimitiveState {
+        PrimitiveState {
             density: 1.0,
             velocity: [0.0, 0.0, 0.0],
             pressure: 1.0,
             temperature: 1.0,
-        };
-        ConservedState::from_primitive(eos, &prim).expect("left")
+        }
     }
 
-    fn sod_right_state(eos: &IdealGasEoS) -> ConservedState {
-        let prim = PrimitiveState {
+    fn sod_right_prim() -> PrimitiveState {
+        PrimitiveState {
             density: 0.125,
             velocity: [0.0, 0.0, 0.0],
             pressure: 0.1,
             temperature: 1.0,
-        };
-        ConservedState::from_primitive(eos, &prim).expect("right")
+        }
     }
 
     #[test]
@@ -442,12 +455,13 @@ mod tests {
     #[test]
     fn sod_interface_roe_flux_matches_reference_values() {
         let eos = IdealGasEoS::new(1.4, 1.0).expect("eos");
-        let left = sod_left_state(&eos);
-        let right = sod_right_state(&eos);
         let n = Vector3::new(1.0, 0.0, 0.0);
         let config = RoeFluxConfig::default();
-        let iface = reconstruct_first_order(left, right);
-        let flux = roe_flux(&iface.left, &iface.right, n, &eos, &config).expect("flux");
+        let iface = reconstruct_first_order(sod_left_prim(), sod_right_prim());
+        let (left, right) = interface_conserved_pair(&eos, &iface).expect("cons");
+        let flux =
+            roe_flux_with_primitives(&left, &right, &iface.left, &iface.right, n, &eos, &config)
+                .expect("flux");
         assert!(approx_eq(flux.momentum[0], 0.55, 1.0e-10));
         assert!(approx_eq(flux.mass, 0.390_660_485_785_962_96, 1.0e-10));
         assert!(approx_eq(flux.energy, 1.295_882_277_373_113, 1.0e-10));

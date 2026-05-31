@@ -31,21 +31,34 @@ fn cylinder_boundary_flux_decomposition_when_present() {
     let mut ghosts = BoundaryGhostBuffer::new();
     apply_compressible_boundary_conditions(mesh, &case.boundary, &fields, &mut ghosts, &eos, &fs)
         .expect("bc");
+    let mut primitives = crate::field::PrimitiveFields::zeros(mesh.num_cells()).expect("prim");
+    primitives
+        .fill_from_conserved(&fields, &eos, 1.0e-6)
+        .expect("fill");
     let config = InviscidFluxConfig::roe_first_order();
     let mut rhs = ConservedResidual::zeros(mesh.num_cells()).expect("rhs");
-    assemble_inviscid_residual_3d(
+    let params = super::InviscidAssembly3dParams {
         mesh,
-        &fields,
-        &mut rhs,
-        &eos,
-        &config,
-        &case.boundary,
-        &ghosts,
-    )
-    .expect("assemble");
+        eos: &eos,
+        config: &config,
+        boundaries: &case.boundary,
+        ghosts: &ghosts,
+        primitives: &primitives,
+        min_pressure: 1.0e-6,
+    };
+    assemble_inviscid_residual_3d(&fields, &mut rhs, &params).expect("assemble");
 
     report_internal_face_alignment(mesh);
-    report_boundary_patch_flux_samples(mesh, &case.boundary, &fields, &eos, &config, &ghosts, &rhs);
+    report_boundary_patch_flux_samples(&BoundaryFluxReport {
+        mesh,
+        boundary: &case.boundary,
+        fields: &fields,
+        eos: &eos,
+        config: &config,
+        ghosts: &ghosts,
+        primitives: &primitives,
+        rhs: &rhs,
+    });
     report_outlet_area_closure(mesh, &case.boundary);
 }
 
@@ -113,38 +126,45 @@ fn face_normal_misaligned(
     dc.x * face.normal.x + dc.y * face.normal.y + dc.z * face.normal.z < 0.0
 }
 
-fn report_boundary_patch_flux_samples(
-    mesh: &StructuredMesh3d,
-    boundary: &crate::boundary::BoundarySet,
-    fields: &ConservedFields,
-    eos: &IdealGasEoS,
-    config: &InviscidFluxConfig,
-    ghosts: &BoundaryGhostBuffer,
-    rhs: &ConservedResidual,
-) {
+struct BoundaryFluxReport<'a> {
+    mesh: &'a StructuredMesh3d,
+    boundary: &'a crate::boundary::BoundarySet,
+    fields: &'a ConservedFields,
+    eos: &'a IdealGasEoS,
+    config: &'a InviscidFluxConfig,
+    ghosts: &'a BoundaryGhostBuffer,
+    primitives: &'a crate::field::PrimitiveFields,
+    rhs: &'a ConservedResidual,
+}
+
+fn report_boundary_patch_flux_samples(ctx: &BoundaryFluxReport<'_>) {
     let flux_ctx = BoundaryFaceFlux3d {
-        fields,
-        mesh,
-        eos,
-        config,
+        primitives: ctx.primitives,
+        mesh: ctx.mesh,
+        eos: ctx.eos,
+        config: ctx.config,
+        min_pressure: 1.0e-6,
     };
     eprintln!("=== 各 patch 边界面通量样本 (mid face) ===");
-    for patch in boundary.patches() {
+    for patch in ctx.boundary.patches() {
         let mid = patch.face_ids[patch.face_ids.len() / 2];
-        let owner_id = mesh.face_owner(mid).expect("owner");
+        let owner_id = ctx.mesh.face_owner(mid).expect("owner");
         let (logical, local) = LogicalFace3d::decode(mid).expect("decode");
-        let (i, j, k) = mesh.face_ij(logical, local).expect("ij");
-        let geom = mesh.face_geometry_3d(mid).expect("geom");
-        let ghost = ghosts.get_face(mid).expect("ghost");
-        let owner = fields.cell_state(owner_id.index() as usize).expect("cell");
-        let prim = crate::field::primitive_from_conserved(eos, &owner).expect("prim");
+        let (i, j, k) = ctx.mesh.face_ij(logical, local).expect("ij");
+        let geom = ctx.mesh.face_geometry_3d(mid).expect("geom");
+        let ghost = ctx.ghosts.get_face(mid).expect("ghost");
+        let owner = ctx
+            .fields
+            .cell_state(owner_id.index() as usize)
+            .expect("cell");
+        let prim = crate::field::primitive_from_conserved(ctx.eos, &owner).expect("prim");
         let un = prim.velocity[0] * geom.normal.x
             + prim.velocity[1] * geom.normal.y
             + prim.velocity[2] * geom.normal.z;
         let flux =
             flux_at_boundary_face(&flux_ctx, mid, ghost.conserved, geom.normal).expect("flux");
-        let vol = mesh.cell_metric(i, j, k).volume;
-        let mut bnd_rhs = ConservedResidual::zeros(mesh.num_cells()).expect("bnd");
+        let vol = ctx.mesh.cell_metric(i, j, k).volume;
+        let mut bnd_rhs = ConservedResidual::zeros(ctx.mesh.num_cells()).expect("bnd");
         if !is_degenerate_volume(vol) {
             accumulate_boundary_face(
                 &mut bnd_rhs,
@@ -156,7 +176,7 @@ fn report_boundary_patch_flux_samples(
             .expect("acc");
         }
         let bnd_rho = bnd_rhs.density.values()[owner_id.index() as usize];
-        let total_rho = rhs.density.values()[owner_id.index() as usize];
+        let total_rho = ctx.rhs.density.values()[owner_id.index() as usize];
         eprintln!(
             "  {:<8} logical={logical:?} un={un:.4} |bnd_rho_dot|={:.3e} |total_rho_dot|={:.3e} n=({:.3},{:.3},{:.3})",
             patch.name,

@@ -35,7 +35,8 @@ pub use flux_config::{FluxScheme, InviscidFluxConfig, ReconstructionKind, SlopeL
 pub use hllc::hllc_flux;
 pub use inviscid::{InviscidFlux, physical_inviscid_flux};
 pub use reconstruction::{
-    InterfaceStates, MusclStencil1d, reconstruct_face_states, reconstruct_first_order,
+    InterfacePrimitiveStates, PrimitiveMusclStencil1d, interface_conserved_pair,
+    reconstruct_face_primitives, reconstruct_first_order,
 };
 pub use residual::{
     BoundaryGhosts1d, InviscidBoundary1d, accumulate_boundary_face, accumulate_interior_face,

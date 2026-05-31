@@ -19,12 +19,24 @@ pub fn hllc_flux(
     normal: Vector3,
     eos: &IdealGasEoS,
 ) -> Result<InviscidFlux> {
-    let n = normalize_face_normal(normal)?;
-    let (t1, t2) = face_tangent_basis(n);
     let prim_l = primitive_from_conserved(eos, left)?;
     let prim_r = primitive_from_conserved(eos, right)?;
-    let frame_l = to_face_frame(left, &prim_l, n, t1, t2);
-    let frame_r = to_face_frame(right, &prim_r, n, t1, t2);
+    hllc_flux_with_primitives(left, right, &prim_l, &prim_r, normal, eos)
+}
+
+/// 使用已恢复的单元原始变量（跳过守恒→原始）。
+pub fn hllc_flux_with_primitives(
+    left: &ConservedState,
+    right: &ConservedState,
+    prim_l: &crate::physics::PrimitiveState,
+    prim_r: &crate::physics::PrimitiveState,
+    normal: Vector3,
+    eos: &IdealGasEoS,
+) -> Result<InviscidFlux> {
+    let n = normalize_face_normal(normal)?;
+    let (t1, t2) = face_tangent_basis(n);
+    let frame_l = to_face_frame(left, prim_l, n, t1, t2);
+    let frame_r = to_face_frame(right, prim_r, n, t1, t2);
     let face_flux = hllc_face_frame_flux(&frame_l, &frame_r, eos.gamma)?;
     Ok(to_global_flux(face_flux, n, t1, t2))
 }

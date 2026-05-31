@@ -5,6 +5,7 @@
 mod algebra;
 mod conserved;
 mod initial;
+mod primitive;
 mod residual;
 
 use std::collections::BTreeMap;
@@ -21,6 +22,7 @@ pub use conserved::{
 pub use initial::{
     FluidInitialConfig, InitialKind, InitialSet, ScalarInitial, build_scalar_initial,
 };
+pub use primitive::PrimitiveFields;
 pub use residual::ConservedResidual;
 
 /// 标量场，长度与网格单元数一致。

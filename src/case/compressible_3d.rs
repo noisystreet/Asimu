@@ -6,6 +6,7 @@ use crate::case::{CaseRunKind, CaseRunResult};
 use crate::core::{Real, format_log_fixed4, format_log_sci4, log10_positive, residual_converged};
 use crate::discretization::BoundaryGhostBuffer;
 use crate::error::{AsimuError, Result};
+use crate::field::PrimitiveFields;
 use crate::io::{CaseSpec, CaseTimeMode};
 use crate::solver::{
     CompressibleAdvanceContext3d, CompressibleEulerConfig, CompressibleEulerSolver,
@@ -47,6 +48,7 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         ghosts: &mut ghosts,
         eos: &eos,
         freestream: &freestream,
+        primitive_scratch: PrimitiveFields::zeros(mesh.num_cells())?,
     };
     let scheme = inviscid.short_label().to_string();
     let limiter = inviscid.limiter_label().to_string();
@@ -85,13 +87,37 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
     );
     let output_paths =
         super::output_3d::write_compressible_3d_outputs(case, mesh, &fields, &eos, &history)?;
-    for path in &snapshot_paths {
+    log_written_paths(&snapshot_paths, &output_paths);
+    Ok(build_case_run_result(
+        case,
+        mesh,
+        &metrics,
+        &scheme,
+        &limiter,
+        time_mode,
+        local_time_step,
+    ))
+}
+
+fn log_written_paths(snapshot_paths: &[std::path::PathBuf], output_paths: &[std::path::PathBuf]) {
+    for path in snapshot_paths {
         info!(path = %path.display(), "算例间隔流场输出");
     }
-    for path in &output_paths {
+    for path in output_paths {
         info!(path = %path.display(), "算例输出");
     }
-    Ok(CaseRunResult {
+}
+
+fn build_case_run_result(
+    case: &CaseSpec,
+    mesh: &crate::mesh::StructuredMesh3d,
+    metrics: &Compressible3dRunMetrics,
+    scheme: &str,
+    limiter: &str,
+    time_mode: CompressibleTimeMode,
+    local_time_step: bool,
+) -> CaseRunResult {
+    CaseRunResult {
         name: case.name.clone(),
         benchmark_id: case.benchmark_id.clone(),
         kind: CaseRunKind::Compressible3dTransient,
@@ -109,8 +135,8 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         ),
         diffusion: None,
         sod: None,
-        compressible_3d: Some(metrics),
-    })
+        compressible_3d: Some(metrics.clone()),
+    }
 }
 
 fn build_compressible_solver(
@@ -184,8 +210,8 @@ struct SnapshotWriter<'a> {
 
 fn run_transient_3d_with_snapshots(
     solver: &CompressibleEulerSolver,
-    time_mode: CompressibleTimeMode,
-    local_time_step: bool,
+    _time_mode: CompressibleTimeMode,
+    _local_time_step: bool,
     ctx: &mut CompressibleAdvanceContext3d<'_>,
     fields: &mut crate::field::ConservedFields,
     tolerance: Option<Real>,
@@ -208,13 +234,9 @@ fn run_transient_3d_with_snapshots(
             t = %format_log_sci4(step_info.physical_time),
             log10_residual = %format_log_fixed4(step_info.residual_log10),
             cfl = step_info.cfl,
-            time_scheme = solver.config.time_scheme.label(),
-            local_time_step,
             is_final = stop,
             converged,
-            "可压缩 Euler 3D {}{}",
-            time_mode_label(time_mode),
-            if local_time_step { "（当地时间步）" } else { "" },
+            "时间步"
         );
         if converged {
             info!(

@@ -12,7 +12,7 @@ use crate::boundary::BoundarySet;
 use crate::core::{Real, format_log_fixed4, format_log_sci4, log10_positive};
 use crate::discretization::{BoundaryGhostBuffer, assemble_inviscid_residual_1d};
 use crate::error::Result;
-use crate::field::{ConservedFields, ConservedResidual};
+use crate::field::{ConservedFields, ConservedResidual, PrimitiveFields};
 use crate::mesh::{BoundaryMesh3d, StructuredMesh1d, StructuredMesh3d};
 use crate::physics::{FreestreamParams, IdealGasEoS, PrimitiveState};
 use crate::solver::state::SolverState;
@@ -80,6 +80,8 @@ pub struct CompressibleAdvanceContext3d<'a> {
     pub ghosts: &'a mut BoundaryGhostBuffer,
     pub eos: &'a IdealGasEoS,
     pub freestream: &'a FreestreamParams,
+    /// 每步 RHS 复用的原始变量缓冲（避免每 `evaluate_rhs` 重新分配）。
+    pub primitive_scratch: PrimitiveFields,
 }
 
 /// 1D 多步推进上下文。
@@ -113,6 +115,7 @@ impl CompressibleEulerSolver {
         let cfl = self.cfl_for_step(state);
         let dt = self.suggest_dt_1d(ctx.mesh, fields, ctx.eos, cfl)?;
         integrator.config.dt = dt;
+        let p_floor = 1.0e-6;
         let evaluate = |u: &ConservedFields, r: &mut ConservedResidual| {
             let boundaries = ctx.boundary.resolve(u)?;
             assemble_inviscid_residual_1d(
@@ -122,6 +125,7 @@ impl CompressibleEulerSolver {
                 ctx.eos,
                 &self.config.inviscid,
                 &boundaries,
+                p_floor,
             )
         };
         self.advance_explicit_step(fields, storage, dt, None, evaluate, None)?;
@@ -133,6 +137,7 @@ impl CompressibleEulerSolver {
             ctx.eos,
             &self.config.inviscid,
             &boundaries,
+            p_floor,
         )?;
         let last_residual = storage.k1.density_rms_norm();
         let time_info = integrator.advance(state)?;
@@ -151,7 +156,7 @@ impl CompressibleEulerSolver {
     /// 3D 推进：每 RK 阶段重算边界 ghost 与残差；支持全局/逐单元时间步。
     #[instrument(
         skip(self, ctx, fields, storage, state, integrator),
-        level = "info",
+        level = "debug",
         fields(step = state.time_step.saturating_add(1))
     )]
     pub fn advance_step_3d(
@@ -197,6 +202,8 @@ impl CompressibleEulerSolver {
             eos,
             freestream,
             inviscid: &inviscid,
+            min_pressure: p_floor,
+            primitive_scratch: &mut ctx.primitive_scratch,
         };
         let step_residual = {
             let _span = info_span!("rhs_monitor").entered();
@@ -224,6 +231,8 @@ impl CompressibleEulerSolver {
                     eos,
                     freestream,
                     inviscid: &inviscid,
+                    min_pressure: p_floor,
+                    primitive_scratch: &mut ctx.primitive_scratch,
                 }
                 .run(u, r)
             };

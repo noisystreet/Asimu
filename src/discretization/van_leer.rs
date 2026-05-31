@@ -314,6 +314,8 @@ mod tests {
             ghosts: &mut ghosts,
             eos: &eos,
             freestream: &fs,
+            primitive_scratch: crate::field::PrimitiveFields::zeros(mesh.num_cells())
+                .expect("primitives"),
         };
         for _ in 0..10 {
             solver
@@ -428,6 +430,8 @@ mod tests {
             ghosts: &mut ghosts,
             eos: &eos,
             freestream: &fs,
+            primitive_scratch: crate::field::PrimitiveFields::zeros(mesh.num_cells())
+                .expect("primitives"),
         };
         for _ in 0..10 {
             solver

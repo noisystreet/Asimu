@@ -59,15 +59,10 @@ pub fn run_case_path_logged(
 }
 
 /// 运行已解析算例。
-#[instrument(skip(case), fields(name = %case.name, benchmark_id = ?case.benchmark_id))]
+#[instrument(skip(case), fields(name = %case.name))]
 pub fn run_case(case: &CaseSpec) -> Result<CaseRunResult> {
     let kind = detect_run_kind(case)?;
-    info!(
-        name = %case.name,
-        benchmark_id = ?case.benchmark_id,
-        ?kind,
-        "开始算例编排"
-    );
+    info!(name = %case.name, ?kind, "开始算例编排");
     case.boundary.log_patches();
     match kind {
         CaseRunKind::Diffusion1dSteady => diffusion::run(case),
@@ -214,16 +209,25 @@ mod tests {
         .expect("bc");
         let inviscid = case.euler.as_ref().expect("euler").inviscid();
         let mut rhs = ConservedResidual::zeros(mesh.num_cells()).expect("rhs");
-        assemble_inviscid_residual_3d(
+        let mut primitives = crate::field::PrimitiveFields::zeros(mesh.num_cells()).expect("prim");
+        primitives
+            .fill_from_conserved(
+                &fields,
+                &eos,
+                crate::field::positivity_pressure_floor(fs.pressure),
+            )
+            .expect("fill");
+        let p_floor = crate::field::positivity_pressure_floor(fs.pressure);
+        let assembly = crate::discretization::residual::InviscidAssembly3dParams {
             mesh,
-            &fields,
-            &mut rhs,
-            &eos,
-            &inviscid,
-            &case.boundary,
-            &ghosts,
-        )
-        .expect("asm");
+            eos: &eos,
+            config: &inviscid,
+            boundaries: &case.boundary,
+            ghosts: &ghosts,
+            primitives: &primitives,
+            min_pressure: p_floor,
+        };
+        assemble_inviscid_residual_3d(&fields, &mut rhs, &assembly).expect("asm");
         let nan_cells = rhs
             .density
             .values()
@@ -262,6 +266,8 @@ mod tests {
             ghosts: &mut ghosts,
             eos: &eos,
             freestream: &fs,
+            primitive_scratch: crate::field::PrimitiveFields::zeros(mesh.num_cells())
+                .expect("primitives"),
         };
         let step1 = solver
             .advance_step_3d(

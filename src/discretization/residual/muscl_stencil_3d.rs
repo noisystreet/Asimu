@@ -1,22 +1,21 @@
 //! 3D 结构化网格 MUSCL 宽模板（沿面法向 i/j/k 四点；边界面含 ghost 宽模板）。
 
+use crate::core::Real;
 use crate::core::{FaceId, Vector3};
-use crate::discretization::{
-    FaceFluxInput, InviscidFlux, InviscidFluxConfig, ReconstructionKind, face_inviscid_flux,
-};
+use crate::discretization::{FaceFluxInput, InviscidFlux, InviscidFluxConfig, face_inviscid_flux};
 use crate::error::Result;
-use crate::field::ConservedFields;
+use crate::field::{PrimitiveFields, primitive_from_conserved_relaxed};
 use crate::mesh::{LogicalFace3d, StructuredMesh3d};
-use crate::physics::{ConservedState, IdealGasEoS};
+use crate::physics::{ConservedState, IdealGasEoS, PrimitiveState};
 
-struct LoadedStencil4 {
-    owner: ConservedState,
-    neighbor: ConservedState,
-    left_of_owner: Option<ConservedState>,
-    right_of_neighbor: Option<ConservedState>,
+struct LoadedPrimitiveStencil4 {
+    owner: PrimitiveState,
+    neighbor: PrimitiveState,
+    left_of_owner: Option<PrimitiveState>,
+    right_of_neighbor: Option<PrimitiveState>,
 }
 
-impl LoadedStencil4 {
+impl LoadedPrimitiveStencil4 {
     fn face_input(&self) -> FaceFluxInput<'_> {
         FaceFluxInput {
             owner: &self.owner,
@@ -28,7 +27,7 @@ impl LoadedStencil4 {
 }
 
 pub(crate) struct InteriorFaceFlux3d<'a> {
-    pub fields: &'a ConservedFields,
+    pub primitives: &'a PrimitiveFields,
     pub mesh: &'a StructuredMesh3d,
     pub eos: &'a IdealGasEoS,
     pub config: &'a InviscidFluxConfig,
@@ -36,48 +35,43 @@ pub(crate) struct InteriorFaceFlux3d<'a> {
 }
 
 pub(crate) struct BoundaryFaceFlux3d<'a> {
-    pub fields: &'a ConservedFields,
+    pub primitives: &'a PrimitiveFields,
     pub mesh: &'a StructuredMesh3d,
     pub eos: &'a IdealGasEoS,
     pub config: &'a InviscidFluxConfig,
+    pub min_pressure: Real,
 }
 
-fn load_stencil(
-    fields: &ConservedFields,
+fn load_primitive_stencil(
+    cache: &PrimitiveFields,
     owner_idx: usize,
     neighbor_idx: usize,
     left_idx: Option<usize>,
     right_idx: Option<usize>,
-) -> Result<LoadedStencil4> {
-    let owner = fields.cell_state(owner_idx)?;
-    let neighbor = fields.cell_state(neighbor_idx)?;
-    let left_of_owner = match left_idx {
-        Some(idx) => Some(fields.cell_state(idx)?),
-        None => None,
-    };
-    let right_of_neighbor = match right_idx {
-        Some(idx) => Some(fields.cell_state(idx)?),
-        None => None,
-    };
-    Ok(LoadedStencil4 {
+) -> LoadedPrimitiveStencil4 {
+    let owner = cache.cell_primitive(owner_idx);
+    let neighbor = cache.cell_primitive(neighbor_idx);
+    let left_of_owner = left_idx.map(|idx| cache.cell_primitive(idx));
+    let right_of_neighbor = right_idx.map(|idx| cache.cell_primitive(idx));
+    LoadedPrimitiveStencil4 {
         owner,
         neighbor,
         left_of_owner,
         right_of_neighbor,
-    })
+    }
 }
 
-fn flux_from_stencil(
-    stencil: LoadedStencil4,
+fn flux_from_primitive_stencil(
+    stencil: LoadedPrimitiveStencil4,
     normal: Vector3,
     eos: &IdealGasEoS,
     config: &InviscidFluxConfig,
 ) -> Result<InviscidFlux> {
     let input = match config.reconstruction {
-        ReconstructionKind::FirstOrder => {
+        crate::discretization::ReconstructionKind::FirstOrder => {
             FaceFluxInput::first_order(&stencil.owner, &stencil.neighbor)
         }
-        ReconstructionKind::Muscl => stencil.face_input(),
+        crate::discretization::ReconstructionKind::Muscl => stencil.face_input(),
     };
     face_inviscid_flux(input, normal, eos, config)
 }
@@ -89,29 +83,27 @@ fn flux_from_indices(
     left_idx: Option<usize>,
     right_idx: Option<usize>,
 ) -> Result<InviscidFlux> {
-    let stencil = load_stencil(ctx.fields, owner_idx, neighbor_idx, left_idx, right_idx)?;
-    flux_from_stencil(stencil, ctx.normal, ctx.eos, ctx.config)
+    let stencil =
+        load_primitive_stencil(ctx.primitives, owner_idx, neighbor_idx, left_idx, right_idx);
+    flux_from_primitive_stencil(stencil, ctx.normal, ctx.eos, ctx.config)
 }
 
-fn load_boundary_stencil(
-    fields: &ConservedFields,
+fn load_boundary_primitive_stencil(
+    cache: &PrimitiveFields,
     owner_idx: usize,
     ghost: ConservedState,
     left_idx: Option<usize>,
     right_idx: Option<usize>,
-) -> Result<LoadedStencil4> {
-    let owner = fields.cell_state(owner_idx)?;
-    let left_of_owner = match left_idx {
-        Some(idx) => Some(fields.cell_state(idx)?),
-        None => None,
-    };
-    let right_of_neighbor = match right_idx {
-        Some(idx) => Some(fields.cell_state(idx)?),
-        None => None,
-    };
-    Ok(LoadedStencil4 {
+    eos: &IdealGasEoS,
+    min_pressure: Real,
+) -> Result<LoadedPrimitiveStencil4> {
+    let owner = cache.cell_primitive(owner_idx);
+    let neighbor = primitive_from_conserved_relaxed(eos, &ghost, min_pressure)?;
+    let left_of_owner = left_idx.map(|idx| cache.cell_primitive(idx));
+    let right_of_neighbor = right_idx.map(|idx| cache.cell_primitive(idx));
+    Ok(LoadedPrimitiveStencil4 {
         owner,
-        neighbor: ghost,
+        neighbor,
         left_of_owner,
         right_of_neighbor,
     })
@@ -168,8 +160,16 @@ pub(crate) fn flux_at_boundary_face(
     let (i, j, k) = ctx.mesh.face_ij(logical, local)?;
     let owner_idx = ctx.mesh.cell_index(i, j, k);
     let (left_idx, right_idx) = boundary_wide_indices(logical, i, j, k, ctx.mesh);
-    let stencil = load_boundary_stencil(ctx.fields, owner_idx, ghost, left_idx, right_idx)?;
-    flux_from_stencil(stencil, normal, ctx.eos, ctx.config)
+    let stencil = load_boundary_primitive_stencil(
+        ctx.primitives,
+        owner_idx,
+        ghost,
+        left_idx,
+        right_idx,
+        ctx.eos,
+        ctx.min_pressure,
+    )?;
+    flux_from_primitive_stencil(stencil, normal, ctx.eos, ctx.config)
 }
 
 pub(crate) fn flux_at_i_face(
@@ -215,24 +215,39 @@ pub(crate) fn flux_at_k_face(
 mod tests {
     use super::*;
     use crate::discretization::InviscidFluxConfig;
+    use crate::field::ConservedFields;
     use crate::mesh::{BoundaryMesh, BoundaryMesh3d};
     use crate::physics::FreestreamParams;
+
+    fn freestream_primitives(mesh: &StructuredMesh3d) -> PrimitiveFields {
+        let eos = IdealGasEoS::AIR_STANDARD;
+        let fields =
+            ConservedFields::from_freestream(mesh.num_cells(), &eos, &FreestreamParams::default())
+                .expect("fields");
+        let mut primitives = PrimitiveFields::zeros(mesh.num_cells()).expect("prim");
+        primitives
+            .fill_from_conserved(&fields, &eos, 1.0e-6)
+            .expect("fill");
+        primitives
+    }
 
     #[test]
     fn boundary_imin_uses_ghost_and_interior_wide_stencil() {
         let mesh = StructuredMesh3d::uniform_box("box", 4, 2, 2, 1.0, 1.0, 1.0).expect("mesh");
         let eos = IdealGasEoS::AIR_STANDARD;
+        let primitives = freestream_primitives(&mesh);
+        let face = mesh.resolve_logical_boundary("i_min").expect("faces")[0];
+        let owner = mesh.face_owner(face).expect("owner");
         let fields =
             ConservedFields::from_freestream(mesh.num_cells(), &eos, &FreestreamParams::default())
                 .expect("fields");
-        let face = mesh.resolve_logical_boundary("i_min").expect("faces")[0];
-        let owner = mesh.face_owner(face).expect("owner");
         let ghost = fields.cell_state(owner.index() as usize).expect("ghost");
         let ctx = BoundaryFaceFlux3d {
-            fields: &fields,
+            primitives: &primitives,
             mesh: &mesh,
             eos: &eos,
             config: &InviscidFluxConfig::muscl_hllc(),
+            min_pressure: 1.0e-6,
         };
         let geom = mesh.face_geometry_3d(face).expect("geom");
         let flux = flux_at_boundary_face(&ctx, face, ghost, geom.normal).expect("flux");
@@ -243,12 +258,10 @@ mod tests {
     fn i_face_stencil_uses_x_neighbors_only() {
         let mesh = StructuredMesh3d::uniform_box("box", 4, 3, 2, 1.0, 1.0, 1.0).expect("mesh");
         let eos = IdealGasEoS::AIR_STANDARD;
-        let fields =
-            ConservedFields::from_freestream(mesh.num_cells(), &eos, &FreestreamParams::default())
-                .expect("fields");
+        let primitives = freestream_primitives(&mesh);
         let config = InviscidFluxConfig::muscl_hllc();
         let ctx = InteriorFaceFlux3d {
-            fields: &fields,
+            primitives: &primitives,
             mesh: &mesh,
             eos: &eos,
             config: &config,

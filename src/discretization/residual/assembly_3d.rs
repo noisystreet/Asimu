@@ -3,9 +3,10 @@
 use tracing::info_span;
 
 use crate::boundary::BoundarySet;
+use crate::core::Real;
 use crate::discretization::{BoundaryGhostBuffer, InviscidFluxConfig};
 use crate::error::{AsimuError, Result};
-use crate::field::{ConservedFields, ConservedResidual};
+use crate::field::{ConservedFields, ConservedResidual, PrimitiveFields};
 use crate::mesh::{BoundaryMesh3d, StructuredMesh3d};
 use crate::physics::IdealGasEoS;
 
@@ -15,25 +16,30 @@ use super::muscl_stencil_3d::{
 };
 use super::{accumulate_boundary_face, accumulate_interior_face, is_degenerate_volume};
 
+/// 3D 无粘残差装配上下文（控制参数个数）。
+pub struct InviscidAssembly3dParams<'a> {
+    pub mesh: &'a StructuredMesh3d,
+    pub eos: &'a IdealGasEoS,
+    pub config: &'a InviscidFluxConfig,
+    pub boundaries: &'a BoundarySet,
+    pub ghosts: &'a BoundaryGhostBuffer,
+    pub primitives: &'a PrimitiveFields,
+    pub min_pressure: Real,
+}
+
 struct BoundaryAssembly3d<'a> {
     mesh: &'a dyn BoundaryMesh3d,
     structured: &'a StructuredMesh3d,
-    eos: &'a IdealGasEoS,
-    config: &'a InviscidFluxConfig,
-    boundaries: &'a BoundarySet,
-    ghosts: &'a BoundaryGhostBuffer,
+    params: &'a InviscidAssembly3dParams<'a>,
 }
 
 /// 装配 3D 均匀结构化网格无粘 Euler 残差（内部面 + 边界 ghost）。
 pub fn assemble_inviscid_residual_3d(
-    mesh: &StructuredMesh3d,
     fields: &ConservedFields,
     residual: &mut ConservedResidual,
-    eos: &IdealGasEoS,
-    config: &InviscidFluxConfig,
-    boundaries: &BoundarySet,
-    ghosts: &BoundaryGhostBuffer,
+    params: &InviscidAssembly3dParams<'_>,
 ) -> Result<()> {
+    let mesh = params.mesh;
     let n = mesh.num_cells();
     if fields.num_cells() != n || residual.num_cells() != n {
         return Err(AsimuError::Field(format!(
@@ -44,28 +50,24 @@ pub fn assemble_inviscid_residual_3d(
     residual.clear();
     {
         let _span = info_span!("assemble_faces", dim = "i").entered();
-        assemble_i_faces(mesh, fields, residual, eos, config)?;
+        assemble_i_faces(mesh, residual, params)?;
     }
     {
         let _span = info_span!("assemble_faces", dim = "j").entered();
-        assemble_j_faces(mesh, fields, residual, eos, config)?;
+        assemble_j_faces(mesh, residual, params)?;
     }
     {
         let _span = info_span!("assemble_faces", dim = "k").entered();
-        assemble_k_faces(mesh, fields, residual, eos, config)?;
+        assemble_k_faces(mesh, residual, params)?;
     }
     {
         let _span = info_span!("assemble_faces", dim = "boundary").entered();
         assemble_boundary_faces_3d(
-            fields,
             residual,
             &BoundaryAssembly3d {
                 mesh,
                 structured: mesh,
-                eos,
-                config,
-                boundaries,
-                ghosts,
+                params,
             },
         )?;
     }
@@ -74,11 +76,12 @@ pub fn assemble_inviscid_residual_3d(
 
 fn assemble_i_faces(
     mesh: &StructuredMesh3d,
-    fields: &ConservedFields,
     residual: &mut ConservedResidual,
-    eos: &IdealGasEoS,
-    config: &InviscidFluxConfig,
+    params: &InviscidAssembly3dParams<'_>,
 ) -> Result<()> {
+    let eos = params.eos;
+    let config = params.config;
+    let primitives = params.primitives;
     let nx = mesh.nx;
     let ny = mesh.ny;
     let nz = mesh.nz;
@@ -89,7 +92,7 @@ fn assemble_i_faces(
                 let neighbor = mesh.cell_index(i + 1, j, k);
                 let face = mesh.i_face_metric(i, j, k);
                 let ctx = InteriorFaceFlux3d {
-                    fields,
+                    primitives,
                     mesh,
                     eos,
                     config,
@@ -118,11 +121,12 @@ fn assemble_i_faces(
 
 fn assemble_j_faces(
     mesh: &StructuredMesh3d,
-    fields: &ConservedFields,
     residual: &mut ConservedResidual,
-    eos: &IdealGasEoS,
-    config: &InviscidFluxConfig,
+    params: &InviscidAssembly3dParams<'_>,
 ) -> Result<()> {
+    let eos = params.eos;
+    let config = params.config;
+    let primitives = params.primitives;
     let nx = mesh.nx;
     let ny = mesh.ny;
     let nz = mesh.nz;
@@ -133,7 +137,7 @@ fn assemble_j_faces(
                 let neighbor = mesh.cell_index(i, j + 1, k);
                 let face = mesh.j_face_metric(i, j, k);
                 let ctx = InteriorFaceFlux3d {
-                    fields,
+                    primitives,
                     mesh,
                     eos,
                     config,
@@ -162,11 +166,12 @@ fn assemble_j_faces(
 
 fn assemble_k_faces(
     mesh: &StructuredMesh3d,
-    fields: &ConservedFields,
     residual: &mut ConservedResidual,
-    eos: &IdealGasEoS,
-    config: &InviscidFluxConfig,
+    params: &InviscidAssembly3dParams<'_>,
 ) -> Result<()> {
+    let eos = params.eos;
+    let config = params.config;
+    let primitives = params.primitives;
     let nx = mesh.nx;
     let ny = mesh.ny;
     let nz = mesh.nz;
@@ -177,7 +182,7 @@ fn assemble_k_faces(
                 let neighbor = mesh.cell_index(i, j, k + 1);
                 let face = mesh.k_face_metric(i, j, k);
                 let ctx = InteriorFaceFlux3d {
-                    fields,
+                    primitives,
                     mesh,
                     eos,
                     config,
@@ -205,23 +210,24 @@ fn assemble_k_faces(
 }
 
 fn assemble_boundary_faces_3d(
-    fields: &ConservedFields,
     residual: &mut ConservedResidual,
     ctx: &BoundaryAssembly3d<'_>,
 ) -> Result<()> {
     let mesh = ctx.structured;
+    let params = ctx.params;
     let flux_ctx = BoundaryFaceFlux3d {
-        fields,
+        primitives: params.primitives,
         mesh,
-        eos: ctx.eos,
-        config: ctx.config,
+        eos: params.eos,
+        config: params.config,
+        min_pressure: params.min_pressure,
     };
-    for patch in ctx.boundaries.patches() {
+    for patch in params.boundaries.patches() {
         for &face in &patch.face_ids {
             let owner_id = ctx.mesh.face_owner(face)?;
             let owner = owner_id.index() as usize;
             let geom = ctx.mesh.face_geometry_3d(face)?;
-            let ghost = ctx.ghosts.get_face(face).ok_or_else(|| {
+            let ghost = params.ghosts.get_face(face).ok_or_else(|| {
                 AsimuError::Boundary(format!("边界面 FaceId({}) 缺少 ghost 状态", face.index()))
             })?;
             let flux = flux_at_boundary_face(&flux_ctx, face, ghost.conserved, geom.normal)?;
@@ -284,17 +290,21 @@ mod tests {
             &fs,
         )
         .expect("bc");
+        let mut primitives = PrimitiveFields::zeros(mesh.num_cells()).expect("prim");
+        primitives
+            .fill_from_conserved(&fields, &eos, 1.0e-6)
+            .expect("fill");
         let mut rhs = ConservedResidual::zeros(mesh.num_cells()).expect("rhs");
-        assemble_inviscid_residual_3d(
-            &mesh,
-            &fields,
-            &mut rhs,
-            &eos,
+        let params = InviscidAssembly3dParams {
+            mesh: &mesh,
+            eos: &eos,
             config,
-            &boundary_set,
-            &ghosts,
-        )
-        .expect("assemble");
+            boundaries: &boundary_set,
+            ghosts: &ghosts,
+            primitives: &primitives,
+            min_pressure: 1.0e-6,
+        };
+        assemble_inviscid_residual_3d(&fields, &mut rhs, &params).expect("assemble");
         rhs
     }
 
@@ -372,18 +382,22 @@ mod tests {
             &fs,
         )
         .expect("bc");
+        let mut primitives = PrimitiveFields::zeros(mesh.num_cells()).expect("prim");
+        primitives
+            .fill_from_conserved(&fields, &eos, 1.0e-6)
+            .expect("fill");
         let config = InviscidFluxConfig::roe_first_order();
         let mut rhs = ConservedResidual::zeros(mesh.num_cells()).expect("rhs");
-        assemble_inviscid_residual_3d(
+        let params = InviscidAssembly3dParams {
             mesh,
-            &fields,
-            &mut rhs,
-            &eos,
-            &config,
-            &case.boundary,
-            &ghosts,
-        )
-        .expect("assemble");
+            eos: &eos,
+            config: &config,
+            boundaries: &case.boundary,
+            ghosts: &ghosts,
+            primitives: &primitives,
+            min_pressure: 1.0e-6,
+        };
+        assemble_inviscid_residual_3d(&fields, &mut rhs, &params).expect("assemble");
 
         let rho_rms = rhs.density_rms_norm();
         let rho_max = rhs

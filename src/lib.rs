@@ -29,7 +29,7 @@ pub mod prelude {
         ReconstructionKind, RoeFluxConfig, SlopeLimiter, apply_boundary_conditions,
         apply_compressible_boundary_conditions, apply_dirichlet, apply_neumann,
         assemble_diffusion_1d, assemble_inviscid_residual_1d, assemble_inviscid_residual_3d,
-        face_inviscid_flux, hanel_van_leer_flux, hllc_flux, reconstruct_face_states,
+        face_inviscid_flux, hanel_van_leer_flux, hllc_flux, reconstruct_face_primitives,
         reconstruct_first_order, roe_flux, van_leer_flux,
     };
     pub use crate::error::{AsimuError, Result};

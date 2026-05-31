@@ -14,7 +14,7 @@ use crate::field::ConservedResidual;
 pub use assembly_1d::{
     BoundaryGhosts1d, InviscidBoundary1d, assemble_inviscid_residual_1d, zero_gradient_ghosts_1d,
 };
-pub use assembly_3d::assemble_inviscid_residual_3d;
+pub use assembly_3d::{InviscidAssembly3dParams, assemble_inviscid_residual_3d};
 
 /// 忽略退化（零体积）控制体的体积下限。
 const DEGENERATE_VOLUME: Real = 1.0e-30;
