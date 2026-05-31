@@ -11,8 +11,8 @@ mod restart;
 mod vertex_field;
 
 pub use case::{
-    CaseMesh, CaseOutputConfig, CaseSpec, CaseTimeConfig, CaseTimeMode, SodCaseConfig, load_case,
-    parse_case_str, resolve_case_output_path,
+    CaseMesh, CaseObservabilityConfig, CaseOutputConfig, CaseSpec, CaseTimeConfig, CaseTimeMode,
+    SodCaseConfig, load_case, parse_case_str, resolve_case_output_path,
 };
 pub use residual::write_residual_csv;
 pub use restart::{load_conserved_fields, write_conserved_fields};

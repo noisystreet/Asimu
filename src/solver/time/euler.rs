@@ -2,6 +2,8 @@
 //!
 //! \(\mathbf{U}^{n+1} = \mathbf{U}^n + \Delta t\,\mathbf{R}(\mathbf{U}^n)\)
 
+use tracing::info_span;
+
 use crate::core::Real;
 use crate::error::Result;
 use crate::field::{ConservedFields, ConservedResidual};
@@ -24,9 +26,15 @@ where
     let n = fields.num_cells();
     storage.ensure_capacity(n)?;
     maybe_enforce_positivity(fields, eos, min_pressure);
-    evaluate_rhs(fields, &mut storage.k1)?;
-    fields.add_axpy(&storage.k1, dt)?;
-    maybe_enforce_positivity(fields, eos, min_pressure);
+    {
+        let _span = info_span!("euler_rhs").entered();
+        evaluate_rhs(fields, &mut storage.k1)?;
+    }
+    {
+        let _span = info_span!("euler_update").entered();
+        fields.add_axpy(&storage.k1, dt)?;
+        maybe_enforce_positivity(fields, eos, min_pressure);
+    }
     Ok(())
 }
 
@@ -53,12 +61,18 @@ where
     maybe_enforce_positivity(fields, eos, min_pressure);
     let gamma = eos.map(|e| e.gamma).unwrap_or(1.4);
     storage.u0.copy_from(fields)?;
-    evaluate_rhs(&storage.u0, &mut storage.k1)?;
-    storage
-        .stage
-        .assign_axpy_dt(&storage.u0, &storage.k1, dt, 1.0, gamma, min_pressure)?;
-    fields.copy_from(&storage.stage)?;
-    maybe_enforce_positivity(fields, eos, min_pressure);
+    {
+        let _span = info_span!("euler_rhs").entered();
+        evaluate_rhs(&storage.u0, &mut storage.k1)?;
+    }
+    {
+        let _span = info_span!("euler_update").entered();
+        storage
+            .stage
+            .assign_axpy_dt(&storage.u0, &storage.k1, dt, 1.0, gamma, min_pressure)?;
+        fields.copy_from(&storage.stage)?;
+        maybe_enforce_positivity(fields, eos, min_pressure);
+    }
     Ok(())
 }
 

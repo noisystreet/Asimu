@@ -2,7 +2,7 @@
 
 > 架构：[ARCHITECTURE.md](ARCHITECTURE.md) §8.6 · 运行清单：[DATA_MODEL.md](DATA_MODEL.md) §10
 
-**状态**：规划（分阶段落地）· 当前仅 `tracing` 基础日志。
+**状态**：L1 日志已实现；**Chrome trace** 可通过算例 `[observability].chrome_trace` 配置（`tracing-chrome`）。
 
 ---
 
@@ -52,8 +52,9 @@
 
 ```toml
 [observability]
-metrics = true              # 写 metrics.jsonl
-metrics_level = "iteration" # iteration | phase | off
+chrome_trace = "profiling/trace.json"  # 已实现：Chrome trace JSON
+# metrics = true                        # 规划：metrics.jsonl
+# metrics_level = "iteration"
 ```
 
 ### 2.3 L3 运行产物
@@ -88,14 +89,30 @@ benches/
 
 ### 3.3 Profiling 开关
 
-```bash
-# 规划 CLI
-asimu run --case foo.toml --profile
-# 生成本地 flamegraph（tracing-chrome / pprof 选型待定）
+**Chrome trace（已实现）** — 在 `case.toml` 中配置，见 [CASE_FORMAT.md](CASE_FORMAT.md) §7.2：
+
+```toml
+[observability]
+chrome_trace = "profiling/trace.json"
 ```
 
-- 仅开发/本地；CI 默认关闭
-- GPU 路径（v1.2+）单独 ADR 评估 nsys/RenderDoc 工作流
+```bash
+asimu --case foo.toml --log-level info
+# 算例配置：输出 <算例目录>/<output.dir>/profiling/trace.json
+
+asimu --case foo.toml --chrome-trace
+# CLI 启用（默认路径 profiling/trace.json，覆盖 case.toml）
+
+asimu --case foo.toml --chrome-trace case_cylinder/trace.json
+# 相对**当前工作目录**（不会自动加上 output/）
+
+asimu --case foo.toml --chrome-trace /tmp/profile.json
+# 绝对路径
+```
+
+用 [ui.perfetto.dev](https://ui.perfetto.dev) 查看时间线。
+
+**Flamegraph（规划）**：`--profile` + pprof，与 Chrome trace 互补。
 
 ---
 

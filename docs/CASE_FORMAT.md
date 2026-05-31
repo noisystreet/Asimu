@@ -229,7 +229,56 @@ HLLC 变体示例：`tests/benchmarks/sod_1d/case_muscl_hllc.toml`。
 
 ---
 
-## 7. 全局 `[solver]`（`config/default.toml`，非算例）
+## 7. `[output]` 与 `[observability]`
+
+### 7.1 `[output]`
+
+```toml
+[output]
+dir = "output"                    # 相对算例目录
+residual_csv = "residual.csv"
+solution_cgns = "flow.cgns"
+solution_every = 100
+solution_vtk = false              # 为 true 时额外写 .vtu/.vts（需 feature io-vtk）
+```
+
+相对路径均相对 **算例文件所在目录**；写出文件落在 `dir` 下。
+
+### 7.2 `[observability]` — Chrome trace
+
+```toml
+[observability]
+chrome_trace = "profiling/trace.json"
+```
+
+| 字段 | 说明 |
+|------|------|
+| `chrome_trace` | 相对 `[output].dir`（未设 `[output]` 时默认 `output/`）的 Chrome trace JSON 路径；省略或空字符串表示关闭 |
+
+算例运行结束后写出 trace；用 [ui.perfetto.dev](https://ui.perfetto.dev) 或 Chrome `chrome://tracing` 打开。时间轴上的 span 来自 `tracing`（如每步 `advance_step_3d`）。日志级别仍由 CLI `--log-level` 控制。
+
+**CLI（优先于算例文件）**：
+
+```bash
+asimu --case case.toml --chrome-trace                      # 默认 <算例>/output/profiling/trace.json
+asimu --case case.toml --chrome-trace case_cylinder/trace.json  # 相对**当前工作目录**
+asimu --case case.toml --chrome-trace /tmp/run.trace.json # 绝对路径
+# 或环境变量 ASIMU_CHROME_TRACE=profiling/trace.json
+```
+
+示例（圆柱算例性能分析）：
+
+```toml
+[output]
+dir = "output"
+
+[observability]
+chrome_trace = "profiling/trace.json"
+```
+
+---
+
+## 8. 全局 `[solver]`（`config/default.toml`，非算例）
 
 算例时间推进与收敛见 `[time].max_steps` / `[time].tolerance`。全局 `config/default.toml` 的 `[solver]` 仅保留 CLI 占位求解器步数：
 
@@ -242,13 +291,13 @@ CLI：`--max-steps` / `ASIMU_MAX_STEPS`。
 
 ---
 
-## 8. 完整示例（1D 扩散）
+## 9. 完整示例（1D 扩散）
 
 见 `tests/benchmarks/1d_diffusion_analytical/case.toml`。
 
 ---
 
-## 9. 与 v0.1 占位格式迁移
+## 10. 与 v0.1 占位格式迁移
 
 | v0.1 | v0.2 TOML 等价 |
 |------|----------------|
@@ -258,7 +307,7 @@ CLI：`--max-steps` / `ASIMU_MAX_STEPS`。
 
 ---
 
-## 10. 相关文档
+## 11. 相关文档
 
 - [BENCHMARKS.md](BENCHMARKS.md) — V&V 算例与 `expected.json`
 - [theory/fvm_diffusion.md](theory/fvm_diffusion.md) — 扩散方程离散

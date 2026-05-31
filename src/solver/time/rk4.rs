@@ -2,6 +2,8 @@
 //!
 //! 理论：[`docs/theory/time_integration.md`](../../../docs/theory/time_integration.md) §3
 
+use tracing::info_span;
+
 use crate::core::Real;
 use crate::error::Result;
 use crate::field::{ConservedFields, ConservedResidual};
@@ -71,21 +73,39 @@ where
     let n = fields.num_cells();
     storage.ensure_capacity(n)?;
     storage.u0.copy_from(fields)?;
-    evaluate_rhs(fields, &mut storage.k1)?;
+    {
+        let _span = info_span!("rk4_stage", stage = 1).entered();
+        evaluate_rhs(fields, &mut storage.k1)?;
+    }
     storage
         .stage
         .assign_axpy(&storage.u0, &storage.k1, 0.5 * dt)?;
-    evaluate_rhs(&storage.stage, &mut storage.k2)?;
+    {
+        let _span = info_span!("rk4_stage", stage = 2).entered();
+        evaluate_rhs(&storage.stage, &mut storage.k2)?;
+    }
     storage
         .stage
         .assign_axpy(&storage.u0, &storage.k2, 0.5 * dt)?;
-    evaluate_rhs(&storage.stage, &mut storage.k3)?;
+    {
+        let _span = info_span!("rk4_stage", stage = 3).entered();
+        evaluate_rhs(&storage.stage, &mut storage.k3)?;
+    }
     storage.stage.assign_axpy(&storage.u0, &storage.k3, dt)?;
-    evaluate_rhs(&storage.stage, &mut storage.k4)?;
-    storage
-        .increment
-        .assign_rk4_increment(&storage.k1, &storage.k2, &storage.k3, &storage.k4)?;
-    fields.assign_axpy(&storage.u0, &storage.increment, dt)
+    {
+        let _span = info_span!("rk4_stage", stage = 4).entered();
+        evaluate_rhs(&storage.stage, &mut storage.k4)?;
+    }
+    {
+        let _span = info_span!("rk4_update").entered();
+        storage.increment.assign_rk4_increment(
+            &storage.k1,
+            &storage.k2,
+            &storage.k3,
+            &storage.k4,
+        )?;
+        fields.assign_axpy(&storage.u0, &storage.increment, dt)
+    }
 }
 
 /// 逐单元 \(\Delta t_i\) 的 RK4 步进（稳态当地时间步）。
@@ -111,34 +131,52 @@ where
     storage.u0.copy_from(fields)?;
     maybe_enforce_positivity(fields, eos, min_pressure);
     let gamma = eos.map(|e| e.gamma).unwrap_or(1.4);
-    evaluate_rhs(fields, &mut storage.k1)?;
+    {
+        let _span = info_span!("rk4_stage", stage = 1).entered();
+        evaluate_rhs(fields, &mut storage.k1)?;
+    }
     storage
         .stage
         .assign_axpy_dt(&storage.u0, &storage.k1, dt, 0.5, gamma, min_pressure)?;
     maybe_enforce_positivity(&mut storage.stage, eos, min_pressure);
-    evaluate_rhs(&storage.stage, &mut storage.k2)?;
+    {
+        let _span = info_span!("rk4_stage", stage = 2).entered();
+        evaluate_rhs(&storage.stage, &mut storage.k2)?;
+    }
     storage
         .stage
         .assign_axpy_dt(&storage.u0, &storage.k2, dt, 0.5, gamma, min_pressure)?;
     maybe_enforce_positivity(&mut storage.stage, eos, min_pressure);
-    evaluate_rhs(&storage.stage, &mut storage.k3)?;
+    {
+        let _span = info_span!("rk4_stage", stage = 3).entered();
+        evaluate_rhs(&storage.stage, &mut storage.k3)?;
+    }
     storage
         .stage
         .assign_axpy_dt(&storage.u0, &storage.k3, dt, 1.0, gamma, min_pressure)?;
     maybe_enforce_positivity(&mut storage.stage, eos, min_pressure);
-    evaluate_rhs(&storage.stage, &mut storage.k4)?;
-    storage
-        .increment
-        .assign_rk4_increment(&storage.k1, &storage.k2, &storage.k3, &storage.k4)?;
-    fields.assign_axpy_dt(
-        &storage.u0,
-        &storage.increment,
-        dt,
-        1.0,
-        gamma,
-        min_pressure,
-    )?;
-    maybe_enforce_positivity(fields, eos, min_pressure);
+    {
+        let _span = info_span!("rk4_stage", stage = 4).entered();
+        evaluate_rhs(&storage.stage, &mut storage.k4)?;
+    }
+    {
+        let _span = info_span!("rk4_update").entered();
+        storage.increment.assign_rk4_increment(
+            &storage.k1,
+            &storage.k2,
+            &storage.k3,
+            &storage.k4,
+        )?;
+        fields.assign_axpy_dt(
+            &storage.u0,
+            &storage.increment,
+            dt,
+            1.0,
+            gamma,
+            min_pressure,
+        )?;
+        maybe_enforce_positivity(fields, eos, min_pressure);
+    }
     Ok(())
 }
 

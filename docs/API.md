@@ -50,7 +50,7 @@ let result = solver.run(&mesh)?;
 | `SolverConfig` | `max_steps` |
 | `LoggingConfig` | `level` |
 | `Cli` | clap 命令行解析（CLI / 应用层使用） |
-| `init_tracing(&str) -> Result<()>` | 初始化 tracing（应用层调用） |
+| `init_tracing(&str, Option<&Path>) -> Result<TracingGuard>` | 初始化 tracing；可选 Chrome trace 输出路径 |
 
 配置加载：`Cli::load_config()` — 优先级见 [ARCHITECTURE.md](ARCHITECTURE.md)。
 

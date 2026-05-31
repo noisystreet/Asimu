@@ -2,11 +2,14 @@
 //!
 //! 详见 `docs/ARCHITECTURE.md` 中的配置管理约定。
 
+mod tracing_init;
+
 use std::path::{Path, PathBuf};
 
 use clap::Parser;
 use serde::{Deserialize, Serialize};
-use tracing::info;
+
+pub use tracing_init::{TracingGuard, init_tracing};
 
 use crate::error::{AsimuError, Result};
 
@@ -59,6 +62,17 @@ pub struct Cli {
     /// 算例文件（TOML）
     #[arg(long, env = "ASIMU_CASE", value_name = "CASE_TOML")]
     pub case: Option<PathBuf>,
+
+    /// Chrome trace JSON（[ui.perfetto.dev](https://ui.perfetto.dev)），覆盖 case.toml。
+    /// 无路径：`output/profiling/trace.json`；有路径：相对当前工作目录或绝对路径。
+    #[arg(
+        long,
+        env = "ASIMU_CHROME_TRACE",
+        value_name = "PATH",
+        num_args = 0..=1,
+        default_missing_value = ""
+    )]
+    pub chrome_trace: Option<String>,
 }
 
 impl Cli {
@@ -93,22 +107,6 @@ fn load_config_file(path: &Path) -> Result<AppConfig> {
         .map_err(|err| AsimuError::Config(format!("无法解析配置文件 {}: {err}", path.display())))
 }
 
-/// 初始化 tracing 日志（开发环境输出到 stderr）。
-pub fn init_tracing(level: &str) -> Result<()> {
-    let filter = tracing_subscriber::EnvFilter::try_new(level)
-        .map_err(|err| AsimuError::Config(format!("无效的日志级别 `{level}`: {err}")))?;
-
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_target(false)
-        .with_writer(std::io::stderr)
-        .try_init()
-        .map_err(|err| AsimuError::Config(format!("初始化日志失败: {err}")))?;
-
-    info!(level, "日志已初始化");
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,6 +124,7 @@ mod tests {
             max_steps: Some(42),
             log_level: Some("debug".to_string()),
             case: None,
+            chrome_trace: None,
         };
         let config = cli.load_config().expect("load config");
         assert_eq!(config.solver.max_steps, 42);

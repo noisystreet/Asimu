@@ -1,5 +1,7 @@
 //! 3D 结构化网格无粘残差装配。
 
+use tracing::info_span;
+
 use crate::boundary::BoundarySet;
 use crate::discretization::{BoundaryGhostBuffer, InviscidFluxConfig};
 use crate::error::{AsimuError, Result};
@@ -40,21 +42,33 @@ pub fn assemble_inviscid_residual_3d(
         )));
     }
     residual.clear();
-    assemble_i_faces(mesh, fields, residual, eos, config)?;
-    assemble_j_faces(mesh, fields, residual, eos, config)?;
-    assemble_k_faces(mesh, fields, residual, eos, config)?;
-    assemble_boundary_faces_3d(
-        fields,
-        residual,
-        &BoundaryAssembly3d {
-            mesh,
-            structured: mesh,
-            eos,
-            config,
-            boundaries,
-            ghosts,
-        },
-    )?;
+    {
+        let _span = info_span!("assemble_faces", dim = "i").entered();
+        assemble_i_faces(mesh, fields, residual, eos, config)?;
+    }
+    {
+        let _span = info_span!("assemble_faces", dim = "j").entered();
+        assemble_j_faces(mesh, fields, residual, eos, config)?;
+    }
+    {
+        let _span = info_span!("assemble_faces", dim = "k").entered();
+        assemble_k_faces(mesh, fields, residual, eos, config)?;
+    }
+    {
+        let _span = info_span!("assemble_faces", dim = "boundary").entered();
+        assemble_boundary_faces_3d(
+            fields,
+            residual,
+            &BoundaryAssembly3d {
+                mesh,
+                structured: mesh,
+                eos,
+                config,
+                boundaries,
+                ghosts,
+            },
+        )?;
+    }
     Ok(())
 }
 

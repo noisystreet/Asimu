@@ -5,7 +5,9 @@ mod case_compressible;
 #[path = "mesh_load.rs"]
 mod mesh_load;
 
-pub use case_compressible::{CaseOutputConfig, EulerCaseConfig, resolve_case_output_path};
+pub use case_compressible::{
+    CaseObservabilityConfig, CaseOutputConfig, EulerCaseConfig, resolve_case_output_path,
+};
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -24,7 +26,9 @@ use crate::mesh::{BoundaryMesh, StructuredMesh1d, StructuredMesh3d};
 use crate::physics::{FreestreamParams, IdealGasEoS, PhysicsConfig};
 
 use super::validate_input_path;
-use case_compressible::{EulerToml, OutputToml, parse_euler_config, parse_output};
+use case_compressible::{
+    EulerToml, ObservabilityToml, OutputToml, parse_euler_config, parse_observability, parse_output,
+};
 
 /// 算例网格（1D 扩散 / 3D 可压缩）。
 #[allow(clippy::large_enum_variant)]
@@ -92,6 +96,7 @@ pub struct CaseSpec {
     pub sod: Option<SodCaseConfig>,
     pub euler: Option<EulerCaseConfig>,
     pub output: Option<CaseOutputConfig>,
+    pub observability: Option<CaseObservabilityConfig>,
     pub case_dir: Option<PathBuf>,
 }
 
@@ -216,6 +221,7 @@ struct CaseToml {
     sod: Option<SodToml>,
     euler: Option<EulerToml>,
     output: Option<OutputToml>,
+    observability: Option<ObservabilityToml>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -369,6 +375,7 @@ fn parse_case_toml(content: &str, case_dir: Option<&Path>) -> Result<CaseSpec> {
         sod,
         euler,
         output: raw.output.as_ref().map(parse_output),
+        observability: raw.observability.as_ref().map(parse_observability),
         case_dir: case_dir.map(Path::to_path_buf),
     };
     case.warn_config_inconsistencies();

@@ -3,12 +3,14 @@
 //! 理论：[`docs/theory/time_integration.md`](../../docs/theory/time_integration.md)、
 //! [`inviscid_flux.md`](../../docs/theory/inviscid_flux.md)
 
+#[path = "compressible_rhs.rs"]
+mod compressible_rhs;
+
+use compressible_rhs::EvaluateRhs3d;
+
 use crate::boundary::BoundarySet;
 use crate::core::{Real, format_log_fixed4, format_log_sci4, log10_positive};
-use crate::discretization::{
-    BoundaryGhostBuffer, apply_compressible_boundary_conditions, assemble_inviscid_residual_1d,
-    assemble_inviscid_residual_3d,
-};
+use crate::discretization::{BoundaryGhostBuffer, assemble_inviscid_residual_1d};
 use crate::error::Result;
 use crate::field::{ConservedFields, ConservedResidual};
 use crate::mesh::{BoundaryMesh3d, StructuredMesh1d, StructuredMesh3d};
@@ -19,7 +21,7 @@ use crate::solver::time::{
     TimeIntegrator, euler_step, euler_step_local, local_dt_cfl, min_positive_dt, rk4_step,
     rk4_step_local,
 };
-use tracing::info;
+use tracing::{info, info_span, instrument};
 
 /// 稳态伪时间 / 瞬态物理时间。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -147,6 +149,11 @@ impl CompressibleEulerSolver {
     }
 
     /// 3D 推进：每 RK 阶段重算边界 ghost 与残差；支持全局/逐单元时间步。
+    #[instrument(
+        skip(self, ctx, fields, storage, state, integrator),
+        level = "info",
+        fields(step = state.time_step.saturating_add(1))
+    )]
     pub fn advance_step_3d(
         &self,
         ctx: &mut CompressibleAdvanceContext3d<'_>,
@@ -155,65 +162,88 @@ impl CompressibleEulerSolver {
         state: &mut SolverState,
         integrator: &mut RungeKutta4Integrator,
     ) -> Result<CompressibleStepInfo> {
-        let cfl = self.cfl_for_step(state);
+        let cfl = {
+            let _span = info_span!("cfl_schedule").entered();
+            self.cfl_for_step(state)
+        };
         let p_floor = Self::positivity_pressure_floor(ctx.freestream);
-        fields.enforce_positivity(ctx.eos, p_floor);
-        let cell_dts = self.suggest_cell_dts_3d(ctx.structured, fields, ctx.eos, cfl, p_floor)?;
-        let dt = min_positive_dt(&cell_dts);
-        integrator.config.dt = dt;
         let inviscid = self.config.inviscid;
-        apply_compressible_boundary_conditions(
-            ctx.mesh,
-            ctx.patches,
-            fields,
-            ctx.ghosts,
-            ctx.eos,
-            ctx.freestream,
-        )?;
-        assemble_inviscid_residual_3d(
-            ctx.structured,
-            fields,
-            &mut storage.k1,
-            ctx.eos,
-            &inviscid,
-            ctx.patches,
-            ctx.ghosts,
-        )?;
-        let step_residual = storage.k1.density_rms_norm();
-        let evaluate = |u: &ConservedFields, r: &mut ConservedResidual| {
-            apply_compressible_boundary_conditions(
-                ctx.mesh,
-                ctx.patches,
-                u,
-                ctx.ghosts,
-                ctx.eos,
-                ctx.freestream,
-            )?;
-            assemble_inviscid_residual_3d(
-                ctx.structured,
-                u,
-                r,
-                ctx.eos,
-                &inviscid,
-                ctx.patches,
-                ctx.ghosts,
+        let (dt, cell_dts) = {
+            let _span = info_span!(
+                "compute_dt",
+                cells = ctx.structured.num_cells(),
+                local_time_step = self.config.local_time_step,
             )
+            .entered();
+            {
+                let _span = info_span!("enforce_positivity_pre").entered();
+                fields.enforce_positivity(ctx.eos, p_floor);
+            }
+            let cell_dts =
+                self.suggest_cell_dts_3d(ctx.structured, fields, ctx.eos, cfl, p_floor)?;
+            (min_positive_dt(&cell_dts), cell_dts)
+        };
+        integrator.config.dt = dt;
+        let mesh = ctx.mesh;
+        let structured = ctx.structured;
+        let patches = ctx.patches;
+        let eos = ctx.eos;
+        let freestream = ctx.freestream;
+        let mut rhs_ctx = EvaluateRhs3d {
+            mesh,
+            structured,
+            patches,
+            ghosts: ctx.ghosts,
+            eos,
+            freestream,
+            inviscid: &inviscid,
+        };
+        let step_residual = {
+            let _span = info_span!("rhs_monitor").entered();
+            rhs_ctx.run(fields, &mut storage.k1)?;
+            storage.k1.density_rms_norm()
         };
         let cell_dts_arg = if self.config.local_time_step {
             Some(cell_dts.as_slice())
         } else {
             None
         };
-        self.advance_explicit_step(
-            fields,
-            storage,
-            dt,
-            cell_dts_arg,
-            evaluate,
-            Some((ctx.eos, p_floor)),
-        )?;
-        fields.enforce_positivity(ctx.eos, p_floor);
-        let time_info = integrator.advance(state)?;
+        {
+            let _span = info_span!(
+                "time_integration",
+                scheme = self.config.time_scheme.label(),
+                local_time_step = self.config.local_time_step,
+            )
+            .entered();
+            let evaluate = |u: &ConservedFields, r: &mut ConservedResidual| {
+                EvaluateRhs3d {
+                    mesh,
+                    structured,
+                    patches,
+                    ghosts: ctx.ghosts,
+                    eos,
+                    freestream,
+                    inviscid: &inviscid,
+                }
+                .run(u, r)
+            };
+            self.advance_explicit_step(
+                fields,
+                storage,
+                dt,
+                cell_dts_arg,
+                evaluate,
+                Some((eos, p_floor)),
+            )?;
+        }
+        {
+            let _span = info_span!("enforce_positivity_post").entered();
+            fields.enforce_positivity(ctx.eos, p_floor);
+        }
+        let time_info = {
+            let _span = info_span!("advance_clock").entered();
+            integrator.advance(state)?
+        };
         Ok(CompressibleStepInfo {
             dt: time_info.dt,
             physical_time: time_info.physical_time,
@@ -311,6 +341,12 @@ impl CompressibleEulerSolver {
     where
         F: FnMut(&ConservedFields, &mut ConservedResidual) -> Result<()>,
     {
+        let _span = info_span!(
+            "explicit_step",
+            scheme = self.config.time_scheme.label(),
+            local = cell_dts.is_some(),
+        )
+        .entered();
         let (eos, min_pressure) = match positivity {
             Some((eos, p)) => (Some(eos), p),
             None => (None, 1.0e-6),
@@ -441,345 +477,5 @@ fn wave_speed_primitive(prim: &PrimitiveState, eos: &IdealGasEoS) -> Result<Real
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::core::approx_eq;
-    use crate::physics::ConservedState;
-    use std::collections::HashSet;
-
-    #[test]
-    fn uniform_1d_field_remains_stationary_over_steps() {
-        let mesh = StructuredMesh1d::new("line", 8, 0.0, 1.0).expect("mesh");
-        let eos = IdealGasEoS::AIR_STANDARD;
-        let mut fields = ConservedFields::from_freestream(8, &eos, &FreestreamParams::default())
-            .expect("fields");
-        let reference = fields.clone();
-        let ctx = CompressibleAdvanceContext1d {
-            mesh: &mesh,
-            boundary: crate::discretization::InviscidBoundary1d::ZeroGradient,
-            eos: &eos,
-        };
-        let solver = CompressibleEulerSolver::new(CompressibleEulerConfig {
-            time: RungeKutta4Config {
-                dt: 1.0e-5,
-                max_steps: 2,
-            },
-            ..CompressibleEulerConfig::default()
-        });
-        solver.run_transient_1d(&ctx, &mut fields).expect("run");
-        for i in 0..mesh.num_cells() {
-            assert!(approx_eq(
-                fields.density.values()[i],
-                reference.density.values()[i],
-                1.0e-8,
-            ));
-        }
-    }
-
-    #[test]
-    fn sod_like_disturbance_evolve_with_rk4() {
-        let mesh = StructuredMesh1d::new("sod", 16, 0.0, 1.0).expect("mesh");
-        let eos = IdealGasEoS::new(1.4, 1.0).expect("eos");
-        let left = ConservedState::from_primitive(
-            &eos,
-            &PrimitiveState {
-                density: 1.0,
-                velocity: [0.0, 0.0, 0.0],
-                pressure: 1.0,
-                temperature: 1.0,
-            },
-        )
-        .expect("left");
-        let right = ConservedState::from_primitive(
-            &eos,
-            &PrimitiveState {
-                density: 0.125,
-                velocity: [0.0, 0.0, 0.0],
-                pressure: 0.1,
-                temperature: 1.0,
-            },
-        )
-        .expect("right");
-        let mut fields = ConservedFields::uniform(mesh.num_cells(), left).expect("fields");
-        let mid = mesh.num_cells() / 2;
-        for i in mid..mesh.num_cells() {
-            fields.density.values_mut()[i] = right.density;
-            fields.total_energy.values_mut()[i] = right.total_energy;
-        }
-        let rho_before = fields.density.values()[mid - 1];
-        let solver = CompressibleEulerSolver::new(CompressibleEulerConfig {
-            time: RungeKutta4Config {
-                dt: 2.0e-4,
-                max_steps: 5,
-            },
-            ..CompressibleEulerConfig::default()
-        });
-        solver
-            .run_transient_1d(
-                &CompressibleAdvanceContext1d {
-                    mesh: &mesh,
-                    boundary: crate::discretization::InviscidBoundary1d::ZeroGradient,
-                    eos: &eos,
-                },
-                &mut fields,
-            )
-            .expect("run");
-        assert!(fields.density.values()[mid - 1] != rho_before);
-    }
-
-    /// 圆柱网格、无边界 patch：均匀来流时间推进（`--nocapture` 打印逐步指标）。
-    #[test]
-    fn cylinder_uniform_freestream_no_bc_time_advance_when_present() {
-        use std::path::PathBuf;
-
-        use crate::boundary::BoundarySet;
-        use crate::discretization::{BoundaryGhostBuffer, InviscidFluxConfig};
-        use crate::io::{CaseMesh, load_case};
-        use crate::solver::time::{CflSchedule, RungeKutta4Integrator};
-
-        let case_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("case_cylinder/case.toml");
-        if !case_path.is_file() {
-            return;
-        }
-        let case = load_case(&case_path).expect("load case");
-        let CaseMesh::Structured3d(mesh) = &case.mesh else {
-            panic!("expected 3d");
-        };
-        let eos = case.physics.eos().expect("eos");
-        let fs = case.freestream.expect("freestream");
-        let mut fields =
-            ConservedFields::from_freestream(mesh.num_cells(), &eos, &fs).expect("fields");
-        let rho0 = fs.pressure / (eos.gas_constant * fs.temperature);
-        let empty_bc = BoundarySet::default();
-        let mut ghosts = BoundaryGhostBuffer::new();
-        let mut storage = Rk4Storage::new(mesh.num_cells()).expect("storage");
-        let mut state = SolverState::default();
-        let steps: u64 = 200;
-        let mut integrator = RungeKutta4Integrator::new(RungeKutta4Config {
-            dt: 0.0,
-            max_steps: steps,
-        });
-        let solver = CompressibleEulerSolver::new(CompressibleEulerConfig {
-            time: RungeKutta4Config {
-                dt: 0.0,
-                max_steps: steps,
-            },
-            inviscid: InviscidFluxConfig::roe_first_order(),
-            cfl_schedule: CflSchedule {
-                initial: 0.01,
-                max: 0.1,
-                ramp_steps: Some(500),
-            },
-            time_mode: CompressibleTimeMode::Steady,
-            local_time_step: true,
-            ..CompressibleEulerConfig::default()
-        });
-        let mut ctx = CompressibleAdvanceContext3d {
-            mesh,
-            structured: mesh,
-            patches: &empty_bc,
-            ghosts: &mut ghosts,
-            eos: &eos,
-            freestream: &fs,
-        };
-
-        eprintln!("=== 圆柱网格 无 BC 均匀来流 时间推进 ({} 步) ===", steps);
-        eprintln!("来流 rho_ref = {rho0:.6e}");
-
-        let report_steps = [1_u64, 10, 50, 100, 200];
-        for _ in 0..steps {
-            let info = solver
-                .advance_step_3d(
-                    &mut ctx,
-                    &mut fields,
-                    &mut storage,
-                    &mut state,
-                    &mut integrator,
-                )
-                .expect("step");
-            if report_steps.contains(&info.step) {
-                let rho = fields.density.values();
-                let rmin = rho.iter().copied().fold(f64::INFINITY, f64::min);
-                let rmax = rho.iter().copied().fold(0.0_f64, f64::max);
-                let center = rho[mesh.cell_index(mesh.nx / 2, mesh.ny / 2, 0)];
-                eprintln!(
-                    "step {:4}: log10_res={:.4} rho=[{:.6e}, {:.6e}] center={:.6e}",
-                    info.step, info.residual_log10, rmin, rmax, center
-                );
-            }
-        }
-
-        let rho = fields.density.values();
-        let rmax = rho.iter().copied().fold(0.0_f64, f64::max);
-        assert!(
-            rmax < rho0 * 100.0,
-            "无 BC 推进后 rho_max={rmax:.6e} 异常 (>100×来流)"
-        );
-    }
-
-    /// 圆柱网格：仅内部面通量 + 边界单元 RHS 清零（不参与更新）。
-    #[test]
-    fn cylinder_uniform_freestream_interior_only_advance_when_present() {
-        use std::path::PathBuf;
-
-        use crate::boundary::BoundarySet;
-        use crate::core::log10_positive;
-        use crate::discretization::{
-            BoundaryGhostBuffer, InviscidFluxConfig, assemble_inviscid_residual_3d,
-        };
-        use crate::field::ConservedResidual;
-        use crate::io::{CaseMesh, load_case};
-        use crate::solver::time::{CflSchedule, RungeKutta4Integrator};
-
-        let case_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("case_cylinder/case.toml");
-        if !case_path.is_file() {
-            return;
-        }
-        let case = load_case(&case_path).expect("load case");
-        let CaseMesh::Structured3d(mesh) = &case.mesh else {
-            panic!("expected 3d");
-        };
-        let eos = case.physics.eos().expect("eos");
-        let fs = case.freestream.expect("freestream");
-        let mut fields =
-            ConservedFields::from_freestream(mesh.num_cells(), &eos, &fs).expect("fields");
-        let reference = fields.clone();
-        let rho0 = fs.pressure / (eos.gas_constant * fs.temperature);
-        let boundary_cells = structured_3d_boundary_cell_indices(mesh);
-        let boundary_set: HashSet<usize> = boundary_cells.iter().copied().collect();
-        let empty_bc = BoundarySet::default();
-        let ghosts = BoundaryGhostBuffer::new();
-        let mut storage = Rk4Storage::new(mesh.num_cells()).expect("storage");
-        let mut state = SolverState::default();
-        let steps: u64 = 200;
-        let mut integrator = RungeKutta4Integrator::new(RungeKutta4Config {
-            dt: 0.0,
-            max_steps: steps,
-        });
-        let inviscid = InviscidFluxConfig::roe_first_order();
-        let cfl_schedule = CflSchedule {
-            initial: 0.01,
-            max: 0.1,
-            ramp_steps: Some(500),
-        };
-
-        eprintln!("=== 圆柱网格 仅内部面 + 边界单元冻结 ({} 步) ===", steps);
-        eprintln!(
-            "来流 rho_ref = {rho0:.6e}  边界单元数 = {} / {}",
-            boundary_cells.len(),
-            mesh.num_cells()
-        );
-
-        let report_steps = [1_u64, 10, 50, 100, 200];
-        for _ in 0..steps {
-            let cfl = cfl_schedule.at_step(state.time_step.saturating_add(1), steps);
-            let lengths = mesh.cell_cfl_lengths().expect("lengths");
-            let speeds = cell_wave_speeds(&fields, &eos, fs.pressure * 1.0e-3).expect("speeds");
-            let cell_dts = local_dt_cfl(&lengths, &speeds, cfl).expect("dt");
-
-            let evaluate = |u: &ConservedFields, r: &mut ConservedResidual| {
-                assemble_inviscid_residual_3d(mesh, u, r, &eos, &inviscid, &empty_bc, &ghosts)?;
-                zero_residual_on_cells(r, &boundary_cells);
-                Ok(())
-            };
-
-            rk4_step_local(
-                &mut fields,
-                &mut storage,
-                &cell_dts,
-                evaluate,
-                Some(&eos),
-                fs.pressure * 1.0e-3,
-            )
-            .expect("rk4");
-            let _ = integrator.advance(&mut state).expect("advance");
-
-            if report_steps.contains(&state.time_step) {
-                let rho = fields.density.values();
-                let interior_rho: Vec<f64> = rho
-                    .iter()
-                    .enumerate()
-                    .filter(|(i, _)| !boundary_set.contains(i))
-                    .map(|(_, v)| *v)
-                    .collect();
-                let rmin = interior_rho.iter().copied().fold(f64::INFINITY, f64::min);
-                let rmax = interior_rho.iter().copied().fold(0.0_f64, f64::max);
-                let center = rho[mesh.cell_index(mesh.nx / 2, mesh.ny / 2, 0)];
-
-                evaluate(&fields, &mut storage.k1).expect("rhs");
-                let int_res = interior_density_rms(&storage.k1, &boundary_set);
-                let boundary_frozen = boundary_cells
-                    .iter()
-                    .all(|&c| fields.density.values()[c] == reference.density.values()[c]);
-
-                eprintln!(
-                    "step {:4}: log10_int_res={:.4} int_rho=[{:.6e}, {:.6e}] center={:.6e} boundary_frozen={boundary_frozen}",
-                    state.time_step,
-                    log10_positive(int_res),
-                    rmin,
-                    rmax,
-                    center
-                );
-            }
-        }
-
-        let interior_max = fields
-            .density
-            .values()
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| !boundary_set.contains(i))
-            .map(|(_, v)| v.abs())
-            .fold(0.0_f64, f64::max);
-        assert!(
-            interior_max < rho0 * 1.01,
-            "内部单元 rho 偏离来流: max={interior_max:.6e}"
-        );
-    }
-
-    /// 贴体结构化网格的边界层单元（准 2D：`nz==1` 时不计 K 面）。
-    fn structured_3d_boundary_cell_indices(mesh: &StructuredMesh3d) -> Vec<usize> {
-        let mut cells = Vec::new();
-        let include_k = mesh.nz > 1;
-        for k in 0..mesh.nz {
-            for j in 0..mesh.ny {
-                for i in 0..mesh.nx {
-                    let on_i = i == 0 || i + 1 == mesh.nx;
-                    let on_j = j == 0 || j + 1 == mesh.ny;
-                    let on_k = include_k && (k == 0 || k + 1 == mesh.nz);
-                    if on_i || on_j || on_k {
-                        cells.push(mesh.cell_index(i, j, k));
-                    }
-                }
-            }
-        }
-        cells
-    }
-
-    fn zero_residual_on_cells(residual: &mut ConservedResidual, cells: &[usize]) {
-        for &c in cells {
-            residual.density.values_mut()[c] = 0.0;
-            residual.momentum_x.values_mut()[c] = 0.0;
-            residual.momentum_y.values_mut()[c] = 0.0;
-            residual.momentum_z.values_mut()[c] = 0.0;
-            residual.total_energy.values_mut()[c] = 0.0;
-        }
-    }
-
-    fn interior_density_rms(residual: &ConservedResidual, boundary: &HashSet<usize>) -> f64 {
-        let mut sum_sq = 0.0_f64;
-        let mut count = 0_usize;
-        for (i, &v) in residual.density.values().iter().enumerate() {
-            if boundary.contains(&i) {
-                continue;
-            }
-            sum_sq += v * v;
-            count += 1;
-        }
-        if count == 0 {
-            0.0
-        } else {
-            (sum_sq / count as f64).sqrt()
-        }
-    }
-}
+#[path = "compressible_tests.rs"]
+mod tests;

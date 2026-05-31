@@ -12,10 +12,8 @@ use crate::error::{AsimuError, Result};
 /// CLI 应用主流程：加载配置 → 运行算例或提示用法。
 pub fn run(cli: Cli) -> Result<()> {
     let case_path = cli.case.clone();
+    let chrome_trace = cli.chrome_trace.clone();
     let config = cli.load_config()?;
-    crate::config::init_tracing(&config.logging.level)?;
-
-    info!(version = env!("CARGO_PKG_VERSION"), "asimu 启动");
 
     let Some(case_path) = case_path else {
         return Err(AsimuError::Config(
@@ -23,7 +21,9 @@ pub fn run(cli: Cli) -> Result<()> {
         ));
     };
 
-    let result = case::run_case_path(&case_path)?;
+    let result =
+        case::run_case_path_logged(&case_path, &config.logging.level, chrome_trace.as_deref())?;
+    info!(version = env!("CARGO_PKG_VERSION"), "asimu 算例完成");
     info!(
         name = %result.name,
         benchmark_id = ?result.benchmark_id,
@@ -51,6 +51,7 @@ mod tests {
             max_steps: None,
             log_level: Some("warn".to_string()),
             case: Some(Path::new("tests/benchmarks/1d_diffusion_analytical/case.toml").into()),
+            chrome_trace: None,
         };
         run(cli).expect("run");
     }

@@ -275,6 +275,7 @@ fn apply_patch_compressible(
 }
 
 /// 可压缩 NS 边界 ghost 施加（类比 CFL3D `bc.F`）。
+#[tracing::instrument(skip_all, level = "info", fields(patches = patches.patches().len()))]
 pub fn apply_compressible_boundary_conditions(
     mesh: &dyn BoundaryMesh3d,
     patches: &BoundarySet,

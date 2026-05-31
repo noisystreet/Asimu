@@ -9,8 +9,9 @@ mod sod;
 
 use std::path::Path;
 
-use tracing::info;
+use tracing::{info, instrument};
 
+use crate::config::init_tracing;
 use crate::error::{AsimuError, Result};
 use crate::io::{CaseSpec, load_case};
 
@@ -38,13 +39,27 @@ pub struct CaseRunResult {
     pub compressible_3d: Option<Compressible3dRunMetrics>,
 }
 
-/// 从 `case.toml` 路径加载并运行。
+/// 从 `case.toml` 路径加载并运行（默认日志级别 `info`）。
 pub fn run_case_path(path: &Path) -> Result<CaseRunResult> {
+    run_case_path_logged(path, "info", None)
+}
+
+/// 从 `case.toml` 加载并运行；按 `log_level` 与 Chrome trace 配置初始化 tracing。
+///
+/// `chrome_trace_cli`：`None` 仅用算例 `[observability]`；`Some(path)` 为 CLI `--chrome-trace [PATH]`。
+pub fn run_case_path_logged(
+    path: &Path,
+    log_level: &str,
+    chrome_trace_cli: Option<&str>,
+) -> Result<CaseRunResult> {
     let case = load_case(path)?;
+    let chrome = case.effective_chrome_trace_path(chrome_trace_cli)?;
+    let _tracing = init_tracing(log_level, chrome.as_deref())?;
     run_case(&case)
 }
 
 /// 运行已解析算例。
+#[instrument(skip(case), fields(name = %case.name, benchmark_id = ?case.benchmark_id))]
 pub fn run_case(case: &CaseSpec) -> Result<CaseRunResult> {
     let kind = detect_run_kind(case)?;
     info!(

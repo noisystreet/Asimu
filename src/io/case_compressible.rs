@@ -11,6 +11,13 @@ use crate::error::{AsimuError, Result};
 use super::CaseSpec;
 use super::validate_input_path;
 
+/// 算例可观测性配置（`[observability]`）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct CaseObservabilityConfig {
+    /// Chrome trace JSON 相对路径（相对 `[output].dir`，默认 `output/`）。
+    pub chrome_trace: Option<String>,
+}
+
 /// 算例输出配置（`[output]`）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct CaseOutputConfig {
@@ -130,6 +137,57 @@ impl CaseSpec {
     pub fn warn_config_inconsistencies(&self) {
         warn_if_output_interval_exceeds_max_steps(self);
     }
+
+    /// 解析 `[observability].chrome_trace` 为绝对路径（未配置则 `None`）。
+    pub fn resolved_chrome_trace_path(&self) -> Result<Option<PathBuf>> {
+        let Some(obs) = &self.observability else {
+            return Ok(None);
+        };
+        let Some(rel) = obs.chrome_trace.as_ref() else {
+            return Ok(None);
+        };
+        Ok(Some(self.resolve_chrome_trace_relative(rel)?))
+    }
+
+    /// 将相对路径解析为 Chrome trace 绝对路径（相对 `[output].dir`；绝对路径原样返回）。
+    pub fn resolve_chrome_trace_relative(&self, rel: &str) -> Result<PathBuf> {
+        let path = Path::new(rel);
+        if path.is_absolute() {
+            return Ok(path.to_path_buf());
+        }
+        let output_dir = self
+            .output
+            .as_ref()
+            .map(|o| o.dir.as_path())
+            .unwrap_or(Path::new("output"));
+        resolve_case_output_path(self.case_dir.as_deref(), output_dir, rel)
+    }
+
+    /// 合并 CLI 与算例配置：`cli` 为 `Some` 时优先。
+    ///
+    /// - `None`：仅用 `[observability]`
+    /// - `Some("")`：`--chrome-trace` 无路径 → `profiling/trace.json`（相对 `[output].dir`）
+    /// - `Some(path)`：`--chrome-trace PATH` → 相对**当前工作目录**或绝对路径
+    pub fn effective_chrome_trace_path(&self, cli: Option<&str>) -> Result<Option<PathBuf>> {
+        match cli {
+            None => self.resolved_chrome_trace_path(),
+            Some("") => Ok(Some(
+                self.resolve_chrome_trace_relative("profiling/trace.json")?,
+            )),
+            Some(rel) => Ok(Some(resolve_chrome_trace_cli(rel)?)),
+        }
+    }
+}
+
+/// CLI `--chrome-trace PATH`：相对路径基于进程当前工作目录。
+fn resolve_chrome_trace_cli(rel: &str) -> Result<PathBuf> {
+    let path = Path::new(rel);
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+    let cwd = std::env::current_dir()
+        .map_err(|err| AsimuError::Config(format!("无法获取当前工作目录: {err}")))?;
+    Ok(cwd.join(path))
 }
 
 #[derive(Debug, Deserialize)]
@@ -140,6 +198,11 @@ pub(super) struct EulerToml {
     reconstruction: Option<String>,
     flux: Option<String>,
     limiter: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ObservabilityToml {
+    chrome_trace: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -165,6 +228,12 @@ pub(super) fn parse_euler_config(raw: &EulerToml) -> Result<EulerCaseConfig> {
         flux: raw.flux.clone(),
         limiter: raw.limiter.clone(),
     })
+}
+
+pub(super) fn parse_observability(raw: &ObservabilityToml) -> CaseObservabilityConfig {
+    CaseObservabilityConfig {
+        chrome_trace: raw.chrome_trace.clone().filter(|s| !s.trim().is_empty()),
+    }
 }
 
 pub(super) fn parse_output(raw: &OutputToml) -> CaseOutputConfig {
