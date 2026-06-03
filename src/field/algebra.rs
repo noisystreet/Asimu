@@ -3,7 +3,7 @@
 use crate::core::Real;
 use crate::error::{AsimuError, Result};
 
-use super::{ConservedFields, ConservedResidual, clamp_conserved_positivity};
+use super::{ConservedFields, ConservedResidual};
 use crate::physics::ConservedState;
 
 impl ConservedFields {
@@ -35,52 +35,24 @@ impl ConservedFields {
         residual: &ConservedResidual,
         dt: &[Real],
         factor: Real,
-        gamma: Real,
-        min_pressure: Real,
+        _gamma: Real,
+        _min_pressure: Real,
     ) -> Result<()> {
         ensure_same_size(self.num_cells(), base.num_cells())?;
         ensure_residual_size(self.num_cells(), residual.num_cells())?;
         ensure_dt_size(self.num_cells(), dt.len())?;
-        let rho_min = 1.0e-12;
         for (i, &dt_i) in dt.iter().enumerate() {
-            let mut rho = base.density.values()[i] + factor * dt_i * residual.density.values()[i];
-            let mut mx =
-                base.momentum_x.values()[i] + factor * dt_i * residual.momentum_x.values()[i];
-            let mut my =
-                base.momentum_y.values()[i] + factor * dt_i * residual.momentum_y.values()[i];
-            let mut mz =
-                base.momentum_z.values()[i] + factor * dt_i * residual.momentum_z.values()[i];
+            let rho = base.density.values()[i] + factor * dt_i * residual.density.values()[i];
+            let mx = base.momentum_x.values()[i] + factor * dt_i * residual.momentum_x.values()[i];
+            let my = base.momentum_y.values()[i] + factor * dt_i * residual.momentum_y.values()[i];
+            let mz = base.momentum_z.values()[i] + factor * dt_i * residual.momentum_z.values()[i];
             let energy =
                 base.total_energy.values()[i] + factor * dt_i * residual.total_energy.values()[i];
-            let rho_old = rho;
-            let rho_clamped = if rho_old.is_finite() && rho_old > 0.0 {
-                rho_old.max(rho_min)
-            } else {
-                rho_min
-            };
-            if rho_old.is_finite() && rho_old > 0.0 && rho_old < rho_min {
-                let scale = rho_clamped / rho_old;
-                mx *= scale;
-                my *= scale;
-                mz *= scale;
-            } else if !(rho_old.is_finite() && rho_old > 0.0) {
-                mx = 0.0;
-                my = 0.0;
-                mz = 0.0;
-            }
-            rho = rho_clamped;
-            let mut state = ConservedState {
-                density: rho,
-                momentum: [mx, my, mz],
-                total_energy: energy,
-            };
-            // 与 RK 后 enforce 一致：避免 E < KE 导致边界 primitive 恢复失败。
-            clamp_conserved_positivity(&mut state, gamma, min_pressure);
-            self.density.values_mut()[i] = state.density;
-            self.momentum_x.values_mut()[i] = state.momentum[0];
-            self.momentum_y.values_mut()[i] = state.momentum[1];
-            self.momentum_z.values_mut()[i] = state.momentum[2];
-            self.total_energy.values_mut()[i] = state.total_energy;
+            self.density.values_mut()[i] = rho;
+            self.momentum_x.values_mut()[i] = mx;
+            self.momentum_y.values_mut()[i] = my;
+            self.momentum_z.values_mut()[i] = mz;
+            self.total_energy.values_mut()[i] = energy;
         }
         Ok(())
     }
@@ -164,46 +136,22 @@ impl ConservedFields {
         cell: usize,
         scale: Real,
         increment: [Real; 5],
-        gamma: Real,
-        min_pressure: Real,
+        _gamma: Real,
+        _min_pressure: Real,
     ) -> Result<()> {
         if cell >= self.num_cells() {
             return Err(AsimuError::Field(format!("单元索引越界: {cell}")));
         }
-        let rho_min = 1.0e-12;
-        let mut rho = self.density.values()[cell] + scale * increment[0];
-        let mut mx = self.momentum_x.values()[cell] + scale * increment[1];
-        let mut my = self.momentum_y.values()[cell] + scale * increment[2];
-        let mut mz = self.momentum_z.values()[cell] + scale * increment[3];
+        let rho = self.density.values()[cell] + scale * increment[0];
+        let mx = self.momentum_x.values()[cell] + scale * increment[1];
+        let my = self.momentum_y.values()[cell] + scale * increment[2];
+        let mz = self.momentum_z.values()[cell] + scale * increment[3];
         let energy = self.total_energy.values()[cell] + scale * increment[4];
-        let rho_old = rho;
-        let rho_clamped = if rho_old.is_finite() && rho_old > 0.0 {
-            rho_old.max(rho_min)
-        } else {
-            rho_min
-        };
-        if rho_old.is_finite() && rho_old > 0.0 && rho_old < rho_min {
-            let s = rho_clamped / rho_old;
-            mx *= s;
-            my *= s;
-            mz *= s;
-        } else if !(rho_old.is_finite() && rho_old > 0.0) {
-            mx = 0.0;
-            my = 0.0;
-            mz = 0.0;
-        }
-        rho = rho_clamped;
-        let mut state = ConservedState {
-            density: rho,
-            momentum: [mx, my, mz],
-            total_energy: energy,
-        };
-        clamp_conserved_positivity(&mut state, gamma, min_pressure);
-        self.density.values_mut()[cell] = state.density;
-        self.momentum_x.values_mut()[cell] = state.momentum[0];
-        self.momentum_y.values_mut()[cell] = state.momentum[1];
-        self.momentum_z.values_mut()[cell] = state.momentum[2];
-        self.total_energy.values_mut()[cell] = state.total_energy;
+        self.density.values_mut()[cell] = rho;
+        self.momentum_x.values_mut()[cell] = mx;
+        self.momentum_y.values_mut()[cell] = my;
+        self.momentum_z.values_mut()[cell] = mz;
+        self.total_energy.values_mut()[cell] = energy;
         Ok(())
     }
 
@@ -470,39 +418,18 @@ fn lusgs_updated_state(
     residual: &ConservedResidual,
     i: usize,
     scale: Real,
-    gamma: Real,
-    min_pressure: Real,
+    _gamma: Real,
+    _min_pressure: Real,
 ) -> ConservedState {
-    let rho_min = 1.0e-12;
-    let mut rho = base.density.values()[i] + scale * residual.density.values()[i];
-    let mut mx = base.momentum_x.values()[i] + scale * residual.momentum_x.values()[i];
-    let mut my = base.momentum_y.values()[i] + scale * residual.momentum_y.values()[i];
-    let mut mz = base.momentum_z.values()[i] + scale * residual.momentum_z.values()[i];
-    let energy = base.total_energy.values()[i] + scale * residual.total_energy.values()[i];
-    let rho_old = rho;
-    let rho_clamped = if rho_old.is_finite() && rho_old > 0.0 {
-        rho_old.max(rho_min)
-    } else {
-        rho_min
-    };
-    if rho_old.is_finite() && rho_old > 0.0 && rho_old < rho_min {
-        let s = rho_clamped / rho_old;
-        mx *= s;
-        my *= s;
-        mz *= s;
-    } else if !(rho_old.is_finite() && rho_old > 0.0) {
-        mx = 0.0;
-        my = 0.0;
-        mz = 0.0;
+    ConservedState {
+        density: base.density.values()[i] + scale * residual.density.values()[i],
+        momentum: [
+            base.momentum_x.values()[i] + scale * residual.momentum_x.values()[i],
+            base.momentum_y.values()[i] + scale * residual.momentum_y.values()[i],
+            base.momentum_z.values()[i] + scale * residual.momentum_z.values()[i],
+        ],
+        total_energy: base.total_energy.values()[i] + scale * residual.total_energy.values()[i],
     }
-    rho = rho_clamped;
-    let mut state = ConservedState {
-        density: rho,
-        momentum: [mx, my, mz],
-        total_energy: energy,
-    };
-    clamp_conserved_positivity(&mut state, gamma, min_pressure);
-    state
 }
 
 fn combine_rk4_component(dst: &mut [Real], k1: &[Real], k2: &[Real], k3: &[Real], k4: &[Real]) {

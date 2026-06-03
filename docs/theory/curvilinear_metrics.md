@@ -141,7 +141,7 @@ $$
 
 | 组件 | 规划 |
 |------|------|
-| `mesh/metrics.rs` | `CellMetric { volume, center }`、`FaceMetric { area_vector, area, normal }` |
+| `mesh/metrics.rs` | `CellMetric { volume, center }`、`FaceMetric { area_vector, area, normal, center }` |
 | `StructuredMesh3d` | `cell_metric(i,j,k)`、`i/j/k_face_metric(...)` |
 | `assembly_3d.rs` | 用 metric 替代 Δx/固定法向 |
 | `face_geometry_3d` | 边界 patch 走同一套 metric |
@@ -221,6 +221,7 @@ pub struct FaceMetric {
     pub area_vector: Vector3,
     pub area: Real,
     pub normal: Vector3,
+    pub center: Vector3,
 }
 
 pub struct CellMetric {

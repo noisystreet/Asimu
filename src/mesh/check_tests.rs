@@ -75,6 +75,9 @@ fn cylinder_cgns_passes_when_present() {
     if !case_path.is_file() {
         return;
     }
+    if !cfg!(feature = "io-cgns") {
+        return;
+    }
     let case = load_case(&case_path).expect("case");
     let CaseMesh::Structured3d(mesh) = &case.mesh else {
         panic!("3d");

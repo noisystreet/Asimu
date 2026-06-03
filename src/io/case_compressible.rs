@@ -258,7 +258,9 @@ pub fn resolve_case_output_path(
 ) -> Result<PathBuf> {
     let rel_path = PathBuf::from(rel);
     validate_input_path(&rel_path)?;
-    let base = case_dir.unwrap_or_else(|| Path::new(".")).join(output_dir);
+    let base = case_dir
+        .map(|dir| dir.join(output_dir))
+        .unwrap_or_else(|| output_dir.to_path_buf());
     Ok(base.join(rel_path))
 }
 

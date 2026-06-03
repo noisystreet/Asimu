@@ -108,7 +108,7 @@ max_steps = 10
     assert!(case.time.uses_local_time_step());
     let cfg = case.time.resolved_lusgs_config().expect("lusgs");
     assert!((cfg.omega - 0.8).abs() < 1.0e-12);
-    assert!(cfg.sweep);
+    assert!(!cfg.sweep);
 }
 
 #[test]

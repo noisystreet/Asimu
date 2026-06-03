@@ -84,7 +84,7 @@ pub fn init_tracing(level: &str, chrome_trace: Option<&Path>) -> Result<TracingG
             .writer(file)
             .include_args(true)
             .build();
-        tracing_subscriber::registry()
+        let init_result = tracing_subscriber::registry()
             .with(filter)
             .with(
                 tracing_subscriber::fmt::layer()
@@ -92,7 +92,13 @@ pub fn init_tracing(level: &str, chrome_trace: Option<&Path>) -> Result<TracingG
                     .with_writer(std::io::stderr),
             )
             .with(chrome_layer)
-            .init();
+            .try_init();
+        if let Err(err) = init_result {
+            if tracing::dispatcher::has_been_set() {
+                return Ok(TracingGuard::noop());
+            }
+            return Err(AsimuError::Config(format!("初始化日志失败: {err}")));
+        }
         info!(path = %path.display(), "Chrome trace 已启用");
         return Ok(TracingGuard {
             _chrome: Some(guard),
@@ -100,12 +106,17 @@ pub fn init_tracing(level: &str, chrome_trace: Option<&Path>) -> Result<TracingG
         });
     }
 
-    tracing_subscriber::fmt()
+    let init_result = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false)
         .with_writer(std::io::stderr)
-        .try_init()
-        .map_err(|err| AsimuError::Config(format!("初始化日志失败: {err}")))?;
+        .try_init();
+    if let Err(err) = init_result {
+        if tracing::dispatcher::has_been_set() {
+            return Ok(TracingGuard::noop());
+        }
+        return Err(AsimuError::Config(format!("初始化日志失败: {err}")));
+    }
 
     info!(level, "日志已初始化");
     Ok(TracingGuard::noop())

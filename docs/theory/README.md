@@ -24,7 +24,9 @@
 | [inviscid_flux.md](inviscid_flux.md) | `discretization/roe` | v1.x | **已实现（Roe + 熵修正）** | Roe (1981)；Toro (2009) Ch. 10–11 |
 | *(待建)* `fvm_convection_diffusion.md` | `discretization` | v0.2 | 规划 | Patankar (1980) Ch. 5–6 |
 | [boundary_conditions.md](boundary_conditions.md) | `discretization` / BC | v0.2–v0.3 | **已实现（v0.2 Dirichlet/Neumann）** | [boundary_conditions.md](boundary_conditions.md) |
-| [time_integration.md](time_integration.md) | `solver/time` | v1.x | **已实现（RK4 + CFL）** | ADR 0005；Ferziger et al. Ch. 6 |
+| [time_integration.md](time_integration.md) | `solver/time` | v1.x | **已实现（RK4 + LU-SGS + CFL）** | Blazek (2015) §6.1.4/§9.1；ADR 0005 |
+| [nondimensional.md](nondimensional.md) | `physics` / `io` / BC | v1.x | **已实现** | Toro (2009) Ch. 1；Anderson (1995) |
+| [structured_gradients.md](structured_gradients.md) | `discretization/gradient` | v1.x | **已实现** | Vinokur (1989)；Ferziger et al. Ch. 8 |
 | [curvilinear_metrics.md](curvilinear_metrics.md) | `mesh/metrics` | v1.x | **规划** | Vinokur (1989)；CFL3D TM-2010-216758 |
 | *(待建)* `linear_cg.md` | `linalg` | v0.2 | 规划 | Saad (2003) Ch. 6 |
 | *(待建)* `incompressible_simple.md` | `solver` | v0.3 | 规划 | Patankar (1980) Ch. 6 |
