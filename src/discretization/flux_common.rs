@@ -55,7 +55,7 @@ pub(crate) fn limited_slope(d_minus: Real, d_plus: Real, limiter: SlopeLimiter) 
                 return 0.0;
             }
             let r = d_minus / d_plus;
-            0.5 * d_plus * (r + r.abs()) / (1.0 + r.abs())
+            d_plus * (r + r.abs()) / (1.0 + r.abs())
         }
         SlopeLimiter::VanAlbada => {
             if d_plus.abs() < Real::EPSILON {
@@ -71,6 +71,21 @@ pub(crate) fn limited_slope(d_minus: Real, d_plus: Real, limiter: SlopeLimiter) 
 mod tests {
     use super::*;
     use crate::core::approx_eq;
+
+    #[test]
+    fn van_leer_is_second_order_on_uniform_slope() {
+        let slope = limited_slope(2.0, 2.0, SlopeLimiter::VanLeer);
+        assert!(approx_eq(slope, 2.0, 1.0e-12));
+    }
+
+    #[test]
+    fn van_leer_zeros_out_opposite_slopes() {
+        assert!(approx_eq(
+            limited_slope(1.0, -1.0, SlopeLimiter::VanLeer),
+            0.0,
+            1.0e-12
+        ));
+    }
 
     #[test]
     fn van_albada_is_second_order_on_uniform_slope() {

@@ -1,7 +1,7 @@
 //! Van Leer / Hanel–Van Leer 通量矢量分裂（FVS）。
 //!
 //! - Van Leer (1982): \(\hat{\mathbf{F}} = \mathbf{F}^+(\mathbf{U}_L) + \mathbf{F}^-(\mathbf{U}_R)\)
-//! - Hanel: 质量/动量分裂同 Van Leer，亚音速能量取 \(F_E^+ = F_m^+ \cdot h\)（Van Leer 为 \(F_m^+ \cdot h/2\)）
+//! - Hanel: 质量/动量分裂同 Van Leer，亚音速能量取 \(F_E^+ = F_m^+ \cdot h\)
 
 use crate::core::{Real, Vector3};
 use crate::error::{AsimuError, Result};
@@ -135,7 +135,7 @@ fn physical_face_flux(state: &FaceFrameState) -> FaceFrameFlux {
     }
 }
 
-/// Van Leer / Hanel \(\mathbf{F}^+\)（Blazek §4.3.1；Hanel 仅改亚音速能量系数）。
+/// Van Leer / Hanel \(\mathbf{F}^+\)（Blazek §4.3.1；Hanel 仅改亚音速能量分裂）。
 fn fvs_positive_flux(
     state: &FaceFrameState,
     gamma: Real,
@@ -155,18 +155,23 @@ fn fvs_positive_flux(
     if mach >= 1.0 {
         return full;
     }
-    let un_plus_a = state.un + a;
-    let mass_plus = 0.25 * state.rho * un_plus_a * un_plus_a;
-    let enthalpy = specific_enthalpy(state, gamma);
-    let energy_scale = match energy_split {
-        EnergyFluxSplit::VanLeer => 0.5,
-        EnergyFluxSplit::Hanel => 1.0,
+    let mach_plus = mach + 1.0;
+    let mass_plus = 0.25 * state.rho * a * mach_plus * mach_plus;
+    let normal_velocity_plus = ((gamma - 1.0) * state.un + 2.0 * a) / gamma;
+    let tangential_ke = 0.5 * (state.ut[0] * state.ut[0] + state.ut[1] * state.ut[1]);
+    let energy = match energy_split {
+        EnergyFluxSplit::VanLeer => {
+            let acoustic_energy =
+                ((gamma - 1.0) * state.un + 2.0 * a).powi(2) / (2.0 * (gamma * gamma - 1.0));
+            mass_plus * (acoustic_energy + tangential_ke)
+        }
+        EnergyFluxSplit::Hanel => mass_plus * specific_enthalpy(state, gamma),
     };
     FaceFrameFlux {
         mass: mass_plus,
-        normal_momentum: mass_plus * 0.5 * un_plus_a + 0.5 * state.p * (1.0 + mach),
+        normal_momentum: mass_plus * normal_velocity_plus,
         tangential_momentum: [mass_plus * state.ut[0], mass_plus * state.ut[1]],
-        energy: mass_plus * energy_scale * enthalpy,
+        energy,
     }
 }
 
@@ -252,6 +257,43 @@ mod tests {
             1.0e-10
         ));
         assert!(approx_eq(split.energy, phys.energy, 1.0e-10));
+    }
+
+    #[test]
+    fn van_leer_subsonic_positive_flux_matches_reference_formula() {
+        let gamma = 1.4;
+        let state = FaceFrameState {
+            rho: 1.2,
+            un: 0.4,
+            ut: [0.3, -0.2],
+            p: 1.1,
+            rho_e: 3.0,
+        };
+        let a = sound_speed(state.rho, state.p, gamma);
+        let mach = state.un / a;
+        let mass = 0.25 * state.rho * a * (mach + 1.0).powi(2);
+        let normal_velocity = ((gamma - 1.0) * state.un + 2.0 * a) / gamma;
+        let tangential_ke = 0.5 * (state.ut[0] * state.ut[0] + state.ut[1] * state.ut[1]);
+        let acoustic_energy =
+            ((gamma - 1.0) * state.un + 2.0 * a).powi(2) / (2.0 * (gamma * gamma - 1.0));
+        let flux = fvs_positive_flux(&state, gamma, EnergyFluxSplit::VanLeer);
+
+        assert!(approx_eq(flux.mass, mass, 1.0e-12));
+        assert!(approx_eq(
+            flux.normal_momentum,
+            mass * normal_velocity,
+            1.0e-12
+        ));
+        assert!(approx_eq(
+            flux.tangential_momentum[0],
+            mass * state.ut[0],
+            1.0e-12
+        ));
+        assert!(approx_eq(
+            flux.energy,
+            mass * (acoustic_energy + tangential_ke),
+            1.0e-12
+        ));
     }
 
     #[test]

@@ -111,7 +111,39 @@ $$
 
 配置：`RoeFluxConfig { entropy_fix: true, entropy_delta: Option<f64> }`。
 
-### 4.5 SLAU2 压力通量
+### 4.5 Van Leer / Hanel FVS
+
+Van Leer FVS 将面法向通量拆为左右状态各自的正/负传播部分：
+
+$$
+\hat{\mathbf{F}} = \mathbf{F}^{+}(\mathbf{U}_L) + \mathbf{F}^{-}(\mathbf{U}_R), \qquad
+M = u_n/a
+\tag{8}
+$$
+
+亚音速区间 \(|M| < 1\) 内，质量通量分裂为：
+
+$$
+F_m^{\pm} = \pm \frac{1}{4}\rho a (M \pm 1)^2
+\tag{9}
+$$
+
+正通量的法向动量和能量分量为：
+
+$$
+F_n^{+}=F_m^{+}\frac{(\gamma-1)u_n+2a}{\gamma}, \qquad
+F_E^{+}=F_m^{+}\left(
+\frac{\left[(\gamma-1)u_n+2a\right]^2}{2(\gamma^2-1)}
++\frac{1}{2}|\mathbf{u}_t|^2
+\right)
+\tag{10}
+$$
+
+负通量由 \(\mathbf{F}^{-}=\mathbf{F}-\mathbf{F}^{+}\) 得到；当 \(M\ge 1\) 时 \(\mathbf{F}^{+}=\mathbf{F}\)，当 \(M\le -1\) 时 \(\mathbf{F}^{+}=0\)。Hanel–Van Leer 保留 Van Leer 的质量/动量分裂，亚音速能量分量改为 \(F_E^{+}=F_m^{+}h\)，其中 \(h=(\rho E+p)/\rho\)。
+
+实现：`van_leer_flux`、`hanel_van_leer_flux`、`fvs_positive_flux`。
+
+### 4.6 SLAU2 压力通量
 
 SLAU2 将 AUSM 型通量拆为质量通量上风项与压力项。压力面值采用左右压力分裂：
 
@@ -120,7 +152,7 @@ $$
 = \bar{p}
 - \frac{\mathcal{P}_{+}(M_L)-\mathcal{P}_{-}(M_R)}{2}\Delta p
 + f(M)\left[\mathcal{P}_{+}(M_L)+\mathcal{P}_{-}(M_R)-1\right]\bar{p}
-\tag{8}
+\tag{11}
 $$
 
 其中 \(\bar{p}=(p_L+p_R)/2\)，\(\Delta p=p_R-p_L\)，
@@ -130,7 +162,7 @@ $$
 
 $$
 \xi=(1-M)^2
-\tag{9}
+\tag{12}
 $$
 
 实现：`slau2_flux`、`interface_pressure_slau2`、`mass_pressure_xi`。均匀左右态下，
@@ -178,9 +210,10 @@ ConservedResidual  (= dU/dt)
 
 1. Roe, P. L. (1981). Approximate Riemann solvers, parameter vectors, and difference schemes. *Journal of Computational Physics*, 43(2), 357–372. DOI [10.1016/0021-9991(81)90128-5](https://doi.org/10.1016/0021-9991(81)90128-5).
 2. Harten, A. (1983). On the symmetric form of the Godunov-type schemes. *Journal of Computational Physics*, 49(3), 357–393.
-3. Toro, E. F. (2009). *Riemann Solvers and Numerical Methods for Fluid Dynamics* (3rd ed.). Springer. Ch. 10–11（Roe、熵修正）。
-4. Kitamura, K., & Shima, E. (2013). Towards shock-stable and accurate hypersonic heating computations: A new pressure flux for AUSM-family schemes. *Journal of Computational Physics*, 245, 62–83. DOI [10.1016/j.jcp.2013.02.046](https://doi.org/10.1016/j.jcp.2013.02.046).
-5. 精确 Riemann 验证：`physics::riemann_exact`（Toro §4）；算例 `tests/benchmarks/sod_1d/`。
+3. Van Leer, B. (1982). Flux-vector splitting for the Euler equations. *ICASE Report* 82-30 / NASA CR-172150.
+4. Toro, E. F. (2009). *Riemann Solvers and Numerical Methods for Fluid Dynamics* (3rd ed.). Springer. Ch. 10–11（Roe、熵修正）。
+5. Kitamura, K., & Shima, E. (2013). Towards shock-stable and accurate hypersonic heating computations: A new pressure flux for AUSM-family schemes. *Journal of Computational Physics*, 245, 62–83. DOI [10.1016/j.jcp.2013.02.046](https://doi.org/10.1016/j.jcp.2013.02.046).
+6. 精确 Riemann 验证：`physics::riemann_exact`（Toro §4）；算例 `tests/benchmarks/sod_1d/`。
 
 ---
 
