@@ -203,6 +203,48 @@ max_steps = 3
 }
 
 #[test]
+fn parses_residual_smoothing_config() {
+    let content = r#"
+name = "smooth_test"
+[mesh]
+kind = "structured_3d"
+nx = 2
+ny = 2
+nz = 2
+[physics]
+gamma = 1.4
+gas_constant = 287.0
+[freestream]
+mach = 0.3
+pressure = 101325.0
+temperature = 288.15
+[boundary.i_min]
+kind = "farfield"
+[boundary.i_max]
+kind = "farfield"
+[boundary.j_min]
+kind = "symmetry"
+[boundary.j_max]
+kind = "symmetry"
+[boundary.k_min]
+kind = "wall"
+[boundary.k_max]
+kind = "outlet"
+static_pressure = 100000.0
+[time]
+mode = "steady"
+residual_smoothing = true
+residual_smoothing_epsilon = 0.25
+residual_smoothing_sweeps = 2
+"#;
+    let case = parse_case_toml(content, None).expect("parse");
+    let cfg = case.time.residual_smoothing_config();
+    assert!(cfg.enabled);
+    assert!((cfg.epsilon - 0.25).abs() < 1.0e-12);
+    assert_eq!(cfg.sweeps, 2);
+}
+
+#[test]
 fn parses_sod_benchmark_case() {
     let content = include_str!("../../tests/benchmarks/sod_1d/case.toml");
     let case = parse_case_toml(content, None).expect("parse");

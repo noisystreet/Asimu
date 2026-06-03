@@ -33,9 +33,9 @@ use crate::physics::{
 };
 use crate::solver::state::SolverState;
 use crate::solver::time::{
-    CflSchedule, LuSgsConfig, Rk4Storage, RungeKutta4Config, RungeKutta4Integrator,
-    TimeIntegrationScheme, TimeIntegrator, euler_step, euler_step_local, min_positive_dt, rk4_step,
-    rk4_step_local,
+    CflSchedule, LuSgsConfig, ResidualSmoothingConfig, Rk4Storage, RungeKutta4Config,
+    RungeKutta4Integrator, TimeIntegrationScheme, TimeIntegrator, euler_step, euler_step_local,
+    min_positive_dt, rk4_step, rk4_step_local, smooth_residual_3d,
 };
 use tracing::{info, info_span, instrument};
 
@@ -60,6 +60,7 @@ pub struct CompressibleEulerConfig {
     pub time_scheme: TimeIntegrationScheme,
     /// `lu_sgs` 松弛因子等（显式格式下忽略）。
     pub lu_sgs: LuSgsConfig,
+    pub residual_smoothing: ResidualSmoothingConfig,
 }
 
 impl Default for CompressibleEulerConfig {
@@ -73,6 +74,7 @@ impl Default for CompressibleEulerConfig {
             local_time_step: false,
             time_scheme: TimeIntegrationScheme::Rk4,
             lu_sgs: LuSgsConfig::default(),
+            residual_smoothing: ResidualSmoothingConfig::default(),
         }
     }
 }
@@ -150,6 +152,27 @@ impl CompressibleEulerSolver {
             primitive_scratch: &mut ctx.primitive_scratch,
             gradient_scratch: &mut ctx.gradient_scratch,
         }
+    }
+
+    fn smooth_residual_if_enabled(
+        &self,
+        mesh: &StructuredMesh3d,
+        residual: &mut ConservedResidual,
+    ) -> Result<()> {
+        if self.config.time_mode != CompressibleTimeMode::Steady {
+            return Ok(());
+        }
+        let config = self.config.residual_smoothing;
+        if !config.enabled {
+            return Ok(());
+        }
+        let _span = info_span!(
+            "residual_smoothing",
+            epsilon = config.epsilon,
+            sweeps = config.sweeps,
+        )
+        .entered();
+        smooth_residual_3d(residual, mesh, config)
     }
 
     /// 1D 瞬态推进：每步刷新边界 ghost、装配残差、RK4 更新守恒量。
@@ -369,7 +392,8 @@ impl CompressibleEulerSolver {
             )
             .entered();
             let evaluate = |u: &ConservedFields, r: &mut ConservedResidual| {
-                self.rhs_context_3d(ctx, &inviscid, p_floor).run(u, r)
+                self.rhs_context_3d(ctx, &inviscid, p_floor).run(u, r)?;
+                self.smooth_residual_if_enabled(ctx.structured, r)
             };
             self.advance_explicit_step(
                 fields,
@@ -446,6 +470,7 @@ impl CompressibleEulerSolver {
                 let _span = info_span!("lu_sgs_rhs").entered();
                 self.rhs_context_3d(ctx, &inviscid, p_floor)
                     .run(&storage.u0, &mut storage.k1)?;
+                self.smooth_residual_if_enabled(structured, &mut storage.k1)?;
             }
             if lu_sgs.sweep {
                 let mut sweep_params = LuSgsSweep3dParams {

@@ -137,7 +137,51 @@ $$
 
 ---
 
-## 6. 稳态 vs 瞬态
+## 6. 方向分裂隐式残差光顺
+
+稳态伪时间推进可在每次更新前对残差做方向分裂隐式光顺：
+
+$$
+\left(I-\epsilon\delta_{\xi\xi}\right)
+\left(I-\epsilon\delta_{\eta\eta}\right)
+\left(I-\epsilon\delta_{\zeta\zeta}\right)
+\bar{\mathbf{R}} = \mathbf{R}.
+\tag{8}
+$$
+
+每个方向沿结构网格线解常系数三对角系统。以 \(i\) 方向为例，内部点满足：
+
+$$
+-\epsilon \bar{R}_{i-1}
++(1+2\epsilon)\bar{R}_i
+-\epsilon \bar{R}_{i+1}
+=R_i.
+\tag{9}
+$$
+
+线端采用零梯度退化：
+
+$$
+(1+\epsilon)\bar{R}_0-\epsilon\bar{R}_1=R_0,
+\qquad
+-\epsilon\bar{R}_{N-2}+(1+\epsilon)\bar{R}_{N-1}=R_{N-1}.
+\tag{10}
+$$
+
+实现按 i→j→k 顺序作用于 \(\rho,\rho u,\rho v,\rho w,\rho E\) 五个残差分量。该操作只改变伪时间收敛路径，不改变稳态控制方程；因此仅在 `mode = "steady"` 的 3D 可压缩推进中启用，真实瞬态计算忽略该配置。
+
+TOML 配置：
+
+```toml
+[time]
+residual_smoothing = true
+residual_smoothing_epsilon = 0.5
+residual_smoothing_sweeps = 1
+```
+
+---
+
+## 7. 稳态 vs 瞬态
 
 | 实现 | 模式 | 说明 |
 |------|------|------|
@@ -146,7 +190,7 @@ $$
 
 ---
 
-## 7. 实现映射
+## 8. 实现映射
 
 | 式 / 步骤 | 代码位置 | 状态 |
 |-----------|----------|------|
@@ -155,10 +199,11 @@ $$
 | RK4 | `rk4_step` / `rk4_step_local` | **已实现** |
 | (6) LU-SGS | `lu_sgs_sweep_3d`, `lu_sgs_step_local` | **已实现** |
 | (7) GMRES | `solve_gmres_implicit_delta_3d`, `advance_gmres_step_3d` | **已实现** |
+| (8)–(10) 残差光顺 | `smooth_residual_3d` | **已实现** |
 
 ---
 
-## 7. 参考文献
+## 9. 参考文献
 
 1. Blazek, J. (2015). *Computational Fluid Dynamics: Principles and Applications* (3rd ed.). Elsevier. **§6.1.4** 最大时间步与粘性谱半径；**§9.1** 局部时间步；**§6.2** 隐式 LU-SGS 谱半径近似。
 2. Ferziger, J. H., Perić, M., & Street, R. L. (2020). *Computational Methods for Fluid Dynamics*. Springer. Ch. 6、Ch. 11.
@@ -166,7 +211,7 @@ $$
 
 ---
 
-## 8. 相关算例
+## 10. 相关算例
 
 - `tests/benchmarks/sod_1d/` — RK4 + Roe
 - `[time] scheme = "lu_sgs"` + `local_time_step = true` — 稳态圆柱等

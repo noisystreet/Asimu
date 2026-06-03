@@ -129,6 +129,8 @@ pub struct CaseTimeConfig {
     pub lusgs_omega: Option<Real>,
     /// `lu_sgs` 双扫（默认 false）；`true` 为实验性阶段 D 双扫。
     pub lusgs_sweep: Option<bool>,
+    /// 方向分裂隐式残差光顺（仅稳态 3D 伪时间）。
+    pub residual_smoothing: crate::solver::time::ResidualSmoothingConfig,
 }
 
 impl CaseTimeConfig {
@@ -144,6 +146,11 @@ impl CaseTimeConfig {
 
     pub fn resolved_lusgs_config(&self) -> Result<crate::solver::time::LuSgsConfig> {
         crate::solver::time::LuSgsConfig::parse(self.lusgs_omega, self.lusgs_sweep)
+    }
+
+    #[must_use]
+    pub const fn residual_smoothing_config(&self) -> crate::solver::time::ResidualSmoothingConfig {
+        self.residual_smoothing
     }
 }
 
@@ -162,6 +169,7 @@ impl Default for CaseTimeConfig {
             scheme: None,
             lusgs_omega: None,
             lusgs_sweep: None,
+            residual_smoothing: crate::solver::time::ResidualSmoothingConfig::disabled(),
         }
     }
 }
@@ -374,6 +382,9 @@ struct TimeToml {
     scheme: Option<String>,
     lusgs_omega: Option<Real>,
     lusgs_sweep: Option<bool>,
+    residual_smoothing: Option<bool>,
+    residual_smoothing_epsilon: Option<Real>,
+    residual_smoothing_sweeps: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -706,6 +717,11 @@ fn parse_time_config(raw: Option<&TimeToml>, has_sod: bool) -> Result<CaseTimeCo
     let lusgs_omega = raw.lusgs_omega;
     let lusgs_sweep = raw.lusgs_sweep;
     let _ = crate::solver::time::LuSgsConfig::parse(lusgs_omega, lusgs_sweep)?;
+    let residual_smoothing = crate::solver::time::ResidualSmoothingConfig::parse(
+        raw.residual_smoothing.unwrap_or(false),
+        raw.residual_smoothing_epsilon,
+        raw.residual_smoothing_sweeps,
+    )?;
     Ok(CaseTimeConfig {
         mode,
         dt: raw.dt,
@@ -719,6 +735,7 @@ fn parse_time_config(raw: Option<&TimeToml>, has_sod: bool) -> Result<CaseTimeCo
         scheme,
         lusgs_omega,
         lusgs_sweep,
+        residual_smoothing,
     })
 }
 
