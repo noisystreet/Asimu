@@ -16,6 +16,7 @@
 - TOML 出口边界：`supersonic = true` 现在正确启用零梯度超声速出口，且不再要求 `static_pressure`
 - LU-SGS 固定步长：`[time].dt > 0` 现在会覆盖 LU-SGS 的局部 CFL 步长，同时仍保留谱半径用于隐式分母
 - LU-SGS 默认值：`lusgs_sweep` 默认改为 `false`，对角隐式作为稳健默认路径；双扫需显式设为 `true`
+- SLAU2 无粘通量：修正右侧压力分裂、压力跳跃项符号，以及质量通量低马赫开关的速度幅值定义，保证均匀态退化为物理通量
 
 ### Added
 

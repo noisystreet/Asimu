@@ -111,6 +111,31 @@ $$
 
 配置：`RoeFluxConfig { entropy_fix: true, entropy_delta: Option<f64> }`。
 
+### 4.5 SLAU2 压力通量
+
+SLAU2 将 AUSM 型通量拆为质量通量上风项与压力项。压力面值采用左右压力分裂：
+
+$$
+\hat{p}
+= \bar{p}
+- \frac{\mathcal{P}_{+}(M_L)-\mathcal{P}_{-}(M_R)}{2}\Delta p
++ f(M)\left[\mathcal{P}_{+}(M_L)+\mathcal{P}_{-}(M_R)-1\right]\bar{p}
+\tag{8}
+$$
+
+其中 \(\bar{p}=(p_L+p_R)/2\)，\(\Delta p=p_R-p_L\)，
+\(\mathcal{P}_{-}(M)=\mathcal{P}_{+}(-M)\)。SLAU2 的低马赫修正使用多维速度幅值
+\(M=\min(1,\sqrt{(|\mathbf{u}_L|^2+|\mathbf{u}_R|^2)/2}/c)\)，本实现取 \(f(M)=M\)。
+质量通量中的压力扩散系数为：
+
+$$
+\xi=(1-M)^2
+\tag{9}
+$$
+
+实现：`slau2_flux`、`interface_pressure_slau2`、`mass_pressure_xi`。均匀左右态下，
+\(\mathcal{P}_{+}(M)+\mathcal{P}_{-}(M)=1\)，因此 SLAU2 退化为式 (2) 的物理通量。
+
 ---
 
 ## 5. 面通量管线
@@ -154,7 +179,8 @@ ConservedResidual  (= dU/dt)
 1. Roe, P. L. (1981). Approximate Riemann solvers, parameter vectors, and difference schemes. *Journal of Computational Physics*, 43(2), 357–372. DOI [10.1016/0021-9991(81)90128-5](https://doi.org/10.1016/0021-9991(81)90128-5).
 2. Harten, A. (1983). On the symmetric form of the Godunov-type schemes. *Journal of Computational Physics*, 49(3), 357–393.
 3. Toro, E. F. (2009). *Riemann Solvers and Numerical Methods for Fluid Dynamics* (3rd ed.). Springer. Ch. 10–11（Roe、熵修正）。
-4. 精确 Riemann 验证：`physics::riemann_exact`（Toro §4）；算例 `tests/benchmarks/sod_1d/`。
+4. Kitamura, K., & Shima, E. (2013). Towards shock-stable and accurate hypersonic heating computations: A new pressure flux for AUSM-family schemes. *Journal of Computational Physics*, 245, 62–83. DOI [10.1016/j.jcp.2013.02.046](https://doi.org/10.1016/j.jcp.2013.02.046).
+5. 精确 Riemann 验证：`physics::riemann_exact`（Toro §4）；算例 `tests/benchmarks/sod_1d/`。
 
 ---
 

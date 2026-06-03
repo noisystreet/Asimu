@@ -58,7 +58,7 @@ fn face_frame_from_conserved(
     let uy = cons.momentum[1] * inv_rho;
     let uz = cons.momentum[2] * inv_rho;
     let ke = 0.5 * rho * (ux * ux + uy * uy + uz * uz);
-    let pressure = ((gamma - 1.0) * (cons.total_energy - ke)).max(1.0e-6);
+    let pressure = (gamma - 1.0) * (cons.total_energy - ke);
     Ok(FaceFrameState {
         rho,
         un: ux * normal.x + uy * normal.y + uz * normal.z,
@@ -81,6 +81,11 @@ fn sound_speed(rho: Real, pressure: Real, gamma: Real) -> Real {
     (gamma * pressure / rho).sqrt().max(1.0e-12)
 }
 
+fn speed_magnitude(state: &FaceFrameState) -> Real {
+    let speed_sq = state.un * state.un + state.ut[0] * state.ut[0] + state.ut[1] * state.ut[1];
+    speed_sq.sqrt()
+}
+
 fn specific_enthalpy(state: &FaceFrameState, gamma: Real) -> Real {
     let speed_sq = state.un * state.un + state.ut[0] * state.ut[0] + state.ut[1] * state.ut[1];
     gamma / (gamma - 1.0) * state.p / state.rho + 0.5 * speed_sq
@@ -91,9 +96,14 @@ fn supersonic_alpha(mach: Real) -> Real {
     if mach.abs() >= 1.0 { 0.0 } else { 1.0 }
 }
 
-/// SLAU 压力因子 \(\beta(M)\)。
-fn pressure_beta(mach: Real, alpha: Real) -> Real {
+/// SLAU 压力正向分裂因子 \(\mathcal{P}_{+}(M)\)。
+fn pressure_beta_plus(mach: Real, alpha: Real) -> Real {
     (1.0 - alpha) * 0.5 * (1.0 + mach.signum()) + alpha * 0.25 * (2.0 - mach) * (mach + 1.0).powi(2)
+}
+
+/// SLAU 压力负向分裂因子 \(\mathcal{P}_{-}(M)=\mathcal{P}_{+}(-M)\)。
+fn pressure_beta_minus(mach: Real, alpha: Real) -> Real {
+    pressure_beta_plus(-mach, alpha)
 }
 
 /// SLAU 质量通量中的 \(g(M_L,M_R)\in[0,1]\)。
@@ -103,18 +113,18 @@ fn mass_coupling_g(ml: Real, mr: Real) -> Real {
     -left * right
 }
 
-/// SLAU 质量通量压力扩散系数 \(\xi=(1-M_t)^2\)，\(M_t=\min(1,|u_t|/c)\)。
-fn mass_pressure_xi(ut_mag_l: Real, ut_mag_r: Real, c: Real) -> Real {
-    let vt = (0.5 * (ut_mag_l * ut_mag_l + ut_mag_r * ut_mag_r)).sqrt();
-    let m_cap = (vt / c).min(1.0);
+/// SLAU 质量通量压力扩散系数 \(\xi=(1-M)^2\)，\(M\) 使用界面速度幅值。
+fn mass_pressure_xi(speed_l: Real, speed_r: Real, c: Real) -> Real {
+    let speed = (0.5 * (speed_l * speed_l + speed_r * speed_r)).sqrt();
+    let m_cap = (speed / c).min(1.0);
     let one_minus = 1.0 - m_cap;
     one_minus * one_minus
 }
 
-/// SLAU2 压力第三耗散项系数：\(M_n(2-M_n)\)，\(M_n=\min(1,\tfrac12(|M_L|+|M_R|))\)（高马赫耗散 \(\propto M\)）。
-fn slau2_pressure_dissipation(ml: Real, mr: Real) -> Real {
-    let m_n = (0.5 * (ml.abs() + mr.abs())).min(1.0);
-    m_n * (2.0 - m_n)
+/// SLAU2 压力第三项系数 \(f(M)=M\)，其中 \(M\) 采用多维速度幅值。
+fn slau2_pressure_dissipation(speed_l: Real, speed_r: Real, c: Real) -> Real {
+    let speed = (0.5 * (speed_l * speed_l + speed_r * speed_r)).sqrt();
+    (speed / c).min(1.0)
 }
 
 fn interface_pressure_slau2(left: &FaceFrameState, right: &FaceFrameState, c: Real) -> Real {
@@ -122,11 +132,14 @@ fn interface_pressure_slau2(left: &FaceFrameState, right: &FaceFrameState, c: Re
     let mr = right.un / c;
     let alpha_l = supersonic_alpha(ml);
     let alpha_r = supersonic_alpha(mr);
-    let beta_l = pressure_beta(ml, alpha_l);
-    let beta_r = pressure_beta(mr, alpha_r);
+    let p_plus_l = pressure_beta_plus(ml, alpha_l);
+    let p_minus_r = pressure_beta_minus(mr, alpha_r);
     let dp = right.p - left.p;
-    let diss = slau2_pressure_dissipation(ml, mr) * (beta_l + beta_r - 1.0) * (left.p + right.p);
-    0.5 * (left.p + right.p + (beta_l - beta_r) * dp + diss)
+    let p_bar = 0.5 * (left.p + right.p);
+    let diss = slau2_pressure_dissipation(speed_magnitude(left), speed_magnitude(right), c)
+        * (p_plus_l + p_minus_r - 1.0)
+        * p_bar;
+    p_bar - 0.5 * (p_plus_l - p_minus_r) * dp + diss
 }
 
 fn slau2_face_flux(
@@ -144,9 +157,7 @@ fn slau2_face_flux(
     let vn_abs = (left.rho * left.un.abs() + right.rho * right.un.abs()) / (left.rho + right.rho);
     let vn_abs_l = (1.0 - g) * vn_abs + g * left.un.abs();
     let vn_abs_r = (1.0 - g) * vn_abs + g * right.un.abs();
-    let ut_l = (left.ut[0] * left.ut[0] + left.ut[1] * left.ut[1]).sqrt();
-    let ut_r = (right.ut[0] * right.ut[0] + right.ut[1] * right.ut[1]).sqrt();
-    let xi = mass_pressure_xi(ut_l, ut_r, c);
+    let xi = mass_pressure_xi(speed_magnitude(left), speed_magnitude(right), c);
     let mass =
         0.5 * (left.rho * (left.un + vn_abs_l) + right.rho * (right.un - vn_abs_r) - xi * dp / c);
     let p_face = interface_pressure_slau2(left, right, c);
@@ -190,18 +201,22 @@ mod tests {
     use crate::discretization::inviscid::physical_inviscid_flux;
 
     #[test]
-    fn uniform_supersonic_mass_flux_matches_physical() {
+    fn uniform_states_match_physical_flux() {
         let eos = IdealGasEoS::new(1.4, 287.0).expect("eos");
-        let prim = eos
-            .freestream_primitive(2.0, 1.0e5, 300.0, [1.0, 0.0, 0.0])
-            .expect("prim");
-        let cons = ConservedState::from_primitive(&eos, &prim).expect("cons");
         let n = Vector3::new(1.0, 0.0, 0.0);
-        let slau2 = slau2_flux(&cons, &cons, n, &eos).expect("slau2");
-        let phys = physical_inviscid_flux(&cons, &prim, n);
-        assert!(approx_eq(slau2.mass, phys.mass, 1.0e-8));
-        assert!(slau2.mass > 0.0);
-        assert!(slau2.energy.is_finite());
+        for mach in [0.0, 0.5, 2.0] {
+            let prim = eos
+                .freestream_primitive(mach, 1.0e5, 300.0, [1.0, 0.0, 0.0])
+                .expect("prim");
+            let cons = ConservedState::from_primitive(&eos, &prim).expect("cons");
+            let slau2 = slau2_flux(&cons, &cons, n, &eos).expect("slau2");
+            let phys = physical_inviscid_flux(&cons, &prim, n);
+            assert!(approx_eq(slau2.mass, phys.mass, 1.0e-8));
+            assert!(approx_eq(slau2.momentum[0], phys.momentum[0], 1.0e-8));
+            assert!(approx_eq(slau2.momentum[1], phys.momentum[1], 1.0e-8));
+            assert!(approx_eq(slau2.momentum[2], phys.momentum[2], 1.0e-8));
+            assert!(approx_eq(slau2.energy, phys.energy, 1.0e-6));
+        }
     }
 
     #[test]
