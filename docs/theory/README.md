@@ -28,7 +28,7 @@
 | [nondimensional.md](nondimensional.md) | `physics` / `io` / BC | v1.x | **已实现** | Toro (2009) Ch. 1；Anderson (1995) |
 | [structured_gradients.md](structured_gradients.md) | `discretization/gradient` | v1.x | **已实现** | Vinokur (1989)；Ferziger et al. Ch. 8 |
 | [curvilinear_metrics.md](curvilinear_metrics.md) | `mesh/metrics` | v1.x | **规划** | Vinokur (1989)；CFL3D TM-2010-216758 |
-| *(待建)* `linear_cg.md` | `linalg` | v0.2 | 规划 | Saad (2003) Ch. 6 |
+| [linear_gmres.md](linear_gmres.md) | `linalg` | v1.x | **已实现（GMRES + ILU(0)/LU-SGS 对角预条件）** | Saad (2003) Ch. 6、Ch. 10 |
 | *(待建)* `incompressible_simple.md` | `solver` | v0.3 | 规划 | Patankar (1980) Ch. 6 |
 | *(待建)* `compressible_ns.md` | `discretization` / `physics` | v1.x | 部分（Euler 无粘见上表） | [adr/0009](../adr/0009-compressible-navier-stokes.md)；Toro (2009) |
 

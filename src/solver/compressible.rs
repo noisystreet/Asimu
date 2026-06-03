@@ -5,6 +5,8 @@
 
 #[path = "compressible_rhs.rs"]
 mod compressible_rhs;
+#[path = "gmres_implicit_3d.rs"]
+mod gmres_implicit_3d;
 #[path = "lu_sgs_sweep_3d.rs"]
 mod lu_sgs_sweep_3d;
 
@@ -12,6 +14,7 @@ use crate::solver::spectral_radius::{
     SpectralRadius3dParams, cell_local_dt_spectral, cell_spectral_radius_3d,
 };
 use compressible_rhs::EvaluateRhs3d;
+pub use gmres_implicit_3d::{GmresImplicitConfig, GmresImplicitDelta};
 use lu_sgs_sweep_3d::{LuSgsSweep3dParams, lu_sgs_sweep_3d};
 
 use crate::boundary::BoundarySet;

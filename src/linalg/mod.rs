@@ -1,9 +1,29 @@
-//! 稀疏线性系统（v0.2：三对角 + Thomas 求解）。
+//! 稀疏线性系统与 Krylov 迭代求解器。
 //!
-//! 理论：[`docs/theory/linear_cg.md`](../../docs/theory/linear_cg.md)（规划）
+//! 理论：[`docs/theory/linear_gmres.md`](../../docs/theory/linear_gmres.md)。
+
+mod gmres;
+mod preconditioner;
+mod sparse;
 
 use crate::core::Real;
 use crate::error::{AsimuError, Result};
+
+pub use gmres::{GmresConfig, GmresReport, GmresSolver};
+pub use preconditioner::{IdentityPreconditioner, LusgsDiagonalPreconditioner};
+pub use sparse::{CsrMatrix, Ilu0Preconditioner};
+
+/// 线性算子 \(y=A x\)。允许矩阵无关实现。
+pub trait LinearOperator {
+    fn dimension(&self) -> usize;
+    fn apply(&mut self, x: &[Real], y: &mut [Real]) -> Result<()>;
+}
+
+/// 左预条件器 \(z=M^{-1}r\)。
+pub trait Preconditioner {
+    fn dimension(&self) -> usize;
+    fn apply(&self, rhs: &[Real], out: &mut [Real]) -> Result<()>;
+}
 
 /// 三对角线性系统 \(A x = b\)（行 `i` 与 `i±1` 耦合）。
 #[derive(Debug, Clone, PartialEq)]
@@ -142,6 +162,39 @@ impl LinearSystem {
         }
         Ok(x)
     }
+}
+
+impl LinearOperator for LinearSystem {
+    fn dimension(&self) -> usize {
+        self.len()
+    }
+
+    fn apply(&mut self, x: &[Real], y: &mut [Real]) -> Result<()> {
+        let n = self.len();
+        ensure_vector_len(x, n, "tridiagonal input")?;
+        ensure_vector_len(y, n, "tridiagonal output")?;
+        for i in 0..n {
+            let mut value = self.diag[i] * x[i];
+            if i > 0 {
+                value += self.lower[i] * x[i - 1];
+            }
+            if i + 1 < n {
+                value += self.upper[i] * x[i + 1];
+            }
+            y[i] = value;
+        }
+        Ok(())
+    }
+}
+
+pub(crate) fn ensure_vector_len(values: &[Real], expected: usize, label: &str) -> Result<()> {
+    if values.len() != expected {
+        return Err(AsimuError::Linalg(format!(
+            "{label} 长度 {} 与期望 {expected} 不一致",
+            values.len()
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

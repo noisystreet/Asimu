@@ -38,7 +38,11 @@ pub mod prelude {
         ScalarField, ScalarInitial,
     };
     pub use crate::io::{CaseMesh, CaseSpec, load_case, load_conserved_fields};
-    pub use crate::linalg::LinearSystem;
+    pub use crate::linalg::{
+        CsrMatrix, GmresConfig, GmresReport, GmresSolver, IdentityPreconditioner,
+        Ilu0Preconditioner, LinearOperator, LinearSystem, LusgsDiagonalPreconditioner,
+        Preconditioner,
+    };
     pub use crate::mesh::{
         BoundaryMesh, BoundaryMesh3d, Mesh, StructuredMesh, StructuredMesh1d, StructuredMesh2d,
         StructuredMesh3d,

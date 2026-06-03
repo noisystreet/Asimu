@@ -189,6 +189,12 @@ name=<mesh_name>;cells=<count>
 | `LinearSystem` | 三对角 `rhs` / `diag` / `lower` / `upper` |
 | `LinearSystem::zeros(n)` | 构造零系统 |
 | `LinearSystem::solve_tridiagonal()` | Thomas 算法求解 |
+| `LinearOperator` | 矩阵无关线性算子接口 `y = A x` |
+| `Preconditioner` | 左预条件器接口 `z = M^{-1}r` |
+| `GmresSolver` / `GmresConfig` | restarted GMRES Krylov 求解器 |
+| `CsrMatrix` | CSR 显式稀疏矩阵，同时实现 `LinearOperator` |
+| `Ilu0Preconditioner` | CSR 矩阵的 ILU(0) 预条件器 |
+| `LusgsDiagonalPreconditioner` | 由 `dt` / `sigma` 构造的 LU-SGS 对角预条件器 |
 
 ### `asimu::discretization`
 
@@ -208,6 +214,7 @@ name=<mesh_name>;cells=<count>
 | `TimeStepInfo` | 单步推进摘要 |
 | `TimeIntegrator` | 时间推进 trait |
 | `SteadyStateIntegrator` | v0.2 稳态伪时间 |
+| `GmresImplicitConfig` / `GmresImplicitDelta` | 3D 可压缩 matrix-free 隐式 GMRES 更新入口 |
 
 理论参考：[docs/theory/fvm_diffusion.md](theory/fvm_diffusion.md)。
 

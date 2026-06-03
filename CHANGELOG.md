@@ -20,6 +20,7 @@
 
 ### Added
 
+- 线性代数：矩阵无关 restarted GMRES、CSR 矩阵、ILU(0) 预条件器与 LU-SGS 对角预条件器
 - 可压缩流无量纲化：`[nondimensional]`、`FreestreamContext` 单一来流入口、理论页 [docs/theory/nondimensional.md](docs/theory/nondimensional.md)
 - CGNS 结构化 zone 读入 + VTS/VTM 导出：`io::load_cgns_zone` / `export_cgns_to_vtm`（features `io-cgns-vts`）；ADR 0008；链接系统 `libcgns-dev`
 - VTK VTS **二进制 appended** 读入/写出：`io::load_vts` / `write_vts`（feature `io-vtk`）；支持 zlib + 3D；ADR 0007
