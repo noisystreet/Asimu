@@ -46,9 +46,9 @@ pub use reconstruction::{
     reconstruct_face_primitives, reconstruct_first_order,
 };
 pub use residual::{
-    BoundaryGhosts1d, InviscidBoundary1d, ViscousAssembly3dInput, ViscousAssembly3dParams,
-    accumulate_boundary_face, accumulate_interior_face, assemble_inviscid_residual_1d,
-    assemble_inviscid_residual_3d, assemble_viscous_residual_3d,
+    BoundaryGhosts1d, BoundaryInviscidFluxInput, InviscidBoundary1d, ViscousAssembly3dInput,
+    ViscousAssembly3dParams, accumulate_boundary_face, accumulate_interior_face,
+    assemble_inviscid_residual_1d, assemble_inviscid_residual_3d, assemble_viscous_residual_3d,
     compute_gradients_and_assemble_viscous_3d, zero_gradient_ghosts_1d,
 };
 pub use roe::{RoeFluxConfig, roe_flux};

@@ -10,10 +10,8 @@ use crate::field::{ConservedFields, ConservedResidual, PrimitiveFields};
 use crate::mesh::{BoundaryMesh3d, StructuredMesh3d};
 use crate::physics::IdealGasEoS;
 
-use super::muscl_stencil_3d::{
-    BoundaryFaceFlux3d, InteriorFaceFlux3d, flux_at_boundary_face, flux_at_i_face, flux_at_j_face,
-    flux_at_k_face,
-};
+use super::face_flux_3d::{BoundaryInviscidFluxInput, inviscid_boundary_face_flux};
+use super::muscl_stencil_3d::{InteriorFaceFlux3d, flux_at_i_face, flux_at_j_face, flux_at_k_face};
 use super::{accumulate_boundary_face, accumulate_interior_face, is_degenerate_volume};
 
 /// 3D 无粘残差装配上下文（控制参数个数）。
@@ -215,13 +213,6 @@ fn assemble_boundary_faces_3d(
 ) -> Result<()> {
     let mesh = ctx.structured;
     let params = ctx.params;
-    let flux_ctx = BoundaryFaceFlux3d {
-        primitives: params.primitives,
-        mesh,
-        eos: params.eos,
-        config: params.config,
-        min_pressure: params.min_pressure,
-    };
     for patch in params.boundaries.patches() {
         for &face in &patch.face_ids {
             let owner_id = ctx.mesh.face_owner(face)?;
@@ -230,7 +221,16 @@ fn assemble_boundary_faces_3d(
             let ghost = params.ghosts.get_face(face).ok_or_else(|| {
                 AsimuError::Boundary(format!("边界面 FaceId({}) 缺少 ghost 状态", face.index()))
             })?;
-            let flux = flux_at_boundary_face(&flux_ctx, face, ghost.conserved, geom.normal)?;
+            let flux = inviscid_boundary_face_flux(BoundaryInviscidFluxInput {
+                mesh: ctx.mesh,
+                structured: mesh,
+                primitives: params.primitives,
+                eos: params.eos,
+                config: params.config,
+                min_pressure: params.min_pressure,
+                face,
+                exterior: ghost.conserved,
+            })?;
             let (logical, local) = crate::mesh::LogicalFace3d::decode(face)?;
             let (i, j, k) = mesh.face_ij(logical, local)?;
             let owner_volume = mesh.cell_metric(i, j, k).volume;

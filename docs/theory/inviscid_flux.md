@@ -182,7 +182,8 @@ InviscidFlux
 ConservedResidual  (= dU/dt)
 ```
 
-入口函数：`face_inviscid_flux`（`FaceFluxInput` + `InviscidFluxConfig`）。
+内部面入口函数：`face_inviscid_flux`（`FaceFluxInput` + `InviscidFluxConfig`）。边界面入口为
+`inviscid_boundary_face_flux`（`BoundaryInviscidFluxInput`），其中面外侧状态由边界模型给出；特征 farfield/inlet/outlet 见 [boundary_conditions.md](boundary_conditions.md)。
 
 ---
 
@@ -199,6 +200,7 @@ ConservedResidual  (= dU/dt)
 | SLAU2（Kitamura & Shima 2013） | `slau2_flux` | **已实现** |
 | Van Leer / Hanel FVS | `van_leer_flux` / `hanel_van_leer_flux` | **已实现** |
 | 面 dispatch | `face_inviscid_flux` | **已实现** |
+| 边界面通量 | `inviscid_boundary_face_flux` | **已实现** |
 | (3) 1D/3D 装配 | `assemble_inviscid_residual_1d` / `_3d` | **已实现** |
 | AUSM+ / SLAU | — | **规划**（SLAU2 已提供） |
 

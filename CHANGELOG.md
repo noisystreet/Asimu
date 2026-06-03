@@ -18,9 +18,11 @@
 - LU-SGS 默认值：`lusgs_sweep` 默认改为 `false`，对角隐式作为稳健默认路径；双扫需显式设为 `true`
 - SLAU2 无粘通量：修正右侧压力分裂、压力跳跃项符号，以及质量通量低马赫开关的速度幅值定义，保证均匀态退化为物理通量
 - Van Leer 无粘通量：修正亚音速 FVS 质量/动量/能量分裂公式；MUSCL `van_leer` 限制器在线性区恢复完整斜率
+- 可压缩 farfield/inlet/outlet 边界：改用法向特征关系生成边界外侧状态，减少简单 ghost 外推的反射与过约束
 
 ### Added
 
+- 可压缩 3D 边界面无粘通量接口：`BoundaryInviscidFluxInput` / `inviscid_boundary_face_flux`
 - 可压缩 3D 时间推进：`time.scheme = "gmres"` 现在启用 matrix-free GMRES 隐式伪时间步，使用 LU-SGS 对角预条件器与正性线搜索
 - 线性代数：矩阵无关 restarted GMRES、CSR 矩阵、ILU(0) 预条件器与 LU-SGS 对角预条件器
 - 可压缩流无量纲化：`[nondimensional]`、`FreestreamContext` 单一来流入口、理论页 [docs/theory/nondimensional.md](docs/theory/nondimensional.md)

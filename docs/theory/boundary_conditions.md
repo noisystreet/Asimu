@@ -1,6 +1,6 @@
-# 边界条件（v0.2）
+# 边界条件
 
-本文描述 asimu v0.2 标量扩散问题的边界条件数据模型与数值施加，架构对照 CFL3D 的 `bc.F` + `bcXXXX.F` 分层。
+本文描述 asimu 标量扩散与可压缩流边界条件的数据模型与数值施加，架构对照 CFL3D 的 `bc.F` + `bcXXXX.F` 分层。
 
 ---
 
@@ -18,7 +18,7 @@
 
 ---
 
-## 2. 边界类型（v0.2）
+## 2. 标量扩散边界类型
 
 ### 2.1 Dirichlet
 
@@ -50,7 +50,71 @@
 
 ---
 
-## 3. 施加顺序
+## 3. 可压缩边界通量
+
+3D 可压缩无粘残差在边界面使用显式边界通量接口：
+
+```text
+owner primitive + boundary exterior state
+    ↓ reconstruct_face_primitives
+InterfacePrimitiveStates
+    ↓ face_inviscid_flux
+F_boundary
+```
+
+`BoundaryInviscidFluxInput` 中的 `exterior` 是边界模型给出的面外侧状态。它可以由传统 ghost cell、特征边界条件或后续边界 Riemann 模型生成；残差装配只消费边界面通量，不依赖边界模型内部实现。
+
+### 3.1 Farfield 特征状态
+
+令面法向指向域外，\(u_n=\mathbf{u}\cdot\mathbf{n}\)，声速 \(a=\sqrt{\gamma p/\rho}\)。亚声速 farfield 使用一维 Riemann 不变量：
+
+\[
+R^+ = u_{n,o} + \frac{2a_o}{\gamma-1}, \qquad
+R^- = u_{n,\infty} - \frac{2a_\infty}{\gamma-1}
+\tag{1}
+\]
+
+\[
+u_n = \frac{R^+ + R^-}{2}, \qquad
+a = \frac{\gamma-1}{4}(R^+ - R^-)
+\tag{2}
+\]
+
+若 \(u_n<0\)（边界入流），熵与切向速度取远场；若 \(u_n\ge0\)（边界出流），熵与切向速度取内侧 owner。超声速入流直接使用远场，超声速出流直接外推 owner。
+
+### 3.2 Inlet / Outlet 特征状态
+
+亚声速入口给定总压 \(p_0\)、总温 \(T_0\) 与流向 \(\mathbf{d}\)，保留内侧出射特征 \(R^+\)。入口马赫数 \(M\in[0,1)\) 由下式求解：
+
+\[
+R^+ =
+\sqrt{\frac{\gamma R T_0}{1+\frac{\gamma-1}{2}M^2}}
+\left(\frac{2}{\gamma-1}+(\mathbf{d}\cdot\mathbf{n})M\right)
+\tag{3}
+\]
+
+随后用等熵关系恢复静温和静压：
+
+\[
+T=\frac{T_0}{1+\frac{\gamma-1}{2}M^2}, \qquad
+p=p_0\left(\frac{T}{T_0}\right)^{\gamma/(\gamma-1)}
+\tag{4}
+\]
+
+亚声速出口给定静压 \(p_b\)，保留 owner 的熵、切向速度与出射特征 \(R^+\)，由 \(p_b/\rho^\gamma=p_o/\rho_o^\gamma\) 恢复密度和声速，再用
+
+\[
+u_n = R^+ - \frac{2a}{\gamma-1}
+\tag{5}
+\]
+
+恢复法向速度。超声速入口/出口分别退化为全指定来流/零梯度外推。
+
+实现：`farfield_ghost`、`inlet_ghost`、`outlet_ghost` 生成边界外侧状态；`inviscid_boundary_face_flux` 和 `BoundaryInviscidFluxInput` 负责边界面通量。
+
+---
+
+## 4. 施加顺序
 
 与 CFL3D `bc.F` 一致，按 `BoundarySet` 中 patch **声明顺序**遍历：
 
@@ -62,7 +126,7 @@
 
 ---
 
-## 4. 1D 逻辑边界名
+## 5. 1D 逻辑边界名
 
 | TOML 键 | 面 | owner 单元 |
 |---------|-----|-----------|
@@ -73,7 +137,7 @@
 
 ---
 
-## 5. 验证
+## 6. 验证
 
 `tests/benchmarks/1d_diffusion_analytical`：\(D=1\)，\(\phi(0)=0\)，\(\phi(L)=1\)，解析解 \(\phi(x)=x/L\)。
 
@@ -81,7 +145,19 @@
 
 ---
 
-## 6. 后续（v0.3+）
+可压缩边界单元测试：`discretization::bc_compressible::tests::*`。
+
+---
+
+## 7. 参考文献
+
+1. Hirsch, C. (2007). *Numerical Computation of Internal and External Flows*, 2nd ed. Ch. 19（特征边界条件）。
+2. Blazek, J. (2015). *Computational Fluid Dynamics: Principles and Applications*, 3rd ed. §8（Euler / Navier-Stokes 边界条件）。
+3. Thompson, K. W. (1987). Time dependent boundary conditions for hyperbolic systems. *Journal of Computational Physics*, 68(1), 1–24.
+
+---
+
+## 8. 后续
 
 - 2D 逻辑名 `bottom` / `top`
 - CGNS `ZoneBC` → `BoundaryPatch`
