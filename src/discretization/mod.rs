@@ -21,6 +21,9 @@ pub mod van_leer;
 pub mod viscous;
 pub mod wall_thermal;
 
+#[cfg(test)]
+pub(crate) mod freestream_pair;
+
 use crate::core::Real;
 use crate::error::Result;
 use crate::field::ScalarField;
@@ -35,7 +38,7 @@ pub use bc_compressible::{
 pub use diffusion_1d::assemble_diffusion_1d;
 pub use face_flux::{FaceFluxInput, face_inviscid_flux};
 pub use flux_config::{FluxScheme, InviscidFluxConfig, ReconstructionKind, SlopeLimiter};
-pub use gradient::{GradientFields, VelocityGradient, compute_green_gauss_gradients_3d};
+pub use gradient::{GradientFields, VelocityGradient, compute_structured_gradients_3d};
 pub use hllc::hllc_flux;
 pub use inviscid::{InviscidFlux, physical_inviscid_flux};
 pub use reconstruction::{

@@ -1,10 +1,14 @@
 //! 物性参数与状态方程。
 
 mod eos;
+mod freestream;
+mod reference;
 mod riemann_exact;
 mod viscosity;
 
 pub use eos::{ConservedState, FreestreamParams, IdealGasEoS, PrimitiveState};
+pub use freestream::{FreestreamContext, FreestreamMode};
+pub use reference::{REFERENCE_LENGTH, ReferenceScales};
 pub use riemann_exact::{
     RiemannPrimitive1d, RiemannProblem1d, SodProblem, sample_exact, sod_sample,
     solve_star_pressure_velocity,

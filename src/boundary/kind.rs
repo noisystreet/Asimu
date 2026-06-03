@@ -134,10 +134,18 @@ impl BoundaryKind {
                     mach: fields.mach.unwrap_or(0.0),
                 })
             }
-            "outlet" => fields.static_pressure.map(|static_pressure| Self::Outlet {
-                static_pressure,
-                supersonic: fields.mach.is_some_and(|m| m >= 1.0),
-            }),
+            "outlet" => {
+                let supersonic = fields
+                    .supersonic
+                    .unwrap_or_else(|| fields.mach.is_some_and(|m| m >= 1.0));
+                let static_pressure = fields
+                    .static_pressure
+                    .or_else(|| supersonic.then_some(101_325.0))?;
+                Some(Self::Outlet {
+                    static_pressure,
+                    supersonic,
+                })
+            }
             "wall" => {
                 let no_slip = fields.no_slip.unwrap_or(true);
                 let heat = match fields.heat.unwrap_or("adiabatic") {
@@ -394,5 +402,32 @@ mod tests {
                 }
             ));
         }
+    }
+
+    #[test]
+    fn outlet_toml_supersonic_flag_sets_zero_gradient_mode() {
+        let fields = BoundaryTomlFields {
+            kind: "outlet",
+            supersonic: Some(true),
+            ..BoundaryTomlFields::default()
+        };
+        let kind = BoundaryKind::from_toml(&fields).expect("outlet");
+        assert!(matches!(
+            kind,
+            BoundaryKind::Outlet {
+                supersonic: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn subsonic_outlet_toml_still_requires_static_pressure() {
+        let fields = BoundaryTomlFields {
+            kind: "outlet",
+            supersonic: Some(false),
+            ..BoundaryTomlFields::default()
+        };
+        assert!(BoundaryKind::from_toml(&fields).is_none());
     }
 }

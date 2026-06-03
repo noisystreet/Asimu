@@ -315,6 +315,7 @@ mod tests {
             ghosts: &mut ghosts,
             eos: &eos,
             freestream: &fs,
+            reference: case.reference.as_ref(),
             primitive_scratch: crate::field::PrimitiveFields::zeros(mesh.num_cells())
                 .expect("primitives"),
             gradient_scratch: crate::discretization::GradientFields::zeros(mesh.num_cells())
@@ -435,6 +436,7 @@ mod tests {
             ghosts: &mut ghosts,
             eos: &eos,
             freestream: &fs,
+            reference: case.reference.as_ref(),
             primitive_scratch: crate::field::PrimitiveFields::zeros(mesh.num_cells())
                 .expect("primitives"),
             gradient_scratch: crate::discretization::GradientFields::zeros(mesh.num_cells())

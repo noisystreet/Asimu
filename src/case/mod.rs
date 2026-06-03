@@ -198,12 +198,13 @@ mod tests {
         eprintln!("zero_volume_cells cartesian={zero_vol_cart} curvilinear={zero_vol_curv}");
         assert_eq!(zero_vol_curv, 0, "贴体 metric 不应产生零体积单元");
         let mut ghosts = BoundaryGhostBuffer::new();
+        let fs_ctx = crate::physics::FreestreamContext::new(&eos, case.reference.as_ref(), None);
         apply_compressible_boundary_conditions(
             mesh,
             &case.boundary,
             &fields,
             &mut ghosts,
-            &eos,
+            &fs_ctx,
             &fs,
             None,
         )
@@ -267,6 +268,7 @@ mod tests {
             ghosts: &mut ghosts,
             eos: &eos,
             freestream: &fs,
+            reference: case.reference.as_ref(),
             primitive_scratch: crate::field::PrimitiveFields::zeros(mesh.num_cells())
                 .expect("primitives"),
             gradient_scratch: crate::discretization::GradientFields::zeros(mesh.num_cells())

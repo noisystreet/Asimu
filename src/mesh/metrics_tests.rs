@@ -86,3 +86,27 @@ fn scale_clears_cache_until_rebuild() {
         1.0e-10
     ));
 }
+
+#[test]
+fn uniform_box_imin_spacing_uses_geometric_distance() {
+    use crate::mesh::BoundaryMesh;
+    use crate::mesh::BoundaryMesh3d;
+
+    let mut mesh = StructuredMesh3d::uniform_box("box", 3, 3, 3, 1.0, 1.0, 1.0).expect("mesh");
+    mesh.set_metric_mode(MeshMetricMode::Curvilinear);
+    let face_id = mesh.resolve_logical_boundary("i_min").expect("faces")[0];
+    let geom = mesh.face_geometry_3d(face_id).expect("geom");
+    let expected = mesh.cell_dx_at(0, 0, 0) * 0.5;
+    assert!(approx_eq(geom.spacing, expected, 1.0e-12));
+    assert!(approx_eq(geom.center.x, 0.0, 1.0e-12));
+}
+
+#[test]
+fn uniform_box_i_face_center_lies_on_face_plane() {
+    let mut mesh = StructuredMesh3d::uniform_box("box", 3, 3, 3, 1.0, 1.0, 1.0).expect("mesh");
+    mesh.set_metric_mode(MeshMetricMode::Curvilinear);
+    let face = mesh.i_face_metric(0, 1, 1);
+    assert!(approx_eq(face.center.x, 1.0 / 3.0, 1.0e-12));
+    assert!(approx_eq(face.center.y, 0.5, 1.0e-12));
+    assert!(approx_eq(face.center.z, 0.5, 1.0e-12));
+}

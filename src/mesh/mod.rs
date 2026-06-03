@@ -17,7 +17,7 @@ pub use diagnostics::{
     CoordRange, MeshBounds, MeshDiagnostics, SpacingStats, mesh1d_diagnostics, mesh2d_diagnostics,
     mesh3d_diagnostics, structured_mesh_diagnostics,
 };
-pub use metrics::{CellMetric, FaceMetric, MeshMetricMode, MetricCache3d};
+pub use metrics::{CellMetric, FaceMetric, MeshMetricMode, MetricCache3d, boundary_cell_spacing};
 pub use structured::{StructuredMesh, StructuredMesh2d, StructuredMesh3d};
 pub use structured_1d::StructuredMesh1d;
 pub use structured_3d_boundary::{BoundaryMesh3d, FaceGeometry3d, LogicalFace3d};

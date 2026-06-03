@@ -50,7 +50,8 @@ pub fn viscous_face_flux(
     ViscousFlux {
         mass: 0.0,
         momentum: tau_dot_n,
-        energy: viscous_work + heat_flux,
+        // 装配用 -F·A/V → dU/dt = +1/V·Σ(λ∇T·n + τ·u·n)·A，即 F = -(λ∇T·n + τ·u·n)
+        energy: -(heat_flux + viscous_work),
     }
 }
 
@@ -61,16 +62,7 @@ pub fn face_transport_coefficients(
     viscous: &ViscousPhysicsConfig,
     eos: &IdealGasEoS,
 ) -> crate::error::Result<(Real, Real)> {
-    let mu_l = viscous.model.dynamic_viscosity(t_l)?;
-    let mu_r = viscous.model.dynamic_viscosity(t_r)?;
-    let mu = 0.5 * (mu_l + mu_r);
-    let lambda_l = viscous
-        .model
-        .thermal_conductivity(t_l, eos, viscous.prandtl)?;
-    let lambda_r = viscous
-        .model
-        .thermal_conductivity(t_r, eos, viscous.prandtl)?;
-    Ok((mu, 0.5 * (lambda_l + lambda_r)))
+    viscous.face_transport_coefficients(t_l, t_r, eos)
 }
 
 /// 面心梯度平均（壁面传导与内面共用）。

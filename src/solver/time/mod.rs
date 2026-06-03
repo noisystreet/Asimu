@@ -59,15 +59,19 @@ impl CflSchedule {
     }
 
     /// 第 `step` 步（1…`max_steps`）使用的 CFL。
+    ///
+    /// `ramp_steps` 为爬升区间长度（第 1 步…`ramp_steps`），**不**因 `max_steps` 更短而压缩；
+    /// 若 `max_steps < ramp_steps`，末步 CFL 可能尚未达到 `max`。
     #[must_use]
     pub fn at_step(&self, step: u64, max_steps: u64) -> Real {
         if (self.max - self.initial).abs() <= Real::EPSILON {
             return self.initial;
         }
-        let ramp_end = self
-            .ramp_steps
-            .unwrap_or(max_steps)
-            .clamp(1, max_steps.max(1));
+        // `ramp_steps = 0`：不爬升，恒用 `initial`（避免 clamp 到 1 后在第 1 步跳到 `max`）。
+        if self.ramp_steps == Some(0) {
+            return self.initial;
+        }
+        let ramp_end = self.ramp_steps.unwrap_or(max_steps).max(1);
         let step = step.max(1);
         if step >= ramp_end {
             return self.max;
@@ -197,6 +201,31 @@ mod tests {
         let sched = CflSchedule::constant(0.4);
         assert!((sched.at_step(1, 100) - 0.4).abs() < 1.0e-12);
         assert!((sched.at_step(100, 100) - 0.4).abs() < 1.0e-12);
+    }
+
+    #[test]
+    fn cfl_schedule_zero_ramp_steps_holds_initial() {
+        let sched = CflSchedule {
+            initial: 0.001,
+            max: 5.0,
+            ramp_steps: Some(0),
+        };
+        assert!((sched.at_step(1, 100) - 0.001).abs() < 1.0e-12);
+        assert!((sched.at_step(100, 100) - 0.001).abs() < 1.0e-12);
+    }
+
+    #[test]
+    fn cfl_schedule_uses_ramp_steps_when_max_steps_is_shorter() {
+        let sched = CflSchedule {
+            initial: 0.001,
+            max: 1.0,
+            ramp_steps: Some(2000),
+        };
+        let cfl_at_100 = sched.at_step(100, 100);
+        let expected = 0.001 + (99.0 / 1999.0) * 0.999;
+        assert!((cfl_at_100 - expected).abs() < 1.0e-12);
+        assert!(cfl_at_100 < 0.1);
+        assert!((sched.at_step(2000, 100) - 1.0).abs() < 1.0e-12);
     }
 
     #[test]

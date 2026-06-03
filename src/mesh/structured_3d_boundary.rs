@@ -5,6 +5,7 @@ use crate::error::{AsimuError, Result};
 use crate::mesh::boundary::BoundaryMesh;
 
 use super::StructuredMesh3d;
+use super::metrics::boundary_cell_spacing;
 
 /// 3D 逻辑边界面（CGNS / CFL3D 命名）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,6 +80,8 @@ pub struct FaceGeometry3d {
     pub normal: Vector3,
     pub spacing: Real,
     pub area: Real,
+    /// 面四顶点算术平均（与 [`FaceMetric::center`] 一致）。
+    pub center: Vector3,
 }
 
 /// 3D 边界网格接口。
@@ -620,15 +623,12 @@ impl BoundaryMesh3d for StructuredMesh3d {
         let (logical, local) = LogicalFace3d::decode(face)?;
         let (i, j, k) = self.face_ij(logical, local)?;
         let metric = self.boundary_face_metric(logical, i, j, k);
-        let spacing = match logical {
-            LogicalFace3d::IMin | LogicalFace3d::IMax => self.cell_dx_at(i, j, k) * 0.5,
-            LogicalFace3d::JMin | LogicalFace3d::JMax => self.cell_dy_at(i, j, k) * 0.5,
-            LogicalFace3d::KMin | LogicalFace3d::KMax => self.cell_dz_at(i, j, k) * 0.5,
-        };
+        let cell = self.cell_metric(i, j, k);
         Ok(FaceGeometry3d {
             normal: metric.normal,
-            spacing,
+            spacing: boundary_cell_spacing(cell.center, &metric, cell.volume),
             area: metric.area,
+            center: metric.center,
         })
     }
 }

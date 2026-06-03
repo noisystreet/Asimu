@@ -84,6 +84,63 @@ fn sod_like_disturbance_evolve_with_rk4() {
     assert!(fields.density.values()[mid - 1] != rho_before);
 }
 
+#[test]
+fn lusgs_3d_honors_fixed_dt() {
+    let mesh = StructuredMesh3d::uniform_box("box", 2, 2, 2, 1.0, 1.0, 1.0).expect("mesh");
+    let eos = IdealGasEoS::AIR_STANDARD;
+    let fs = FreestreamParams {
+        mach: 0.2,
+        ..FreestreamParams::default()
+    };
+    let mut fields = ConservedFields::from_freestream(mesh.num_cells(), &eos, &fs).expect("fields");
+    let mut ghosts = BoundaryGhostBuffer::new();
+    let boundary = BoundarySet::default();
+    let mut storage = Rk4Storage::new(mesh.num_cells()).expect("storage");
+    let mut state = SolverState::default();
+    let fixed_dt = 1.0e-4;
+    let mut integrator = RungeKutta4Integrator::new(RungeKutta4Config {
+        dt: 0.0,
+        max_steps: 1,
+    });
+    let solver = CompressibleEulerSolver::new(CompressibleEulerConfig {
+        time: RungeKutta4Config {
+            dt: fixed_dt,
+            max_steps: 1,
+        },
+        time_mode: CompressibleTimeMode::Steady,
+        local_time_step: true,
+        time_scheme: TimeIntegrationScheme::LuSgs,
+        lu_sgs: LuSgsConfig {
+            sweep: false,
+            ..LuSgsConfig::default()
+        },
+        ..CompressibleEulerConfig::default()
+    });
+    let mut ctx = CompressibleAdvanceContext3d {
+        mesh: &mesh,
+        structured: &mesh,
+        patches: &boundary,
+        ghosts: &mut ghosts,
+        eos: &eos,
+        freestream: &fs,
+        reference: None,
+        primitive_scratch: PrimitiveFields::zeros(mesh.num_cells()).expect("primitives"),
+        gradient_scratch: crate::discretization::GradientFields::zeros(mesh.num_cells())
+            .expect("gradients"),
+        viscous: None,
+    };
+    let info = solver
+        .advance_step_3d(
+            &mut ctx,
+            &mut fields,
+            &mut storage,
+            &mut state,
+            &mut integrator,
+        )
+        .expect("step");
+    assert!((info.dt - fixed_dt).abs() < 1.0e-14);
+}
+
 /// 圆柱网格、无边界 patch：均匀来流时间推进（`--nocapture` 打印逐步指标）。
 #[cfg(all(feature = "io-cgns", feature = "slow-tests"))]
 #[test]
@@ -138,6 +195,7 @@ fn cylinder_uniform_freestream_no_bc_time_advance_when_present() {
         ghosts: &mut ghosts,
         eos: &eos,
         freestream: &fs,
+        reference: None,
         primitive_scratch: crate::field::PrimitiveFields::zeros(mesh.num_cells())
             .expect("primitives"),
         gradient_scratch: crate::discretization::GradientFields::zeros(mesh.num_cells())
@@ -238,6 +296,7 @@ fn cylinder_lusgs_post_residual_changes_with_cfl1_when_present() {
         ghosts: &mut ghosts,
         eos: &eos,
         freestream: &fs,
+        reference: None,
         primitive_scratch: PrimitiveFields::zeros(mesh.num_cells()).expect("primitives"),
         gradient_scratch: crate::discretization::GradientFields::zeros(mesh.num_cells())
             .expect("gradients"),
@@ -331,23 +390,26 @@ fn cylinder_uniform_freestream_interior_only_advance_when_present() {
         ramp_steps: Some(500),
     };
 
-    eprintln!("=== 圆柱网格 仅内部面 + 边界单元冻结 ({} 步) ===", steps);
-    eprintln!(
-        "来流 rho_ref = {rho0:.6e}  边界单元数 = {} / {}",
-        boundary_cells.len(),
-        mesh.num_cells()
-    );
-
     let mut primitives = crate::field::PrimitiveFields::zeros(mesh.num_cells()).expect("prim");
     let report_steps = [1_u64, 10, 50, 100, 200];
     for _ in 0..steps {
         let cfl = cfl_schedule.at_step(state.time_step.saturating_add(1), steps);
-        let lengths = mesh.cell_cfl_lengths().expect("lengths");
-        let speeds = cell_wave_speeds(&fields, &eos, fs.pressure * 1.0e-3).expect("speeds");
-        use crate::solver::local_dt_cfl;
-        let cell_dts = local_dt_cfl(&lengths, &speeds, cfl).expect("dt");
-
         let p_floor = fs.pressure * 1.0e-3;
+        primitives
+            .fill_from_conserved(&fields, &eos, p_floor)
+            .expect("primitive for dt");
+        let sigma = cell_spectral_radius_3d(&SpectralRadius3dParams {
+            mesh,
+            boundary_mesh: mesh,
+            boundaries: &empty_bc,
+            ghosts: &ghosts,
+            primitives: &primitives,
+            eos: &eos,
+            min_pressure: p_floor,
+            viscous: None,
+        })
+        .expect("sigma");
+        let cell_dts = cell_local_dt_spectral(&mesh.cell_volumes(), &sigma, cfl).expect("dt");
         let evaluate = |u: &ConservedFields, r: &mut ConservedResidual| {
             primitives.fill_from_conserved(u, &eos, p_floor)?;
             let assembly = crate::discretization::residual::InviscidAssembly3dParams {

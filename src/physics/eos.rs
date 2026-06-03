@@ -122,17 +122,25 @@ impl IdealGasEoS {
         if mach < 0.0 {
             return Err(AsimuError::Config("Mach 数不能为负".to_string()));
         }
-        let a = self.sound_speed(temperature)?;
+        let density = self.density(pressure, temperature)?;
+        let a = self.sound_speed_density_pressure(density, pressure)?;
         let speed = mach * a;
         let dir = normalize_direction(velocity_direction)?;
         let velocity = [dir[0] * speed, dir[1] * speed, dir[2] * speed];
-        let density = self.density(pressure, temperature)?;
         Ok(PrimitiveState {
             density,
             velocity,
             pressure,
             temperature,
         })
+    }
+
+    /// \(a = \sqrt{\gamma p / \rho}\)（与 \(a=\sqrt{\gamma R T}\) 在有量纲理想气体下等价）。
+    pub fn sound_speed_density_pressure(&self, density: Real, pressure: Real) -> Result<Real> {
+        if density <= 0.0 || pressure <= 0.0 {
+            return Err(AsimuError::Config("密度与压力必须大于 0".to_string()));
+        }
+        Ok((self.gamma * pressure / density).sqrt())
     }
 }
 

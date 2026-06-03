@@ -1,4 +1,4 @@
-//! LU-SGS 隐式伪时间步：阶段 D 双扫（默认）或阶段 C 对角（`sweep = false`）。
+//! LU-SGS 隐式伪时间步：阶段 C 对角（默认）或实验性阶段 D 双扫。
 //!
 //! \((1/\Delta t_i + \sigma_i)\,\partial\mathbf{U}/\partial\tau \approx \mathbf{R}_i\)（\(\mathbf{R}=\mathrm{d}\mathbf{U}/\mathrm{d}t\)）
 //! \(\Rightarrow \Delta\mathbf{U}_i = \omega\,\Delta t_i\,\mathbf{R}_i / (1 + \Delta t_i\,\sigma_i)\)，\(\sigma_i=(|u|+a)_i/h_i\)
@@ -19,7 +19,7 @@ use super::rk4::Rk4Storage;
 pub struct LuSgsConfig {
     /// 松弛因子 \(\omega\in(0,1]\)（默认 1）。
     pub omega: Real,
-    /// `true`：i/j/k 双扫 + 面通量增量（阶段 D）；`false`：对角隐式（阶段 C）。
+    /// `true`：实验性 i/j/k 双扫（阶段 D）；`false`：对角隐式（阶段 C，默认）。
     pub sweep: bool,
 }
 
@@ -27,7 +27,7 @@ impl Default for LuSgsConfig {
     fn default() -> Self {
         Self {
             omega: 1.0,
-            sweep: true,
+            sweep: false,
         }
     }
 }
@@ -42,7 +42,7 @@ impl LuSgsConfig {
         }
         Ok(Self {
             omega,
-            sweep: sweep.unwrap_or(true),
+            sweep: sweep.unwrap_or(false),
         })
     }
 

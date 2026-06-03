@@ -78,6 +78,11 @@ impl ViscosityModel {
 pub struct ViscousPhysicsConfig {
     pub model: ViscosityModel,
     pub prandtl: Real,
+    /// 无量纲 NS：粘性项乘子 \(1/\mathrm{Re}\)；有量纲时为 1.0。
+    pub inv_reynolds: Real,
+    /// 无量纲 Sutherland：\(T^*\) 还原为有量纲温度时的 \(T_{\mathrm{ref}}\)。
+    pub viscosity_ref: Option<Real>,
+    pub temperature_ref: Option<Real>,
 }
 
 impl Default for ViscousPhysicsConfig {
@@ -85,6 +90,9 @@ impl Default for ViscousPhysicsConfig {
         Self {
             model: ViscosityModel::AIR_SUTHERLAND,
             prandtl: 0.72,
+            inv_reynolds: 1.0,
+            viscosity_ref: None,
+            temperature_ref: None,
         }
     }
 }
@@ -94,6 +102,175 @@ impl ViscousPhysicsConfig {
         if prandtl <= 0.0 {
             return Err(AsimuError::Config("Prandtl 数必须大于 0".to_string()));
         }
-        Ok(Self { model, prandtl })
+        Ok(Self {
+            model,
+            prandtl,
+            inv_reynolds: 1.0,
+            viscosity_ref: None,
+            temperature_ref: None,
+        })
+    }
+
+    fn dimensional_temperature(&self, temperature: Real) -> Real {
+        self.dimensional_temperature_from_static(temperature)
+    }
+
+    /// 是否为无量纲 NS（`temperature_ref` 已设）。
+    #[must_use]
+    pub fn is_nondimensional(&self) -> bool {
+        self.temperature_ref.is_some()
+    }
+
+    /// 静温：有量纲式 (1) \(T=p/(\rho R)\)；无量纲式 (2) \(T^*=p^*\gamma/\rho^*\)。
+    ///
+    /// 理论：[`docs/theory/nondimensional.md`](../../docs/theory/nondimensional.md) §3.1。
+    #[must_use]
+    pub fn static_temperature(&self, pressure: Real, density: Real, eos: &IdealGasEoS) -> Real {
+        let rho = density.max(1.0e-30);
+        if self.is_nondimensional() {
+            pressure / rho * eos.gamma
+        } else {
+            pressure / (rho * eos.gas_constant)
+        }
+    }
+
+    /// 将 `static_temperature` 返回值转为 Sutherland 等模型所需的有量纲 \(T\) (K)。
+    #[must_use]
+    pub fn dimensional_temperature_from_static(&self, temperature: Real) -> Real {
+        self.temperature_ref
+            .map(|t_ref| temperature * t_ref)
+            .unwrap_or(temperature)
+    }
+
+    /// 比热：有量纲 \(c_p=\gamma R/(\gamma-1)\)；无量纲 \(c_p^*=1/(\gamma-1)\)（`T^*=p^*\gamma/\rho^*` 约定）。
+    #[must_use]
+    pub fn specific_heat_capacity(&self, eos: &IdealGasEoS) -> Real {
+        if self.is_nondimensional() {
+            1.0 / (eos.gamma - 1.0)
+        } else {
+            eos.gamma * eos.gas_constant / (eos.gamma - 1.0)
+        }
+    }
+
+    /// 热传导系数 \(\lambda\)（或无量纲 \(\lambda^*\)），含 \(1/\mathrm{Re}\) 缩放。
+    pub fn thermal_conductivity_coefficient(
+        &self,
+        temperature_static: Real,
+        eos: &IdealGasEoS,
+    ) -> Result<Real> {
+        let t_dim = self.dimensional_temperature(temperature_static);
+        let mu = self.model.dynamic_viscosity(t_dim)?;
+        let mut lambda = mu * self.specific_heat_capacity(eos) / self.prandtl;
+        if let Some(mu_ref) = self.viscosity_ref {
+            lambda *= self.inv_reynolds / mu_ref;
+        }
+        Ok(lambda)
+    }
+
+    /// 面平均 \(\mu,\lambda\)；无量纲模式下含 \(1/\mathrm{Re}\) 与 \(\mu/\mu_{\mathrm{ref}}\)。
+    pub fn face_transport_coefficients(
+        &self,
+        t_left: Real,
+        t_right: Real,
+        eos: &IdealGasEoS,
+    ) -> Result<(Real, Real)> {
+        let t_l = self.dimensional_temperature(t_left);
+        let t_r = self.dimensional_temperature(t_right);
+        let mu_l = self.model.dynamic_viscosity(t_l)?;
+        let mu_r = self.model.dynamic_viscosity(t_r)?;
+        let mut mu = 0.5 * (mu_l + mu_r);
+        let cp = self.specific_heat_capacity(eos);
+        let mut lambda = mu * cp / self.prandtl;
+        if let Some(mu_ref) = self.viscosity_ref {
+            let scale = self.inv_reynolds / mu_ref;
+            mu *= scale;
+            lambda *= scale;
+        }
+        Ok((mu, lambda))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::physics::IdealGasEoS;
+    use crate::physics::{FreestreamParams, ReferenceScales};
+
+    #[test]
+    fn static_temperature_matches_freestream_in_nondimensional_mode() {
+        let eos = IdealGasEoS::AIR_STANDARD;
+        let viscous = ViscousPhysicsConfig {
+            temperature_ref: Some(300.0),
+            viscosity_ref: Some(1.716e-5),
+            ..Default::default()
+        };
+        let p_star = 1.0 / eos.gamma;
+        let t_star = viscous.static_temperature(p_star, 1.0, &eos);
+        assert!((t_star - 1.0).abs() < 1.0e-12);
+        let mu_ref = viscous.model.dynamic_viscosity(300.0).expect("mu ref");
+        let mu_at_fs = viscous
+            .model
+            .dynamic_viscosity(viscous.dimensional_temperature_from_static(t_star))
+            .expect("mu");
+        assert!((mu_at_fs - mu_ref).abs() / mu_ref < 1.0e-10);
+    }
+
+    #[test]
+    fn nondimensional_lambda_uses_cp_star_not_gamma_times_dimensional_cp() {
+        let dim_eos = IdealGasEoS::AIR_STANDARD;
+        let mut nd_eos = dim_eos;
+        nd_eos.gas_constant = dim_eos.gamma * dim_eos.gas_constant;
+        let viscous = ViscousPhysicsConfig {
+            inv_reynolds: 1.0 / 1.0e6,
+            viscosity_ref: Some(1.716e-5),
+            temperature_ref: Some(300.0),
+            ..Default::default()
+        };
+        let (mu, lambda) = viscous
+            .face_transport_coefficients(1.0, 1.0, &nd_eos)
+            .expect("tc");
+        let cp_star = 1.0 / (dim_eos.gamma - 1.0);
+        assert!((lambda / mu - cp_star / viscous.prandtl).abs() < 1.0e-12);
+        let cp_wrong = dim_eos.gamma * nd_eos.gas_constant / (dim_eos.gamma - 1.0);
+        assert!((lambda / mu - cp_wrong / viscous.prandtl).abs() > 1.0e-6);
+    }
+
+    #[test]
+    fn nondimensional_face_mu_at_freestream_equals_inv_re() {
+        let dim_eos = IdealGasEoS::AIR_STANDARD;
+        let mut nd_eos = dim_eos;
+        nd_eos.gas_constant = dim_eos.gamma * dim_eos.gas_constant;
+        let fs = FreestreamParams {
+            mach: 8.0,
+            pressure: 1000.0,
+            temperature: 300.0,
+            ..FreestreamParams::default()
+        };
+        let viscous = ViscousPhysicsConfig::new(ViscosityModel::AIR_SUTHERLAND, 0.72).expect("v");
+        let reference =
+            ReferenceScales::from_freestream(&dim_eos, &fs, Some(&viscous)).expect("ref");
+        let mut nd_viscous = viscous.clone();
+        nd_viscous.inv_reynolds = reference.inv_reynolds();
+        nd_viscous.viscosity_ref = Some(reference.viscosity);
+        nd_viscous.temperature_ref = Some(reference.temperature);
+        let (mu, _) = nd_viscous
+            .face_transport_coefficients(1.0, 1.0, &nd_eos)
+            .expect("tc");
+        let inv_re = reference.inv_reynolds();
+        assert!(
+            (mu - inv_re).abs() / inv_re < 1.0e-10,
+            "freestream mu* should be 1/Re, got {mu} vs {inv_re}"
+        );
+    }
+
+    #[test]
+    fn static_temperature_dimensional_ideal_gas() {
+        let eos = IdealGasEoS::AIR_STANDARD;
+        let viscous = ViscousPhysicsConfig::default();
+        let p = 101_325.0;
+        let t = 300.0;
+        let rho = eos.density(p, t).expect("rho");
+        let back = viscous.static_temperature(p, rho, &eos);
+        assert!((back - t).abs() / t < 1.0e-10);
     }
 }

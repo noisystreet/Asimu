@@ -13,8 +13,9 @@ use crate::discretization::{
 use crate::error::Result;
 use crate::field::{ConservedFields, ConservedResidual, PrimitiveFields};
 use crate::mesh::{BoundaryMesh3d, StructuredMesh3d};
-use crate::physics::ViscousPhysicsConfig;
-use crate::physics::{FreestreamParams, IdealGasEoS};
+use crate::physics::{
+    FreestreamContext, FreestreamParams, IdealGasEoS, ReferenceScales, ViscousPhysicsConfig,
+};
 
 /// 单步 RHS 求值上下文（避免过多函数参数）。
 pub(crate) struct EvaluateRhs3d<'a> {
@@ -24,6 +25,7 @@ pub(crate) struct EvaluateRhs3d<'a> {
     pub ghosts: &'a mut BoundaryGhostBuffer,
     pub eos: &'a IdealGasEoS,
     pub freestream: &'a FreestreamParams,
+    pub reference: Option<&'a ReferenceScales>,
     pub inviscid: &'a InviscidFluxConfig,
     pub viscous: Option<&'a ViscousPhysicsConfig>,
     pub min_pressure: Real,
@@ -38,12 +40,13 @@ impl EvaluateRhs3d<'_> {
         residual: &mut ConservedResidual,
     ) -> Result<()> {
         let _span = info_span!("evaluate_rhs").entered();
+        let fs_ctx = FreestreamContext::new(self.eos, self.reference, self.viscous);
         apply_compressible_boundary_conditions(
             self.mesh,
             self.patches,
             fields,
             self.ghosts,
-            self.eos,
+            &fs_ctx,
             self.freestream,
             self.viscous,
         )?;

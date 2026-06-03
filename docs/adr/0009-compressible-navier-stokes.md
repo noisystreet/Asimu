@@ -116,7 +116,7 @@ ConservedFields U
 
 | 类型 | 用途 | 离散处理 |
 |------|------|----------|
-| `Wall` | 无滑移壁面 | 反射/ghost；绝热或等温 |
+| `Wall` | 无滑移/滑移壁 | 等距镜像 ghost：无滑移 \(\mathbf{u}_g=-\mathbf{u}_o\)；滑移 \(u_{n,g}=-u_{n,o}\)、\(\mathbf{u}_{t,g}=\mathbf{u}_{t,o}\) |
 | `Farfield` | 远场 | Riemann 特征边界 |
 | `Inlet` | 总压/总温入口 | 指定下游状态 |
 | `Outlet` | 静压出口 | 外推或指定 \(p\) |

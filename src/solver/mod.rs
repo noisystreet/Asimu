@@ -22,9 +22,8 @@ pub use sod::{
     write_sod_compare_profile, write_sod_profile,
 };
 pub use spectral_radius::{
-    SpectralRadius3dParams, cell_local_dt_cfl_3d, cell_local_dt_spectral,
-    cell_lusgs_spacing_timestep, cell_spectral_radius_3d, cell_viscous_diffusivity_max,
-    local_pseudo_dt_lusgs,
+    SpectralRadius3dParams, cell_local_dt_cfl_3d, cell_local_dt_spectral, cell_spectral_radius_3d,
+    cell_viscous_diffusivity_max, local_pseudo_dt_lusgs,
 };
 pub use state::SolverState;
 pub use time::{

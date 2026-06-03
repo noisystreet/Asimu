@@ -3,7 +3,7 @@
 use asimu::boundary::BoundaryKind;
 use asimu::discretization::{BoundaryGhostBuffer, apply_compressible_boundary_conditions};
 use asimu::io::{parse_case_str, write_conserved_fields};
-use asimu::physics::{FreestreamParams, IdealGasEoS};
+use asimu::physics::{FreestreamContext, FreestreamParams, IdealGasEoS};
 
 #[test]
 fn compressible_case_builds_and_applies_bc() {
@@ -41,7 +41,9 @@ static_pressure = 100000.0
     let fs = case.freestream.unwrap_or_default();
     let patches = &case.boundary;
     let mut ghosts = BoundaryGhostBuffer::new();
-    apply_compressible_boundary_conditions(mesh, patches, &fields, &mut ghosts, &eos, &fs, None)
+    let fs_ctx =
+        FreestreamContext::new(&eos, case.reference.as_ref(), case.physics.viscous.as_ref());
+    apply_compressible_boundary_conditions(mesh, patches, &fields, &mut ghosts, &fs_ctx, &fs, None)
         .expect("bc");
 }
 

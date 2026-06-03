@@ -23,7 +23,7 @@ use crate::field::{
     Fields, FluidInitialConfig, InitialKind, InitialSet, ScalarField, ScalarInitial,
 };
 use crate::mesh::{BoundaryMesh, StructuredMesh1d, StructuredMesh3d};
-use crate::physics::{FreestreamParams, IdealGasEoS, PhysicsConfig};
+use crate::physics::{FreestreamParams, IdealGasEoS, PhysicsConfig, ReferenceScales};
 
 use super::validate_input_path;
 use case_compressible::{
@@ -100,6 +100,8 @@ pub struct CaseSpec {
     pub output: Option<CaseOutputConfig>,
     pub observability: Option<CaseObservabilityConfig>,
     pub case_dir: Option<PathBuf>,
+    /// 无量纲参考量；`Some` 表示算例在 \(*\) 变量下求解。
+    pub reference: Option<ReferenceScales>,
 }
 
 /// 算例时间推进配置（`[time]`）。
@@ -125,7 +127,7 @@ pub struct CaseTimeConfig {
     pub scheme: Option<crate::solver::time::TimeIntegrationScheme>,
     /// `lu_sgs` 松弛因子 \(\omega\in(0,1]\)（默认 1）。
     pub lusgs_omega: Option<Real>,
-    /// `lu_sgs` 双扫（默认 true）；`false` 为阶段 C 对角隐式。
+    /// `lu_sgs` 双扫（默认 false）；`true` 为实验性阶段 D 双扫。
     pub lusgs_sweep: Option<bool>,
 }
 
@@ -205,7 +207,12 @@ impl CaseSpec {
             .freestream
             .or(self.fluid_initial.freestream)
             .ok_or_else(|| AsimuError::Field("须指定 [freestream] 或 [restart]".to_string()))?;
-        crate::field::ConservedFields::from_freestream(self.mesh.num_cells(), &eos, &fs)
+        let ctx = crate::physics::FreestreamContext::new(
+            &eos,
+            self.reference.as_ref(),
+            self.physics.viscous.as_ref(),
+        );
+        crate::field::ConservedFields::from_freestream_context(self.mesh.num_cells(), &ctx, &fs)
     }
 
     pub fn is_compressible(&self) -> bool {
@@ -224,6 +231,20 @@ impl CaseSpec {
 
     pub fn is_navier_stokes(&self) -> bool {
         self.physics.is_navier_stokes()
+    }
+
+    #[must_use]
+    pub fn is_nondimensional(&self) -> bool {
+        self.reference.is_some()
+    }
+
+    /// 输出还原用的有量纲 EOS；有量纲算例返回 `[physics]` 中的 EOS。
+    pub fn dimensional_eos(&self) -> Result<IdealGasEoS> {
+        if let Some(reference) = &self.reference {
+            reference.dimensional_eos(self.physics.eos()?.gamma)
+        } else {
+            self.physics.eos()
+        }
     }
 
     pub fn diffusivity(&self) -> Real {
@@ -249,6 +270,12 @@ struct CaseToml {
     navier_stokes: Option<EulerToml>,
     output: Option<OutputToml>,
     observability: Option<ObservabilityToml>,
+    nondimensional: Option<NondimensionalToml>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NondimensionalToml {
+    enabled: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -406,7 +433,7 @@ fn parse_case_toml(content: &str, case_dir: Option<&Path>) -> Result<CaseSpec> {
     let time = parse_time_config(raw.time.as_ref(), raw.sod.is_some())?;
     let sod = raw.sod.as_ref().map(parse_sod_config);
 
-    let case = CaseSpec {
+    let mut case = CaseSpec {
         name: raw.name,
         benchmark_id: raw.benchmark_id,
         mesh: parsed.mesh,
@@ -423,8 +450,14 @@ fn parse_case_toml(content: &str, case_dir: Option<&Path>) -> Result<CaseSpec> {
         output: raw.output.as_ref().map(parse_output),
         observability: raw.observability.as_ref().map(parse_observability),
         case_dir: case_dir.map(Path::to_path_buf),
+        reference: None,
     };
     case.warn_config_inconsistencies();
+    let nd_enabled = match raw.nondimensional.as_ref() {
+        Some(n) => n.enabled,
+        None => case.is_compressible() && case.freestream.is_some(),
+    };
+    super::nondimensional::maybe_apply_nondimensionalization(&mut case, nd_enabled)?;
     Ok(case)
 }
 

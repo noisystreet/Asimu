@@ -211,6 +211,25 @@ name=<mesh_name>;cells=<count>
 
 理论参考：[docs/theory/fvm_diffusion.md](theory/fvm_diffusion.md)。
 
+### `asimu::physics`（可压缩 v1.x）
+
+理论：[docs/theory/nondimensional.md](theory/nondimensional.md)（无量纲）；[adr/0009-compressible-navier-stokes.md](adr/0009-compressible-navier-stokes.md)
+
+| 类型 / 函数 | 说明 |
+|-------------|------|
+| `IdealGasEoS` | \(\gamma, R\)；`freestream_primitive`（有量纲来流） |
+| `FreestreamParams` | `[freestream]` 对应 Mach、\(p,T\)、方向 |
+| `ReferenceScales` | 参考量与 Re；`from_freestream` |
+| `FreestreamContext` | **来流单一入口**：`primitive` / `conserved` / `density_from_pressure_temperature` |
+| `FreestreamMode` | `Dimensional` / `Nondimensional` |
+| `ViscousPhysicsConfig` | Sutherland/常数粘度；`static_temperature`（式 (1)(2)） |
+| `ConservedFields::from_freestream_context` | 初场（经 `CaseSpec::build_conserved_fields`） |
+| `ConservedFields::to_dimensional` | 输出还原 SI |
+| `CaseSpec::is_nondimensional` | `reference.is_some()` |
+| `CaseSpec::dimensional_eos` | 输出用有量纲 EOS |
+
+BC：`apply_compressible_boundary_conditions(..., &FreestreamContext, ...)` — 见 [theory/nondimensional.md §4](theory/nondimensional.md#4-边界条件)。
+
 ---
 
 ## `asimu::app`（应用层）

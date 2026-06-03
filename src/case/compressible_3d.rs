@@ -45,6 +45,7 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         ghosts: &mut ghosts,
         eos: &eos,
         freestream: &freestream,
+        reference: case.reference.as_ref(),
         primitive_scratch: PrimitiveFields::zeros(mesh.num_cells())?,
         gradient_scratch: GradientFields::zeros(mesh.num_cells())?,
         viscous: solver.config.viscous.as_ref(),

@@ -1,4 +1,4 @@
-//! 单元谱半径 \(\sigma_i\)（LU-SGS / 对角隐式伪时间用）。
+//! 单元谱半径 \(\sigma_i\)（RK4 当地时间步、LU-SGS 伪时间共用）。
 
 use crate::boundary::BoundarySet;
 use crate::core::{FaceId, Real, Vector3};
@@ -10,7 +10,12 @@ use crate::physics::{IdealGasEoS, PrimitiveState, ViscousPhysicsConfig};
 
 const DEGENERATE_VOLUME: Real = 1.0e-30;
 
-/// 3D 中心差分抛物型（粘性/热传导）对 \(\sigma\) 的贡献系数：\(\sigma_i \mathrel{+}= d\,\max(\nu_i,\alpha_i)/h_i^2\)，\(d=6\) 对应三方向 Laplacian 上界。
+/// 3D 中心差分抛物型（粘性/热传导）对 \(\sigma\) 的贡献系数。
+///
+/// Blazek §6.1.4 的结构网格形式可写为
+/// \(\Delta t_i=\mathrm{CFL}\,\Omega_i/(\Lambda_i^c+C\Lambda_i^v)\)；
+/// 本模块内部使用 \(\sigma_i=(\Lambda_i^c+C\Lambda_i^v)/\Omega_i\)，
+/// 因此粘性面贡献为 \(C\,\max(\nu,\alpha)\,A_f^2/\Omega_i^2\)。
 const PARABOLIC_SPECTRAL_FACTOR_3D: Real = 6.0;
 
 /// 谱半径求值上下文。
@@ -26,7 +31,7 @@ pub struct SpectralRadius3dParams<'a> {
     pub viscous: Option<&'a ViscousPhysicsConfig>,
 }
 
-/// \(\sigma_i = \frac{1}{V_i}\sum_f (|u_n|+a)_f\,A_f\)（内界面 + 边界面 owner 侧）。
+/// \(\sigma_i = \frac{1}{V_i}\sum_f (|u_n|+a)_f\,A_f + \sigma_i^v\)（内界面 + 边界面 owner 侧）。
 ///
 /// 调用前须已刷新 `ghosts`（与 `evaluate_rhs` 一致）。
 pub fn cell_spectral_radius_3d(params: &SpectralRadius3dParams<'_>) -> Result<Vec<Real>> {
@@ -45,9 +50,8 @@ pub fn cell_spectral_radius_3d(params: &SpectralRadius3dParams<'_>) -> Result<Ve
     accumulate_k_face_sigma(mesh, params.primitives, gamma, &mut sigma);
     accumulate_boundary_face_sigma(params, &mut sigma)?;
     if let Some(viscous) = params.viscous {
-        let lengths = mesh.cell_cfl_lengths()?;
         let diff = cell_viscous_diffusivity_max(params.primitives, params.eos, viscous)?;
-        add_viscous_parabolic_sigma(&mut sigma, &lengths, &diff);
+        add_viscous_parabolic_sigma(params, &diff, &mut sigma)?;
     }
     for s in &mut sigma {
         *s = s.max(Real::EPSILON);
@@ -62,27 +66,156 @@ pub fn cell_viscous_diffusivity_max(
     viscous: &ViscousPhysicsConfig,
 ) -> Result<Vec<Real>> {
     let n = primitives.num_cells();
-    let r_gas = eos.gas_constant;
     let mut diff = Vec::with_capacity(n);
     for i in 0..n {
         let rho = primitives.density.values()[i].max(1.0e-30);
         let pressure = primitives.pressure.values()[i].max(1.0e-30);
-        let temperature = pressure / (rho * r_gas);
-        let mu = viscous.model.dynamic_viscosity(temperature)?;
-        let nu = mu / rho;
-        let alpha = mu / (rho * viscous.prandtl);
+        let t_star = viscous.static_temperature(pressure, rho, eos);
+        let (mu_eff, _lambda) = viscous.face_transport_coefficients(t_star, t_star, eos)?;
+        let nu = mu_eff / rho;
+        let alpha = mu_eff / (rho * viscous.prandtl);
         diff.push(nu.max(alpha));
     }
     Ok(diff)
 }
 
-fn add_viscous_parabolic_sigma(sigma: &mut [Real], lengths: &[Real], diffusivity: &[Real]) {
-    debug_assert_eq!(sigma.len(), lengths.len());
+fn add_viscous_parabolic_sigma(
+    params: &SpectralRadius3dParams<'_>,
+    diffusivity: &[Real],
+    sigma: &mut [Real],
+) -> Result<()> {
     debug_assert_eq!(sigma.len(), diffusivity.len());
-    for (s, (&h, &d)) in sigma.iter_mut().zip(lengths.iter().zip(diffusivity.iter())) {
-        if d > 0.0 && h > Real::EPSILON {
-            *s += PARABOLIC_SPECTRAL_FACTOR_3D * d / (h * h);
+    let mesh = params.mesh;
+    add_i_viscous_parabolic_sigma(mesh, diffusivity, sigma);
+    add_j_viscous_parabolic_sigma(mesh, diffusivity, sigma);
+    add_k_viscous_parabolic_sigma(mesh, diffusivity, sigma);
+    add_boundary_viscous_parabolic_sigma(params, diffusivity, sigma)
+}
+
+fn add_i_viscous_parabolic_sigma(
+    mesh: &StructuredMesh3d,
+    diffusivity: &[Real],
+    sigma: &mut [Real],
+) {
+    for k in 0..mesh.nz {
+        for j in 0..mesh.ny {
+            for i in 0..mesh.nx.saturating_sub(1) {
+                let owner = mesh.cell_index(i, j, k);
+                let neighbor = mesh.cell_index(i + 1, j, k);
+                let face = mesh.i_face_metric(i, j, k);
+                add_viscous_face_contribution(
+                    sigma,
+                    diffusivity,
+                    owner,
+                    face.area,
+                    mesh.cell_metric(i, j, k).volume,
+                );
+                add_viscous_face_contribution(
+                    sigma,
+                    diffusivity,
+                    neighbor,
+                    face.area,
+                    mesh.cell_metric(i + 1, j, k).volume,
+                );
+            }
         }
+    }
+}
+
+fn add_j_viscous_parabolic_sigma(
+    mesh: &StructuredMesh3d,
+    diffusivity: &[Real],
+    sigma: &mut [Real],
+) {
+    for k in 0..mesh.nz {
+        for j in 0..mesh.ny.saturating_sub(1) {
+            for i in 0..mesh.nx {
+                let owner = mesh.cell_index(i, j, k);
+                let neighbor = mesh.cell_index(i, j + 1, k);
+                let face = mesh.j_face_metric(i, j, k);
+                add_viscous_face_contribution(
+                    sigma,
+                    diffusivity,
+                    owner,
+                    face.area,
+                    mesh.cell_metric(i, j, k).volume,
+                );
+                add_viscous_face_contribution(
+                    sigma,
+                    diffusivity,
+                    neighbor,
+                    face.area,
+                    mesh.cell_metric(i, j + 1, k).volume,
+                );
+            }
+        }
+    }
+}
+
+fn add_k_viscous_parabolic_sigma(
+    mesh: &StructuredMesh3d,
+    diffusivity: &[Real],
+    sigma: &mut [Real],
+) {
+    for k in 0..mesh.nz.saturating_sub(1) {
+        for j in 0..mesh.ny {
+            for i in 0..mesh.nx {
+                let owner = mesh.cell_index(i, j, k);
+                let neighbor = mesh.cell_index(i, j, k + 1);
+                let face = mesh.k_face_metric(i, j, k);
+                add_viscous_face_contribution(
+                    sigma,
+                    diffusivity,
+                    owner,
+                    face.area,
+                    mesh.cell_metric(i, j, k).volume,
+                );
+                add_viscous_face_contribution(
+                    sigma,
+                    diffusivity,
+                    neighbor,
+                    face.area,
+                    mesh.cell_metric(i, j, k + 1).volume,
+                );
+            }
+        }
+    }
+}
+
+fn add_boundary_viscous_parabolic_sigma(
+    params: &SpectralRadius3dParams<'_>,
+    diffusivity: &[Real],
+    sigma: &mut [Real],
+) -> Result<()> {
+    let mesh = params.mesh;
+    for patch in params.boundaries.patches() {
+        for &face in &patch.face_ids {
+            let owner = params.boundary_mesh.face_owner(face)?.index() as usize;
+            let geom = params.boundary_mesh.face_geometry_3d(face)?;
+            let (logical, local) = LogicalFace3d::decode(face)?;
+            let (i, j, k) = mesh.face_ij(logical, local)?;
+            add_viscous_face_contribution(
+                sigma,
+                diffusivity,
+                owner,
+                geom.area,
+                mesh.cell_metric(i, j, k).volume,
+            );
+        }
+    }
+    Ok(())
+}
+
+fn add_viscous_face_contribution(
+    sigma: &mut [Real],
+    diffusivity: &[Real],
+    cell: usize,
+    area: Real,
+    volume: Real,
+) {
+    let d = diffusivity[cell];
+    if d > 0.0 && area > Real::EPSILON && volume > DEGENERATE_VOLUME {
+        sigma[cell] += PARABOLIC_SPECTRAL_FACTOR_3D * d * area * area / (volume * volume);
     }
 }
 
@@ -281,9 +414,11 @@ fn normal_speed_plus_sound(prim: &PrimitiveState, normal: Vector3, gamma: Real) 
     u_n.abs() + a
 }
 
-/// Blazek 局部时间步（第 9.1 节）：\(\Delta t_i = \mathrm{CFL}\,V_i/\sigma_i\)，\(\sigma_i=\frac{1}{V_i}\sum_f \lambda_f A_f\)。
+/// Blazek 局部时间步（第 6.1.4/9.1 节）：\(\Delta t_i = \mathrm{CFL}/\sigma_i\)，\(\sigma_i=(\Lambda_i^c+C\Lambda_i^v)/V_i\)。
 ///
-/// 显式 RK、LU-SGS 伪时间共用；\(\lambda_f \approx \frac{1}{2}(|u_n|+a)_L+\frac{1}{2}(|u_n|+a)_R\)。
+/// 无粘时等价于 \(\Delta t_i = \mathrm{CFL}\,V_i / \sum_f \lambda_f A_f\)。
+/// 显式 RK、LU-SGS 伪时间共用；\(\lambda_f \approx \frac{1}{2}(|u_n|+a)_L+\frac{1}{2}(|u_n|+a)_R\)，
+/// Navier-Stokes 还叠加 `cell_spectral_radius_3d` 中的粘性 face-sum 项。
 pub fn cell_local_dt_spectral(volumes: &[Real], sigma: &[Real], cfl: Real) -> Result<Vec<Real>> {
     if volumes.len() != sigma.len() {
         return Err(AsimuError::Solver(
@@ -302,7 +437,7 @@ pub fn cell_local_dt_spectral(volumes: &[Real], sigma: &[Real], cfl: Real) -> Re
                 "cell_local_dt_spectral: 体积与谱半径须为正".to_string(),
             ));
         }
-        dt.push(cfl * v / s);
+        dt.push(cfl / s);
     }
     Ok(dt)
 }
@@ -319,72 +454,23 @@ pub fn local_pseudo_dt_lusgs(volumes: &[Real], sigma: &[Real], cfl: Real) -> Res
     cell_local_dt_spectral(volumes, sigma, cfl)
 }
 
-/// LU-SGS 用面间距 CFL：\(\sigma_i=(|u|+a)_i/h_i + d\,\max(\nu,\alpha)_i/h_i^2\)，\(\Delta t_i=\mathrm{CFL}/\sigma_i\)。
-///
-/// 曲网格贴体单元上 \(\sum_f\lambda_f A_f/V_i\) 常远大于 \((|u|+a)/h\)，
-/// 若仍用体积谱半径会导致 \(\Delta U\sim V/\sigma\) 极小、残差“冻结”。RK4 仍用 `cell_spectral_radius_3d`。
-pub fn cell_lusgs_spacing_timestep(
-    lengths: &[Real],
-    wave_speeds: &[Real],
-    cfl: Real,
-    viscous_diffusivity: Option<&[Real]>,
-) -> Result<(Vec<Real>, Vec<Real>)> {
-    if lengths.len() != wave_speeds.len() {
-        return Err(AsimuError::Solver(
-            "cell_lusgs_spacing_timestep: lengths 与 wave_speeds 长度不一致".to_string(),
-        ));
-    }
-    if let Some(diff) = viscous_diffusivity {
-        if diff.len() != lengths.len() {
-            return Err(AsimuError::Solver(
-                "cell_lusgs_spacing_timestep: viscous_diffusivity 与 lengths 长度不一致"
-                    .to_string(),
-            ));
-        }
-    }
-    if cfl <= 0.0 {
-        return Err(AsimuError::Solver(
-            "cell_lusgs_spacing_timestep: CFL 须为正".to_string(),
-        ));
-    }
-    let mut sigma = Vec::with_capacity(lengths.len());
-    let mut dt = Vec::with_capacity(lengths.len());
-    for (i, (&h, &speed)) in lengths.iter().zip(wave_speeds.iter()).enumerate() {
-        if h <= 0.0 || speed <= 0.0 {
-            return Err(AsimuError::Solver(
-                "cell_lusgs_spacing_timestep: 面间距与波速须为正".to_string(),
-            ));
-        }
-        let mut sig = speed / h;
-        if let Some(diff) = viscous_diffusivity {
-            let d = diff[i];
-            if d > 0.0 {
-                sig += PARABOLIC_SPECTRAL_FACTOR_3D * d / (h * h);
-            }
-        }
-        sigma.push(sig);
-        dt.push(cfl / sig);
-    }
-    Ok((dt, sigma))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::boundary::{BoundaryKind, BoundaryPatch};
+    use crate::boundary::{BoundaryKind, BoundaryPatch, BoundarySet};
+    use crate::discretization::freestream_pair::{FreestreamPairFixture, UniformFarfieldSide};
     use crate::discretization::{BoundaryGhostBuffer, apply_compressible_boundary_conditions};
-    use crate::field::ConservedFields;
-    use crate::mesh::BoundaryMesh;
-    use crate::physics::FreestreamParams;
+    use crate::field::{ConservedFields, PrimitiveFields};
+    use crate::mesh::{BoundaryMesh, StructuredMesh3d};
+    use crate::physics::{FreestreamContext, FreestreamParams};
 
-    fn uniform_box_sigma(boundary_patches: Vec<BoundaryPatch>) -> Vec<Real> {
+    fn uniform_box_sigma(
+        boundary_patches: Vec<BoundaryPatch>,
+        side: &UniformFarfieldSide<'_>,
+    ) -> Vec<Real> {
         let mesh = StructuredMesh3d::uniform_box("box", 3, 3, 3, 1.0, 1.0, 1.0).expect("mesh");
-        let eos = IdealGasEoS::AIR_STANDARD;
-        let fs = FreestreamParams {
-            mach: 0.2,
-            ..FreestreamParams::default()
-        };
-        let fields = ConservedFields::from_freestream(mesh.num_cells(), &eos, &fs).expect("fields");
+        let fields = ConservedFields::from_freestream_context(mesh.num_cells(), &side.ctx, side.fs)
+            .expect("fields");
         let boundary_set = BoundarySet::new(boundary_patches);
         let mut ghosts = BoundaryGhostBuffer::new();
         apply_compressible_boundary_conditions(
@@ -392,14 +478,14 @@ mod tests {
             &boundary_set,
             &fields,
             &mut ghosts,
-            &eos,
-            &fs,
-            None,
+            &side.ctx,
+            side.fs,
+            side.viscous,
         )
         .expect("bc");
         let mut primitives = PrimitiveFields::zeros(mesh.num_cells()).expect("prim");
         primitives
-            .fill_from_conserved(&fields, &eos, 1.0e-6)
+            .fill_from_conserved(&fields, side.eos, side.min_pressure)
             .expect("fill");
         cell_spectral_radius_3d(&SpectralRadius3dParams {
             mesh: &mesh,
@@ -407,35 +493,32 @@ mod tests {
             boundaries: &boundary_set,
             ghosts: &ghosts,
             primitives: &primitives,
-            eos: &eos,
-            min_pressure: 1.0e-6,
-            viscous: None,
+            eos: side.eos,
+            min_pressure: side.min_pressure,
+            viscous: side.viscous,
         })
         .expect("sigma")
     }
 
     #[test]
     fn boundary_faces_increase_owner_spectral_radius() {
-        let mut farfield_patches = Vec::new();
+        let pair = FreestreamPairFixture::air_sutherland(0.2);
+        let side = pair.inviscid_dimensional();
         let mesh = StructuredMesh3d::uniform_box("box", 3, 3, 3, 1.0, 1.0, 1.0).expect("mesh");
-        let fs = FreestreamParams {
-            mach: 0.2,
-            ..FreestreamParams::default()
-        };
         let faces = mesh.resolve_logical_boundary("i_min").expect("i_min");
-        farfield_patches.push(BoundaryPatch::new(
+        let farfield_patches = vec![BoundaryPatch::new(
             "i_min",
             faces,
             BoundaryKind::Farfield {
-                mach: fs.mach,
-                pressure: fs.pressure,
-                temperature: fs.temperature,
+                mach: side.fs.mach,
+                pressure: side.fs.pressure,
+                temperature: side.fs.temperature,
                 alpha: 0.0,
                 beta: 0.0,
             },
-        ));
-        let sigma_boundary = uniform_box_sigma(farfield_patches);
-        let sigma_interior_only = uniform_box_sigma(Vec::new());
+        )];
+        let sigma_boundary = uniform_box_sigma(farfield_patches, &side);
+        let sigma_interior_only = uniform_box_sigma(Vec::new(), &side);
         let imin_owner = mesh.cell_index(0, 0, 0);
         assert!(sigma_boundary[imin_owner] > sigma_interior_only[imin_owner]);
     }
@@ -461,12 +544,13 @@ mod tests {
         let cfl = case.time.cfl.expect("cfl");
         let fields = ConservedFields::from_freestream(mesh.num_cells(), &eos, &fs).expect("fields");
         let mut ghosts = BoundaryGhostBuffer::new();
+        let fs_ctx = FreestreamContext::new(&eos, case.reference.as_ref(), None);
         apply_compressible_boundary_conditions(
             mesh,
             &case.boundary,
             &fields,
             &mut ghosts,
-            &eos,
+            &fs_ctx,
             &fs,
             None,
         )
@@ -523,7 +607,7 @@ mod tests {
             dts.iter().copied().fold(0.0_f64, f64::max),
         );
         eprintln!(
-            "dt[h/(|u|+a)]: min={:.6e} p50={:.6e} p99={:.6e} max={:.6e}",
+            "dt[length estimate, comparison only]: min={:.6e} p50={:.6e} p99={:.6e} max={:.6e}",
             dts_h.iter().copied().fold(f64::INFINITY, f64::min),
             pct(&dts_h, 0.5),
             pct(&dts_h, 0.99),
@@ -543,35 +627,41 @@ mod tests {
     }
 
     #[test]
-    fn viscous_diffusion_increases_spectral_radius_and_tightens_lusgs_dt() {
+    fn viscous_diffusion_increases_unified_spectral_radius_and_tightens_dt() {
         use crate::physics::{ViscosityModel, ViscousPhysicsConfig};
 
         let mesh = StructuredMesh3d::uniform_box("box", 2, 2, 2, 1.0, 1.0, 1.0).expect("mesh");
         let eos = IdealGasEoS::AIR_STANDARD;
         let fs = FreestreamParams::default();
         let fields = ConservedFields::from_freestream(mesh.num_cells(), &eos, &fs).expect("fields");
+        let boundary_set = BoundarySet::new(Vec::new());
+        let ghosts = BoundaryGhostBuffer::new();
         let mut primitives = PrimitiveFields::zeros(mesh.num_cells()).expect("prim");
         primitives
             .fill_from_conserved(&fields, &eos, 1.0e-6)
             .expect("fill");
-        let lengths = mesh.cell_cfl_lengths().expect("lengths");
-        let mut wave_speeds = Vec::with_capacity(mesh.num_cells());
-        for i in 0..mesh.num_cells() {
-            let prim = primitives.cell_primitive(i);
-            let rho = prim.density.max(1.0e-30);
-            let u_mag =
-                (prim.velocity[0].powi(2) + prim.velocity[1].powi(2) + prim.velocity[2].powi(2))
-                    .sqrt();
-            wave_speeds.push(u_mag + (eos.gamma * prim.pressure.max(1.0e-30) / rho).sqrt());
-        }
         let cfl = 0.5;
-        let (dt_inv, sigma_inv) =
-            cell_lusgs_spacing_timestep(&lengths, &wave_speeds, cfl, None).expect("inviscid");
+        let base = SpectralRadius3dParams {
+            mesh: &mesh,
+            boundary_mesh: &mesh,
+            boundaries: &boundary_set,
+            ghosts: &ghosts,
+            primitives: &primitives,
+            eos: &eos,
+            min_pressure: 1.0e-6,
+            viscous: None,
+        };
+        let sigma_inv = cell_spectral_radius_3d(&base).expect("sigma inv");
+        let volumes = mesh.cell_volumes();
+        let dt_inv = cell_local_dt_spectral(&volumes, &sigma_inv, cfl).expect("dt inv");
         let viscous = ViscousPhysicsConfig::new(ViscosityModel::constant(1.0).expect("mu"), 0.72)
             .expect("visc cfg");
-        let diff = cell_viscous_diffusivity_max(&primitives, &eos, &viscous).expect("diffusivity");
-        let (dt_visc, sigma_visc) =
-            cell_lusgs_spacing_timestep(&lengths, &wave_speeds, cfl, Some(&diff)).expect("viscous");
+        let sigma_visc = cell_spectral_radius_3d(&SpectralRadius3dParams {
+            viscous: Some(&viscous),
+            ..base
+        })
+        .expect("sigma visc");
+        let dt_visc = cell_local_dt_spectral(&volumes, &sigma_visc, cfl).expect("dt visc");
         for i in 0..mesh.num_cells() {
             assert!(
                 sigma_visc[i] > sigma_inv[i],
@@ -594,12 +684,13 @@ mod tests {
         let fields = ConservedFields::from_freestream(mesh.num_cells(), &eos, &fs).expect("fields");
         let boundary_set = BoundarySet::new(Vec::new());
         let mut ghosts = BoundaryGhostBuffer::new();
+        let fs_ctx = FreestreamContext::dimensional(&eos);
         apply_compressible_boundary_conditions(
             &mesh,
             &boundary_set,
             &fields,
             &mut ghosts,
-            &eos,
+            &fs_ctx,
             &fs,
             None,
         )
@@ -636,24 +727,30 @@ mod tests {
 
     #[test]
     fn spectral_radius_positive_on_uniform_freestream() {
-        let mut patches = Vec::new();
-        let mesh = StructuredMesh3d::uniform_box("box", 2, 2, 2, 1.0, 1.0, 1.0).expect("mesh");
-        let fs = FreestreamParams::default();
-        for name in ["i_min", "i_max", "j_min", "j_max", "k_min", "k_max"] {
-            let faces = mesh.resolve_logical_boundary(name).expect("faces");
-            patches.push(BoundaryPatch::new(
-                name,
-                faces,
-                BoundaryKind::Farfield {
-                    mach: fs.mach,
-                    pressure: fs.pressure,
-                    temperature: fs.temperature,
-                    alpha: 0.0,
-                    beta: 0.0,
-                },
-            ));
-        }
-        let sigma = uniform_box_sigma(patches);
-        assert!(sigma.iter().all(|&s| s.is_finite() && s > 0.0));
+        let pair = FreestreamPairFixture::air_sutherland(0.2);
+        pair.for_each_inviscid_side(|side| {
+            let mesh = StructuredMesh3d::uniform_box("box", 2, 2, 2, 1.0, 1.0, 1.0).expect("mesh");
+            let mut patches = Vec::new();
+            for name in ["i_min", "i_max", "j_min", "j_max", "k_min", "k_max"] {
+                let faces = mesh.resolve_logical_boundary(name).expect("faces");
+                patches.push(BoundaryPatch::new(
+                    name,
+                    faces,
+                    BoundaryKind::Farfield {
+                        mach: side.fs.mach,
+                        pressure: side.fs.pressure,
+                        temperature: side.fs.temperature,
+                        alpha: 0.0,
+                        beta: 0.0,
+                    },
+                ));
+            }
+            let sigma = uniform_box_sigma(patches, side);
+            assert!(
+                sigma.iter().all(|&s| s.is_finite() && s > 0.0),
+                "{} spectral radius",
+                side.label
+            );
+        });
     }
 }

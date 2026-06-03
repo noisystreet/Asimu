@@ -11,6 +11,7 @@ use crate::discretization::{BoundaryGhostBuffer, apply_compressible_boundary_con
 use crate::field::{ConservedFields, ConservedResidual};
 use crate::io::{CaseMesh, load_case};
 use crate::mesh::{BoundaryMesh, BoundaryMesh3d, FaceMetric, LogicalFace3d, StructuredMesh3d};
+use crate::physics::FreestreamContext;
 use crate::physics::IdealGasEoS;
 
 #[test]
@@ -21,6 +22,9 @@ fn cylinder_boundary_flux_decomposition_when_present() {
     if !case_path.is_file() {
         return;
     }
+    if !cfg!(feature = "io-cgns") {
+        return;
+    }
     let case = load_case(&case_path).expect("load case");
     let CaseMesh::Structured3d(mesh) = &case.mesh else {
         panic!("expected 3d mesh");
@@ -29,12 +33,13 @@ fn cylinder_boundary_flux_decomposition_when_present() {
     let fs = case.freestream.expect("freestream");
     let fields = ConservedFields::from_freestream(mesh.num_cells(), &eos, &fs).expect("fields");
     let mut ghosts = BoundaryGhostBuffer::new();
+    let fs_ctx = FreestreamContext::dimensional(&eos);
     apply_compressible_boundary_conditions(
         mesh,
         &case.boundary,
         &fields,
         &mut ghosts,
-        &eos,
+        &fs_ctx,
         &fs,
         None,
     )

@@ -246,64 +246,31 @@ fn assemble_boundary_faces_3d(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::boundary::{BoundaryKind, BoundaryPatch};
     use crate::core::approx_eq;
-    use crate::discretization::{BoundaryGhostBuffer, apply_compressible_boundary_conditions};
-    use crate::mesh::{BoundaryMesh, MeshMetricMode};
-    use crate::physics::FreestreamParams;
+    use crate::discretization::freestream_pair::{FreestreamPairFixture, uniform_farfield_box};
+    use crate::mesh::MeshMetricMode;
 
     fn assemble_uniform_freestream(
+        side: &crate::discretization::freestream_pair::UniformFarfieldSide<'_>,
         config: &InviscidFluxConfig,
         metric_mode: MeshMetricMode,
     ) -> ConservedResidual {
-        let mut mesh = StructuredMesh3d::uniform_box("box", 3, 3, 3, 1.0, 1.0, 1.0).expect("mesh");
+        let (mut mesh, boundary_set, fields, ghosts) =
+            uniform_farfield_box(3, 3, 3, 1.0, 1.0, 1.0, side);
         mesh.set_metric_mode(metric_mode);
-        let eos = IdealGasEoS::AIR_STANDARD;
-        let fs = FreestreamParams {
-            mach: 0.2,
-            ..FreestreamParams::default()
-        };
-        let fields = ConservedFields::from_freestream(mesh.num_cells(), &eos, &fs).expect("fields");
-        let mut patches = Vec::new();
-        for name in ["i_min", "i_max", "j_min", "j_max", "k_min", "k_max"] {
-            let faces = mesh.resolve_logical_boundary(name).expect("faces");
-            patches.push(BoundaryPatch::new(
-                name,
-                faces,
-                BoundaryKind::Farfield {
-                    mach: fs.mach,
-                    pressure: fs.pressure,
-                    temperature: fs.temperature,
-                    alpha: 0.0,
-                    beta: 0.0,
-                },
-            ));
-        }
-        let boundary_set = BoundarySet::new(patches);
-        let mut ghosts = BoundaryGhostBuffer::new();
-        apply_compressible_boundary_conditions(
-            &mesh,
-            &boundary_set,
-            &fields,
-            &mut ghosts,
-            &eos,
-            &fs,
-            None,
-        )
-        .expect("bc");
         let mut primitives = PrimitiveFields::zeros(mesh.num_cells()).expect("prim");
         primitives
-            .fill_from_conserved(&fields, &eos, 1.0e-6)
+            .fill_from_conserved(&fields, side.eos, side.min_pressure)
             .expect("fill");
         let mut rhs = ConservedResidual::zeros(mesh.num_cells()).expect("rhs");
         let params = InviscidAssembly3dParams {
             mesh: &mesh,
-            eos: &eos,
+            eos: side.eos,
             config,
             boundaries: &boundary_set,
             ghosts: &ghosts,
             primitives: &primitives,
-            min_pressure: 1.0e-6,
+            min_pressure: side.min_pressure,
         };
         assemble_inviscid_residual_3d(&fields, &mut rhs, &params).expect("assemble");
         rhs
@@ -311,29 +278,65 @@ mod tests {
 
     #[test]
     fn uniform_freestream_with_farfield_has_near_zero_rhs() {
-        let rhs =
-            assemble_uniform_freestream(&InviscidFluxConfig::default(), MeshMetricMode::Cartesian);
-        assert!(rhs.density.values().iter().all(|&v| v.abs() < 1.0e-8));
-        assert!(rhs.momentum_x.values().iter().all(|&v| v.abs() < 1.0e-6));
-        assert!(rhs.total_energy.values().iter().all(|&v| v.abs() < 1.0e-6));
+        let pair = FreestreamPairFixture::air_sutherland(0.2);
+        pair.for_each_inviscid_side(|side| {
+            let rhs = assemble_uniform_freestream(
+                side,
+                &InviscidFluxConfig::default(),
+                MeshMetricMode::Cartesian,
+            );
+            assert!(
+                rhs.density.values().iter().all(|&v| v.abs() < 1.0e-8),
+                "{} density rhs",
+                side.label
+            );
+            assert!(
+                rhs.momentum_x.values().iter().all(|&v| v.abs() < 1.0e-6),
+                "{} momentum rhs",
+                side.label
+            );
+            assert!(
+                rhs.total_energy.values().iter().all(|&v| v.abs() < 1.0e-6),
+                "{} energy rhs",
+                side.label
+            );
+        });
     }
 
     #[test]
     fn uniform_freestream_with_muscl_hllc_has_near_zero_rhs() {
-        let rhs = assemble_uniform_freestream(
-            &InviscidFluxConfig::muscl_hllc(),
-            MeshMetricMode::Cartesian,
-        );
-        assert!(rhs.density.values().iter().all(|&v| v.abs() < 1.0e-8));
-        assert!(rhs.momentum_x.values().iter().all(|&v| v.abs() < 1.0e-6));
-        assert!(rhs.total_energy.values().iter().all(|&v| v.abs() < 1.0e-6));
+        let pair = FreestreamPairFixture::air_sutherland(0.2);
+        pair.for_each_inviscid_side(|side| {
+            let rhs = assemble_uniform_freestream(
+                side,
+                &InviscidFluxConfig::muscl_hllc(),
+                MeshMetricMode::Cartesian,
+            );
+            assert!(
+                rhs.density.values().iter().all(|&v| v.abs() < 1.0e-8),
+                "{} density rhs",
+                side.label
+            );
+            assert!(
+                rhs.momentum_x.values().iter().all(|&v| v.abs() < 1.0e-6),
+                "{} momentum rhs",
+                side.label
+            );
+            assert!(
+                rhs.total_energy.values().iter().all(|&v| v.abs() < 1.0e-6),
+                "{} energy rhs",
+                side.label
+            );
+        });
     }
 
     #[test]
     fn curvilinear_metrics_match_cartesian_rhs_on_uniform_box() {
+        let pair = FreestreamPairFixture::air_sutherland(0.2);
+        let side = pair.inviscid_dimensional();
         let config = InviscidFluxConfig::muscl_hllc();
-        let cart = assemble_uniform_freestream(&config, MeshMetricMode::Cartesian);
-        let curv = assemble_uniform_freestream(&config, MeshMetricMode::Curvilinear);
+        let cart = assemble_uniform_freestream(&side, &config, MeshMetricMode::Cartesian);
+        let curv = assemble_uniform_freestream(&side, &config, MeshMetricMode::Curvilinear);
         for i in 0..cart.num_cells() {
             assert!(approx_eq(
                 cart.density.values()[i],
@@ -361,9 +364,13 @@ mod tests {
         use crate::discretization::{BoundaryGhostBuffer, apply_compressible_boundary_conditions};
         use crate::io::{CaseMesh, load_case};
         use crate::mesh::BoundaryMesh;
+        use crate::physics::FreestreamContext;
 
         let case_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("case_cylinder/case.toml");
         if !case_path.is_file() {
+            return;
+        }
+        if !cfg!(feature = "io-cgns") {
             return;
         }
         let case = load_case(&case_path).expect("load case");
@@ -374,12 +381,13 @@ mod tests {
         let fs = case.freestream.expect("freestream");
         let fields = ConservedFields::from_freestream(mesh.num_cells(), &eos, &fs).expect("fields");
         let mut ghosts = BoundaryGhostBuffer::new();
+        let fs_ctx = FreestreamContext::new(&eos, case.reference.as_ref(), None);
         apply_compressible_boundary_conditions(
             mesh,
             &case.boundary,
             &fields,
             &mut ghosts,
-            &eos,
+            &fs_ctx,
             &fs,
             None,
         )

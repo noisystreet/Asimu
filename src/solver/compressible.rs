@@ -9,11 +9,10 @@ mod compressible_rhs;
 mod lu_sgs_sweep_3d;
 
 use crate::solver::spectral_radius::{
-    SpectralRadius3dParams, cell_local_dt_spectral, cell_lusgs_spacing_timestep,
-    cell_spectral_radius_3d,
+    SpectralRadius3dParams, cell_local_dt_spectral, cell_spectral_radius_3d,
 };
 use compressible_rhs::EvaluateRhs3d;
-use lu_sgs_sweep_3d::{LuSgsSweep3dParams, lu_sgs_sweep_3d, sweep_first_order_config};
+use lu_sgs_sweep_3d::{LuSgsSweep3dParams, lu_sgs_sweep_3d};
 
 use crate::boundary::BoundarySet;
 use crate::core::{Real, format_log_fixed4, format_log_sci4, log10_positive};
@@ -25,7 +24,9 @@ use crate::error::Result;
 use crate::field::{ConservedFields, ConservedResidual, PrimitiveFields};
 use crate::mesh::{BoundaryMesh3d, StructuredMesh1d, StructuredMesh3d};
 use crate::physics::ViscousPhysicsConfig;
-use crate::physics::{FreestreamParams, IdealGasEoS, PrimitiveState};
+use crate::physics::{
+    FreestreamContext, FreestreamParams, IdealGasEoS, PrimitiveState, ReferenceScales,
+};
 use crate::solver::state::SolverState;
 use crate::solver::time::{
     CflSchedule, LuSgsConfig, Rk4Storage, RungeKutta4Config, RungeKutta4Integrator,
@@ -97,6 +98,7 @@ pub struct CompressibleAdvanceContext3d<'a> {
     pub ghosts: &'a mut BoundaryGhostBuffer,
     pub eos: &'a IdealGasEoS,
     pub freestream: &'a FreestreamParams,
+    pub reference: Option<&'a ReferenceScales>,
     /// 每步 RHS 复用的原始变量缓冲（避免每 `evaluate_rhs` 重新分配）。
     pub primitive_scratch: PrimitiveFields,
     /// 粘性梯度缓冲（仅 NS 算例使用）。
@@ -137,6 +139,7 @@ impl CompressibleEulerSolver {
             ghosts: ctx.ghosts,
             eos: ctx.eos,
             freestream: ctx.freestream,
+            reference: ctx.reference,
             inviscid,
             viscous: self.config.viscous.as_ref(),
             min_pressure,
@@ -328,9 +331,7 @@ impl CompressibleEulerSolver {
             (min_positive_dt(&cell_dts), cell_dts, sigma)
         };
         integrator.config.dt = dt;
-        let mesh = ctx.mesh;
         let structured = ctx.structured;
-        let patches = ctx.patches;
         let eos = ctx.eos;
         let volumes = structured.cell_volumes();
         let lu_sgs = self.config.lu_sgs;
@@ -349,16 +350,11 @@ impl CompressibleEulerSolver {
                     .run(&storage.u0, &mut storage.k1)?;
             }
             if lu_sgs.sweep {
-                let sweep_cfg = sweep_first_order_config(&inviscid);
                 let mut sweep_params = LuSgsSweep3dParams {
                     mesh: structured,
-                    boundary_mesh: mesh,
                     eos,
-                    boundaries: patches,
-                    ghosts: ctx.ghosts,
                     primitives: &mut ctx.primitive_scratch,
                     min_pressure: p_floor,
-                    sweep_config: sweep_cfg,
                 };
                 let _span = info_span!("lu_sgs_sweep").entered();
                 lu_sgs_sweep_3d(
@@ -534,7 +530,7 @@ impl CompressibleEulerSolver {
         crate::solver::time::suggested_dt_cfl(mesh.dx(), max_speed, cfl)
     }
 
-    /// Blazek 局部时间步（Ch. 9.1）：\(\Delta t_i=\mathrm{CFL}\,V_i/\sigma_i\)；RK4 / LU-SGS 共用。
+    /// Blazek 结构网格局部时间步：\(\Delta t_i=\mathrm{CFL}/\sigma_i\)；RK4 / LU-SGS 共用。
     fn compute_cell_dts_3d(
         &self,
         ctx: &mut CompressibleAdvanceContext3d<'_>,
@@ -555,7 +551,7 @@ impl CompressibleEulerSolver {
         }
     }
 
-    /// LU-SGS：面间距 CFL + \(\sigma_i=(|u|+a)_i/h_i\)（避免贴体单元 \(V/\sigma\) 冻结更新）。
+    /// LU-SGS：与显式 RK 共用有限体积 face-sum 谱半径时间步。
     fn prepare_lusgs_timestep_3d(
         &self,
         ctx: &mut CompressibleAdvanceContext3d<'_>,
@@ -563,34 +559,14 @@ impl CompressibleEulerSolver {
         cfl: Real,
         p_floor: Real,
     ) -> Result<(Vec<Real>, Vec<Real>)> {
-        fields.enforce_positivity(ctx.eos, p_floor);
-        apply_compressible_boundary_conditions(
-            ctx.mesh,
-            ctx.patches,
-            fields,
-            ctx.ghosts,
-            ctx.eos,
-            ctx.freestream,
-            ctx.viscous,
-        )?;
-        ctx.primitive_scratch
-            .fill_from_conserved(fields, ctx.eos, p_floor)?;
-        let lengths = ctx.structured.cell_cfl_lengths()?;
-        let wave_speeds = cell_wave_speeds(fields, ctx.eos, p_floor)?;
-        let viscous_diff = ctx
-            .viscous
-            .map(|v| {
-                crate::solver::spectral_radius::cell_viscous_diffusivity_max(
-                    &ctx.primitive_scratch,
-                    ctx.eos,
-                    v,
-                )
-            })
-            .transpose()?;
-        cell_lusgs_spacing_timestep(&lengths, &wave_speeds, cfl, viscous_diff.as_deref())
+        let (mut cell_dts, sigma) = self.prepare_spectral_timestep_3d(ctx, fields, cfl, p_floor)?;
+        if let Some(dt) = positive_fixed_dt(self.config.time.dt) {
+            cell_dts.fill(dt);
+        }
+        Ok((cell_dts, sigma))
     }
 
-    /// 刷新 BC ghost、原始变量，并计算 Blazek 体积谱半径 \((\Delta t_i,\sigma_i)\)（RK4）。
+    /// 刷新 BC ghost、原始变量，并计算 Blazek face-sum 谱半径 \((\Delta t_i,\sigma_i)\)。
     fn prepare_spectral_timestep_3d(
         &self,
         ctx: &mut CompressibleAdvanceContext3d<'_>,
@@ -599,12 +575,13 @@ impl CompressibleEulerSolver {
         p_floor: Real,
     ) -> Result<(Vec<Real>, Vec<Real>)> {
         fields.enforce_positivity(ctx.eos, p_floor);
+        let fs_ctx = FreestreamContext::new(ctx.eos, ctx.reference, ctx.viscous);
         apply_compressible_boundary_conditions(
             ctx.mesh,
             ctx.patches,
             fields,
             ctx.ghosts,
-            ctx.eos,
+            &fs_ctx,
             ctx.freestream,
             ctx.viscous,
         )?;
@@ -655,23 +632,6 @@ pub fn max_wave_speed(
         max_speed = max_speed.max(wave_speed_primitive(&prim, eos)?);
     }
     Ok(max_speed)
-}
-
-fn cell_wave_speeds(
-    fields: &ConservedFields,
-    eos: &IdealGasEoS,
-    min_pressure: Real,
-) -> Result<Vec<Real>> {
-    let mut speeds = Vec::with_capacity(fields.num_cells());
-    for i in 0..fields.num_cells() {
-        let prim = crate::field::primitive_from_conserved_relaxed(
-            eos,
-            &fields.cell_state(i)?,
-            min_pressure,
-        )?;
-        speeds.push(wave_speed_primitive(&prim, eos)?);
-    }
-    Ok(speeds)
 }
 
 fn wave_speed_primitive(prim: &PrimitiveState, eos: &IdealGasEoS) -> Result<Real> {

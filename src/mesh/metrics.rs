@@ -34,11 +34,18 @@ pub struct FaceMetric {
     pub area_vector: Vector3,
     pub area: Real,
     pub normal: Vector3,
+    /// 四边形面四顶点算术平均（几何面心）。
+    pub center: Vector3,
 }
 
 impl FaceMetric {
     #[must_use]
     pub fn from_area_vector(area_vector: Vector3) -> Self {
+        Self::from_area_vector_and_center(area_vector, Vector3::new(0.0, 0.0, 0.0))
+    }
+
+    #[must_use]
+    pub fn from_area_vector_and_center(area_vector: Vector3, center: Vector3) -> Self {
         let area = area_vector.magnitude();
         let normal = if area > Real::EPSILON {
             Vector3::new(
@@ -53,8 +60,23 @@ impl FaceMetric {
             area_vector,
             area,
             normal,
+            center,
         }
     }
+}
+
+/// 边界面 owner 单元中心到面心的法向距离（BC ghost / 粘性壁面 \(\delta\)）。
+#[must_use]
+pub fn boundary_cell_spacing(cell_center: Vector3, face: &FaceMetric, cell_volume: Real) -> Real {
+    let dr = vec_sub(face.center, cell_center);
+    let proj = (dr.x * face.normal.x + dr.y * face.normal.y + dr.z * face.normal.z).abs();
+    if proj > Real::EPSILON {
+        return proj;
+    }
+    if face.area > Real::EPSILON {
+        return cell_volume / (2.0 * face.area);
+    }
+    Real::EPSILON
 }
 
 /// 预计算的 3D 曲线网格度量（加载或 `scale` 后构建，求解循环内只读）。
@@ -150,7 +172,16 @@ impl StructuredMesh3d {
         if self.uses_curvilinear_metrics() {
             compute_i_face_metric(self, i, j, k)
         } else {
-            FaceMetric::from_area_vector(Vector3::new(self.i_face_area_between(i, j, k), 0.0, 0.0))
+            let x = i + 1;
+            FaceMetric::from_area_vector_and_center(
+                Vector3::new(self.i_face_area_between(i, j, k), 0.0, 0.0),
+                quad_vertex_center(
+                    node_vec(self, x, j, k),
+                    node_vec(self, x, j + 1, k),
+                    node_vec(self, x, j + 1, k + 1),
+                    node_vec(self, x, j, k + 1),
+                ),
+            )
         }
     }
 
@@ -163,7 +194,16 @@ impl StructuredMesh3d {
         if self.uses_curvilinear_metrics() {
             compute_j_face_metric(self, i, j, k)
         } else {
-            FaceMetric::from_area_vector(Vector3::new(0.0, self.j_face_area_between(i, j, k), 0.0))
+            let y = j + 1;
+            FaceMetric::from_area_vector_and_center(
+                Vector3::new(0.0, self.j_face_area_between(i, j, k), 0.0),
+                quad_vertex_center(
+                    node_vec(self, i, y, k),
+                    node_vec(self, i + 1, y, k),
+                    node_vec(self, i + 1, y, k + 1),
+                    node_vec(self, i, y, k + 1),
+                ),
+            )
         }
     }
 
@@ -176,7 +216,16 @@ impl StructuredMesh3d {
         if self.uses_curvilinear_metrics() {
             compute_k_face_metric(self, i, j, k)
         } else {
-            FaceMetric::from_area_vector(Vector3::new(0.0, 0.0, self.k_face_area_between(i, j, k)))
+            let z = k + 1;
+            FaceMetric::from_area_vector_and_center(
+                Vector3::new(0.0, 0.0, self.k_face_area_between(i, j, k)),
+                quad_vertex_center(
+                    node_vec(self, i, j, z),
+                    node_vec(self, i + 1, j, z),
+                    node_vec(self, i + 1, j + 1, z),
+                    node_vec(self, i, j + 1, z),
+                ),
+            )
         }
     }
 
@@ -196,11 +245,11 @@ impl StructuredMesh3d {
             curvilinear_boundary_face_metric(self, face, i, j, k)
         } else {
             let (normal, area, _spacing) = self.boundary_face_geometry(face, i, j, k);
-            FaceMetric::from_area_vector(Vector3::new(
-                normal.x * area,
-                normal.y * area,
-                normal.z * area,
-            ))
+            let [v0, v1, v2, v3] = boundary_quad_vertices(self, face, i, j, k);
+            FaceMetric::from_area_vector_and_center(
+                Vector3::new(normal.x * area, normal.y * area, normal.z * area),
+                quad_vertex_center(v0, v1, v2, v3),
+            )
         }
     }
 }
@@ -259,6 +308,10 @@ fn face_spacing(owner_volume: Real, neighbor_volume: Real, area: Real) -> Real {
 #[must_use]
 fn compute_i_face_metric(mesh: &StructuredMesh3d, i: usize, j: usize, k: usize) -> FaceMetric {
     let x = i + 1;
+    let v00 = node_vec(mesh, x, j, k);
+    let v10 = node_vec(mesh, x, j + 1, k);
+    let v11 = node_vec(mesh, x, j + 1, k + 1);
+    let v01 = node_vec(mesh, x, j, k + 1);
     let area_vector = orient_internal_face_area_vector(
         mesh,
         i,
@@ -267,19 +320,18 @@ fn compute_i_face_metric(mesh: &StructuredMesh3d, i: usize, j: usize, k: usize) 
         i + 1,
         j,
         k,
-        quad_area_vector(
-            node_vec(mesh, x, j, k),
-            node_vec(mesh, x, j + 1, k),
-            node_vec(mesh, x, j + 1, k + 1),
-            node_vec(mesh, x, j, k + 1),
-        ),
+        quad_area_vector(v00, v10, v11, v01),
     );
-    FaceMetric::from_area_vector(area_vector)
+    FaceMetric::from_area_vector_and_center(area_vector, quad_vertex_center(v00, v10, v11, v01))
 }
 
 #[must_use]
 fn compute_j_face_metric(mesh: &StructuredMesh3d, i: usize, j: usize, k: usize) -> FaceMetric {
     let y = j + 1;
+    let v00 = node_vec(mesh, i, y, k);
+    let v10 = node_vec(mesh, i + 1, y, k);
+    let v11 = node_vec(mesh, i + 1, y, k + 1);
+    let v01 = node_vec(mesh, i, y, k + 1);
     let area_vector = orient_internal_face_area_vector(
         mesh,
         i,
@@ -288,19 +340,18 @@ fn compute_j_face_metric(mesh: &StructuredMesh3d, i: usize, j: usize, k: usize) 
         i,
         j + 1,
         k,
-        quad_area_vector(
-            node_vec(mesh, i, y, k),
-            node_vec(mesh, i + 1, y, k),
-            node_vec(mesh, i + 1, y, k + 1),
-            node_vec(mesh, i, y, k + 1),
-        ),
+        quad_area_vector(v00, v10, v11, v01),
     );
-    FaceMetric::from_area_vector(area_vector)
+    FaceMetric::from_area_vector_and_center(area_vector, quad_vertex_center(v00, v10, v11, v01))
 }
 
 #[must_use]
 fn compute_k_face_metric(mesh: &StructuredMesh3d, i: usize, j: usize, k: usize) -> FaceMetric {
     let z = k + 1;
+    let v00 = node_vec(mesh, i, j, z);
+    let v10 = node_vec(mesh, i + 1, j, z);
+    let v11 = node_vec(mesh, i + 1, j + 1, z);
+    let v01 = node_vec(mesh, i, j + 1, z);
     let area_vector = orient_internal_face_area_vector(
         mesh,
         i,
@@ -309,14 +360,9 @@ fn compute_k_face_metric(mesh: &StructuredMesh3d, i: usize, j: usize, k: usize) 
         i,
         j,
         k + 1,
-        quad_area_vector(
-            node_vec(mesh, i, j, z),
-            node_vec(mesh, i + 1, j, z),
-            node_vec(mesh, i + 1, j + 1, z),
-            node_vec(mesh, i, j + 1, z),
-        ),
+        quad_area_vector(v00, v10, v11, v01),
     );
-    FaceMetric::from_area_vector(area_vector)
+    FaceMetric::from_area_vector_and_center(area_vector, quad_vertex_center(v00, v10, v11, v01))
 }
 
 /// 内界面面积向量与 owner→neighbor 方向对齐（贴体网格顶点顺序可能反号）。
@@ -423,62 +469,8 @@ fn curvilinear_boundary_face_metric(
     j: usize,
     k: usize,
 ) -> FaceMetric {
-    let mut area_vector = match face {
-        LogicalFace3d::IMin => {
-            let x = 0;
-            quad_area_vector(
-                node_vec(mesh, x, j + 1, k),
-                node_vec(mesh, x, j, k),
-                node_vec(mesh, x, j, k + 1),
-                node_vec(mesh, x, j + 1, k + 1),
-            )
-        }
-        LogicalFace3d::IMax => {
-            let x = mesh.nx;
-            quad_area_vector(
-                node_vec(mesh, x, j, k),
-                node_vec(mesh, x, j + 1, k),
-                node_vec(mesh, x, j + 1, k + 1),
-                node_vec(mesh, x, j, k + 1),
-            )
-        }
-        LogicalFace3d::JMin => {
-            let y = 0;
-            quad_area_vector(
-                node_vec(mesh, i + 1, y, k),
-                node_vec(mesh, i, y, k),
-                node_vec(mesh, i, y, k + 1),
-                node_vec(mesh, i + 1, y, k + 1),
-            )
-        }
-        LogicalFace3d::JMax => {
-            let y = mesh.ny;
-            quad_area_vector(
-                node_vec(mesh, i, y, k),
-                node_vec(mesh, i + 1, y, k),
-                node_vec(mesh, i + 1, y, k + 1),
-                node_vec(mesh, i, y, k + 1),
-            )
-        }
-        LogicalFace3d::KMin => {
-            let z = 0;
-            quad_area_vector(
-                node_vec(mesh, i + 1, j, z),
-                node_vec(mesh, i, j, z),
-                node_vec(mesh, i, j + 1, z),
-                node_vec(mesh, i + 1, j + 1, z),
-            )
-        }
-        LogicalFace3d::KMax => {
-            let z = mesh.nz;
-            quad_area_vector(
-                node_vec(mesh, i, j, z),
-                node_vec(mesh, i + 1, j, z),
-                node_vec(mesh, i + 1, j + 1, z),
-                node_vec(mesh, i, j + 1, z),
-            )
-        }
-    };
+    let [v0, v1, v2, v3] = boundary_quad_vertices(mesh, face, i, j, k);
+    let mut area_vector = quad_area_vector(v0, v1, v2, v3);
     // 贴体网格上逻辑边界面可能物理倾斜；用 owner→域内邻居修正外向法向。
     // 准 2D（`nz==1`）时 K 面无域内邻居，跳过 K 面修正。
     let include_k = mesh.nz > 1;
@@ -501,7 +493,82 @@ fn curvilinear_boundary_face_metric(
             area_vector = Vector3::new(-area_vector.x, -area_vector.y, -area_vector.z);
         }
     }
-    FaceMetric::from_area_vector(area_vector)
+    FaceMetric::from_area_vector_and_center(area_vector, quad_vertex_center(v0, v1, v2, v3))
+}
+
+fn boundary_quad_vertices(
+    mesh: &StructuredMesh3d,
+    face: LogicalFace3d,
+    i: usize,
+    j: usize,
+    k: usize,
+) -> [Vector3; 4] {
+    let _ = (i, j, k);
+    match face {
+        LogicalFace3d::IMin => {
+            let x = 0;
+            [
+                node_vec(mesh, x, j + 1, k),
+                node_vec(mesh, x, j, k),
+                node_vec(mesh, x, j, k + 1),
+                node_vec(mesh, x, j + 1, k + 1),
+            ]
+        }
+        LogicalFace3d::IMax => {
+            let x = mesh.nx;
+            [
+                node_vec(mesh, x, j, k),
+                node_vec(mesh, x, j + 1, k),
+                node_vec(mesh, x, j + 1, k + 1),
+                node_vec(mesh, x, j, k + 1),
+            ]
+        }
+        LogicalFace3d::JMin => {
+            let y = 0;
+            [
+                node_vec(mesh, i + 1, y, k),
+                node_vec(mesh, i, y, k),
+                node_vec(mesh, i, y, k + 1),
+                node_vec(mesh, i + 1, y, k + 1),
+            ]
+        }
+        LogicalFace3d::JMax => {
+            let y = mesh.ny;
+            [
+                node_vec(mesh, i, y, k),
+                node_vec(mesh, i + 1, y, k),
+                node_vec(mesh, i + 1, y, k + 1),
+                node_vec(mesh, i, y, k + 1),
+            ]
+        }
+        LogicalFace3d::KMin => {
+            let z = 0;
+            [
+                node_vec(mesh, i + 1, j, z),
+                node_vec(mesh, i, j, z),
+                node_vec(mesh, i, j + 1, z),
+                node_vec(mesh, i + 1, j + 1, z),
+            ]
+        }
+        LogicalFace3d::KMax => {
+            let z = mesh.nz;
+            [
+                node_vec(mesh, i, j, z),
+                node_vec(mesh, i + 1, j, z),
+                node_vec(mesh, i + 1, j + 1, z),
+                node_vec(mesh, i, j + 1, z),
+            ]
+        }
+    }
+}
+
+#[must_use]
+fn quad_vertex_center(v00: Vector3, v10: Vector3, v11: Vector3, v01: Vector3) -> Vector3 {
+    Vector3::new(
+        (v00.x + v10.x + v11.x + v01.x) / 4.0,
+        (v00.y + v10.y + v11.y + v01.y) / 4.0,
+        (v00.z + v10.z + v11.z + v01.z) / 4.0,
+    )
 }
 
 /// 四边形面两三角分解（式 (3)）。

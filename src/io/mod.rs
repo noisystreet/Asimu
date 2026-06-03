@@ -6,6 +6,7 @@
 mod case;
 mod limits;
 mod mesh_report;
+mod nondimensional;
 mod residual;
 mod restart;
 mod vertex_field;

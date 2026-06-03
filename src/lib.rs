@@ -43,7 +43,10 @@ pub mod prelude {
         BoundaryMesh, BoundaryMesh3d, Mesh, StructuredMesh, StructuredMesh1d, StructuredMesh2d,
         StructuredMesh3d,
     };
-    pub use crate::physics::{FreestreamParams, IdealGasEoS, PhysicsConfig, PrimitiveState};
+    pub use crate::physics::{
+        FreestreamContext, FreestreamParams, IdealGasEoS, PhysicsConfig, PrimitiveState,
+        ReferenceScales,
+    };
     pub use crate::solver::{
         CompressibleAdvanceContext1d, CompressibleAdvanceContext3d, CompressibleEulerConfig,
         CompressibleEulerSolver, CompressibleStepInfo, Rk4Storage, RungeKutta4Config,

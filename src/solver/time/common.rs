@@ -4,11 +4,9 @@ use crate::field::ConservedFields;
 use crate::physics::IdealGasEoS;
 
 pub(crate) fn maybe_enforce_positivity(
-    fields: &mut ConservedFields,
-    eos: Option<&IdealGasEoS>,
-    min_pressure: crate::core::Real,
+    _fields: &mut ConservedFields,
+    _eos: Option<&IdealGasEoS>,
+    _min_pressure: crate::core::Real,
 ) {
-    if let Some(eos) = eos {
-        fields.enforce_positivity(eos, min_pressure);
-    }
+    // 已禁用正性钳制——不做任何操作。
 }

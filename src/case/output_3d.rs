@@ -133,36 +133,58 @@ fn write_solution_flow(
     physical_time: Real,
     case: &CaseSpec,
 ) -> Result<()> {
-    let p_floor = case
-        .freestream
-        .or(case.fluid_initial.freestream)
-        .map(|f| positivity_pressure_floor(f.pressure))
-        .unwrap_or(1.0e-6);
+    let (fields_out, eos_out, time_out, p_floor) =
+        prepare_dimensional_flow_output(case, fields, eos, physical_time)?;
     #[cfg(feature = "io-cgns")]
-    {
-        write_flow_cgns(path, mesh, fields, eos, physical_time, p_floor)?;
-    }
+    write_flow_cgns(path, mesh, &fields_out, &eos_out, time_out, p_floor)?;
     #[cfg(not(feature = "io-cgns"))]
+    let _ = time_out;
+    #[cfg(not(feature = "io-cgns"))]
+    if case
+        .output
+        .as_ref()
+        .is_some_and(|o| o.solution_cgns.is_some())
     {
-        let _ = (path, mesh, fields, eos, physical_time, p_floor);
         warn!("solution_cgns 须启用 feature io-cgns");
     }
     #[cfg(feature = "io-vtk")]
     if case.output.as_ref().is_some_and(|o| o.solution_vtk) {
         let vtu = flow_vtu_path(path);
-        crate::io::write_flow_vtu(&vtu, mesh, fields, eos, p_floor)?;
+        crate::io::write_flow_vtu(&vtu, mesh, &fields_out, &eos_out, p_floor)?;
         info!(
             path = %vtu.display(),
             "已写出流场 VTU（ParaView 请优先打开此文件）"
         );
         let vts = flow_vts_path(path);
-        crate::io::write_flow_vts(&vts, mesh, fields, eos, p_floor)?;
+        crate::io::write_flow_vts(&vts, mesh, &fields_out, &eos_out, p_floor)?;
         info!(
             path = %vts.display(),
             "已写出流场 VTS（备用；Coloring 选 Cell Data → Density）"
         );
     }
     Ok(())
+}
+
+fn prepare_dimensional_flow_output(
+    case: &CaseSpec,
+    fields: &ConservedFields,
+    eos: &IdealGasEoS,
+    physical_time: Real,
+) -> Result<(ConservedFields, IdealGasEoS, Real, Real)> {
+    let p_floor_nd = case
+        .freestream
+        .or(case.fluid_initial.freestream)
+        .map(|f| positivity_pressure_floor(f.pressure))
+        .unwrap_or(1.0e-6);
+    if let Some(reference) = &case.reference {
+        let fields_out = fields.to_dimensional(reference)?;
+        let eos_out = case.dimensional_eos()?;
+        let time_out = physical_time * reference.time_scale();
+        let p_floor = p_floor_nd * reference.pressure;
+        Ok((fields_out, eos_out, time_out, p_floor))
+    } else {
+        Ok((fields.clone(), *eos, physical_time, p_floor_nd))
+    }
 }
 
 /// 由 `flow.cgns` 或 `snapshots/flow.cgns` 生成间隔输出文件名。
