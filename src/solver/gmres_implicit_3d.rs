@@ -3,7 +3,7 @@
 use crate::core::Real;
 use crate::discretization::InviscidFluxConfig;
 use crate::error::{AsimuError, Result};
-use crate::field::{ConservedFields, ConservedResidual};
+use crate::field::{ConservedFields, ConservedResidual, primitive_from_conserved};
 use crate::linalg::{
     GmresConfig, GmresReport, GmresSolver, LinearOperator, LusgsDiagonalPreconditioner,
 };
@@ -17,6 +17,18 @@ const CONSERVED_COMPONENTS_3D: usize = 5;
 pub struct GmresImplicitDelta {
     pub delta: Vec<Real>,
     pub report: GmresReport,
+}
+
+impl GmresImplicitDelta {
+    /// 将 GMRES 求得的 \(\Delta U\) 按给定线搜索系数写入输出场。
+    pub fn assign_scaled_to(
+        &self,
+        out: &mut ConservedFields,
+        base: &ConservedFields,
+        alpha: Real,
+    ) -> Result<()> {
+        assign_delta_scaled(out, base, &self.delta, alpha)
+    }
 }
 
 /// GMRES 隐式线性化参数。
@@ -183,6 +195,49 @@ fn assign_perturbed_fields(
     Ok(())
 }
 
+pub(crate) fn assign_delta_scaled(
+    out: &mut ConservedFields,
+    base: &ConservedFields,
+    delta: &[Real],
+    alpha: Real,
+) -> Result<()> {
+    let n = base.num_cells();
+    ensure_vector_len(delta, n * CONSERVED_COMPONENTS_3D, "gmres delta")?;
+    for cell in 0..n {
+        let offset = cell * CONSERVED_COMPONENTS_3D;
+        out.density.values_mut()[cell] = base.density.values()[cell] + alpha * delta[offset];
+        out.momentum_x.values_mut()[cell] =
+            base.momentum_x.values()[cell] + alpha * delta[offset + 1];
+        out.momentum_y.values_mut()[cell] =
+            base.momentum_y.values()[cell] + alpha * delta[offset + 2];
+        out.momentum_z.values_mut()[cell] =
+            base.momentum_z.values()[cell] + alpha * delta[offset + 3];
+        out.total_energy.values_mut()[cell] =
+            base.total_energy.values()[cell] + alpha * delta[offset + 4];
+    }
+    Ok(())
+}
+
+pub(crate) fn fields_are_physical(
+    fields: &ConservedFields,
+    eos: &crate::physics::IdealGasEoS,
+    min_pressure: Real,
+) -> bool {
+    (0..fields.num_cells()).all(|cell| {
+        let Ok(state) = fields.cell_state(cell) else {
+            return false;
+        };
+        let Ok(prim) = primitive_from_conserved(eos, &state) else {
+            return false;
+        };
+        prim.density.is_finite()
+            && prim.density > 0.0
+            && prim.pressure.is_finite()
+            && prim.pressure > min_pressure
+            && prim.velocity.iter().all(|v| v.is_finite())
+    })
+}
+
 fn residual_to_vector(residual: &ConservedResidual) -> Vec<Real> {
     let n = residual.num_cells();
     let mut out = vec![0.0; n * CONSERVED_COMPONENTS_3D];
@@ -266,6 +321,23 @@ mod tests {
         assert!((out.momentum_y.values()[0] - 3.3).abs() < 1.0e-12);
         assert!((out.momentum_z.values()[0] - 4.4).abs() < 1.0e-12);
         assert!((out.total_energy.values()[0] - 10.5).abs() < 1.0e-12);
+    }
+
+    #[test]
+    fn scaled_delta_assigns_all_conserved_components() {
+        let state = ConservedState {
+            density: 1.0,
+            momentum: [2.0, 3.0, 4.0],
+            total_energy: 10.0,
+        };
+        let base = ConservedFields::uniform(1, state).expect("base");
+        let mut out = base.clone();
+        assign_delta_scaled(&mut out, &base, &[1.0, 2.0, 3.0, 4.0, 5.0], 0.25).expect("delta");
+        assert!((out.density.values()[0] - 1.25).abs() < 1.0e-12);
+        assert!((out.momentum_x.values()[0] - 2.5).abs() < 1.0e-12);
+        assert!((out.momentum_y.values()[0] - 3.75).abs() < 1.0e-12);
+        assert!((out.momentum_z.values()[0] - 5.0).abs() < 1.0e-12);
+        assert!((out.total_energy.values()[0] - 11.25).abs() < 1.0e-12);
     }
 
     #[test]

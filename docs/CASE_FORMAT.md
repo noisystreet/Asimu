@@ -188,7 +188,7 @@ API：`CaseSpec::build_initial_fields()` / `initial_scalar("phi")`。
 ```toml
 [time]
 mode = "steady"       # steady | transient
-# scheme = "rk4"      # rk4（默认）| euler | lu_sgs（对角隐式伪时间，须 local_time_step）
+# scheme = "rk4"      # rk4（默认）| euler | lu_sgs | gmres（隐式伪时间须 local_time_step）
 # lusgs_omega = 1.0   # 可选；lu_sgs 松弛因子 ω∈(0,1]
 # lusgs_sweep = false # 可选；false=阶段C对角隐式（默认），true=实验性阶段D双扫
 # dt = 1.0e-3
@@ -197,6 +197,9 @@ mode = "steady"       # steady | transient
 max_steps = 1000      # 时间推进步数上限（稳态伪时间 / 瞬态物理时间共用）
 # tolerance = -6.0    # 可选；log₁₀(RMS(ρ̇)) 阈值，满足则早停
 ```
+
+`scheme = "gmres"` 启用 3D 可压缩 matrix-free GMRES 隐式伪时间步：
+求解 \((D_{\Delta t}-J_R)\Delta U=R(U)\)，使用 LU-SGS 对角预条件器，并在更新守恒量前做正性线搜索。
 
 | 字段 | 说明 |
 |------|------|

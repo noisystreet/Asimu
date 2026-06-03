@@ -15,6 +15,7 @@ use crate::solver::spectral_radius::{
 };
 use compressible_rhs::EvaluateRhs3d;
 pub use gmres_implicit_3d::{GmresImplicitConfig, GmresImplicitDelta};
+use gmres_implicit_3d::{assign_delta_scaled, fields_are_physical};
 use lu_sgs_sweep_3d::{LuSgsSweep3dParams, lu_sgs_sweep_3d};
 
 use crate::boundary::BoundarySet;
@@ -55,7 +56,7 @@ pub struct CompressibleEulerConfig {
     pub cfl_schedule: CflSchedule,
     pub time_mode: CompressibleTimeMode,
     pub local_time_step: bool,
-    /// 时间积分格式（`rk4` 默认；`euler` 排错；`lu_sgs` 对角隐式伪时间）。
+    /// 时间积分格式（`rk4` 默认；`euler` 排错；`lu_sgs`/`gmres` 隐式伪时间）。
     pub time_scheme: TimeIntegrationScheme,
     /// `lu_sgs` 松弛因子等（显式格式下忽略）。
     pub lu_sgs: LuSgsConfig,
@@ -220,11 +221,105 @@ impl CompressibleEulerSolver {
             self.cfl_for_step(state)
         };
         let p_floor = Self::positivity_pressure_floor(ctx.freestream);
+        if self.config.time_scheme == TimeIntegrationScheme::Gmres {
+            return self
+                .advance_gmres_step_3d(ctx, fields, storage, state, integrator, cfl, p_floor);
+        }
         if self.config.time_scheme == TimeIntegrationScheme::LuSgs {
             return self
                 .advance_lusgs_step_3d(ctx, fields, storage, state, integrator, cfl, p_floor);
         }
         self.advance_explicit_step_3d(ctx, fields, storage, state, integrator, cfl, p_floor)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn advance_gmres_step_3d(
+        &self,
+        ctx: &mut CompressibleAdvanceContext3d<'_>,
+        fields: &mut ConservedFields,
+        storage: &mut Rk4Storage,
+        state: &mut SolverState,
+        integrator: &mut RungeKutta4Integrator,
+        cfl: Real,
+        p_floor: Real,
+    ) -> Result<CompressibleStepInfo> {
+        if !self.config.local_time_step {
+            return Err(crate::error::AsimuError::Config(
+                "time.scheme = gmres 须配合 [time].local_time_step = true（稳态伪时间）"
+                    .to_string(),
+            ));
+        }
+        let inviscid = self.config.inviscid;
+        let (dt, cell_dts, sigma) = {
+            let _span = info_span!(
+                "compute_dt",
+                cells = ctx.structured.num_cells(),
+                scheme = "gmres",
+            )
+            .entered();
+            let (cell_dts, sigma) = self.prepare_lusgs_timestep_3d(ctx, fields, cfl, p_floor)?;
+            (min_positive_dt(&cell_dts), cell_dts, sigma)
+        };
+        integrator.config.dt = dt;
+        storage.ensure_capacity(fields.num_cells())?;
+        storage.u0.copy_from(fields)?;
+        let delta = {
+            let _span = info_span!("gmres_implicit_solve").entered();
+            self.solve_gmres_implicit_delta_3d(
+                ctx,
+                &storage.u0,
+                &cell_dts,
+                &sigma,
+                p_floor,
+                GmresImplicitConfig::default(),
+            )?
+        };
+        let accepted_alpha = {
+            let _span = info_span!("gmres_line_search").entered();
+            apply_gmres_delta_with_line_search(
+                fields,
+                &mut storage.stage,
+                &storage.u0,
+                &delta,
+                ctx.eos,
+                p_floor,
+            )?
+        };
+        let step_residual = {
+            let _span = info_span!(
+                "gmres_residual_post",
+                gmres_converged = delta.report.converged,
+                gmres_iters = delta.report.iterations,
+                gmres_residual = delta.report.residual_norm,
+                alpha = accepted_alpha,
+            )
+            .entered();
+            self.rhs_context_3d(ctx, &inviscid, p_floor)
+                .run(fields, &mut storage.k1)?;
+            storage.k1.density_rms_norm()
+        };
+        info!(
+            step = state.time_step.saturating_add(1),
+            dt = %format_log_sci4(dt),
+            cfl,
+            gmres_converged = delta.report.converged,
+            gmres_iters = delta.report.iterations,
+            gmres_residual = %format_log_sci4(delta.report.residual_norm),
+            line_search_alpha = accepted_alpha,
+            log10_residual_post = %format_log_fixed4(log10_positive(step_residual)),
+            "GMRES 隐式步诊断"
+        );
+        let time_info = integrator.advance(state)?;
+        Ok(CompressibleStepInfo {
+            dt: time_info.dt,
+            physical_time: time_info.physical_time,
+            step: time_info.step,
+            residual_rms: step_residual,
+            residual_log10: log10_positive(step_residual),
+            cfl,
+            is_final: time_info.is_final,
+            converged: false,
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -516,6 +611,9 @@ impl CompressibleEulerSolver {
             (TimeIntegrationScheme::LuSgs, _) => Err(crate::error::AsimuError::Solver(
                 "advance_explicit_step 不支持 lu_sgs".to_string(),
             )),
+            (TimeIntegrationScheme::Gmres, _) => Err(crate::error::AsimuError::Solver(
+                "advance_explicit_step 不支持 gmres".to_string(),
+            )),
         }
     }
 
@@ -617,6 +715,31 @@ impl CompressibleEulerSolver {
 
 fn positive_fixed_dt(dt: Real) -> Option<Real> {
     if dt > 0.0 { Some(dt) } else { None }
+}
+
+fn apply_gmres_delta_with_line_search(
+    fields: &mut ConservedFields,
+    stage: &mut ConservedFields,
+    base: &ConservedFields,
+    delta: &GmresImplicitDelta,
+    eos: &IdealGasEoS,
+    p_floor: Real,
+) -> Result<Real> {
+    const MIN_ALPHA: Real = 1.0 / 1024.0;
+    let mut alpha = 1.0;
+    loop {
+        assign_delta_scaled(stage, base, &delta.delta, alpha)?;
+        if fields_are_physical(stage, eos, p_floor) {
+            fields.copy_from(stage)?;
+            return Ok(alpha);
+        }
+        alpha *= 0.5;
+        if alpha < MIN_ALPHA {
+            return Err(crate::error::AsimuError::Solver(format!(
+                "GMRES 隐式更新线搜索失败：alpha < {MIN_ALPHA:.3e}"
+            )));
+        }
+    }
 }
 
 /// 全场最大波速 \(|u| + a\)（CFL 估计）。

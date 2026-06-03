@@ -1,4 +1,4 @@
-# 时间积分（显式 RK4 / LU-SGS）
+# 时间积分（显式 RK4 / LU-SGS / GMRES）
 
 > 模块：`src/solver/time/`、`src/solver/compressible.rs`、`src/solver/spectral_radius.rs` · 版本：v1.x · 状态：**已实现**
 
@@ -29,7 +29,7 @@ $$
 ```text
 for each time step:
   dt_i ← Blazek local Δt (§4)
-  U^{n+1} ← rk4 / lu_sgs (evaluate_rhs)
+  U^{n+1} ← rk4 / lu_sgs / gmres (evaluate_rhs)
   t ← t + dt_min
 ```
 
@@ -120,7 +120,24 @@ $$
 
 ---
 
-## 5. 稳态 vs 瞬态
+## 5. Matrix-Free GMRES 隐式伪时间
+
+`time.scheme = "gmres"` 求解线性化伪时间系统：
+
+$$
+\left(D_{\Delta t}-J_R\right)\Delta U = R(U),
+\qquad
+D_{\Delta t,i}=\frac{1}{\Delta t_i}I.
+\tag{7}
+$$
+
+其中 \(J_R v\) 不显式装配，而用有限差分 \(J_R v \approx [R(U+\epsilon v)-R(U)]/\epsilon\)。GMRES 左预条件器使用式 (6) 的 LU-SGS 对角近似。求得 \(\Delta U\) 后，`CompressibleEulerSolver` 对更新系数 \(\alpha\) 做 \(1,1/2,\ldots\) 回退线搜索，确保更新场可恢复正密度与正压力后再接受。
+
+当前 GMRES 路径仅用于 3D 可压缩稳态伪时间，须设置 `local_time_step = true`。
+
+---
+
+## 6. 稳态 vs 瞬态
 
 | 实现 | 模式 | 说明 |
 |------|------|------|
@@ -129,7 +146,7 @@ $$
 
 ---
 
-## 6. 实现映射
+## 7. 实现映射
 
 | 式 / 步骤 | 代码位置 | 状态 |
 |-----------|----------|------|
@@ -137,6 +154,7 @@ $$
 | (2)–(5) 局部 \(\Delta t\) | `cell_spectral_radius_3d`, `cell_local_dt_cfl_3d`, `compute_cell_dts_3d` | **已实现** |
 | RK4 | `rk4_step` / `rk4_step_local` | **已实现** |
 | (6) LU-SGS | `lu_sgs_sweep_3d`, `lu_sgs_step_local` | **已实现** |
+| (7) GMRES | `solve_gmres_implicit_delta_3d`, `advance_gmres_step_3d` | **已实现** |
 
 ---
 

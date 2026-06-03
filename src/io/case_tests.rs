@@ -158,6 +158,51 @@ lusgs_sweep = false
 }
 
 #[test]
+fn parses_gmres_time_scheme() {
+    let content = r#"
+name = "gmres_test"
+[mesh]
+kind = "structured_3d"
+nx = 2
+ny = 2
+nz = 2
+[physics]
+gamma = 1.4
+gas_constant = 287.0
+[freestream]
+mach = 0.3
+pressure = 101325.0
+temperature = 288.15
+[boundary.i_min]
+kind = "wall"
+[boundary.i_max]
+kind = "farfield"
+mach = 0.3
+pressure = 101325.0
+temperature = 288.15
+[boundary.j_min]
+kind = "symmetry"
+[boundary.j_max]
+kind = "symmetry"
+[boundary.k_min]
+kind = "wall"
+[boundary.k_max]
+kind = "outlet"
+static_pressure = 100000.0
+[time]
+scheme = "gmres"
+local_time_step = true
+max_steps = 3
+"#;
+    let case = parse_case_toml(content, None).expect("parse");
+    assert_eq!(
+        case.time.resolved_time_scheme(),
+        crate::solver::time::TimeIntegrationScheme::Gmres
+    );
+    assert!(case.time.uses_local_time_step());
+}
+
+#[test]
 fn parses_sod_benchmark_case() {
     let content = include_str!("../../tests/benchmarks/sod_1d/case.toml");
     let case = parse_case_toml(content, None).expect("parse");

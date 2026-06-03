@@ -108,7 +108,7 @@ $$
 A v = D_{\Delta t} v - J_R v. \tag{12}
 $$
 
-左预条件器默认使用式 (7) 的 `LusgsDiagonalPreconditioner`。当前实现返回 `GmresImplicitDelta`，调用方仍需对 \(\Delta U\) 做线搜索 / 正性检查后再更新场；默认 RK/LU-SGS 时间推进路径尚未自动切换到 GMRES。
+左预条件器默认使用式 (7) 的 `LusgsDiagonalPreconditioner`。`time.scheme = "gmres"` 时，3D 可压缩求解器会调用该入口，并在线搜索确认正密度、正压力后接受 \(\Delta U\)。显式 CSR 的 `Ilu0Preconditioner` 仍用于已装配矩阵问题；当前可压缩 matrix-free 路径不装配 CSR Jacobian，因此不使用 ILU(0)。
 
 ## 7. 参考文献
 

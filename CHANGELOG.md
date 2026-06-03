@@ -21,6 +21,7 @@
 
 ### Added
 
+- 可压缩 3D 时间推进：`time.scheme = "gmres"` 现在启用 matrix-free GMRES 隐式伪时间步，使用 LU-SGS 对角预条件器与正性线搜索
 - 线性代数：矩阵无关 restarted GMRES、CSR 矩阵、ILU(0) 预条件器与 LU-SGS 对角预条件器
 - 可压缩流无量纲化：`[nondimensional]`、`FreestreamContext` 单一来流入口、理论页 [docs/theory/nondimensional.md](docs/theory/nondimensional.md)
 - CGNS 结构化 zone 读入 + VTS/VTM 导出：`io::load_cgns_zone` / `export_cgns_to_vtm`（features `io-cgns-vts`）；ADR 0008；链接系统 `libcgns-dev`
