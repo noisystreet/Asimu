@@ -67,7 +67,7 @@ B_i[:,k] \approx D_{\Delta t,i} e_k
 \qquad k=1,\dots,5. \tag{8}
 $$
 
-其中 \(e_{i,k}\) 只扰动单元 \(i\) 的第 \(k\) 个守恒分量。`CellBlockDiagonalPreconditioner` 存储 \(B_i^{-1}\)，应用时逐单元求 \(z_i=B_i^{-1}r_i\)。该预条件器比式 (7) 的标量对角更能捕捉密度、动量、能量耦合，但每次构造需额外 \(5N\) 次局部残差差分，适合小网格或诊断对比。
+其中 \(e_{i,k}\) 只扰动单元 \(i\) 的第 \(k\) 个守恒分量，\(R_i^{\mathrm{local}}\) 只重算该单元相邻内部面与边界面的无粘通量贡献，不调用全场 RHS。`CellBlockDiagonalPreconditioner` 存储 \(B_i^{-1}\)，应用时逐单元求 \(z_i=B_i^{-1}r_i\)。该预条件器比式 (7) 的标量对角更能捕捉密度、动量、能量耦合，构造成本为 \(O(5N)\) 个局部面通量差分；粘性与远邻 MUSCL 耦合仍由外层 matrix-free GMRES 算子处理。
 
 ## 5. ILU(0)
 
@@ -121,7 +121,7 @@ $$
 A v = D_{\Delta t} v - J_R v. \tag{13}
 $$
 
-左预条件器默认使用式 (7) 的 `LusgsDiagonalPreconditioner`；`[time] gmres_preconditioner = "cell_block_diagonal"` 时使用式 (8)。`time.scheme = "gmres"` 时，3D 可压缩求解器会调用该入口；有限差分扰动 \(U+\epsilon v\) 与最终更新 \(\Delta U\) 都会按单元限制到正密度、正压力可行范围，并在线搜索确认后接受。显式 CSR 的 `Ilu0Preconditioner` 仍用于已装配矩阵问题；当前可压缩 matrix-free 路径不装配 CSR Jacobian，因此不使用 ILU(0)。
+左预条件器默认使用式 (7) 的 `LusgsDiagonalPreconditioner`；`[time] gmres_preconditioner = "cell_block_diagonal"` 时使用式 (8) 的局部无粘 Jacobian 块近似。`time.scheme = "gmres"` 时，3D 可压缩求解器会调用该入口；有限差分扰动 \(U+\epsilon v\) 与最终更新 \(\Delta U\) 都会按单元限制到正密度、正压力可行范围，并在线搜索确认后接受。显式 CSR 的 `Ilu0Preconditioner` 仍用于已装配矩阵问题；当前可压缩 matrix-free 路径不装配 CSR Jacobian，因此不使用 ILU(0)。
 
 实现会把基础残差、预条件器构造、GMRES 线性求解等阶段耗时写入 `GmresImplicitDiagnostics::timing`，外层 `advance_gmres_step_3d` 再补充局部时间步、线搜索、更新后残差评估与整步总耗时日志，便于比较标量对角与块对角预条件器成本。
 

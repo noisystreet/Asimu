@@ -17,9 +17,10 @@ use crate::linalg::{
 };
 use crate::physics::IdealGasEoS;
 
+use super::gmres_block_preconditioner_3d::build_cell_block_preconditioner;
 use super::{CompressibleAdvanceContext3d, CompressibleEulerSolver};
 
-const CONSERVED_COMPONENTS_3D: usize = 5;
+pub(super) const CONSERVED_COMPONENTS_3D: usize = 5;
 
 /// GMRES 隐式更新结果。
 #[derive(Debug, Clone, PartialEq)]
@@ -261,7 +262,6 @@ impl CompressibleEulerSolver {
             solver: self,
             ctx,
             fields,
-            base_residual: &base_residual,
             inviscid: &inviscid,
             dt,
             sigma,
@@ -329,7 +329,6 @@ struct GmresPreconditionerBuild<'a, 'ctx> {
     solver: &'a CompressibleEulerSolver,
     ctx: &'a mut CompressibleAdvanceContext3d<'ctx>,
     fields: &'a ConservedFields,
-    base_residual: &'a ConservedResidual,
     inviscid: &'a InviscidFluxConfig,
     dt: &'a [Real],
     sigma: &'a [Real],
@@ -351,10 +350,8 @@ fn build_gmres_preconditioner(
         )),
         GmresPreconditionerKind::CellBlockDiagonal => Ok(GmresImplicitPreconditioner::CellBlock(
             build_cell_block_preconditioner(
-                params.solver,
                 params.ctx,
                 params.fields,
-                params.base_residual,
                 params.inviscid,
                 params.dt,
                 params.p_floor,
@@ -362,59 +359,6 @@ fn build_gmres_preconditioner(
             )?,
         )),
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn build_cell_block_preconditioner(
-    solver: &CompressibleEulerSolver,
-    ctx: &mut CompressibleAdvanceContext3d<'_>,
-    fields: &ConservedFields,
-    base_residual: &ConservedResidual,
-    inviscid: &InviscidFluxConfig,
-    dt: &[Real],
-    p_floor: Real,
-    epsilon_rel: Real,
-) -> Result<CellBlockDiagonalPreconditioner> {
-    let n = fields.num_cells();
-    let mut blocks = vec![0.0; n * CONSERVED_COMPONENTS_3D * CONSERVED_COMPONENTS_3D];
-    let mut perturbed = fields.clone();
-    let mut perturbed_residual = ConservedResidual::zeros(n)?;
-    for (cell, &dt_cell) in dt.iter().enumerate().take(n) {
-        let base_state = fields.cell_state(cell)?;
-        let scales = conserved_component_scales(&base_state);
-        for col in 0..CONSERVED_COMPONENTS_3D {
-            perturbed.copy_from(fields)?;
-            let requested_eps = epsilon_rel.sqrt() * scales[col];
-            let unit = component_basis_increment(col);
-            let eps = max_physical_increment_scale(
-                &base_state,
-                unit,
-                requested_eps,
-                ctx.eos.gamma,
-                p_floor,
-            );
-            if eps <= 0.0 {
-                return Err(AsimuError::Solver(format!(
-                    "GMRES 块预条件器：cell {cell} 分量 {col} 无法构造正性扰动"
-                )));
-            }
-            write_cell_state(
-                &mut perturbed,
-                cell,
-                &state_after_increment(&base_state, unit, eps),
-            );
-            solver
-                .rhs_context_3d(ctx, inviscid, p_floor)
-                .run(&perturbed, &mut perturbed_residual)?;
-            let jv = residual_difference_at(&perturbed_residual, base_residual, cell, eps);
-            for row in 0..CONSERVED_COMPONENTS_3D {
-                let block_offset = cell * CONSERVED_COMPONENTS_3D * CONSERVED_COMPONENTS_3D;
-                let diagonal = if row == col { 1.0 / dt_cell } else { 0.0 };
-                blocks[block_offset + row * CONSERVED_COMPONENTS_3D + col] = diagonal - jv[row];
-            }
-        }
-    }
-    CellBlockDiagonalPreconditioner::from_blocks(CONSERVED_COMPONENTS_3D, blocks)
 }
 
 struct MatrixFreeResidualOperator3d<'a, 'ctx> {
@@ -528,7 +472,7 @@ fn finite_difference_epsilon(
     Ok(epsilon_rel.sqrt() / norm.max(1.0))
 }
 
-fn conserved_component_scales(state: &crate::physics::ConservedState) -> [Real; 5] {
+pub(super) fn conserved_component_scales(state: &crate::physics::ConservedState) -> [Real; 5] {
     [
         state.density.abs().max(1.0),
         state.momentum[0].abs().max(state.density.abs()).max(1.0),
@@ -687,7 +631,7 @@ fn vector_increment_at(values: &[Real], cell: usize) -> [Real; CONSERVED_COMPONE
     ]
 }
 
-fn component_basis_increment(component: usize) -> [Real; CONSERVED_COMPONENTS_3D] {
+pub(super) fn component_basis_increment(component: usize) -> [Real; CONSERVED_COMPONENTS_3D] {
     let mut increment = [0.0; CONSERVED_COMPONENTS_3D];
     increment[component] = 1.0;
     increment

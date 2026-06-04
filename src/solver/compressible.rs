@@ -7,6 +7,8 @@ use std::time::Instant;
 
 #[path = "compressible_rhs.rs"]
 mod compressible_rhs;
+#[path = "gmres_block_preconditioner_3d.rs"]
+mod gmres_block_preconditioner_3d;
 #[path = "gmres_implicit_3d.rs"]
 mod gmres_implicit_3d;
 #[path = "lu_sgs_sweep_3d.rs"]
