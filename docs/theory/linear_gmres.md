@@ -123,6 +123,8 @@ $$
 
 左预条件器默认使用式 (7) 的 `LusgsDiagonalPreconditioner`；`[time] gmres_preconditioner = "cell_block_diagonal"` 时使用式 (8)。`time.scheme = "gmres"` 时，3D 可压缩求解器会调用该入口；有限差分扰动 \(U+\epsilon v\) 与最终更新 \(\Delta U\) 都会按单元限制到正密度、正压力可行范围，并在线搜索确认后接受。显式 CSR 的 `Ilu0Preconditioner` 仍用于已装配矩阵问题；当前可压缩 matrix-free 路径不装配 CSR Jacobian，因此不使用 ILU(0)。
 
+实现会把基础残差、预条件器构造、GMRES 线性求解等阶段耗时写入 `GmresImplicitDiagnostics::timing`，外层 `advance_gmres_step_3d` 再补充局部时间步、线搜索、更新后残差评估与整步总耗时日志，便于比较标量对角与块对角预条件器成本。
+
 ## 8. 参考文献
 
 1. Saad, Y. (2003). *Iterative Methods for Sparse Linear Systems* (2nd ed.). SIAM. Ch. 6（GMRES）、Ch. 10（预条件）。

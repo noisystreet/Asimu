@@ -1,6 +1,10 @@
 //! 3D 可压缩残差的 matrix-free GMRES 隐式线性化。
 
-use crate::core::Real;
+use std::time::Instant;
+
+use tracing::info;
+
+use crate::core::{Real, format_log_fixed4, format_log_sci4, log10_positive};
 use crate::discretization::InviscidFluxConfig;
 use crate::error::{AsimuError, Result};
 use crate::field::{
@@ -32,6 +36,28 @@ pub struct GmresImplicitDiagnostics {
     pub perturbation_evals: usize,
     pub perturbation_limited_evals: usize,
     pub min_perturbation_scale: Real,
+    pub timing: GmresImplicitTiming,
+}
+
+/// GMRES 隐式线性化内部阶段耗时（毫秒）。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GmresImplicitTiming {
+    pub base_residual_ms: Real,
+    pub preconditioner_build_ms: Real,
+    pub linear_solve_ms: Real,
+    pub total_ms: Real,
+}
+
+impl GmresImplicitTiming {
+    #[must_use]
+    pub const fn zero() -> Self {
+        Self {
+            base_residual_ms: 0.0,
+            preconditioner_build_ms: 0.0,
+            linear_solve_ms: 0.0,
+            total_ms: 0.0,
+        }
+    }
 }
 
 impl GmresImplicitDiagnostics {
@@ -41,6 +67,7 @@ impl GmresImplicitDiagnostics {
             perturbation_evals: 0,
             perturbation_limited_evals: 0,
             min_perturbation_scale: 1.0,
+            timing: GmresImplicitTiming::zero(),
         }
     }
 }
@@ -51,6 +78,56 @@ pub struct GmresUpdateDiagnostics {
     pub alpha: Real,
     pub limited_cells: usize,
     pub min_update_scale: Real,
+}
+
+/// GMRES 外层推进阶段耗时（毫秒）。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GmresStepTiming {
+    pub compute_dt_ms: Real,
+    pub implicit_solve_ms: Real,
+    pub line_search_ms: Real,
+    pub post_residual_ms: Real,
+    pub step_total_ms: Real,
+}
+
+/// GMRES 单步诊断日志参数。
+#[derive(Debug, Clone, Copy)]
+pub struct GmresStepLog<'a> {
+    pub step: u64,
+    pub dt: Real,
+    pub cfl: Real,
+    pub delta: &'a GmresImplicitDelta,
+    pub update: GmresUpdateDiagnostics,
+    pub residual_rms: Real,
+    pub timing: GmresStepTiming,
+}
+
+pub(crate) fn log_gmres_step_diagnostics(params: GmresStepLog<'_>) {
+    let inner = params.delta.diagnostics.timing;
+    info!(
+        step = params.step,
+        dt = %format_log_sci4(params.dt),
+        cfl = params.cfl,
+        gmres_converged = params.delta.report.converged,
+        gmres_iters = params.delta.report.iterations,
+        gmres_residual = %format_log_sci4(params.delta.report.residual_norm),
+        gmres_preconditioner = params.delta.diagnostics.preconditioner.as_str(),
+        line_search_alpha = params.update.alpha,
+        update_limited_cells = params.update.limited_cells,
+        update_min_scale = %format_log_sci4(params.update.min_update_scale),
+        perturb_limited_evals = params.delta.diagnostics.perturbation_limited_evals,
+        perturb_min_scale = %format_log_sci4(params.delta.diagnostics.min_perturbation_scale),
+        log10_residual_post = %format_log_fixed4(log10_positive(params.residual_rms)),
+        profile_compute_dt_ms = %format_log_fixed4(params.timing.compute_dt_ms),
+        profile_implicit_solve_ms = %format_log_fixed4(params.timing.implicit_solve_ms),
+        profile_base_residual_ms = %format_log_fixed4(inner.base_residual_ms),
+        profile_preconditioner_build_ms = %format_log_fixed4(inner.preconditioner_build_ms),
+        profile_linear_solve_ms = %format_log_fixed4(inner.linear_solve_ms),
+        profile_line_search_ms = %format_log_fixed4(params.timing.line_search_ms),
+        profile_post_residual_ms = %format_log_fixed4(params.timing.post_residual_ms),
+        profile_step_total_ms = %format_log_fixed4(params.timing.step_total_ms),
+        "GMRES 隐式步诊断"
+    );
 }
 
 impl GmresImplicitDelta {
@@ -169,13 +246,17 @@ impl CompressibleEulerSolver {
         p_floor: Real,
         config: GmresImplicitConfig,
     ) -> Result<GmresImplicitDelta> {
+        let total_start = Instant::now();
         validate_gmres_inputs(fields.num_cells(), dt, sigma, config.epsilon)?;
         let inviscid = self.config.inviscid;
         let mut base_residual = ConservedResidual::zeros(fields.num_cells())?;
+        let base_residual_start = Instant::now();
         self.rhs_context_3d(ctx, &inviscid, p_floor)
             .run(fields, &mut base_residual)?;
+        let base_residual_ms = elapsed_ms(base_residual_start);
         let rhs = residual_to_vector(&base_residual);
         let preconditioner_kind = config.preconditioner;
+        let preconditioner_start = Instant::now();
         let precond = build_gmres_preconditioner(GmresPreconditionerBuild {
             solver: self,
             ctx,
@@ -187,6 +268,7 @@ impl CompressibleEulerSolver {
             p_floor,
             config,
         })?;
+        let preconditioner_build_ms = elapsed_ms(preconditioner_start);
         let mut diagnostics = GmresImplicitDiagnostics::new(preconditioner_kind);
         let mut op = MatrixFreeResidualOperator3d {
             solver: self,
@@ -202,10 +284,18 @@ impl CompressibleEulerSolver {
             perturbed_residual: ConservedResidual::zeros(fields.num_cells())?,
         };
         let mut delta = vec![0.0; rhs.len()];
+        let linear_solve_start = Instant::now();
         let report = GmresSolver::new(config.gmres)?.solve(&mut op, &precond, &rhs, &mut delta)?;
+        let linear_solve_ms = elapsed_ms(linear_solve_start);
         diagnostics.perturbation_evals = op.diagnostics.perturbation_evals;
         diagnostics.perturbation_limited_evals = op.diagnostics.perturbation_limited_evals;
         diagnostics.min_perturbation_scale = op.diagnostics.min_perturbation_scale;
+        diagnostics.timing = GmresImplicitTiming {
+            base_residual_ms,
+            preconditioner_build_ms,
+            linear_solve_ms,
+            total_ms: elapsed_ms(total_start),
+        };
         Ok(GmresImplicitDelta {
             delta,
             report,
@@ -663,6 +753,10 @@ fn zero_conserved_fields(num_cells: usize) -> Result<ConservedFields> {
             total_energy: 0.0,
         },
     )
+}
+
+fn elapsed_ms(start: Instant) -> Real {
+    start.elapsed().as_secs_f64() * 1000.0
 }
 
 #[cfg(test)]

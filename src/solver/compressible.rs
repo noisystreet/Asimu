@@ -3,6 +3,8 @@
 //! 理论：[`docs/theory/time_integration.md`](../../docs/theory/time_integration.md)、
 //! [`inviscid_flux.md`](../../docs/theory/inviscid_flux.md)
 
+use std::time::Instant;
+
 #[path = "compressible_rhs.rs"]
 mod compressible_rhs;
 #[path = "gmres_implicit_3d.rs"]
@@ -14,8 +16,10 @@ use crate::solver::spectral_radius::{
     SpectralRadius3dParams, cell_local_dt_spectral, cell_spectral_radius_3d,
 };
 use compressible_rhs::EvaluateRhs3d;
-use gmres_implicit_3d::apply_delta_with_line_search;
 pub use gmres_implicit_3d::{GmresImplicitConfig, GmresImplicitDelta, GmresPreconditionerKind};
+use gmres_implicit_3d::{
+    GmresStepLog, GmresStepTiming, apply_delta_with_line_search, log_gmres_step_diagnostics,
+};
 use lu_sgs_sweep_3d::{LuSgsSweep3dParams, lu_sgs_sweep_3d};
 
 use crate::boundary::BoundarySet;
@@ -279,6 +283,7 @@ impl CompressibleEulerSolver {
         cfl: Real,
         p_floor: Real,
     ) -> Result<CompressibleStepInfo> {
+        let step_start = Instant::now();
         if !self.config.local_time_step {
             return Err(crate::error::AsimuError::Config(
                 "time.scheme = gmres 须配合 [time].local_time_step = true（稳态伪时间）"
@@ -286,19 +291,17 @@ impl CompressibleEulerSolver {
             ));
         }
         let inviscid = self.config.inviscid;
+        let compute_dt_start = Instant::now();
         let (dt, cell_dts, sigma) = {
-            let _span = info_span!(
-                "compute_dt",
-                cells = ctx.structured.num_cells(),
-                scheme = "gmres",
-            )
-            .entered();
+            let _span = info_span!("compute_dt").entered();
             let (cell_dts, sigma) = self.prepare_lusgs_timestep_3d(ctx, fields, cfl, p_floor)?;
             (min_positive_dt(&cell_dts), cell_dts, sigma)
         };
+        let compute_dt_ms = elapsed_ms(compute_dt_start);
         integrator.config.dt = dt;
         storage.ensure_capacity(fields.num_cells())?;
         storage.u0.copy_from(fields)?;
+        let implicit_solve_start = Instant::now();
         let delta = {
             let _span = info_span!("gmres_implicit_solve").entered();
             self.solve_gmres_implicit_delta_3d(
@@ -310,6 +313,8 @@ impl CompressibleEulerSolver {
                 self.config.gmres,
             )?
         };
+        let implicit_solve_ms = elapsed_ms(implicit_solve_start);
+        let line_search_start = Instant::now();
         let update = {
             let _span = info_span!("gmres_line_search").entered();
             apply_delta_with_line_search(
@@ -321,40 +326,31 @@ impl CompressibleEulerSolver {
                 p_floor,
             )?
         };
+        let line_search_ms = elapsed_ms(line_search_start);
+        let post_residual_start = Instant::now();
         let step_residual = {
-            let _span = info_span!(
-                "gmres_residual_post",
-                gmres_converged = delta.report.converged,
-                gmres_iters = delta.report.iterations,
-                gmres_residual = delta.report.residual_norm,
-                alpha = update.alpha,
-                update_limited_cells = update.limited_cells,
-                update_min_scale = update.min_update_scale,
-                perturb_limited_evals = delta.diagnostics.perturbation_limited_evals,
-                perturb_min_scale = delta.diagnostics.min_perturbation_scale,
-                preconditioner = delta.diagnostics.preconditioner.as_str(),
-            )
-            .entered();
+            let _span = info_span!("gmres_residual_post").entered();
             self.rhs_context_3d(ctx, &inviscid, p_floor)
                 .run(fields, &mut storage.k1)?;
             storage.k1.density_rms_norm()
         };
-        info!(
-            step = state.time_step.saturating_add(1),
-            dt = %format_log_sci4(dt),
+        let post_residual_ms = elapsed_ms(post_residual_start);
+        let step_total_ms = elapsed_ms(step_start);
+        log_gmres_step_diagnostics(GmresStepLog {
+            step: state.time_step.saturating_add(1),
+            dt,
             cfl,
-            gmres_converged = delta.report.converged,
-            gmres_iters = delta.report.iterations,
-            gmres_residual = %format_log_sci4(delta.report.residual_norm),
-            gmres_preconditioner = delta.diagnostics.preconditioner.as_str(),
-            line_search_alpha = update.alpha,
-            update_limited_cells = update.limited_cells,
-            update_min_scale = %format_log_sci4(update.min_update_scale),
-            perturb_limited_evals = delta.diagnostics.perturbation_limited_evals,
-            perturb_min_scale = %format_log_sci4(delta.diagnostics.min_perturbation_scale),
-            log10_residual_post = %format_log_fixed4(log10_positive(step_residual)),
-            "GMRES 隐式步诊断"
-        );
+            delta: &delta,
+            update,
+            residual_rms: step_residual,
+            timing: GmresStepTiming {
+                compute_dt_ms,
+                implicit_solve_ms,
+                line_search_ms,
+                post_residual_ms,
+                step_total_ms,
+            },
+        });
         let time_info = integrator.advance(state)?;
         Ok(CompressibleStepInfo {
             dt: time_info.dt,
@@ -790,6 +786,10 @@ impl CompressibleEulerSolver {
 
 fn positive_fixed_dt(dt: Real) -> Option<Real> {
     if dt > 0.0 { Some(dt) } else { None }
+}
+
+fn elapsed_ms(start: Instant) -> Real {
+    start.elapsed().as_secs_f64() * 1000.0
 }
 
 #[cfg(test)]
