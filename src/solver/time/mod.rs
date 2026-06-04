@@ -37,7 +37,7 @@ pub trait TimeIntegrator {
 
 pub use euler::{euler_step, euler_step_local};
 pub use lu_sgs::{LuSgsConfig, lu_sgs_step, lu_sgs_step_local, lu_sgs_step_sweep_local};
-pub use residual_smoothing::{ResidualSmoothingConfig, smooth_residual_3d};
+pub use residual_smoothing::{ResidualSmoothingConfig, smooth_residual_3d_limited};
 pub use rk4::{Rk4Storage, RungeKutta4Config, RungeKutta4Integrator, rk4_step, rk4_step_local};
 pub use scheme::TimeIntegrationScheme;
 

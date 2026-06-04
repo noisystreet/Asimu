@@ -7,6 +7,7 @@ use crate::field::{ConservedFields, ConservedResidual, primitive_from_conserved}
 use crate::linalg::{
     GmresConfig, GmresReport, GmresSolver, LinearOperator, LusgsDiagonalPreconditioner,
 };
+use crate::physics::IdealGasEoS;
 
 use super::{CompressibleAdvanceContext3d, CompressibleEulerSolver};
 
@@ -28,6 +29,31 @@ impl GmresImplicitDelta {
         alpha: Real,
     ) -> Result<()> {
         assign_delta_scaled(out, base, &self.delta, alpha)
+    }
+}
+
+pub(crate) fn apply_delta_with_line_search(
+    fields: &mut ConservedFields,
+    stage: &mut ConservedFields,
+    base: &ConservedFields,
+    delta: &GmresImplicitDelta,
+    eos: &IdealGasEoS,
+    p_floor: Real,
+) -> Result<Real> {
+    const MIN_ALPHA: Real = 1.0 / 1024.0;
+    let mut alpha = 1.0;
+    loop {
+        assign_delta_scaled(stage, base, &delta.delta, alpha)?;
+        if fields_are_physical(stage, eos, p_floor) {
+            fields.copy_from(stage)?;
+            return Ok(alpha);
+        }
+        alpha *= 0.5;
+        if alpha < MIN_ALPHA {
+            return Err(AsimuError::Solver(format!(
+                "GMRES 隐式更新线搜索失败：alpha < {MIN_ALPHA:.3e}"
+            )));
+        }
     }
 }
 

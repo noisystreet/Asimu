@@ -1,6 +1,6 @@
 use super::*;
 use crate::core::approx_eq;
-use crate::physics::ConservedState;
+use crate::physics::{ConservedState, PrimitiveState};
 #[cfg(all(feature = "io-cgns", feature = "slow-tests"))]
 use std::collections::HashSet;
 

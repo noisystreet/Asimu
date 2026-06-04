@@ -14,8 +14,8 @@ use crate::solver::spectral_radius::{
     SpectralRadius3dParams, cell_local_dt_spectral, cell_spectral_radius_3d,
 };
 use compressible_rhs::EvaluateRhs3d;
+use gmres_implicit_3d::apply_delta_with_line_search;
 pub use gmres_implicit_3d::{GmresImplicitConfig, GmresImplicitDelta};
-use gmres_implicit_3d::{assign_delta_scaled, fields_are_physical};
 use lu_sgs_sweep_3d::{LuSgsSweep3dParams, lu_sgs_sweep_3d};
 
 use crate::boundary::BoundarySet;
@@ -28,15 +28,14 @@ use crate::error::Result;
 use crate::field::{ConservedFields, ConservedResidual, PrimitiveFields};
 use crate::mesh::{BoundaryMesh3d, StructuredMesh1d, StructuredMesh3d};
 use crate::physics::ViscousPhysicsConfig;
-use crate::physics::{
-    FreestreamContext, FreestreamParams, IdealGasEoS, PrimitiveState, ReferenceScales,
-};
+use crate::physics::{FreestreamContext, FreestreamParams, IdealGasEoS, ReferenceScales};
 use crate::solver::state::SolverState;
 use crate::solver::time::{
     CflSchedule, LuSgsConfig, ResidualSmoothingConfig, Rk4Storage, RungeKutta4Config,
     RungeKutta4Integrator, TimeIntegrationScheme, TimeIntegrator, euler_step, euler_step_local,
-    min_positive_dt, rk4_step, rk4_step_local, smooth_residual_3d,
+    min_positive_dt, rk4_step, rk4_step_local, smooth_residual_3d_limited,
 };
+use crate::solver::wave_speed::max_wave_speed;
 use tracing::{info, info_span, instrument};
 
 /// 稳态伪时间 / 瞬态物理时间。
@@ -157,7 +156,11 @@ impl CompressibleEulerSolver {
     fn smooth_residual_if_enabled(
         &self,
         mesh: &StructuredMesh3d,
+        base: &ConservedFields,
         residual: &mut ConservedResidual,
+        update_scales: &[Real],
+        eos: &IdealGasEoS,
+        min_pressure: Real,
     ) -> Result<()> {
         if self.config.time_mode != CompressibleTimeMode::Steady {
             return Ok(());
@@ -172,7 +175,15 @@ impl CompressibleEulerSolver {
             sweeps = config.sweeps,
         )
         .entered();
-        smooth_residual_3d(residual, mesh, config)
+        smooth_residual_3d_limited(
+            residual,
+            base,
+            update_scales,
+            mesh,
+            eos,
+            min_pressure,
+            config,
+        )
     }
 
     /// 1D 瞬态推进：每步刷新边界 ghost、装配残差、RK4 更新守恒量。
@@ -299,7 +310,7 @@ impl CompressibleEulerSolver {
         };
         let accepted_alpha = {
             let _span = info_span!("gmres_line_search").entered();
-            apply_gmres_delta_with_line_search(
+            apply_delta_with_line_search(
                 fields,
                 &mut storage.stage,
                 &storage.u0,
@@ -384,6 +395,13 @@ impl CompressibleEulerSolver {
         } else {
             None
         };
+        let global_dt_scales;
+        let smoothing_scales = if let Some(local_dt) = cell_dts_arg {
+            local_dt
+        } else {
+            global_dt_scales = vec![dt; fields.num_cells()];
+            global_dt_scales.as_slice()
+        };
         {
             let _span = info_span!(
                 "time_integration",
@@ -393,7 +411,14 @@ impl CompressibleEulerSolver {
             .entered();
             let evaluate = |u: &ConservedFields, r: &mut ConservedResidual| {
                 self.rhs_context_3d(ctx, &inviscid, p_floor).run(u, r)?;
-                self.smooth_residual_if_enabled(ctx.structured, r)
+                self.smooth_residual_if_enabled(
+                    ctx.structured,
+                    u,
+                    r,
+                    smoothing_scales,
+                    &eos,
+                    p_floor,
+                )
             };
             self.advance_explicit_step(
                 fields,
@@ -457,6 +482,11 @@ impl CompressibleEulerSolver {
         let eos = ctx.eos;
         let volumes = structured.cell_volumes();
         let lu_sgs = self.config.lu_sgs;
+        let update_scales: Vec<Real> = cell_dts
+            .iter()
+            .zip(sigma.iter())
+            .map(|(&dt_i, &sigma_i)| lu_sgs.omega * dt_i / (1.0 + dt_i * sigma_i))
+            .collect();
         {
             let _span = info_span!(
                 "time_integration",
@@ -470,7 +500,14 @@ impl CompressibleEulerSolver {
                 let _span = info_span!("lu_sgs_rhs").entered();
                 self.rhs_context_3d(ctx, &inviscid, p_floor)
                     .run(&storage.u0, &mut storage.k1)?;
-                self.smooth_residual_if_enabled(structured, &mut storage.k1)?;
+                self.smooth_residual_if_enabled(
+                    structured,
+                    &storage.u0,
+                    &mut storage.k1,
+                    &update_scales,
+                    eos,
+                    p_floor,
+                )?;
             }
             if lu_sgs.sweep {
                 let mut sweep_params = LuSgsSweep3dParams {
@@ -740,59 +777,6 @@ impl CompressibleEulerSolver {
 
 fn positive_fixed_dt(dt: Real) -> Option<Real> {
     if dt > 0.0 { Some(dt) } else { None }
-}
-
-fn apply_gmres_delta_with_line_search(
-    fields: &mut ConservedFields,
-    stage: &mut ConservedFields,
-    base: &ConservedFields,
-    delta: &GmresImplicitDelta,
-    eos: &IdealGasEoS,
-    p_floor: Real,
-) -> Result<Real> {
-    const MIN_ALPHA: Real = 1.0 / 1024.0;
-    let mut alpha = 1.0;
-    loop {
-        assign_delta_scaled(stage, base, &delta.delta, alpha)?;
-        if fields_are_physical(stage, eos, p_floor) {
-            fields.copy_from(stage)?;
-            return Ok(alpha);
-        }
-        alpha *= 0.5;
-        if alpha < MIN_ALPHA {
-            return Err(crate::error::AsimuError::Solver(format!(
-                "GMRES 隐式更新线搜索失败：alpha < {MIN_ALPHA:.3e}"
-            )));
-        }
-    }
-}
-
-/// 全场最大波速 \(|u| + a\)（CFL 估计）。
-pub fn max_wave_speed(
-    fields: &ConservedFields,
-    eos: &IdealGasEoS,
-    min_pressure: Real,
-) -> Result<Real> {
-    let mut max_speed = Real::EPSILON;
-    for i in 0..fields.num_cells() {
-        let prim = crate::field::primitive_from_conserved_relaxed(
-            eos,
-            &fields.cell_state(i)?,
-            min_pressure,
-        )?;
-        max_speed = max_speed.max(wave_speed_primitive(&prim, eos)?);
-    }
-    Ok(max_speed)
-}
-
-fn wave_speed_primitive(prim: &PrimitiveState, eos: &IdealGasEoS) -> Result<Real> {
-    let rho = prim.density.max(1.0e-12);
-    let pressure = prim.pressure.max(1.0e-6);
-    let speed = (prim.velocity[0] * prim.velocity[0]
-        + prim.velocity[1] * prim.velocity[1]
-        + prim.velocity[2] * prim.velocity[2])
-        .sqrt();
-    Ok(speed + (eos.gamma * pressure / rho).sqrt())
 }
 
 #[cfg(test)]

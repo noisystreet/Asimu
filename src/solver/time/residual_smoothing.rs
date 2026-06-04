@@ -4,8 +4,9 @@
 
 use crate::core::Real;
 use crate::error::{AsimuError, Result};
-use crate::field::{ConservedResidual, ScalarField};
+use crate::field::{ConservedFields, ConservedResidual, ScalarField};
 use crate::mesh::StructuredMesh3d;
+use crate::physics::{ConservedState, IdealGasEoS};
 
 /// 方向分裂隐式残差光顺配置。
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -71,6 +72,40 @@ pub fn smooth_residual_3d(
         smooth_field_all_directions(&mut residual.momentum_y, mesh, config.epsilon);
         smooth_field_all_directions(&mut residual.momentum_z, mesh, config.epsilon);
         smooth_field_all_directions(&mut residual.total_energy, mesh, config.epsilon);
+    }
+    Ok(())
+}
+
+/// 光顺残差并按单元限制更新方向，避免光顺后的 RHS 破坏密度/内能正性。
+pub fn smooth_residual_3d_limited(
+    residual: &mut ConservedResidual,
+    base: &ConservedFields,
+    update_scales: &[Real],
+    mesh: &StructuredMesh3d,
+    eos: &IdealGasEoS,
+    min_pressure: Real,
+    config: ResidualSmoothingConfig,
+) -> Result<()> {
+    if !config.enabled || config.epsilon <= 0.0 {
+        return Ok(());
+    }
+    if base.num_cells() != mesh.num_cells() || update_scales.len() != mesh.num_cells() {
+        return Err(AsimuError::Field(
+            "残差光顺正性限制的场/步长尺寸与网格不一致".to_string(),
+        ));
+    }
+    let original = residual.clone();
+    smooth_residual_3d(residual, mesh, config)?;
+    for (cell, &update_scale) in update_scales.iter().enumerate().take(mesh.num_cells()) {
+        limit_cell_residual(
+            residual,
+            &original,
+            base,
+            cell,
+            update_scale,
+            eos.gamma,
+            min_pressure,
+        )?;
     }
     Ok(())
 }
@@ -154,10 +189,136 @@ fn solve_zero_gradient_line(rhs: &mut [Real], epsilon: Real) {
     }
 }
 
+fn limit_cell_residual(
+    residual: &mut ConservedResidual,
+    original: &ConservedResidual,
+    base: &ConservedFields,
+    cell: usize,
+    scale: Real,
+    gamma: Real,
+    min_pressure: Real,
+) -> Result<()> {
+    if scale <= 0.0 {
+        return Ok(());
+    }
+    let base_state = base.cell_state(cell)?;
+    let smooth = residual_cell(residual, cell);
+    if updated_state_is_physical(&base_state, smooth, scale, gamma, min_pressure) {
+        return Ok(());
+    }
+    let raw = residual_cell(original, cell);
+    if let Some(blended) = find_positive_blend(&base_state, raw, smooth, scale, gamma, min_pressure)
+    {
+        write_residual_cell(residual, cell, blended);
+        return Ok(());
+    }
+    if let Some(limited_raw) = find_positive_scale(&base_state, raw, scale, gamma, min_pressure) {
+        write_residual_cell(residual, cell, limited_raw);
+        return Ok(());
+    }
+    write_residual_cell(residual, cell, [0.0; 5]);
+    Ok(())
+}
+
+fn find_positive_blend(
+    base: &ConservedState,
+    raw: [Real; 5],
+    smooth: [Real; 5],
+    scale: Real,
+    gamma: Real,
+    min_pressure: Real,
+) -> Option<[Real; 5]> {
+    let mut alpha = 1.0;
+    for _ in 0..12 {
+        let candidate = blend_residual(raw, smooth, alpha);
+        if updated_state_is_physical(base, candidate, scale, gamma, min_pressure) {
+            return Some(candidate);
+        }
+        alpha *= 0.5;
+    }
+    if updated_state_is_physical(base, raw, scale, gamma, min_pressure) {
+        Some(raw)
+    } else {
+        None
+    }
+}
+
+fn find_positive_scale(
+    base: &ConservedState,
+    residual: [Real; 5],
+    scale: Real,
+    gamma: Real,
+    min_pressure: Real,
+) -> Option<[Real; 5]> {
+    let mut alpha = 0.5;
+    for _ in 0..12 {
+        let candidate = residual.map(|value| alpha * value);
+        if updated_state_is_physical(base, candidate, scale, gamma, min_pressure) {
+            return Some(candidate);
+        }
+        alpha *= 0.5;
+    }
+    None
+}
+
+fn updated_state_is_physical(
+    base: &ConservedState,
+    residual: [Real; 5],
+    scale: Real,
+    gamma: Real,
+    min_pressure: Real,
+) -> bool {
+    let rho = base.density + scale * residual[0];
+    let momentum = [
+        base.momentum[0] + scale * residual[1],
+        base.momentum[1] + scale * residual[2],
+        base.momentum[2] + scale * residual[3],
+    ];
+    let total_energy = base.total_energy + scale * residual[4];
+    if rho <= 0.0 || !rho.is_finite() || !total_energy.is_finite() {
+        return false;
+    }
+    let ke = 0.5
+        * (momentum[0] * momentum[0] + momentum[1] * momentum[1] + momentum[2] * momentum[2])
+        / rho;
+    let min_internal = min_pressure.max(0.0) / (gamma - 1.0);
+    let internal = total_energy - ke;
+    internal.is_finite() && internal > min_internal
+}
+
+fn blend_residual(raw: [Real; 5], smooth: [Real; 5], alpha: Real) -> [Real; 5] {
+    [
+        raw[0] + alpha * (smooth[0] - raw[0]),
+        raw[1] + alpha * (smooth[1] - raw[1]),
+        raw[2] + alpha * (smooth[2] - raw[2]),
+        raw[3] + alpha * (smooth[3] - raw[3]),
+        raw[4] + alpha * (smooth[4] - raw[4]),
+    ]
+}
+
+fn residual_cell(residual: &ConservedResidual, cell: usize) -> [Real; 5] {
+    [
+        residual.density.values()[cell],
+        residual.momentum_x.values()[cell],
+        residual.momentum_y.values()[cell],
+        residual.momentum_z.values()[cell],
+        residual.total_energy.values()[cell],
+    ]
+}
+
+fn write_residual_cell(residual: &mut ConservedResidual, cell: usize, values: [Real; 5]) {
+    residual.density.values_mut()[cell] = values[0];
+    residual.momentum_x.values_mut()[cell] = values[1];
+    residual.momentum_y.values_mut()[cell] = values[2];
+    residual.momentum_z.values_mut()[cell] = values[3];
+    residual.total_energy.values_mut()[cell] = values[4];
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::mesh::StructuredMesh3d;
+    use crate::physics::{ConservedState, IdealGasEoS};
 
     #[test]
     fn constant_residual_is_preserved() {
@@ -205,5 +366,40 @@ mod tests {
         assert!(residual.density.values()[mesh.cell_index(0, 1, 1)] > 0.0);
         assert!(residual.density.values()[mesh.cell_index(1, 0, 1)] > 0.0);
         assert!(residual.density.values()[mesh.cell_index(1, 1, 0)] > 0.0);
+    }
+
+    #[test]
+    fn limiter_rejects_smoothed_residual_that_breaks_internal_energy() {
+        let mesh = StructuredMesh3d::uniform_box("box", 3, 1, 1, 1.0, 1.0, 1.0).expect("mesh");
+        let base_state = ConservedState {
+            density: 1.0,
+            momentum: [1.0, 0.0, 0.0],
+            total_energy: 1.0,
+        };
+        let base = ConservedFields::uniform(mesh.num_cells(), base_state).expect("base");
+        let mut residual = ConservedResidual::zeros(mesh.num_cells()).expect("rhs");
+        let center = mesh.cell_index(1, 0, 0);
+        residual.momentum_x.values_mut()[center] = 10.0;
+        smooth_residual_3d_limited(
+            &mut residual,
+            &base,
+            &[1.0; 3],
+            &mesh,
+            &IdealGasEoS::AIR_STANDARD,
+            0.0,
+            ResidualSmoothingConfig {
+                enabled: true,
+                epsilon: 0.5,
+                sweeps: 1,
+            },
+        )
+        .expect("smooth");
+        let updated = [
+            base_state.density + residual.density.values()[center],
+            base_state.momentum[0] + residual.momentum_x.values()[center],
+            base_state.total_energy + residual.total_energy.values()[center],
+        ];
+        let internal = updated[2] - 0.5 * updated[1] * updated[1] / updated[0];
+        assert!(internal > 0.0);
     }
 }

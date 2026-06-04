@@ -5,6 +5,7 @@ pub mod sod;
 pub mod spectral_radius;
 pub mod state;
 pub mod time;
+pub mod wave_speed;
 
 use tracing::{info, instrument};
 
@@ -16,7 +17,7 @@ use crate::mesh::Mesh;
 pub use compressible::{
     CompressibleAdvanceContext1d, CompressibleAdvanceContext3d, CompressibleEulerConfig,
     CompressibleEulerSolver, CompressibleStepInfo, CompressibleTimeMode, GmresImplicitConfig,
-    GmresImplicitDelta, max_wave_speed,
+    GmresImplicitDelta,
 };
 pub use sod::{
     SodBenchmarkConfig, SodBenchmarkResult, run_sod_benchmark, sod_initial_fields,
@@ -33,6 +34,7 @@ pub use time::{
     euler_step, euler_step_local, local_dt_cfl, lu_sgs_step, lu_sgs_step_local, min_positive_dt,
     rk4_step, rk4_step_local,
 };
+pub use wave_speed::max_wave_speed;
 
 /// 求解结果摘要。
 #[derive(Debug, Clone, PartialEq)]
