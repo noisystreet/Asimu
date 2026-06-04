@@ -131,7 +131,7 @@ D_{\Delta t,i}=\frac{1}{\Delta t_i}I.
 \tag{7}
 $$
 
-其中 \(J_R v\) 不显式装配，而用有限差分 \(J_R v \approx [R(U+\epsilon v)-R(U)]/\epsilon\)。GMRES 左预条件器使用式 (6) 的 LU-SGS 对角近似。求得 \(\Delta U\) 后，`CompressibleEulerSolver` 对更新系数 \(\alpha\) 做 \(1,1/2,\ldots\) 回退线搜索，确保更新场可恢复正密度与正压力后再接受。
+其中 \(J_R v\) 不显式装配，而用有限差分 \(J_R v \approx [R(U+\epsilon v)-R(U)]/\epsilon\)。GMRES 左预条件器使用式 (6) 的 LU-SGS 对角近似。有限差分扰动会先按单元缩放到正密度、正压力可行范围；求得 \(\Delta U\) 后，`CompressibleEulerSolver` 对更新系数 \(\alpha\) 做 \(1,1/2,\ldots\) 回退线搜索，并在写回时逐单元限制增量，确保更新场可恢复正密度与正压力后再接受。
 
 当前 GMRES 路径仅用于 3D 可压缩稳态伪时间，须设置 `local_time_step = true`。
 

@@ -108,7 +108,7 @@ $$
 A v = D_{\Delta t} v - J_R v. \tag{12}
 $$
 
-左预条件器默认使用式 (7) 的 `LusgsDiagonalPreconditioner`。`time.scheme = "gmres"` 时，3D 可压缩求解器会调用该入口，并在线搜索确认正密度、正压力后接受 \(\Delta U\)。显式 CSR 的 `Ilu0Preconditioner` 仍用于已装配矩阵问题；当前可压缩 matrix-free 路径不装配 CSR Jacobian，因此不使用 ILU(0)。
+左预条件器默认使用式 (7) 的 `LusgsDiagonalPreconditioner`。`time.scheme = "gmres"` 时，3D 可压缩求解器会调用该入口；有限差分扰动 \(U+\epsilon v\) 与最终更新 \(\Delta U\) 都会按单元限制到正密度、正压力可行范围，并在线搜索确认后接受。显式 CSR 的 `Ilu0Preconditioner` 仍用于已装配矩阵问题；当前可压缩 matrix-free 路径不装配 CSR Jacobian，因此不使用 ILU(0)。
 
 ## 7. 参考文献
 

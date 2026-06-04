@@ -3,7 +3,10 @@
 use crate::core::Real;
 use crate::discretization::InviscidFluxConfig;
 use crate::error::{AsimuError, Result};
-use crate::field::{ConservedFields, ConservedResidual, primitive_from_conserved};
+use crate::field::{
+    ConservedFields, ConservedResidual, is_physical_conserved, max_physical_increment_scale,
+    state_after_increment,
+};
 use crate::linalg::{
     GmresConfig, GmresReport, GmresSolver, LinearOperator, LusgsDiagonalPreconditioner,
 };
@@ -30,6 +33,18 @@ impl GmresImplicitDelta {
     ) -> Result<()> {
         assign_delta_scaled(out, base, &self.delta, alpha)
     }
+
+    /// 将 GMRES 增量按正性约束裁剪后写入输出场。
+    pub fn assign_limited_scaled_to(
+        &self,
+        out: &mut ConservedFields,
+        base: &ConservedFields,
+        alpha: Real,
+        gamma: Real,
+        p_floor: Real,
+    ) -> Result<()> {
+        assign_delta_limited_scaled(out, base, &self.delta, alpha, gamma, p_floor)
+    }
 }
 
 pub(crate) fn apply_delta_with_line_search(
@@ -43,8 +58,8 @@ pub(crate) fn apply_delta_with_line_search(
     const MIN_ALPHA: Real = 1.0 / 1024.0;
     let mut alpha = 1.0;
     loop {
-        assign_delta_scaled(stage, base, &delta.delta, alpha)?;
-        if fields_are_physical(stage, eos, p_floor) {
+        delta.assign_limited_scaled_to(stage, base, alpha, eos.gamma, p_floor)?;
+        if fields_are_physical(stage, eos.gamma, p_floor)? {
             fields.copy_from(stage)?;
             return Ok(alpha);
         }
@@ -146,7 +161,14 @@ impl LinearOperator for MatrixFreeResidualOperator3d<'_, '_> {
         ensure_vector_len(x, self.dimension(), "gmres implicit input")?;
         ensure_vector_len(y, self.dimension(), "gmres implicit output")?;
         let eps = finite_difference_epsilon(x, self.epsilon_rel)?;
-        assign_perturbed_fields(&mut self.perturbed, self.base, x, eps)?;
+        let eps = assign_physical_perturbed_fields(
+            &mut self.perturbed,
+            self.base,
+            x,
+            eps,
+            self.ctx.eos.gamma,
+            self.p_floor,
+        )?;
         self.solver
             .rhs_context_3d(self.ctx, self.inviscid, self.p_floor)
             .run(&self.perturbed, &mut self.perturbed_residual)?;
@@ -221,6 +243,25 @@ fn assign_perturbed_fields(
     Ok(())
 }
 
+fn assign_physical_perturbed_fields(
+    out: &mut ConservedFields,
+    base: &ConservedFields,
+    direction: &[Real],
+    epsilon: Real,
+    gamma: Real,
+    min_pressure: Real,
+) -> Result<Real> {
+    let effective =
+        max_physical_vector_increment_scale(base, direction, epsilon, gamma, min_pressure)?;
+    if effective <= 0.0 {
+        return Err(AsimuError::Solver(
+            "GMRES 隐式更新：有限差分扰动无法保持正性".to_string(),
+        ));
+    }
+    assign_perturbed_fields(out, base, direction, effective)?;
+    Ok(effective)
+}
+
 pub(crate) fn assign_delta_scaled(
     out: &mut ConservedFields,
     base: &ConservedFields,
@@ -244,24 +285,89 @@ pub(crate) fn assign_delta_scaled(
     Ok(())
 }
 
+pub(crate) fn assign_delta_limited_scaled(
+    out: &mut ConservedFields,
+    base: &ConservedFields,
+    delta: &[Real],
+    alpha: Real,
+    gamma: Real,
+    min_pressure: Real,
+) -> Result<()> {
+    let n = base.num_cells();
+    ensure_vector_len(delta, n * CONSERVED_COMPONENTS_3D, "gmres delta")?;
+    for cell in 0..n {
+        let base_state = base.cell_state(cell)?;
+        let increment = vector_increment_at(delta, cell);
+        let effective =
+            max_physical_increment_scale(&base_state, increment, alpha, gamma, min_pressure);
+        let updated = if effective > 0.0 {
+            state_after_increment(&base_state, increment, effective)
+        } else {
+            base_state
+        };
+        write_cell_state(out, cell, &updated);
+    }
+    Ok(())
+}
+
 pub(crate) fn fields_are_physical(
     fields: &ConservedFields,
-    eos: &crate::physics::IdealGasEoS,
+    gamma: Real,
     min_pressure: Real,
-) -> bool {
-    (0..fields.num_cells()).all(|cell| {
-        let Ok(state) = fields.cell_state(cell) else {
-            return false;
-        };
-        let Ok(prim) = primitive_from_conserved(eos, &state) else {
-            return false;
-        };
-        prim.density.is_finite()
-            && prim.density > 0.0
-            && prim.pressure.is_finite()
-            && prim.pressure > min_pressure
-            && prim.velocity.iter().all(|v| v.is_finite())
-    })
+) -> Result<bool> {
+    for cell in 0..fields.num_cells() {
+        if !is_physical_conserved(&fields.cell_state(cell)?, gamma, min_pressure) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn max_physical_vector_increment_scale(
+    base: &ConservedFields,
+    delta: &[Real],
+    scale: Real,
+    gamma: Real,
+    min_pressure: Real,
+) -> Result<Real> {
+    let n = base.num_cells();
+    ensure_vector_len(delta, n * CONSERVED_COMPONENTS_3D, "gmres vector increment")?;
+    let mut effective = scale;
+    for cell in 0..n {
+        let base_state = base.cell_state(cell)?;
+        let increment = vector_increment_at(delta, cell);
+        effective = effective.min(max_physical_increment_scale(
+            &base_state,
+            increment,
+            scale,
+            gamma,
+            min_pressure,
+        ));
+    }
+    Ok(effective)
+}
+
+fn vector_increment_at(values: &[Real], cell: usize) -> [Real; CONSERVED_COMPONENTS_3D] {
+    let offset = cell * CONSERVED_COMPONENTS_3D;
+    [
+        values[offset],
+        values[offset + 1],
+        values[offset + 2],
+        values[offset + 3],
+        values[offset + 4],
+    ]
+}
+
+fn write_cell_state(
+    fields: &mut ConservedFields,
+    cell: usize,
+    state: &crate::physics::ConservedState,
+) {
+    fields.density.values_mut()[cell] = state.density;
+    fields.momentum_x.values_mut()[cell] = state.momentum[0];
+    fields.momentum_y.values_mut()[cell] = state.momentum[1];
+    fields.momentum_z.values_mut()[cell] = state.momentum[2];
+    fields.total_energy.values_mut()[cell] = state.total_energy;
 }
 
 fn residual_to_vector(residual: &ConservedResidual) -> Vec<Real> {
@@ -364,6 +470,46 @@ mod tests {
         assert!((out.momentum_y.values()[0] - 3.75).abs() < 1.0e-12);
         assert!((out.momentum_z.values()[0] - 5.0).abs() < 1.0e-12);
         assert!((out.total_energy.values()[0] - 11.25).abs() < 1.0e-12);
+    }
+
+    #[test]
+    fn limited_delta_clips_nonphysical_density_update() {
+        let state = ConservedState {
+            density: 1.0,
+            momentum: [0.0, 0.0, 0.0],
+            total_energy: 4.0,
+        };
+        let base = ConservedFields::uniform(1, state).expect("base");
+        let mut out = base.clone();
+        assign_delta_limited_scaled(&mut out, &base, &[-2.0, 0.0, 0.0, 0.0, 0.0], 1.0, 1.4, 0.0)
+            .expect("limited");
+        let limited = out.cell_state(0).expect("cell");
+        assert!(limited.density > 0.0);
+        assert!(limited.density < state.density);
+        assert!(is_physical_conserved(&limited, 1.4, 0.0));
+    }
+
+    #[test]
+    fn physical_perturbation_reduces_epsilon_when_needed() {
+        let state = ConservedState {
+            density: 1.0,
+            momentum: [0.0, 0.0, 0.0],
+            total_energy: 4.0,
+        };
+        let base = ConservedFields::uniform(1, state).expect("base");
+        let mut out = base.clone();
+        let eps = assign_physical_perturbed_fields(
+            &mut out,
+            &base,
+            &[-20.0, 0.0, 0.0, 0.0, 0.0],
+            0.1,
+            1.4,
+            0.0,
+        )
+        .expect("perturb");
+        assert!(eps < 0.1);
+        let perturbed = out.cell_state(0).expect("cell");
+        assert!(is_physical_conserved(&perturbed, 1.4, 0.0));
     }
 
     #[test]
