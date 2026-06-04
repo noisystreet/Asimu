@@ -154,6 +154,7 @@ fn build_compressible_solver(
         local_time_step: case.time.uses_local_time_step(),
         time_scheme: case.time.resolved_time_scheme(),
         lu_sgs: case.time.resolved_lusgs_config()?,
+        gmres: case.time.resolved_gmres_config(),
         residual_smoothing: case.time.residual_smoothing_config(),
     }))
 }

@@ -15,7 +15,7 @@ use crate::solver::spectral_radius::{
 };
 use compressible_rhs::EvaluateRhs3d;
 use gmres_implicit_3d::apply_delta_with_line_search;
-pub use gmres_implicit_3d::{GmresImplicitConfig, GmresImplicitDelta};
+pub use gmres_implicit_3d::{GmresImplicitConfig, GmresImplicitDelta, GmresPreconditionerKind};
 use lu_sgs_sweep_3d::{LuSgsSweep3dParams, lu_sgs_sweep_3d};
 
 use crate::boundary::BoundarySet;
@@ -59,6 +59,7 @@ pub struct CompressibleEulerConfig {
     pub time_scheme: TimeIntegrationScheme,
     /// `lu_sgs` 松弛因子等（显式格式下忽略）。
     pub lu_sgs: LuSgsConfig,
+    pub gmres: GmresImplicitConfig,
     pub residual_smoothing: ResidualSmoothingConfig,
 }
 
@@ -73,6 +74,7 @@ impl Default for CompressibleEulerConfig {
             local_time_step: false,
             time_scheme: TimeIntegrationScheme::Rk4,
             lu_sgs: LuSgsConfig::default(),
+            gmres: GmresImplicitConfig::default(),
             residual_smoothing: ResidualSmoothingConfig::default(),
         }
     }
@@ -305,10 +307,10 @@ impl CompressibleEulerSolver {
                 &cell_dts,
                 &sigma,
                 p_floor,
-                GmresImplicitConfig::default(),
+                self.config.gmres,
             )?
         };
-        let accepted_alpha = {
+        let update = {
             let _span = info_span!("gmres_line_search").entered();
             apply_delta_with_line_search(
                 fields,
@@ -325,7 +327,12 @@ impl CompressibleEulerSolver {
                 gmres_converged = delta.report.converged,
                 gmres_iters = delta.report.iterations,
                 gmres_residual = delta.report.residual_norm,
-                alpha = accepted_alpha,
+                alpha = update.alpha,
+                update_limited_cells = update.limited_cells,
+                update_min_scale = update.min_update_scale,
+                perturb_limited_evals = delta.diagnostics.perturbation_limited_evals,
+                perturb_min_scale = delta.diagnostics.min_perturbation_scale,
+                preconditioner = delta.diagnostics.preconditioner.as_str(),
             )
             .entered();
             self.rhs_context_3d(ctx, &inviscid, p_floor)
@@ -339,7 +346,12 @@ impl CompressibleEulerSolver {
             gmres_converged = delta.report.converged,
             gmres_iters = delta.report.iterations,
             gmres_residual = %format_log_sci4(delta.report.residual_norm),
-            line_search_alpha = accepted_alpha,
+            gmres_preconditioner = delta.diagnostics.preconditioner.as_str(),
+            line_search_alpha = update.alpha,
+            update_limited_cells = update.limited_cells,
+            update_min_scale = %format_log_sci4(update.min_update_scale),
+            perturb_limited_evals = delta.diagnostics.perturbation_limited_evals,
+            perturb_min_scale = %format_log_sci4(delta.diagnostics.min_perturbation_scale),
             log10_residual_post = %format_log_fixed4(log10_positive(step_residual)),
             "GMRES 隐式步诊断"
         );

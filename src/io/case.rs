@@ -131,6 +131,8 @@ pub struct CaseTimeConfig {
     pub lusgs_sweep: Option<bool>,
     /// `lu_sgs` 后扫耦合阻尼（默认 0.5）。
     pub lusgs_sweep_backward_damping: Option<Real>,
+    /// GMRES 左预条件器（默认 scalar_diagonal）。
+    pub gmres_preconditioner: Option<crate::solver::GmresPreconditionerKind>,
     /// 方向分裂隐式残差光顺（仅稳态 3D 伪时间）。
     pub residual_smoothing: crate::solver::time::ResidualSmoothingConfig,
 }
@@ -158,6 +160,16 @@ impl CaseTimeConfig {
     pub const fn residual_smoothing_config(&self) -> crate::solver::time::ResidualSmoothingConfig {
         self.residual_smoothing
     }
+
+    #[must_use]
+    pub fn resolved_gmres_config(&self) -> crate::solver::GmresImplicitConfig {
+        crate::solver::GmresImplicitConfig {
+            preconditioner: self
+                .gmres_preconditioner
+                .unwrap_or(crate::solver::GmresPreconditionerKind::ScalarDiagonal),
+            ..crate::solver::GmresImplicitConfig::default()
+        }
+    }
 }
 
 impl Default for CaseTimeConfig {
@@ -176,6 +188,7 @@ impl Default for CaseTimeConfig {
             lusgs_omega: None,
             lusgs_sweep: None,
             lusgs_sweep_backward_damping: None,
+            gmres_preconditioner: None,
             residual_smoothing: crate::solver::time::ResidualSmoothingConfig::disabled(),
         }
     }
@@ -383,6 +396,7 @@ struct TimeToml {
     lusgs_omega: Option<Real>,
     lusgs_sweep: Option<bool>,
     lusgs_sweep_backward_damping: Option<Real>,
+    gmres_preconditioner: Option<String>,
     residual_smoothing: Option<bool>,
     residual_smoothing_epsilon: Option<Real>,
     residual_smoothing_sweeps: Option<usize>,
@@ -724,6 +738,11 @@ fn parse_time_config(raw: Option<&TimeToml>, has_sod: bool) -> Result<CaseTimeCo
         raw.residual_smoothing_epsilon,
         raw.residual_smoothing_sweeps,
     )?;
+    let gmres_preconditioner = raw
+        .gmres_preconditioner
+        .as_deref()
+        .map(crate::solver::GmresPreconditionerKind::parse)
+        .transpose()?;
     Ok(CaseTimeConfig {
         mode,
         dt: raw.dt,
@@ -738,6 +757,7 @@ fn parse_time_config(raw: Option<&TimeToml>, has_sod: bool) -> Result<CaseTimeCo
         lusgs_omega,
         lusgs_sweep,
         lusgs_sweep_backward_damping,
+        gmres_preconditioner,
         residual_smoothing,
     })
 }

@@ -246,6 +246,7 @@ static_pressure = 100000.0
 [time]
 scheme = "gmres"
 local_time_step = true
+gmres_preconditioner = "cell_block_diagonal"
 max_steps = 3
 "#;
     let case = parse_case_toml(content, None).expect("parse");
@@ -254,6 +255,10 @@ max_steps = 3
         crate::solver::time::TimeIntegrationScheme::Gmres
     );
     assert!(case.time.uses_local_time_step());
+    assert_eq!(
+        case.time.resolved_gmres_config().preconditioner,
+        crate::solver::GmresPreconditionerKind::CellBlockDiagonal
+    );
 }
 
 #[test]

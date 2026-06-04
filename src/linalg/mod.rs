@@ -10,7 +10,9 @@ use crate::core::Real;
 use crate::error::{AsimuError, Result};
 
 pub use gmres::{GmresConfig, GmresReport, GmresSolver};
-pub use preconditioner::{IdentityPreconditioner, LusgsDiagonalPreconditioner};
+pub use preconditioner::{
+    CellBlockDiagonalPreconditioner, IdentityPreconditioner, LusgsDiagonalPreconditioner,
+};
 pub use sparse::{CsrMatrix, Ilu0Preconditioner};
 
 /// 线性算子 \(y=A x\)。允许矩阵无关实现。

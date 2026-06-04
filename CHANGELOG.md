@@ -21,13 +21,13 @@
 - 可压缩 farfield/inlet/outlet 边界：改用法向特征关系生成边界外侧状态，减少简单 ghost 外推的反射与过约束
 - 可压缩 3D 稳态推进：方向分裂隐式残差光顺新增逐单元正性回退，避免光顺后更新方向导致内能非正
 - LU-SGS 双扫：逐单元正性限制、后扫耦合阻尼与全场线搜索；失败时回退对角隐式更新
-- GMRES 隐式伪时间：有限差分扰动与最终增量写回均加入逐单元正性限制，避免 Krylov 更新产生非物理状态
+- GMRES 隐式伪时间：有限差分扰动按守恒量量级自适应缩放，扰动与最终增量写回均加入逐单元正性限制，并记录裁剪诊断
 - 可压缩正性下限：恢复来流静压 1% 的 `positivity_pressure_floor`，通量/输出 primitive 恢复钳制最低压力，避免极低温度伪解
 
 ### Added
 
 - 可压缩 3D 边界面无粘通量接口：`BoundaryInviscidFluxInput` / `inviscid_boundary_face_flux`
-- 可压缩 3D 时间推进：`time.scheme = "gmres"` 现在启用 matrix-free GMRES 隐式伪时间步，使用 LU-SGS 对角预条件器与正性线搜索
+- 可压缩 3D 时间推进：`time.scheme = "gmres"` 现在启用 matrix-free GMRES 隐式伪时间步，支持 LU-SGS 标量对角与单元 5×5 块对角预条件器
 - 线性代数：矩阵无关 restarted GMRES、CSR 矩阵、ILU(0) 预条件器与 LU-SGS 对角预条件器
 - 可压缩流无量纲化：`[nondimensional]`、`FreestreamContext` 单一来流入口、理论页 [docs/theory/nondimensional.md](docs/theory/nondimensional.md)
 - CGNS 结构化 zone 读入 + VTS/VTM 导出：`io::load_cgns_zone` / `export_cgns_to_vtm`（features `io-cgns-vts`）；ADR 0008；链接系统 `libcgns-dev`

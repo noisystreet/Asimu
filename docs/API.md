@@ -195,6 +195,7 @@ name=<mesh_name>;cells=<count>
 | `CsrMatrix` | CSR 显式稀疏矩阵，同时实现 `LinearOperator` |
 | `Ilu0Preconditioner` | CSR 矩阵的 ILU(0) 预条件器 |
 | `LusgsDiagonalPreconditioner` | 由 `dt` / `sigma` 构造的 LU-SGS 对角预条件器 |
+| `CellBlockDiagonalPreconditioner` | 每单元固定大小局部块逆矩阵预条件器（GMRES 3D 可压缩块对角路径复用） |
 
 ### `asimu::discretization`
 
@@ -215,6 +216,7 @@ name=<mesh_name>;cells=<count>
 | `TimeIntegrator` | 时间推进 trait |
 | `SteadyStateIntegrator` | v0.2 稳态伪时间 |
 | `GmresImplicitConfig` / `GmresImplicitDelta` | 3D 可压缩 matrix-free 隐式 GMRES 更新入口 |
+| `GmresPreconditionerKind` | `ScalarDiagonal` / `CellBlockDiagonal`，对应 `[time] gmres_preconditioner` |
 
 理论参考：[docs/theory/fvm_diffusion.md](theory/fvm_diffusion.md)。
 

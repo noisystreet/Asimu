@@ -17,7 +17,7 @@ use crate::mesh::Mesh;
 pub use compressible::{
     CompressibleAdvanceContext1d, CompressibleAdvanceContext3d, CompressibleEulerConfig,
     CompressibleEulerSolver, CompressibleStepInfo, CompressibleTimeMode, GmresImplicitConfig,
-    GmresImplicitDelta,
+    GmresImplicitDelta, GmresPreconditionerKind,
 };
 pub use sod::{
     SodBenchmarkConfig, SodBenchmarkResult, run_sod_benchmark, sod_initial_fields,

@@ -8,7 +8,8 @@ use crate::field::{
     state_after_increment,
 };
 use crate::linalg::{
-    GmresConfig, GmresReport, GmresSolver, LinearOperator, LusgsDiagonalPreconditioner,
+    CellBlockDiagonalPreconditioner, GmresConfig, GmresReport, GmresSolver, LinearOperator,
+    LusgsDiagonalPreconditioner, Preconditioner,
 };
 use crate::physics::IdealGasEoS;
 
@@ -21,6 +22,35 @@ const CONSERVED_COMPONENTS_3D: usize = 5;
 pub struct GmresImplicitDelta {
     pub delta: Vec<Real>,
     pub report: GmresReport,
+    pub diagnostics: GmresImplicitDiagnostics,
+}
+
+/// GMRES 隐式步的数值诊断。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GmresImplicitDiagnostics {
+    pub preconditioner: GmresPreconditionerKind,
+    pub perturbation_evals: usize,
+    pub perturbation_limited_evals: usize,
+    pub min_perturbation_scale: Real,
+}
+
+impl GmresImplicitDiagnostics {
+    fn new(preconditioner: GmresPreconditionerKind) -> Self {
+        Self {
+            preconditioner,
+            perturbation_evals: 0,
+            perturbation_limited_evals: 0,
+            min_perturbation_scale: 1.0,
+        }
+    }
+}
+
+/// GMRES 更新写回诊断。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GmresUpdateDiagnostics {
+    pub alpha: Real,
+    pub limited_cells: usize,
+    pub min_update_scale: Real,
 }
 
 impl GmresImplicitDelta {
@@ -42,7 +72,7 @@ impl GmresImplicitDelta {
         alpha: Real,
         gamma: Real,
         p_floor: Real,
-    ) -> Result<()> {
+    ) -> Result<GmresUpdateDiagnostics> {
         assign_delta_limited_scaled(out, base, &self.delta, alpha, gamma, p_floor)
     }
 }
@@ -54,14 +84,16 @@ pub(crate) fn apply_delta_with_line_search(
     delta: &GmresImplicitDelta,
     eos: &IdealGasEoS,
     p_floor: Real,
-) -> Result<Real> {
+) -> Result<GmresUpdateDiagnostics> {
     const MIN_ALPHA: Real = 1.0 / 1024.0;
     let mut alpha = 1.0;
     loop {
-        delta.assign_limited_scaled_to(stage, base, alpha, eos.gamma, p_floor)?;
+        let mut diagnostics =
+            delta.assign_limited_scaled_to(stage, base, alpha, eos.gamma, p_floor)?;
         if fields_are_physical(stage, eos.gamma, p_floor)? {
+            diagnostics.alpha = alpha;
             fields.copy_from(stage)?;
-            return Ok(alpha);
+            return Ok(diagnostics);
         }
         alpha *= 0.5;
         if alpha < MIN_ALPHA {
@@ -78,6 +110,34 @@ pub struct GmresImplicitConfig {
     pub gmres: GmresConfig,
     /// 有限差分扰动系数，实际 \(\epsilon\) 会按方向范数缩放。
     pub epsilon: Real,
+    pub preconditioner: GmresPreconditionerKind,
+}
+
+/// Matrix-free GMRES 使用的左预条件器。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GmresPreconditionerKind {
+    ScalarDiagonal,
+    CellBlockDiagonal,
+}
+
+impl GmresPreconditionerKind {
+    pub fn parse(raw: &str) -> Result<Self> {
+        match raw {
+            "scalar" | "scalar_diagonal" | "lusgs_diagonal" => Ok(Self::ScalarDiagonal),
+            "block" | "cell_block" | "cell_block_diagonal" => Ok(Self::CellBlockDiagonal),
+            other => Err(AsimuError::Config(format!(
+                "不支持的 GMRES 预条件器 \"{other}\"（可用 scalar_diagonal / cell_block_diagonal）"
+            ))),
+        }
+    }
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ScalarDiagonal => "scalar_diagonal",
+            Self::CellBlockDiagonal => "cell_block_diagonal",
+        }
+    }
 }
 
 impl Default for GmresImplicitConfig {
@@ -89,6 +149,7 @@ impl Default for GmresImplicitConfig {
                 tolerance: 1.0e-6,
             },
             epsilon: 1.0e-7,
+            preconditioner: GmresPreconditionerKind::ScalarDiagonal,
         }
     }
 }
@@ -114,12 +175,19 @@ impl CompressibleEulerSolver {
         self.rhs_context_3d(ctx, &inviscid, p_floor)
             .run(fields, &mut base_residual)?;
         let rhs = residual_to_vector(&base_residual);
-        let precond = LusgsDiagonalPreconditioner::from_lusgs_diagonal(
+        let preconditioner_kind = config.preconditioner;
+        let precond = build_gmres_preconditioner(GmresPreconditionerBuild {
+            solver: self,
+            ctx,
+            fields,
+            base_residual: &base_residual,
+            inviscid: &inviscid,
             dt,
             sigma,
-            self.config.lu_sgs.omega,
-            CONSERVED_COMPONENTS_3D,
-        )?;
+            p_floor,
+            config,
+        })?;
+        let mut diagnostics = GmresImplicitDiagnostics::new(preconditioner_kind);
         let mut op = MatrixFreeResidualOperator3d {
             solver: self,
             ctx,
@@ -129,13 +197,134 @@ impl CompressibleEulerSolver {
             dt,
             p_floor,
             epsilon_rel: config.epsilon,
+            diagnostics: GmresImplicitDiagnostics::new(preconditioner_kind),
             perturbed: zero_conserved_fields(fields.num_cells())?,
             perturbed_residual: ConservedResidual::zeros(fields.num_cells())?,
         };
         let mut delta = vec![0.0; rhs.len()];
         let report = GmresSolver::new(config.gmres)?.solve(&mut op, &precond, &rhs, &mut delta)?;
-        Ok(GmresImplicitDelta { delta, report })
+        diagnostics.perturbation_evals = op.diagnostics.perturbation_evals;
+        diagnostics.perturbation_limited_evals = op.diagnostics.perturbation_limited_evals;
+        diagnostics.min_perturbation_scale = op.diagnostics.min_perturbation_scale;
+        Ok(GmresImplicitDelta {
+            delta,
+            report,
+            diagnostics,
+        })
     }
+}
+
+enum GmresImplicitPreconditioner {
+    Scalar(LusgsDiagonalPreconditioner),
+    CellBlock(CellBlockDiagonalPreconditioner),
+}
+
+impl Preconditioner for GmresImplicitPreconditioner {
+    fn dimension(&self) -> usize {
+        match self {
+            Self::Scalar(p) => p.dimension(),
+            Self::CellBlock(p) => p.dimension(),
+        }
+    }
+
+    fn apply(&self, rhs: &[Real], out: &mut [Real]) -> Result<()> {
+        match self {
+            Self::Scalar(p) => p.apply(rhs, out),
+            Self::CellBlock(p) => p.apply(rhs, out),
+        }
+    }
+}
+
+struct GmresPreconditionerBuild<'a, 'ctx> {
+    solver: &'a CompressibleEulerSolver,
+    ctx: &'a mut CompressibleAdvanceContext3d<'ctx>,
+    fields: &'a ConservedFields,
+    base_residual: &'a ConservedResidual,
+    inviscid: &'a InviscidFluxConfig,
+    dt: &'a [Real],
+    sigma: &'a [Real],
+    p_floor: Real,
+    config: GmresImplicitConfig,
+}
+
+fn build_gmres_preconditioner(
+    params: GmresPreconditionerBuild<'_, '_>,
+) -> Result<GmresImplicitPreconditioner> {
+    match params.config.preconditioner {
+        GmresPreconditionerKind::ScalarDiagonal => Ok(GmresImplicitPreconditioner::Scalar(
+            LusgsDiagonalPreconditioner::from_lusgs_diagonal(
+                params.dt,
+                params.sigma,
+                params.solver.config.lu_sgs.omega,
+                CONSERVED_COMPONENTS_3D,
+            )?,
+        )),
+        GmresPreconditionerKind::CellBlockDiagonal => Ok(GmresImplicitPreconditioner::CellBlock(
+            build_cell_block_preconditioner(
+                params.solver,
+                params.ctx,
+                params.fields,
+                params.base_residual,
+                params.inviscid,
+                params.dt,
+                params.p_floor,
+                params.config.epsilon,
+            )?,
+        )),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_cell_block_preconditioner(
+    solver: &CompressibleEulerSolver,
+    ctx: &mut CompressibleAdvanceContext3d<'_>,
+    fields: &ConservedFields,
+    base_residual: &ConservedResidual,
+    inviscid: &InviscidFluxConfig,
+    dt: &[Real],
+    p_floor: Real,
+    epsilon_rel: Real,
+) -> Result<CellBlockDiagonalPreconditioner> {
+    let n = fields.num_cells();
+    let mut blocks = vec![0.0; n * CONSERVED_COMPONENTS_3D * CONSERVED_COMPONENTS_3D];
+    let mut perturbed = fields.clone();
+    let mut perturbed_residual = ConservedResidual::zeros(n)?;
+    for (cell, &dt_cell) in dt.iter().enumerate().take(n) {
+        let base_state = fields.cell_state(cell)?;
+        let scales = conserved_component_scales(&base_state);
+        for col in 0..CONSERVED_COMPONENTS_3D {
+            perturbed.copy_from(fields)?;
+            let requested_eps = epsilon_rel.sqrt() * scales[col];
+            let unit = component_basis_increment(col);
+            let eps = max_physical_increment_scale(
+                &base_state,
+                unit,
+                requested_eps,
+                ctx.eos.gamma,
+                p_floor,
+            );
+            if eps <= 0.0 {
+                return Err(AsimuError::Solver(format!(
+                    "GMRES 块预条件器：cell {cell} 分量 {col} 无法构造正性扰动"
+                )));
+            }
+            write_cell_state(
+                &mut perturbed,
+                cell,
+                &state_after_increment(&base_state, unit, eps),
+            );
+            solver
+                .rhs_context_3d(ctx, inviscid, p_floor)
+                .run(&perturbed, &mut perturbed_residual)?;
+            let jv = residual_difference_at(&perturbed_residual, base_residual, cell, eps);
+            for row in 0..CONSERVED_COMPONENTS_3D {
+                let block_offset = cell * CONSERVED_COMPONENTS_3D * CONSERVED_COMPONENTS_3D;
+                let diagonal = if row == col { 1.0 / dt_cell } else { 0.0 };
+                blocks[block_offset + row * CONSERVED_COMPONENTS_3D + col] = diagonal - jv[row];
+            }
+        }
+    }
+    CellBlockDiagonalPreconditioner::from_blocks(CONSERVED_COMPONENTS_3D, blocks)
 }
 
 struct MatrixFreeResidualOperator3d<'a, 'ctx> {
@@ -147,6 +336,7 @@ struct MatrixFreeResidualOperator3d<'a, 'ctx> {
     dt: &'a [Real],
     p_floor: Real,
     epsilon_rel: Real,
+    diagnostics: GmresImplicitDiagnostics,
     perturbed: ConservedFields,
     perturbed_residual: ConservedResidual,
 }
@@ -160,15 +350,16 @@ impl LinearOperator for MatrixFreeResidualOperator3d<'_, '_> {
         let n = self.base.num_cells();
         ensure_vector_len(x, self.dimension(), "gmres implicit input")?;
         ensure_vector_len(y, self.dimension(), "gmres implicit output")?;
-        let eps = finite_difference_epsilon(x, self.epsilon_rel)?;
+        let requested_eps = finite_difference_epsilon(self.base, x, self.epsilon_rel)?;
         let eps = assign_physical_perturbed_fields(
             &mut self.perturbed,
             self.base,
             x,
-            eps,
+            requested_eps,
             self.ctx.eos.gamma,
             self.p_floor,
         )?;
+        self.record_perturbation_scale(eps / requested_eps);
         self.solver
             .rhs_context_3d(self.ctx, self.inviscid, self.p_floor)
             .run(&self.perturbed, &mut self.perturbed_residual)?;
@@ -181,6 +372,17 @@ impl LinearOperator for MatrixFreeResidualOperator3d<'_, '_> {
             }
         }
         Ok(())
+    }
+}
+
+impl MatrixFreeResidualOperator3d<'_, '_> {
+    fn record_perturbation_scale(&mut self, scale: Real) {
+        self.diagnostics.perturbation_evals += 1;
+        self.diagnostics.min_perturbation_scale =
+            self.diagnostics.min_perturbation_scale.min(scale);
+        if scale < 1.0 - 1.0e-12 {
+            self.diagnostics.perturbation_limited_evals += 1;
+        }
     }
 }
 
@@ -210,14 +412,40 @@ fn validate_gmres_inputs(
     Ok(())
 }
 
-fn finite_difference_epsilon(direction: &[Real], epsilon_rel: Real) -> Result<Real> {
-    let norm = direction.iter().map(|v| v * v).sum::<Real>().sqrt();
+fn finite_difference_epsilon(
+    base: &ConservedFields,
+    direction: &[Real],
+    epsilon_rel: Real,
+) -> Result<Real> {
+    let n = base.num_cells();
+    ensure_vector_len(direction, n * CONSERVED_COMPONENTS_3D, "gmres direction")?;
+    let mut scaled_norm_sq = 0.0;
+    for cell in 0..n {
+        let state = base.cell_state(cell)?;
+        let scales = conserved_component_scales(&state);
+        let offset = cell * CONSERVED_COMPONENTS_3D;
+        for comp in 0..CONSERVED_COMPONENTS_3D {
+            let scaled = direction[offset + comp] / scales[comp];
+            scaled_norm_sq += scaled * scaled;
+        }
+    }
+    let norm = scaled_norm_sq.sqrt();
     if !norm.is_finite() {
         return Err(AsimuError::Solver(
             "GMRES 隐式更新：方向向量含非有限值".to_string(),
         ));
     }
-    Ok(epsilon_rel / norm.max(1.0))
+    Ok(epsilon_rel.sqrt() / norm.max(1.0))
+}
+
+fn conserved_component_scales(state: &crate::physics::ConservedState) -> [Real; 5] {
+    [
+        state.density.abs().max(1.0),
+        state.momentum[0].abs().max(state.density.abs()).max(1.0),
+        state.momentum[1].abs().max(state.density.abs()).max(1.0),
+        state.momentum[2].abs().max(state.density.abs()).max(1.0),
+        state.total_energy.abs().max(1.0),
+    ]
 }
 
 fn assign_perturbed_fields(
@@ -292,14 +520,21 @@ pub(crate) fn assign_delta_limited_scaled(
     alpha: Real,
     gamma: Real,
     min_pressure: Real,
-) -> Result<()> {
+) -> Result<GmresUpdateDiagnostics> {
     let n = base.num_cells();
     ensure_vector_len(delta, n * CONSERVED_COMPONENTS_3D, "gmres delta")?;
+    let mut limited_cells = 0;
+    let mut min_update_scale: Real = 1.0;
     for cell in 0..n {
         let base_state = base.cell_state(cell)?;
         let increment = vector_increment_at(delta, cell);
         let effective =
             max_physical_increment_scale(&base_state, increment, alpha, gamma, min_pressure);
+        let scale_ratio = if alpha > 0.0 { effective / alpha } else { 0.0 };
+        min_update_scale = min_update_scale.min(scale_ratio);
+        if scale_ratio < 1.0 - 1.0e-12 {
+            limited_cells += 1;
+        }
         let updated = if effective > 0.0 {
             state_after_increment(&base_state, increment, effective)
         } else {
@@ -307,7 +542,11 @@ pub(crate) fn assign_delta_limited_scaled(
         };
         write_cell_state(out, cell, &updated);
     }
-    Ok(())
+    Ok(GmresUpdateDiagnostics {
+        alpha,
+        limited_cells,
+        min_update_scale,
+    })
 }
 
 pub(crate) fn fields_are_physical(
@@ -356,6 +595,12 @@ fn vector_increment_at(values: &[Real], cell: usize) -> [Real; CONSERVED_COMPONE
         values[offset + 3],
         values[offset + 4],
     ]
+}
+
+fn component_basis_increment(component: usize) -> [Real; CONSERVED_COMPONENTS_3D] {
+    let mut increment = [0.0; CONSERVED_COMPONENTS_3D];
+    increment[component] = 1.0;
+    increment
 }
 
 fn write_cell_state(
@@ -421,103 +666,5 @@ fn zero_conserved_fields(num_cells: usize) -> Result<ConservedFields> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::field::ConservedFields;
-    use crate::physics::ConservedState;
-
-    #[test]
-    fn residual_vector_uses_cell_major_component_order() {
-        let mut r = ConservedResidual::zeros(2).expect("r");
-        r.density.values_mut()[1] = 1.0;
-        r.momentum_x.values_mut()[1] = 2.0;
-        r.momentum_y.values_mut()[1] = 3.0;
-        r.momentum_z.values_mut()[1] = 4.0;
-        r.total_energy.values_mut()[1] = 5.0;
-        let v = residual_to_vector(&r);
-        assert_eq!(&v[5..10], &[1.0, 2.0, 3.0, 4.0, 5.0]);
-    }
-
-    #[test]
-    fn perturbation_assigns_all_conserved_components() {
-        let state = ConservedState {
-            density: 1.0,
-            momentum: [2.0, 3.0, 4.0],
-            total_energy: 10.0,
-        };
-        let base = ConservedFields::uniform(1, state).expect("base");
-        let mut out = base.clone();
-        assign_perturbed_fields(&mut out, &base, &[1.0, 2.0, 3.0, 4.0, 5.0], 0.1).expect("perturb");
-        assert!((out.density.values()[0] - 1.1).abs() < 1.0e-12);
-        assert!((out.momentum_x.values()[0] - 2.2).abs() < 1.0e-12);
-        assert!((out.momentum_y.values()[0] - 3.3).abs() < 1.0e-12);
-        assert!((out.momentum_z.values()[0] - 4.4).abs() < 1.0e-12);
-        assert!((out.total_energy.values()[0] - 10.5).abs() < 1.0e-12);
-    }
-
-    #[test]
-    fn scaled_delta_assigns_all_conserved_components() {
-        let state = ConservedState {
-            density: 1.0,
-            momentum: [2.0, 3.0, 4.0],
-            total_energy: 10.0,
-        };
-        let base = ConservedFields::uniform(1, state).expect("base");
-        let mut out = base.clone();
-        assign_delta_scaled(&mut out, &base, &[1.0, 2.0, 3.0, 4.0, 5.0], 0.25).expect("delta");
-        assert!((out.density.values()[0] - 1.25).abs() < 1.0e-12);
-        assert!((out.momentum_x.values()[0] - 2.5).abs() < 1.0e-12);
-        assert!((out.momentum_y.values()[0] - 3.75).abs() < 1.0e-12);
-        assert!((out.momentum_z.values()[0] - 5.0).abs() < 1.0e-12);
-        assert!((out.total_energy.values()[0] - 11.25).abs() < 1.0e-12);
-    }
-
-    #[test]
-    fn limited_delta_clips_nonphysical_density_update() {
-        let state = ConservedState {
-            density: 1.0,
-            momentum: [0.0, 0.0, 0.0],
-            total_energy: 4.0,
-        };
-        let base = ConservedFields::uniform(1, state).expect("base");
-        let mut out = base.clone();
-        assign_delta_limited_scaled(&mut out, &base, &[-2.0, 0.0, 0.0, 0.0, 0.0], 1.0, 1.4, 0.0)
-            .expect("limited");
-        let limited = out.cell_state(0).expect("cell");
-        assert!(limited.density > 0.0);
-        assert!(limited.density < state.density);
-        assert!(is_physical_conserved(&limited, 1.4, 0.0));
-    }
-
-    #[test]
-    fn physical_perturbation_reduces_epsilon_when_needed() {
-        let state = ConservedState {
-            density: 1.0,
-            momentum: [0.0, 0.0, 0.0],
-            total_energy: 4.0,
-        };
-        let base = ConservedFields::uniform(1, state).expect("base");
-        let mut out = base.clone();
-        let eps = assign_physical_perturbed_fields(
-            &mut out,
-            &base,
-            &[-20.0, 0.0, 0.0, 0.0, 0.0],
-            0.1,
-            1.4,
-            0.0,
-        )
-        .expect("perturb");
-        assert!(eps < 0.1);
-        let perturbed = out.cell_state(0).expect("cell");
-        assert!(is_physical_conserved(&perturbed, 1.4, 0.0));
-    }
-
-    #[test]
-    fn validates_gmres_timestep_inputs() {
-        assert!(validate_gmres_inputs(2, &[0.1, 0.2], &[1.0, 2.0], 1.0e-7).is_ok());
-        assert!(validate_gmres_inputs(2, &[0.1], &[1.0, 2.0], 1.0e-7).is_err());
-        assert!(validate_gmres_inputs(1, &[0.0], &[1.0], 1.0e-7).is_err());
-        assert!(validate_gmres_inputs(1, &[0.1], &[-1.0], 1.0e-7).is_err());
-        assert!(validate_gmres_inputs(1, &[0.1], &[1.0], 0.0).is_err());
-    }
-}
+#[path = "gmres_implicit_3d_tests.rs"]
+mod tests;

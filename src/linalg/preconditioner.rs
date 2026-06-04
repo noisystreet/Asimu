@@ -98,6 +98,139 @@ impl Preconditioner for LusgsDiagonalPreconditioner {
     }
 }
 
+/// 单元局部块对角预条件器：每个控制体一个固定大小的小块逆矩阵。
+#[derive(Debug, Clone, PartialEq)]
+pub struct CellBlockDiagonalPreconditioner {
+    block_size: usize,
+    inverse_blocks: Vec<Real>,
+}
+
+impl CellBlockDiagonalPreconditioner {
+    pub fn from_blocks(block_size: usize, blocks: Vec<Real>) -> Result<Self> {
+        let block_entries = block_size * block_size;
+        if block_size == 0 || blocks.is_empty() || blocks.len() % block_entries != 0 {
+            return Err(AsimuError::Linalg(
+                "块对角预条件器 block_size/blocks 尺寸不一致".to_string(),
+            ));
+        }
+        let num_blocks = blocks.len() / block_entries;
+        let mut inverse_blocks = Vec::with_capacity(blocks.len());
+        for block in 0..num_blocks {
+            let start = block * block_size * block_size;
+            inverse_blocks.extend(invert_dense_block(
+                block_size,
+                &blocks[start..start + block_size * block_size],
+            )?);
+        }
+        Ok(Self {
+            block_size,
+            inverse_blocks,
+        })
+    }
+
+    #[must_use]
+    pub fn num_blocks(&self) -> usize {
+        self.inverse_blocks.len() / (self.block_size * self.block_size)
+    }
+}
+
+impl Preconditioner for CellBlockDiagonalPreconditioner {
+    fn dimension(&self) -> usize {
+        self.num_blocks() * self.block_size
+    }
+
+    fn apply(&self, rhs: &[Real], out: &mut [Real]) -> Result<()> {
+        ensure_vector_len(rhs, self.dimension(), "cell block preconditioner rhs")?;
+        ensure_vector_len(out, self.dimension(), "cell block preconditioner out")?;
+        for block in 0..self.num_blocks() {
+            let vec_offset = block * self.block_size;
+            let mat_offset = block * self.block_size * self.block_size;
+            for row in 0..self.block_size {
+                let mut value = 0.0;
+                for col in 0..self.block_size {
+                    value += self.inverse_blocks[mat_offset + row * self.block_size + col]
+                        * rhs[vec_offset + col];
+                }
+                out[vec_offset + row] = value;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn invert_dense_block(block_size: usize, block: &[Real]) -> Result<Vec<Real>> {
+    let width = block_size * 2;
+    let mut aug = vec![0.0; block_size * width];
+    for row in 0..block_size {
+        for col in 0..block_size {
+            aug[row * width + col] = block[row * block_size + col];
+        }
+        aug[row * width + block_size + row] = 1.0;
+    }
+    for pivot in 0..block_size {
+        let (pivot_row, pivot_abs) = find_pivot_row(&aug, block_size, width, pivot);
+        if pivot_abs <= Real::EPSILON {
+            return Err(AsimuError::Linalg(
+                "块对角预条件器遇到奇异局部块".to_string(),
+            ));
+        }
+        swap_augmented_rows(&mut aug, width, pivot, pivot_row);
+        normalize_pivot_row(&mut aug, width, pivot);
+        eliminate_pivot_column(&mut aug, block_size, width, pivot);
+    }
+    let mut inverse = vec![0.0; block_size * block_size];
+    for row in 0..block_size {
+        for col in 0..block_size {
+            inverse[row * block_size + col] = aug[row * width + block_size + col];
+        }
+    }
+    Ok(inverse)
+}
+
+fn find_pivot_row(aug: &[Real], block_size: usize, width: usize, pivot: usize) -> (usize, Real) {
+    let mut pivot_row = pivot;
+    let mut pivot_abs = aug[pivot * width + pivot].abs();
+    for row in pivot + 1..block_size {
+        let candidate = aug[row * width + pivot].abs();
+        if candidate > pivot_abs {
+            pivot_abs = candidate;
+            pivot_row = row;
+        }
+    }
+    (pivot_row, pivot_abs)
+}
+
+fn swap_augmented_rows(aug: &mut [Real], width: usize, lhs: usize, rhs: usize) {
+    if lhs == rhs {
+        return;
+    }
+    for col in 0..width {
+        aug.swap(lhs * width + col, rhs * width + col);
+    }
+}
+
+fn normalize_pivot_row(aug: &mut [Real], width: usize, pivot: usize) {
+    let denom = aug[pivot * width + pivot];
+    for col in 0..width {
+        aug[pivot * width + col] /= denom;
+    }
+}
+
+fn eliminate_pivot_column(aug: &mut [Real], block_size: usize, width: usize, pivot: usize) {
+    for row in 0..block_size {
+        if row == pivot {
+            continue;
+        }
+        let factor = aug[row * width + pivot];
+        if factor.abs() <= Real::EPSILON {
+            continue;
+        }
+        for col in 0..width {
+            aug[row * width + col] -= factor * aug[pivot * width + col];
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,5 +244,20 @@ mod tests {
             .expect("apply");
         let scale = 0.5 * 0.5 / (1.0 + 0.5 * 3.0);
         assert!((out[4] - 5.0 * scale).abs() < 1.0e-12);
+    }
+
+    #[test]
+    fn cell_block_preconditioner_solves_local_blocks() {
+        let p = CellBlockDiagonalPreconditioner::from_blocks(
+            2,
+            vec![2.0, 0.0, 0.0, 4.0, 1.0, 1.0, 0.0, 2.0],
+        )
+        .expect("precond");
+        let mut out = [0.0; 4];
+        p.apply(&[2.0, 8.0, 3.0, 4.0], &mut out).expect("apply");
+        assert!((out[0] - 1.0).abs() < 1.0e-12);
+        assert!((out[1] - 2.0).abs() < 1.0e-12);
+        assert!((out[2] - 1.0).abs() < 1.0e-12);
+        assert!((out[3] - 2.0).abs() < 1.0e-12);
     }
 }
