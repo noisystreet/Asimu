@@ -9,6 +9,7 @@
 | [MCP.md](MCP.md) | MCP 集成规划（Tools / Resources） |
 | [BENCHMARKS.md](BENCHMARKS.md) | V&V 验证算例库规划 |
 | [OBSERVABILITY.md](OBSERVABILITY.md) | 性能与可观测性规划 |
+| [SLIDING_MESH.md](SLIDING_MESH.md) | 滑移网格 / MRF / ALE 分阶段规划 |
 | [theory/](theory/) | 数值理论手册（离散、BC、时间推进等） |
 | [adr/](adr/) | 架构决策记录（ADR） |
 | [en/CROSS_CUTTING.md](en/CROSS_CUTTING.md) | 四大横向能力英文摘要 |
