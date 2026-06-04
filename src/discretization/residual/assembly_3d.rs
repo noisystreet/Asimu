@@ -333,7 +333,7 @@ mod tests {
     #[test]
     fn curvilinear_metrics_match_cartesian_rhs_on_uniform_box() {
         let pair = FreestreamPairFixture::air_sutherland(0.2);
-        let side = pair.inviscid_dimensional();
+        let side = pair.inviscid_side();
         let config = InviscidFluxConfig::muscl_hllc();
         let cart = assemble_uniform_freestream(&side, &config, MeshMetricMode::Cartesian);
         let curv = assemble_uniform_freestream(&side, &config, MeshMetricMode::Curvilinear);

@@ -40,7 +40,7 @@ fn wall_no_slip_ghost_velocity_negates_owner() {
         center: Vector3::new(0.0, 0.0, 0.0),
     };
     let p_floor = crate::field::positivity_pressure_floor(params.pressure);
-    let fs_ctx = FreestreamContext::dimensional(&eos);
+    let fs_ctx = FreestreamContext::new(&eos, None, None);
     let ghost = wall_ghost(
         &owner,
         &geom,
@@ -87,7 +87,7 @@ fn wall_slip_ghost_mirrors_normal_preserves_tangential_at_face() {
         area: 1.0,
         center: Vector3::new(0.0, 0.0, 0.0),
     };
-    let fs_ctx = FreestreamContext::dimensional(&eos);
+    let fs_ctx = FreestreamContext::new(&eos, None, None);
     let ghost = wall_ghost(
         &owner,
         &geom,
@@ -132,14 +132,11 @@ fn wall_slip_ghost_mirrors_normal_preserves_tangential_at_face() {
 
 #[test]
 fn supersonic_inlet_ghost_uses_freestream_static_state() {
-    let eos = IdealGasEoS::AIR_STANDARD;
-    let fs = FreestreamParams {
-        mach: 8.0,
-        pressure: 714.0,
-        temperature: 139.0,
-        ..FreestreamParams::default()
-    };
-    let owner = ConservedFields::from_freestream(1, &eos, &fs)
+    use crate::discretization::freestream_pair::FreestreamPairFixture;
+
+    let pair = FreestreamPairFixture::air_sutherland(8.0);
+    let side = pair.inviscid_side();
+    let owner = ConservedFields::from_freestream_context(1, &side.ctx, side.fs)
         .expect("fields")
         .cell_state(0)
         .expect("cell");
@@ -149,35 +146,33 @@ fn supersonic_inlet_ghost_uses_freestream_static_state() {
         area: 1.0,
         center: Vector3::new(0.0, 0.0, 0.0),
     };
-    let fs_ctx = FreestreamContext::dimensional(&eos);
     let ghost = inlet_ghost(
         &owner,
         &geom,
         &InletGhostParams {
             supersonic: true,
             velocity_direction: [1.0, 0.0, 0.0],
-            freestream: &fs,
-            fs_ctx: &fs_ctx,
+            freestream: side.fs,
+            fs_ctx: &side.ctx,
             total_pressure: 1.0e9,
             total_temperature: 1.0e4,
         },
     )
     .expect("ghost");
-    let prim = crate::field::primitive_from_conserved(&eos, &ghost.conserved).expect("prim");
-    let ref_prim = fs_ctx.primitive(&fs).expect("ref");
+    let prim = crate::field::primitive_from_conserved(side.eos, &ghost.conserved).expect("prim");
+    let ref_prim = side.ctx.primitive(side.fs).expect("ref");
     assert!((prim.density - ref_prim.density).abs() / ref_prim.density < 1.0e-6);
 }
 
 #[test]
 fn subsonic_inlet_ghost_ignores_high_mach_freestream() {
-    let eos = IdealGasEoS::AIR_STANDARD;
-    let fs = FreestreamParams {
-        mach: 8.0,
-        pressure: 714.0,
-        temperature: 139.0,
-        ..FreestreamParams::default()
-    };
-    let owner = ConservedFields::from_freestream(1, &eos, &fs)
+    use crate::discretization::freestream_pair::FreestreamPairFixture;
+
+    let pair = FreestreamPairFixture::air_sutherland(0.3);
+    let side = pair.inviscid_side();
+    let mut high_mach_fs = *side.fs;
+    high_mach_fs.mach = 8.0;
+    let owner = ConservedFields::from_freestream_context(1, &side.ctx, side.fs)
         .expect("fields")
         .cell_state(0)
         .expect("cell");
@@ -187,25 +182,30 @@ fn subsonic_inlet_ghost_ignores_high_mach_freestream() {
         area: 1.0,
         center: Vector3::new(0.0, 0.0, 0.0),
     };
-    let fs_ctx = FreestreamContext::dimensional(&eos);
+    let owner_prim = side.ctx.primitive(side.fs).expect("owner prim");
+    let total_pressure = side
+        .eos
+        .stagnation_pressure(owner_prim.pressure, side.fs.mach)
+        .expect("p0");
+    let total_temperature =
+        owner_prim.temperature * (1.0 + 0.5 * (side.eos.gamma - 1.0) * side.fs.mach * side.fs.mach);
     let ghost = inlet_ghost(
         &owner,
         &geom,
         &InletGhostParams {
             supersonic: false,
             velocity_direction: [1.0, 0.0, 0.0],
-            freestream: &fs,
-            fs_ctx: &fs_ctx,
-            total_pressure: 200_000.0,
-            total_temperature: 300.0,
+            freestream: &high_mach_fs,
+            fs_ctx: &side.ctx,
+            total_pressure,
+            total_temperature,
         },
     )
     .expect("ghost");
-    let prim = crate::field::primitive_from_conserved(&eos, &ghost.conserved).expect("prim");
-    let ref_prim = eos
-        .freestream_primitive(fs.mach, fs.pressure, fs.temperature, [1.0, 0.0, 0.0])
-        .expect("ref");
-    assert!(prim.density > ref_prim.density * 10.0);
+    let prim = crate::field::primitive_from_conserved(side.eos, &ghost.conserved).expect("prim");
+    let high_ref = side.ctx.primitive(&high_mach_fs).expect("ref");
+    // 亚声速入口走总压/总温分支，不采用 `freestream.mach=8` 的 \(u^*=8\) 来流速度。
+    assert!((prim.velocity[0] - high_ref.velocity[0]).abs() > 1.0);
 }
 
 #[test]
@@ -272,7 +272,7 @@ fn farfield_supersonic_outflow_uses_owner_state() {
         area: 1.0,
         center: Vector3::new(0.0, 0.0, 0.0),
     };
-    let fs_ctx = FreestreamContext::dimensional(&eos);
+    let fs_ctx = FreestreamContext::new(&eos, None, None);
     let exterior = farfield_ghost(&owner, &geom, &fs, &fs_ctx).expect("farfield");
     let prim = crate::field::primitive_from_conserved(&eos, &exterior.conserved).expect("prim");
     assert!((prim.pressure - owner_prim.pressure).abs() < 1.0e-8);
@@ -281,32 +281,34 @@ fn farfield_supersonic_outflow_uses_owner_state() {
 
 #[test]
 fn apply_farfield_patch() {
+    use crate::discretization::freestream_pair::FreestreamPairFixture;
+
     let mesh = StructuredMesh3d::uniform_box("box", 2, 2, 2, 1.0, 1.0, 1.0).expect("mesh");
-    let eos = IdealGasEoS::AIR_STANDARD;
-    let fs = FreestreamParams::default();
-    let fields = ConservedFields::from_freestream(mesh.num_cells(), &eos, &fs).expect("fields");
+    let pair = FreestreamPairFixture::air_sutherland(0.3);
+    let side = pair.inviscid_side();
+    let fields = ConservedFields::from_freestream_context(mesh.num_cells(), &side.ctx, side.fs)
+        .expect("fields");
     let faces = mesh.resolve_logical_boundary("i_max").expect("faces");
     let first_face = faces[0];
     let patches = BoundarySet::new(vec![BoundaryPatch::new(
         "farfield",
         faces,
         BoundaryKind::Farfield {
-            mach: 0.3,
-            pressure: 101_325.0,
-            temperature: 288.15,
+            mach: side.fs.mach,
+            pressure: side.fs.pressure,
+            temperature: side.fs.temperature,
             alpha: 0.0,
             beta: 0.0,
         },
     )]);
     let mut ghosts = BoundaryGhostBuffer::new();
-    let fs_ctx = FreestreamContext::dimensional(&eos);
     apply_compressible_boundary_conditions(
         &mesh,
         &patches,
         &fields,
         &mut ghosts,
-        &fs_ctx,
-        &fs,
+        &side.ctx,
+        side.fs,
         None,
     )
     .expect("bc");

@@ -16,7 +16,7 @@
 | \(\rho_{\mathrm{ref}}\) | \(p_\infty/(R T_\infty)\) | `density` |
 | \(p_{\mathrm{ref}}\) | \(\rho_{\mathrm{ref}} U_{\mathrm{ref}}^2=\gamma p_\infty\) | `pressure` |
 
-任意量 \(q\) 的无量纲值 \(q^*=q/q_{\mathrm{ref}}\)（或按表 1 中对应参考量）。算例 TOML **仍写 SI**；含 `[freestream]` 的可压缩算例**默认**在 `CaseSpec` 解析完成后调用 `io::nondimensional::apply_nondimensionalization`（可用 `[nondimensional] enabled = false` 关闭）。
+任意量 \(q\) 的无量纲值 \(q^*=q/q_{\mathrm{ref}}\)（或按表 1 中对应参考量）。算例 TOML **仍写 SI**；可压缩算例在 `CaseSpec` 解析完成后**必定**调用 `io::nondimensional::apply_nondimensionalization`（须 `[freestream]`）。
 
 Reynolds 数与 NS 粘性缩放：
 
@@ -90,7 +90,7 @@ T = T^*\,T_{\mathrm{ref}}
 
 远场 / 超声速入口 ghost 与内场来流一致，均经 `FreestreamContext::primitive`（`farfield_ghost`、`inlet_ghost` 超声速分支）。
 
-`apply_compressible_boundary_conditions` 接收 `&FreestreamContext`；模式判定：`CaseSpec.reference.is_some()` 优先，否则 `ViscousPhysicsConfig::is_nondimensional()`。
+`apply_compressible_boundary_conditions` 接收 `&FreestreamContext`；来流 primitive 恒按 \(*\) 约定由 `FreestreamContext::primitive` 构造。
 
 ## 5. 输出还原
 

@@ -31,9 +31,10 @@ fn cylinder_boundary_flux_decomposition_when_present() {
     };
     let eos = case.physics.eos().expect("eos");
     let fs = case.freestream.expect("freestream");
-    let fields = ConservedFields::from_freestream(mesh.num_cells(), &eos, &fs).expect("fields");
+    let fs_ctx = FreestreamContext::new(&eos, case.reference.as_ref(), None);
+    let fields =
+        ConservedFields::from_freestream_context(mesh.num_cells(), &fs_ctx, &fs).expect("fields");
     let mut ghosts = BoundaryGhostBuffer::new();
-    let fs_ctx = FreestreamContext::dimensional(&eos);
     apply_compressible_boundary_conditions(
         mesh,
         &case.boundary,

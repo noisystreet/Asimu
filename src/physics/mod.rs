@@ -7,7 +7,7 @@ mod riemann_exact;
 mod viscosity;
 
 pub use eos::{ConservedState, FreestreamParams, IdealGasEoS, PrimitiveState};
-pub use freestream::{FreestreamContext, FreestreamMode};
+pub use freestream::FreestreamContext;
 pub use reference::{REFERENCE_LENGTH, ReferenceScales};
 pub use riemann_exact::{
     RiemannPrimitive1d, RiemannProblem1d, SodProblem, sample_exact, sod_sample,

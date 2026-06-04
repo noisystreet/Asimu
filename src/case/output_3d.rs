@@ -19,7 +19,6 @@ pub fn write_compressible_3d_outputs(
     case: &CaseSpec,
     mesh: &StructuredMesh3d,
     fields: &ConservedFields,
-    eos: &IdealGasEoS,
     history: &[CompressibleStepInfo],
 ) -> Result<Vec<PathBuf>> {
     let Some(output) = &case.output else {
@@ -48,7 +47,7 @@ pub fn write_compressible_3d_outputs(
     if let Some(name) = &output.solution_cgns {
         let path = resolve_case_output_path(case.case_dir.as_deref(), &output.dir, name)?;
         let physical_time = history.last().map(|s| s.physical_time).unwrap_or(0.0);
-        write_solution_flow(&path, mesh, fields, eos, physical_time, case)?;
+        write_solution_flow(&path, mesh, fields, physical_time, case)?;
         info!(path = %path.display(), t = %format_log_sci4(physical_time), "已写出流场 CGNS");
         written.push(path.clone());
         #[cfg(feature = "io-vtk")]
@@ -66,7 +65,6 @@ pub fn maybe_write_flow_snapshot(
     case: &CaseSpec,
     mesh: &StructuredMesh3d,
     fields: &ConservedFields,
-    eos: &IdealGasEoS,
     info: &CompressibleStepInfo,
 ) -> Result<Option<PathBuf>> {
     let output = match &case.output {
@@ -80,7 +78,7 @@ pub fn maybe_write_flow_snapshot(
     let base = output.solution_cgns.as_ref().expect("wants_interval_flow");
     let name = flow_cgns_name_for_step(base, info.step);
     let path = resolve_case_output_path(case.case_dir.as_deref(), &output.dir, &name)?;
-    write_solution_flow(&path, mesh, fields, eos, info.physical_time, case)?;
+    write_solution_flow(&path, mesh, fields, info.physical_time, case)?;
     #[cfg(feature = "io-vtk")]
     if output.solution_vtk {
         info!(
@@ -129,12 +127,11 @@ fn write_solution_flow(
     path: &Path,
     mesh: &StructuredMesh3d,
     fields: &ConservedFields,
-    eos: &IdealGasEoS,
     physical_time: Real,
     case: &CaseSpec,
 ) -> Result<()> {
     let (fields_out, eos_out, time_out, p_floor) =
-        prepare_dimensional_flow_output(case, fields, eos, physical_time)?;
+        prepare_dimensional_flow_output(case, fields, physical_time)?;
     #[cfg(feature = "io-cgns")]
     write_flow_cgns(path, mesh, &fields_out, &eos_out, time_out, p_floor)?;
     #[cfg(not(feature = "io-cgns"))]
@@ -168,7 +165,6 @@ fn write_solution_flow(
 fn prepare_dimensional_flow_output(
     case: &CaseSpec,
     fields: &ConservedFields,
-    eos: &IdealGasEoS,
     physical_time: Real,
 ) -> Result<(ConservedFields, IdealGasEoS, Real, Real)> {
     let p_floor_nd = case
@@ -176,15 +172,14 @@ fn prepare_dimensional_flow_output(
         .or(case.fluid_initial.freestream)
         .map(|f| positivity_pressure_floor(f.pressure))
         .unwrap_or(1.0e-6);
-    if let Some(reference) = &case.reference {
-        let fields_out = fields.to_dimensional(reference)?;
-        let eos_out = case.dimensional_eos()?;
-        let time_out = physical_time * reference.time_scale();
-        let p_floor = p_floor_nd * reference.pressure;
-        Ok((fields_out, eos_out, time_out, p_floor))
-    } else {
-        Ok((fields.clone(), *eos, physical_time, p_floor_nd))
-    }
+    let reference = case.reference.as_ref().ok_or_else(|| {
+        crate::error::AsimuError::Config("可压缩流场输出须有无量纲 reference".to_string())
+    })?;
+    let fields_out = fields.to_dimensional(reference)?;
+    let eos_out = case.dimensional_eos()?;
+    let time_out = physical_time * reference.time_scale();
+    let p_floor = p_floor_nd * reference.pressure;
+    Ok((fields_out, eos_out, time_out, p_floor))
 }
 
 /// 由 `flow.cgns` 或 `snapshots/flow.cgns` 生成间隔输出文件名。

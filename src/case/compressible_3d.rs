@@ -69,7 +69,6 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         interval_flow.then_some(SnapshotWriter {
             case,
             mesh,
-            eos: &eos,
             paths: &mut snapshot_paths,
         }),
     )?;
@@ -86,7 +85,7 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         mesh.num_cells(),
     );
     let output_paths =
-        super::output_3d::write_compressible_3d_outputs(case, mesh, &fields, &eos, &history)?;
+        super::output_3d::write_compressible_3d_outputs(case, mesh, &fields, &history)?;
     log_written_paths(&snapshot_paths, &output_paths);
     Ok(build_case_run_result(
         case,
@@ -207,7 +206,6 @@ fn log_run_complete(
 struct SnapshotWriter<'a> {
     case: &'a CaseSpec,
     mesh: &'a crate::mesh::StructuredMesh3d,
-    eos: &'a crate::physics::IdealGasEoS,
     paths: &'a mut Vec<std::path::PathBuf>,
 }
 
@@ -254,7 +252,6 @@ fn run_transient_3d_with_snapshots(
                 writer.case,
                 writer.mesh,
                 fields,
-                writer.eos,
                 &step_info,
             )? {
                 writer.paths.push(path);

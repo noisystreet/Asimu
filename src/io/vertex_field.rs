@@ -152,11 +152,19 @@ mod tests {
             mach: 0.5,
             ..FreestreamParams::default()
         };
+        let reference =
+            crate::physics::ReferenceScales::from_freestream(&eos, &fs, None).expect("ref");
+        let mut nd_eos = eos;
+        nd_eos.gas_constant = reference.nondimensional_gas_constant();
         let fields = ConservedFields::from_freestream(mesh.num_cells(), &eos, &fs).expect("fields");
         let (_, _, _, _, _, mach, t) =
-            gather_cell_primitives(&mesh, &fields, &eos, 1.0e-6).expect("gather");
+            gather_cell_primitives(&mesh, &fields, &nd_eos, 1.0e-6).expect("gather");
+        let ref_t = fields
+            .primitive_at(0, &nd_eos, 1.0e-6)
+            .expect("prim")
+            .temperature;
         assert!(mach.iter().all(|&m| (m - 0.5).abs() < 1.0e-4));
-        assert!(t.iter().all(|&x| (x - fs.temperature).abs() < 1.0));
+        assert!(t.iter().all(|&x| (x - ref_t).abs() < 1.0e-4));
     }
 
     #[test]

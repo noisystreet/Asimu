@@ -127,21 +127,25 @@ fn configure_nondimensional_viscous(
     viscous.temperature_ref = Some(reference.temperature);
 }
 
-/// 解析 `[nondimensional]` 并在可压缩算例上应用缩放。
-pub(super) fn maybe_apply_nondimensionalization(case: &mut CaseSpec, enabled: bool) -> Result<()> {
-    if !enabled {
+/// 3D 可压缩算例在解析后统一切换为 \(*\) 变量求解（Sod 等专用 1D 算例除外）。
+pub(super) fn apply_nondimensionalization_for_compressible(case: &mut CaseSpec) -> Result<()> {
+    if case.sod.is_some() {
         return Ok(());
     }
     if !case.is_compressible() {
-        return Err(AsimuError::Config(
-            "[nondimensional] 仅适用于可压缩算例（须配置 gamma 与 gas_constant）".to_string(),
-        ));
+        return Ok(());
     }
+    if case.euler.is_none() && case.navier_stokes.is_none() {
+        return Ok(());
+    }
+    case.mesh
+        .as_3d()
+        .map_err(|_| AsimuError::Config("无量纲可压缩求解仅支持 structured_3d 网格".to_string()))?;
     let fs = case
         .freestream
         .or(case.fluid_initial.freestream)
         .ok_or_else(|| {
-            AsimuError::Config("[nondimensional] 可压缩算例须指定 [freestream]".to_string())
+            AsimuError::Config("可压缩算例须指定 [freestream] 以构造无量纲参考量".to_string())
         })?;
     let reference =
         ReferenceScales::from_freestream(&case.physics.eos()?, &fs, case.physics.viscous.as_ref())?;
@@ -183,33 +187,6 @@ flux = "hllc"
     }
 
     #[test]
-    fn nondimensional_can_be_disabled_explicitly() {
-        let case = parse_case_str(
-            r#"
-name = "dim"
-[mesh]
-kind = "structured_3d"
-nx = 2
-ny = 2
-nz = 2
-[physics]
-gamma = 1.4
-gas_constant = 287.0
-[freestream]
-pressure = 1000.0
-temperature = 300.0
-[euler]
-flux = "hllc"
-[nondimensional]
-enabled = false
-"#,
-        )
-        .expect("parse");
-        assert!(case.reference.is_none());
-        assert!((case.freestream.expect("fs").pressure - 1000.0).abs() < 1.0e-6);
-    }
-
-    #[test]
     fn nondimensional_freestream_pressure_is_one_over_gamma() {
         let case_str = r#"
 name = "nd"
@@ -235,9 +212,6 @@ temperature = 300.0
 
 [euler]
 flux = "hllc"
-
-[nondimensional]
-enabled = true
 "#;
         let case = parse_case_str(case_str).expect("parse");
         let fs = case.freestream.expect("fs");
@@ -271,8 +245,6 @@ kind = "wall"
 no_slip = true
 heat = "isothermal"
 wall_temperature = 600.0
-[nondimensional]
-enabled = true
 "#,
         )
         .expect("parse");

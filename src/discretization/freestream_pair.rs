@@ -1,4 +1,4 @@
-//! 有量纲 / 无量纲均匀来流 + 远场 BC 成对测试 fixture（仅 `cfg(test)` 编译）。
+//! 无量纲均匀来流 + 远场 BC 测试 fixture（仅 `cfg(test)` 编译）。
 
 use crate::boundary::{BoundaryKind, BoundaryPatch, BoundarySet};
 use crate::core::Real;
@@ -13,18 +13,15 @@ use crate::physics::{
 const DIM_PRESSURE: Real = 101_325.0;
 const DIM_TEMPERATURE: Real = 300.0;
 
-/// 由来流 Mach 构造的有量纲 / 无量纲对称 fixture。
+/// 由来流 Mach 构造的无量纲来流 fixture。
 pub struct FreestreamPairFixture {
-    pub dim_eos: IdealGasEoS,
-    pub dim_fs: FreestreamParams,
-    pub nd_eos: IdealGasEoS,
-    pub nd_fs: FreestreamParams,
+    pub eos: IdealGasEoS,
+    pub fs: FreestreamParams,
     pub reference: ReferenceScales,
-    dim_viscous: ViscousPhysicsConfig,
     pub nd_viscous: ViscousPhysicsConfig,
 }
 
-/// 单套来流 + BC 上下文（有量纲或无量纲之一）。
+/// 单套无量纲来流 + BC 上下文。
 pub struct UniformFarfieldSide<'a> {
     pub label: &'static str,
     pub eos: &'a IdealGasEoS,
@@ -51,107 +48,69 @@ impl FreestreamPairFixture {
         nd_viscous.inv_reynolds = reference.inv_reynolds();
         nd_viscous.viscosity_ref = Some(reference.viscosity);
         nd_viscous.temperature_ref = Some(reference.temperature);
-        let mut nd_eos = dim_eos;
-        nd_eos.gas_constant = reference.nondimensional_gas_constant();
-        let nd_fs = FreestreamParams {
+        let mut eos = dim_eos;
+        eos.gas_constant = reference.nondimensional_gas_constant();
+        let fs = FreestreamParams {
             mach,
             pressure: 1.0 / dim_eos.gamma,
             temperature: 1.0,
             ..FreestreamParams::default()
         };
         Self {
-            dim_eos,
-            dim_fs,
-            nd_eos,
-            nd_fs,
+            eos,
+            fs,
             reference,
-            dim_viscous,
             nd_viscous,
         }
     }
 
     #[must_use]
-    pub fn min_pressure_dimensional(&self) -> Real {
-        1.0e-6
+    pub fn min_pressure(&self) -> Real {
+        crate::field::positivity_pressure_floor(self.fs.pressure)
     }
 
-    #[must_use]
-    pub fn min_pressure_nondimensional(&self) -> Real {
-        1.0e-6 / self.dim_eos.gamma
-    }
-
-    /// 无粘成对：有量纲侧。
-    pub fn inviscid_dimensional<'a>(&'a self) -> UniformFarfieldSide<'a> {
+    /// 无粘无量纲来流侧。
+    pub fn inviscid_side<'a>(&'a self) -> UniformFarfieldSide<'a> {
         UniformFarfieldSide {
-            label: "dimensional",
-            eos: &self.dim_eos,
-            fs: &self.dim_fs,
-            ctx: FreestreamContext::dimensional(&self.dim_eos),
-            min_pressure: self.min_pressure_dimensional(),
+            label: "nondimensional",
+            eos: &self.eos,
+            fs: &self.fs,
+            ctx: FreestreamContext::new(&self.eos, Some(&self.reference), None),
+            min_pressure: self.min_pressure(),
             viscous: None,
         }
     }
 
-    /// 无粘成对：无量纲侧。
-    pub fn inviscid_nondimensional<'a>(&'a self) -> UniformFarfieldSide<'a> {
+    /// NS 无量纲来流侧。
+    pub fn viscous_side<'a>(&'a self) -> UniformFarfieldSide<'a> {
         UniformFarfieldSide {
             label: "nondimensional",
-            eos: &self.nd_eos,
-            fs: &self.nd_fs,
-            ctx: FreestreamContext::new(&self.nd_eos, Some(&self.reference), None),
-            min_pressure: self.min_pressure_nondimensional(),
-            viscous: None,
-        }
-    }
-
-    /// NS 成对：有量纲侧。
-    pub fn viscous_dimensional<'a>(&'a self) -> UniformFarfieldSide<'a> {
-        UniformFarfieldSide {
-            label: "dimensional",
-            eos: &self.dim_eos,
-            fs: &self.dim_fs,
-            ctx: FreestreamContext::dimensional(&self.dim_eos),
-            min_pressure: self.min_pressure_dimensional(),
-            viscous: Some(&self.dim_viscous),
-        }
-    }
-
-    /// NS 成对：无量纲侧。
-    pub fn viscous_nondimensional<'a>(&'a self) -> UniformFarfieldSide<'a> {
-        UniformFarfieldSide {
-            label: "nondimensional",
-            eos: &self.nd_eos,
-            fs: &self.nd_fs,
-            ctx: FreestreamContext::new(
-                &self.nd_eos,
-                Some(&self.reference),
-                Some(&self.nd_viscous),
-            ),
-            min_pressure: self.min_pressure_nondimensional(),
+            eos: &self.eos,
+            fs: &self.fs,
+            ctx: FreestreamContext::new(&self.eos, Some(&self.reference), Some(&self.nd_viscous)),
+            min_pressure: self.min_pressure(),
             viscous: Some(&self.nd_viscous),
         }
     }
 
-    /// 依次执行有量纲 / 无量纲回调（单测内成对断言用）。
+    /// 依次执行无粘回调（仅无量纲侧）。
     pub fn for_each_inviscid_side<F>(&self, mut f: F)
     where
         F: FnMut(&UniformFarfieldSide<'_>),
     {
-        f(&self.inviscid_dimensional());
-        f(&self.inviscid_nondimensional());
+        f(&self.inviscid_side());
     }
 
-    /// 依次执行 NS 有量纲 / 无量纲回调。
+    /// 依次执行 NS 回调（仅无量纲侧）。
     pub fn for_each_viscous_side<F>(&self, mut f: F)
     where
         F: FnMut(&UniformFarfieldSide<'_>),
     {
-        f(&self.viscous_dimensional());
-        f(&self.viscous_nondimensional());
+        f(&self.viscous_side());
     }
 }
 
-/// 均匀盒网格 + 六面远场 BC + ghost（来流经 `FreestreamContext` 构造）。
+/// 均匀盒网格 + 六面远场 BC + ghost。
 pub fn uniform_farfield_box(
     nx: usize,
     ny: usize,
@@ -203,10 +162,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pair_fixture_freestream_density_is_unity_in_nondimensional_mode() {
+    fn fixture_freestream_density_is_unity() {
         let pair = FreestreamPairFixture::air_sutherland(0.5);
-        let nd = pair.inviscid_nondimensional();
-        let prim = nd.ctx.primitive(nd.fs).expect("prim");
+        let side = pair.inviscid_side();
+        let prim = side.ctx.primitive(side.fs).expect("prim");
         assert!((prim.density - 1.0).abs() < 1.0e-12);
         assert!((prim.temperature - 1.0).abs() < 1.0e-12);
     }

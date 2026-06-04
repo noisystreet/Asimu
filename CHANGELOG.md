@@ -7,7 +7,7 @@
 
 ### Changed
 
-- 可压缩算例默认启用无量纲（含 `[freestream]` 时）；`[nondimensional] enabled = false` 可关闭
+- 可压缩算例仅保留无量纲求解：移除 `[nondimensional] enabled` 开关，可压缩算例解析后必定缩放为 \(*\) 变量
 - 无量纲热传导 \(\lambda^*\)：修正 \(c_p^*=1/(\gamma-1)\)（此前误用 \(\gamma R^*\) 导致壁面热通量偏大）
 - CFL 爬升：`max_steps < cfl_ramp_steps` 时仍按 `cfl_ramp_steps` 线性增 CFL，不再压缩到 `max_steps` 内达 `cfl_max`
 - 3D 可压缩局部时间步：RK4 与 LU-SGS 统一使用 Blazek 结构网格 face-sum 谱半径 \(\Delta t_i=\mathrm{CFL}/\sigma_i\)，Navier-Stokes 叠加粘性面贡献

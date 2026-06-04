@@ -3,6 +3,7 @@
 use crate::error::{AsimuError, Result};
 use crate::physics::{
     ConservedState, FreestreamContext, FreestreamParams, IdealGasEoS, PrimitiveState,
+    ReferenceScales,
 };
 
 use super::ScalarField;
@@ -28,15 +29,31 @@ impl ConservedFields {
         })
     }
 
+    /// 由 SI 来流参数构造均匀无量纲来流场（与算例 `apply_nondimensionalization` 一致）。
     pub fn from_freestream(
         num_cells: usize,
         eos: &IdealGasEoS,
         params: &FreestreamParams,
     ) -> Result<Self> {
-        Self::from_freestream_context(num_cells, &FreestreamContext::dimensional(eos), params)
+        let reference = ReferenceScales::from_freestream(eos, params, None)?;
+        let mut nd_eos = *eos;
+        nd_eos.gas_constant = reference.nondimensional_gas_constant();
+        let nd_params = FreestreamParams {
+            mach: params.mach,
+            pressure: 1.0 / eos.gamma,
+            temperature: 1.0,
+            velocity_direction: params.velocity_direction,
+            alpha: params.alpha,
+            beta: params.beta,
+        };
+        Self::from_freestream_context(
+            num_cells,
+            &FreestreamContext::new(&nd_eos, Some(&reference), None),
+            &nd_params,
+        )
     }
 
-    /// 经 [`FreestreamContext`](crate::physics::FreestreamContext) 构造均匀来流场（有量纲 / 无量纲统一入口）。
+    /// 经 [`FreestreamContext`](crate::physics::FreestreamContext) 构造均匀来流场（\(*\) 变量）。
     ///
     /// 理论：[`docs/theory/nondimensional.md`](../../docs/theory/nondimensional.md) §2、§6。
     pub fn from_freestream_context(
@@ -47,13 +64,13 @@ impl ConservedFields {
         Self::uniform(num_cells, ctx.conserved(params)?)
     }
 
-    /// 无量纲来流（等价于 `from_freestream_context` + 无量纲 `FreestreamContext`）。
+    /// 已缩放的无量纲来流参数（`pressure=1/γ`，`temperature=1`）。
     pub fn from_nondimensional_freestream(
         num_cells: usize,
         eos: &IdealGasEoS,
         params: &FreestreamParams,
     ) -> Result<Self> {
-        Self::from_freestream_context(num_cells, &FreestreamContext::nondimensional(eos), params)
+        Self::from_freestream_context(num_cells, &FreestreamContext::new(eos, None, None), params)
     }
 
     #[must_use]
@@ -231,20 +248,11 @@ mod tests {
         };
         let viscous = ViscousPhysicsConfig::new(ViscosityModel::AIR_SUTHERLAND, 0.72).expect("v");
         let reference = ReferenceScales::from_freestream(&eos, &fs, Some(&viscous)).expect("ref");
-        let dim = ConservedFields::from_freestream(4, &eos, &fs).expect("dim");
-        let mut nd_eos = eos;
-        nd_eos.gas_constant = reference.nondimensional_gas_constant();
-        let nd_fs = FreestreamParams {
-            mach: fs.mach,
-            pressure: 1.0 / eos.gamma,
-            temperature: 1.0,
-            ..FreestreamParams::default()
-        };
-        let nd = ConservedFields::from_nondimensional_freestream(4, &nd_eos, &nd_fs).expect("nd");
+        let nd = ConservedFields::from_freestream(4, &eos, &fs).expect("nd");
         let back = nd.to_dimensional(&reference).expect("back");
-        assert!(
-            (back.density.values()[0] - dim.density.values()[0]).abs() / dim.density.values()[0]
-                < 1.0e-10
-        );
+        let dim_prim = eos
+            .freestream_primitive(fs.mach, fs.pressure, fs.temperature, fs.velocity_direction)
+            .expect("dim prim");
+        assert!((back.density.values()[0] - dim_prim.density).abs() / dim_prim.density < 1.0e-10);
     }
 }

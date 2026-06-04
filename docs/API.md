@@ -224,15 +224,15 @@ name=<mesh_name>;cells=<count>
 
 | 类型 / 函数 | 说明 |
 |-------------|------|
-| `IdealGasEoS` | \(\gamma, R\)；`freestream_primitive`（有量纲来流） |
-| `FreestreamParams` | `[freestream]` 对应 Mach、\(p,T\)、方向 |
+| `IdealGasEoS` | \(\gamma, R^*\)（可压缩求解为 \(*\) 变量） |
+| `FreestreamParams` | `[freestream]` 对应 Mach、\(p,T\)、方向（TOML 写 SI，解析后缩放） |
 | `ReferenceScales` | 参考量与 Re；`from_freestream` |
-| `FreestreamContext` | **来流单一入口**：`primitive` / `conserved` / `density_from_pressure_temperature` |
-| `FreestreamMode` | `Dimensional` / `Nondimensional` |
-| `ViscousPhysicsConfig` | Sutherland/常数粘度；`static_temperature`（式 (1)(2)） |
+| `FreestreamContext` | **来流单一入口**（\(*\) primitive / conserved / \(\rho^*\) 由 \(p^*,T^*\)） |
+| `ViscousPhysicsConfig` | Sutherland/常数粘度；`static_temperature`（式 (2)） |
+| `ConservedFields::from_freestream` | 由 SI 来流参数构造无量纲均匀初场 |
 | `ConservedFields::from_freestream_context` | 初场（经 `CaseSpec::build_conserved_fields`） |
 | `ConservedFields::to_dimensional` | 输出还原 SI |
-| `CaseSpec::is_nondimensional` | `reference.is_some()` |
+| `CaseSpec::is_nondimensional` | 可压缩算例恒为 `true` |
 | `CaseSpec::dimensional_eos` | 输出用有量纲 EOS |
 
 BC：`apply_compressible_boundary_conditions(..., &FreestreamContext, ...)` — 见 [theory/nondimensional.md §4](theory/nondimensional.md#4-边界条件)。

@@ -503,7 +503,7 @@ mod tests {
     #[test]
     fn boundary_faces_increase_owner_spectral_radius() {
         let pair = FreestreamPairFixture::air_sutherland(0.2);
-        let side = pair.inviscid_dimensional();
+        let side = pair.inviscid_side();
         let mesh = StructuredMesh3d::uniform_box("box", 3, 3, 3, 1.0, 1.0, 1.0).expect("mesh");
         let faces = mesh.resolve_logical_boundary("i_min").expect("i_min");
         let farfield_patches = vec![BoundaryPatch::new(
@@ -684,7 +684,7 @@ mod tests {
         let fields = ConservedFields::from_freestream(mesh.num_cells(), &eos, &fs).expect("fields");
         let boundary_set = BoundarySet::new(Vec::new());
         let mut ghosts = BoundaryGhostBuffer::new();
-        let fs_ctx = FreestreamContext::dimensional(&eos);
+        let fs_ctx = FreestreamContext::new(&eos, None, None);
         apply_compressible_boundary_conditions(
             &mesh,
             &boundary_set,

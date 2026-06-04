@@ -100,7 +100,7 @@ pub struct CaseSpec {
     pub output: Option<CaseOutputConfig>,
     pub observability: Option<CaseObservabilityConfig>,
     pub case_dir: Option<PathBuf>,
-    /// 无量纲参考量；`Some` 表示算例在 \(*\) 变量下求解。
+    /// 无量纲参考量；可压缩算例解析后恒为 `Some`。
     pub reference: Option<ReferenceScales>,
 }
 
@@ -253,13 +253,12 @@ impl CaseSpec {
         self.reference.is_some()
     }
 
-    /// 输出还原用的有量纲 EOS；有量纲算例返回 `[physics]` 中的 EOS。
+    /// 输出还原用的有量纲 EOS（可压缩算例由 `reference` 还原 SI 气体常数）。
     pub fn dimensional_eos(&self) -> Result<IdealGasEoS> {
-        if let Some(reference) = &self.reference {
-            reference.dimensional_eos(self.physics.eos()?.gamma)
-        } else {
-            self.physics.eos()
-        }
+        let reference = self.reference.as_ref().ok_or_else(|| {
+            AsimuError::Config("可压缩算例缺少无量纲参考量 reference".to_string())
+        })?;
+        reference.dimensional_eos(self.physics.eos()?.gamma)
     }
 
     pub fn diffusivity(&self) -> Real {
@@ -285,12 +284,6 @@ struct CaseToml {
     navier_stokes: Option<EulerToml>,
     output: Option<OutputToml>,
     observability: Option<ObservabilityToml>,
-    nondimensional: Option<NondimensionalToml>,
-}
-
-#[derive(Debug, Deserialize)]
-struct NondimensionalToml {
-    enabled: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -472,11 +465,7 @@ fn parse_case_toml(content: &str, case_dir: Option<&Path>) -> Result<CaseSpec> {
         reference: None,
     };
     case.warn_config_inconsistencies();
-    let nd_enabled = match raw.nondimensional.as_ref() {
-        Some(n) => n.enabled,
-        None => case.is_compressible() && case.freestream.is_some(),
-    };
-    super::nondimensional::maybe_apply_nondimensionalization(&mut case, nd_enabled)?;
+    super::nondimensional::apply_nondimensionalization_for_compressible(&mut case)?;
     Ok(case)
 }
 

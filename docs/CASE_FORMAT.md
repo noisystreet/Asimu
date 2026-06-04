@@ -252,23 +252,9 @@ HLLC 变体示例：`tests/benchmarks/sod_1d/case_muscl_hllc.toml`。
 
 ---
 
-## 6.5 `[nondimensional]`（可压缩算例）
+## 6.5 无量纲求解（可压缩算例）
 
-将 3D 可压缩 Euler/NS 切换为 \(*\) 变量求解；**输入 TOML 仍为 SI 有量纲**，解析后自动缩放。
-
-**默认**：含 `[freestream]` 的可压缩算例**自动启用**无量纲；若需有量纲求解，显式关闭：
-
-```toml
-[nondimensional]
-enabled = false
-```
-
-启用时也可写（与默认等价）：
-
-```toml
-[nondimensional]
-enabled = true
-```
+3D 可压缩 Euler/NS **仅在 \(*\) 变量下求解**；**输入 TOML 仍为 SI 有量纲**，`CaseSpec` 解析完成后自动调用 `apply_nondimensionalization` 缩放。须配置 `[freestream]`。
 
 | 参考量 | 取值（自动，不可覆盖） |
 |--------|------------------------|
