@@ -5,6 +5,7 @@
 mod algebra;
 mod conserved;
 mod initial;
+mod positivity;
 mod primitive;
 mod residual;
 
@@ -22,6 +23,7 @@ pub use conserved::{
 pub use initial::{
     FluidInitialConfig, InitialKind, InitialSet, ScalarInitial, build_scalar_initial,
 };
+pub use positivity::{is_physical_conserved, max_physical_increment_scale, state_after_increment};
 pub use primitive::PrimitiveFields;
 pub use residual::ConservedResidual;
 

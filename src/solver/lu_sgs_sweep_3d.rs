@@ -1,6 +1,6 @@
-//! 3D LU-SGS 实验性扫掠：前向 (+i,+j,+k) 与后向 (−i,−j,−k) 单元耦合扫掠。
+//! 3D LU-SGS 双扫：前向 (+i,+j,+k) 与后向 (−i,−j,−k) 单元耦合扫掠。
 //!
-//! 当前实现用标量谱半径近似块 Jacobian 邻居耦合项；强激波算例应优先使用默认对角模式。
+//! 标量谱半径近似邻居耦合；逐单元正性限制、后扫阻尼与全场线搜索用于强激波稳定化。
 //! **不含**面通量增量步——残差 R 已包含全部面通量贡献；face sweep 会重复计入导致发散。
 
 #![allow(clippy::too_many_arguments)]
@@ -9,7 +9,10 @@ use tracing::info_span;
 
 use crate::core::Real;
 use crate::error::{AsimuError, Result};
-use crate::field::{ConservedFields, ConservedResidual, PrimitiveFields};
+use crate::field::{
+    ConservedFields, ConservedResidual, PrimitiveFields, is_physical_conserved,
+    max_physical_increment_scale, state_after_increment,
+};
 use crate::mesh::StructuredMesh3d;
 use crate::physics::IdealGasEoS;
 
@@ -29,9 +32,11 @@ pub struct LuSgsSweep3dParams<'a> {
     pub eos: &'a IdealGasEoS,
     pub primitives: &'a mut PrimitiveFields,
     pub min_pressure: Real,
+    /// 后扫邻居耦合阻尼 \(\in(0,1]\)。
+    pub backward_damping: Real,
 }
 
-/// 实验性 LU-SGS 双扫：前向 (+i,+j,+k) 与后向 (−i,−j,−k)。
+/// LU-SGS 双扫：前向 (+i,+j,+k) 与后向 (−i,−j,−k)，含稳定化。
 ///
 /// 前扫：ΔU_i = ω·Δt/(1+Δt·σ_i) · (R_i − Σ A·λ/V_i · ΔU_j)，j 为已访问邻居
 /// 后扫：ΔU_i = −ω·Δt/(1+Δt·σ_i) · Σ A·λ/V_i · ΔU_j，j 为未访问邻居
@@ -67,6 +72,16 @@ pub fn lu_sgs_sweep_3d(
         let _span = info_span!("lu_sgs_sweep_backward").entered();
         backward_cell_coupling_sweep(fields, &u0, params, &scalars)?;
     }
+    let u_sweep = fields.clone();
+    stabilize_sweep_update(
+        fields,
+        &u0,
+        &u_sweep,
+        residual,
+        params.min_pressure,
+        params.eos.gamma,
+        &scalars,
+    )?;
     Ok(())
 }
 
@@ -131,7 +146,8 @@ fn forward_cell_coupling_sweep(
                         u0,
                     );
                 }
-                fields.add_conserved_increment(
+                apply_limited_cell_increment(
+                    fields,
                     idx,
                     scale,
                     source,
@@ -197,10 +213,12 @@ fn backward_cell_coupling_sweep(
                     );
                 }
                 if source.iter().any(|c| c.abs() > Real::EPSILON) {
-                    fields.add_conserved_increment(
+                    let damped = scale_source(source, params.backward_damping);
+                    apply_limited_cell_increment(
+                        fields,
                         idx,
                         scale,
-                        source,
+                        damped,
                         scalars.gamma,
                         params.min_pressure,
                     )?;
@@ -303,6 +321,135 @@ fn k_face_lambda(
     ))
 }
 
+fn scale_source(source: [Real; 5], factor: Real) -> [Real; 5] {
+    [
+        source[0] * factor,
+        source[1] * factor,
+        source[2] * factor,
+        source[3] * factor,
+        source[4] * factor,
+    ]
+}
+
+fn apply_limited_cell_increment(
+    fields: &mut ConservedFields,
+    cell: usize,
+    scale: Real,
+    increment: [Real; 5],
+    gamma: Real,
+    min_pressure: Real,
+) -> Result<()> {
+    let base = fields.cell_state(cell)?;
+    let effective = max_physical_increment_scale(&base, increment, scale, gamma, min_pressure);
+    if effective <= 0.0 {
+        return Ok(());
+    }
+    let updated = state_after_increment(&base, increment, effective);
+    write_cell_state(fields, cell, &updated);
+    Ok(())
+}
+
+fn write_cell_state(
+    fields: &mut ConservedFields,
+    cell: usize,
+    state: &crate::physics::ConservedState,
+) {
+    fields.density.values_mut()[cell] = state.density;
+    fields.momentum_x.values_mut()[cell] = state.momentum[0];
+    fields.momentum_y.values_mut()[cell] = state.momentum[1];
+    fields.momentum_z.values_mut()[cell] = state.momentum[2];
+    fields.total_energy.values_mut()[cell] = state.total_energy;
+}
+
+fn fields_are_physical(fields: &ConservedFields, gamma: Real, min_pressure: Real) -> Result<bool> {
+    for cell in 0..fields.num_cells() {
+        let state = fields.cell_state(cell)?;
+        if !is_physical_conserved(&state, gamma, min_pressure) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn blend_fields(
+    out: &mut ConservedFields,
+    base: &ConservedFields,
+    target: &ConservedFields,
+    alpha: Real,
+) -> Result<()> {
+    for cell in 0..base.num_cells() {
+        let b = base.cell_state(cell)?;
+        let t = target.cell_state(cell)?;
+        let delta = [
+            t.density - b.density,
+            t.momentum[0] - b.momentum[0],
+            t.momentum[1] - b.momentum[1],
+            t.momentum[2] - b.momentum[2],
+            t.total_energy - b.total_energy,
+        ];
+        write_cell_state(out, cell, &state_after_increment(&b, delta, alpha));
+    }
+    Ok(())
+}
+
+fn stabilize_sweep_update(
+    fields: &mut ConservedFields,
+    u0: &ConservedFields,
+    u_sweep: &ConservedFields,
+    residual: &ConservedResidual,
+    min_pressure: Real,
+    gamma: Real,
+    scalars: &LuSgsSweepScalars<'_>,
+) -> Result<()> {
+    if fields_are_physical(u_sweep, gamma, min_pressure)? {
+        return Ok(());
+    }
+    const MIN_ALPHA: Real = 1.0 / 1024.0;
+    let mut alpha = 1.0;
+    loop {
+        blend_fields(fields, u0, u_sweep, alpha)?;
+        if fields_are_physical(fields, gamma, min_pressure)? {
+            return Ok(());
+        }
+        alpha *= 0.5;
+        if alpha < MIN_ALPHA {
+            apply_diagonal_fallback(fields, u0, residual, gamma, min_pressure, scalars)?;
+            return Ok(());
+        }
+    }
+}
+
+fn apply_diagonal_fallback(
+    fields: &mut ConservedFields,
+    u0: &ConservedFields,
+    residual: &ConservedResidual,
+    gamma: Real,
+    min_pressure: Real,
+    scalars: &LuSgsSweepScalars<'_>,
+) -> Result<()> {
+    for cell in 0..fields.num_cells() {
+        let scale = implicit_scale(
+            scalars.dt[cell],
+            scalars.sigma[cell],
+            scalars.volumes[cell],
+            scalars.omega,
+        );
+        let increment = residual_cell_vector(residual, cell);
+        let base = u0.cell_state(cell)?;
+        let effective = max_physical_increment_scale(&base, increment, scale, gamma, min_pressure);
+        if effective > 0.0 {
+            write_cell_state(
+                fields,
+                cell,
+                &state_after_increment(&base, increment, effective),
+            );
+        } else {
+            write_cell_state(fields, cell, &base);
+        }
+    }
+    Ok(())
+}
+
 fn refresh_primitive(
     params: &mut LuSgsSweep3dParams<'_>,
     fields: &ConservedFields,
@@ -317,4 +464,75 @@ fn refresh_primitive(
     params.primitives.velocity_y.values_mut()[cell] = prim.velocity[1];
     params.primitives.velocity_z.values_mut()[cell] = prim.velocity[2];
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::field::ConservedResidual;
+    use crate::physics::{ConservedState, FreestreamParams};
+
+    #[test]
+    fn sweep_keeps_uniform_freestream_physical() {
+        let mesh = StructuredMesh3d::uniform_box("box", 3, 2, 2, 1.0, 1.0, 1.0).expect("mesh");
+        let eos = IdealGasEoS::AIR_STANDARD;
+        let fs = FreestreamParams::default();
+        let mut fields =
+            ConservedFields::from_freestream(mesh.num_cells(), &eos, &fs).expect("fields");
+        let mut primitives = PrimitiveFields::zeros(mesh.num_cells()).expect("prim");
+        let min_pressure = 1.0e-6;
+        primitives
+            .fill_from_conserved(&fields, &eos, min_pressure)
+            .expect("prim");
+        let residual = ConservedResidual::zeros(mesh.num_cells()).expect("rhs");
+        let n = mesh.num_cells();
+        let dt = vec![0.01; n];
+        let sigma = vec![10.0; n];
+        let volumes = mesh.cell_volumes();
+        let mut params = LuSgsSweep3dParams {
+            mesh: &mesh,
+            eos: &eos,
+            primitives: &mut primitives,
+            min_pressure,
+            backward_damping: 0.5,
+        };
+        lu_sgs_sweep_3d(
+            &mut fields,
+            &residual,
+            &mut params,
+            &dt,
+            &sigma,
+            &volumes,
+            1.0,
+            eos.gamma,
+        )
+        .expect("sweep");
+        assert!(fields_are_physical(&fields, eos.gamma, params.min_pressure).expect("check"));
+    }
+
+    #[test]
+    fn line_search_recovers_from_nonphysical_sweep_candidate() {
+        let mesh = StructuredMesh3d::uniform_box("box", 2, 1, 1, 1.0, 1.0, 1.0).expect("mesh");
+        let eos = IdealGasEoS::AIR_STANDARD;
+        let base_state = ConservedState {
+            density: 1.0,
+            momentum: [1.0, 0.0, 0.0],
+            total_energy: 2.5,
+        };
+        let u0 = ConservedFields::uniform(mesh.num_cells(), base_state).expect("u0");
+        let mut bad = u0.clone();
+        bad.momentum_x.values_mut()[0] = 100.0;
+        let mut fields = u0.clone();
+        let residual = ConservedResidual::zeros(mesh.num_cells()).expect("rhs");
+        let scalars = LuSgsSweepScalars {
+            dt: &[0.01; 2],
+            sigma: &[1.0; 2],
+            volumes: &[1.0; 2],
+            omega: 1.0,
+            gamma: eos.gamma,
+        };
+        stabilize_sweep_update(&mut fields, &u0, &bad, &residual, 0.0, eos.gamma, &scalars)
+            .expect("stabilize");
+        assert!(fields_are_physical(&fields, eos.gamma, 0.0).expect("check"));
+    }
 }

@@ -158,6 +158,60 @@ lusgs_sweep = false
 }
 
 #[test]
+fn parses_lusgs_sweep_backward_damping() {
+    let case = parse_case_toml(
+        r#"
+name = "lusgs_sweep_damp"
+[mesh]
+kind = "structured_3d"
+nx = 2
+ny = 2
+nz = 2
+lx = 1.0
+ly = 1.0
+lz = 1.0
+[physics]
+gamma = 1.4
+gas_constant = 287.0
+[freestream]
+mach = 0.3
+pressure = 101325.0
+temperature = 288.15
+[boundary.i_min]
+kind = "wall"
+no_slip = true
+heat = "adiabatic"
+[boundary.i_max]
+kind = "farfield"
+mach = 0.3
+pressure = 101325.0
+temperature = 288.15
+[boundary.j_min]
+kind = "symmetry"
+[boundary.j_max]
+kind = "symmetry"
+[boundary.k_min]
+kind = "wall"
+[boundary.k_max]
+kind = "outlet"
+static_pressure = 100000.0
+[time]
+mode = "steady"
+scheme = "lu_sgs"
+local_time_step = true
+lusgs_sweep = true
+lusgs_sweep_backward_damping = 0.35
+max_steps = 10
+"#,
+        None,
+    )
+    .expect("case");
+    let cfg = case.time.resolved_lusgs_config().expect("lusgs");
+    assert!(cfg.sweep);
+    assert!((cfg.sweep_backward_damping - 0.35).abs() < 1.0e-12);
+}
+
+#[test]
 fn parses_gmres_time_scheme() {
     let content = r#"
 name = "gmres_test"

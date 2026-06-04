@@ -19,8 +19,10 @@ use super::rk4::Rk4Storage;
 pub struct LuSgsConfig {
     /// 松弛因子 \(\omega\in(0,1]\)（默认 1）。
     pub omega: Real,
-    /// `true`：实验性 i/j/k 双扫（阶段 D）；`false`：对角隐式（阶段 C，默认）。
+    /// `true`：i/j/k 双扫（阶段 D）；`false`：对角隐式（阶段 C，默认）。
     pub sweep: bool,
+    /// 后扫邻居耦合阻尼 \(\in(0,1]\)（默认 0.5），抑制后扫过冲。
+    pub sweep_backward_damping: Real,
 }
 
 impl Default for LuSgsConfig {
@@ -28,26 +30,38 @@ impl Default for LuSgsConfig {
         Self {
             omega: 1.0,
             sweep: false,
+            sweep_backward_damping: 0.5,
         }
     }
 }
 
 impl LuSgsConfig {
-    pub fn parse(omega: Option<Real>, sweep: Option<bool>) -> Result<Self> {
+    pub fn parse(
+        omega: Option<Real>,
+        sweep: Option<bool>,
+        sweep_backward_damping: Option<Real>,
+    ) -> Result<Self> {
         let omega = omega.unwrap_or(1.0);
         if !(0.0 < omega && omega <= 1.0) {
             return Err(AsimuError::Config(
                 "[time].lusgs_omega 须在 (0, 1] 内".to_string(),
             ));
         }
+        let sweep_backward_damping = sweep_backward_damping.unwrap_or(0.5);
+        if !(0.0 < sweep_backward_damping && sweep_backward_damping <= 1.0) {
+            return Err(AsimuError::Config(
+                "[time].lusgs_sweep_backward_damping 须在 (0, 1] 内".to_string(),
+            ));
+        }
         Ok(Self {
             omega,
             sweep: sweep.unwrap_or(false),
+            sweep_backward_damping,
         })
     }
 
     pub fn parse_omega(value: Option<Real>) -> Result<Self> {
-        Self::parse(value, None)
+        Self::parse(value, None, None)
     }
 }
 

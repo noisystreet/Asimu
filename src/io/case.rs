@@ -127,8 +127,10 @@ pub struct CaseTimeConfig {
     pub scheme: Option<crate::solver::time::TimeIntegrationScheme>,
     /// `lu_sgs` 松弛因子 \(\omega\in(0,1]\)（默认 1）。
     pub lusgs_omega: Option<Real>,
-    /// `lu_sgs` 双扫（默认 false）；`true` 为实验性阶段 D 双扫。
+    /// `lu_sgs` 双扫（默认 false）；`true` 启用 i/j/k 双扫。
     pub lusgs_sweep: Option<bool>,
+    /// `lu_sgs` 后扫耦合阻尼（默认 0.5）。
+    pub lusgs_sweep_backward_damping: Option<Real>,
     /// 方向分裂隐式残差光顺（仅稳态 3D 伪时间）。
     pub residual_smoothing: crate::solver::time::ResidualSmoothingConfig,
 }
@@ -145,7 +147,11 @@ impl CaseTimeConfig {
     }
 
     pub fn resolved_lusgs_config(&self) -> Result<crate::solver::time::LuSgsConfig> {
-        crate::solver::time::LuSgsConfig::parse(self.lusgs_omega, self.lusgs_sweep)
+        crate::solver::time::LuSgsConfig::parse(
+            self.lusgs_omega,
+            self.lusgs_sweep,
+            self.lusgs_sweep_backward_damping,
+        )
     }
 
     #[must_use]
@@ -169,6 +175,7 @@ impl Default for CaseTimeConfig {
             scheme: None,
             lusgs_omega: None,
             lusgs_sweep: None,
+            lusgs_sweep_backward_damping: None,
             residual_smoothing: crate::solver::time::ResidualSmoothingConfig::disabled(),
         }
     }
@@ -382,6 +389,7 @@ struct TimeToml {
     scheme: Option<String>,
     lusgs_omega: Option<Real>,
     lusgs_sweep: Option<bool>,
+    lusgs_sweep_backward_damping: Option<Real>,
     residual_smoothing: Option<bool>,
     residual_smoothing_epsilon: Option<Real>,
     residual_smoothing_sweeps: Option<usize>,
@@ -716,7 +724,12 @@ fn parse_time_config(raw: Option<&TimeToml>, has_sod: bool) -> Result<CaseTimeCo
         .transpose()?;
     let lusgs_omega = raw.lusgs_omega;
     let lusgs_sweep = raw.lusgs_sweep;
-    let _ = crate::solver::time::LuSgsConfig::parse(lusgs_omega, lusgs_sweep)?;
+    let lusgs_sweep_backward_damping = raw.lusgs_sweep_backward_damping;
+    let _ = crate::solver::time::LuSgsConfig::parse(
+        lusgs_omega,
+        lusgs_sweep,
+        lusgs_sweep_backward_damping,
+    )?;
     let residual_smoothing = crate::solver::time::ResidualSmoothingConfig::parse(
         raw.residual_smoothing.unwrap_or(false),
         raw.residual_smoothing_epsilon,
@@ -735,6 +748,7 @@ fn parse_time_config(raw: Option<&TimeToml>, has_sod: bool) -> Result<CaseTimeCo
         scheme,
         lusgs_omega,
         lusgs_sweep,
+        lusgs_sweep_backward_damping,
         residual_smoothing,
     })
 }

@@ -10,7 +10,7 @@ pub enum TimeIntegrationScheme {
     Rk4,
     /// 一阶前向 Euler（排错对照用，稳定性比 RK4 差）。
     Euler,
-    /// LU-SGS 隐式伪时间（默认对角；`lusgs_sweep=true` 启用实验性双扫）。
+    /// LU-SGS 隐式伪时间（默认对角；`lusgs_sweep=true` 启用双扫）。
     LuSgs,
     /// Matrix-free GMRES 隐式伪时间（LU-SGS 对角预条件器）。
     Gmres,

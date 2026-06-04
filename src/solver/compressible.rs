@@ -515,6 +515,7 @@ impl CompressibleEulerSolver {
                     eos,
                     primitives: &mut ctx.primitive_scratch,
                     min_pressure: p_floor,
+                    backward_damping: lu_sgs.sweep_backward_damping,
                 };
                 let _span = info_span!("lu_sgs_sweep").entered();
                 lu_sgs_sweep_3d(

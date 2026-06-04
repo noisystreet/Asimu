@@ -116,7 +116,7 @@ $$
 
 `σ_i` 由 `cell_spectral_radius_3d` 统一给出；RK4 与 LU-SGS 不再分别维护 `h_i/(|u|+a)` 与 face-sum 两套局部 CFL。`cell_cfl_lengths` 仅保留作网格尺度诊断。
 
-**阶段 D（`lusgs_sweep = true`，实验性）**：在式 (5)(6) 基础上增加 i/j/k 前扫与后扫，用标量谱半径近似邻居耦合项。默认 `lusgs_sweep = false` 仅执行阶段 C 对角更新；`lu_sgs` 须 `local_time_step = true`。
+**阶段 D（`lusgs_sweep = true`）**：在式 (5)(6) 基础上增加 i/j/k 前扫与后扫，用标量谱半径近似邻居耦合项。实现含逐单元正性限制、`lusgs_sweep_backward_damping` 后扫阻尼，以及相对 \(U_0\) 的全场线搜索（失败时回退对角隐式更新）。默认 `lusgs_sweep = false` 仅执行阶段 C；`lu_sgs` 须 `local_time_step = true`。
 
 ---
 

@@ -120,11 +120,16 @@ impl ConservedFields {
     }
 }
 
-/// 来流静压的 1%（下限 1e-6 Pa），与求解器 CFL/正性保持一致。
+/// 来流静压的 1%（下限 1e-6 Pa 或 1e-12 无量纲），与求解器正性限制一致。
 #[must_use]
 pub fn positivity_pressure_floor(freestream_pressure: crate::core::Real) -> crate::core::Real {
-    let _ = freestream_pressure;
-    0.0
+    const ABSOLUTE_MIN: crate::core::Real = 1.0e-6;
+    const RELATIVE_FRACTION: crate::core::Real = 0.01;
+    if freestream_pressure > 0.0 {
+        (RELATIVE_FRACTION * freestream_pressure).max(ABSOLUTE_MIN)
+    } else {
+        ABSOLUTE_MIN
+    }
 }
 
 /// 单单元守恒量正性钳制（调试模式下已禁用——不做任何钳制）。
@@ -170,19 +175,29 @@ pub fn primitive_from_conserved(
     })
 }
 
-/// 通量/边界装配用的宽松 primitive 恢复（RK 中间态对压力做下限）。
+/// 通量/边界装配用的宽松 primitive 恢复（压力不低于 `min_pressure`）。
 pub fn primitive_from_conserved_relaxed(
     eos: &IdealGasEoS,
     cons: &ConservedState,
-    _min_pressure: crate::core::Real,
+    min_pressure: crate::core::Real,
 ) -> Result<PrimitiveState> {
-    let _ = _min_pressure;
-    primitive_from_conserved(eos, cons)
+    let mut prim = primitive_from_conserved(eos, cons)?;
+    if prim.pressure < min_pressure {
+        prim.pressure = min_pressure;
+        prim.temperature = prim.pressure / (prim.density.max(1.0e-30) * eos.gas_constant);
+    }
+    Ok(prim)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn positivity_pressure_floor_is_one_percent_of_freestream() {
+        assert!((positivity_pressure_floor(1000.0) - 10.0).abs() < 1.0e-12);
+        assert!((positivity_pressure_floor(1.0 / 1.4) - 0.01 / 1.4).abs() < 1.0e-12);
+    }
 
     #[test]
     fn freestream_uniform_field_has_correct_density() {

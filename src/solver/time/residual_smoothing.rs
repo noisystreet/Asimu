@@ -4,7 +4,10 @@
 
 use crate::core::Real;
 use crate::error::{AsimuError, Result};
-use crate::field::{ConservedFields, ConservedResidual, ScalarField};
+use crate::field::{
+    ConservedFields, ConservedResidual, ScalarField, is_physical_conserved,
+    max_physical_increment_scale, state_after_increment,
+};
 use crate::mesh::StructuredMesh3d;
 use crate::physics::{ConservedState, IdealGasEoS};
 
@@ -203,7 +206,11 @@ fn limit_cell_residual(
     }
     let base_state = base.cell_state(cell)?;
     let smooth = residual_cell(residual, cell);
-    if updated_state_is_physical(&base_state, smooth, scale, gamma, min_pressure) {
+    if is_physical_conserved(
+        &state_after_increment(&base_state, smooth, scale),
+        gamma,
+        min_pressure,
+    ) {
         return Ok(());
     }
     let raw = residual_cell(original, cell);
@@ -212,8 +219,13 @@ fn limit_cell_residual(
         write_residual_cell(residual, cell, blended);
         return Ok(());
     }
-    if let Some(limited_raw) = find_positive_scale(&base_state, raw, scale, gamma, min_pressure) {
-        write_residual_cell(residual, cell, limited_raw);
+    let limited_scale = max_physical_increment_scale(&base_state, raw, scale, gamma, min_pressure);
+    if limited_scale > 0.0 {
+        write_residual_cell(
+            residual,
+            cell,
+            raw.map(|value| limited_scale / scale * value),
+        );
         return Ok(());
     }
     write_residual_cell(residual, cell, [0.0; 5]);
@@ -231,59 +243,24 @@ fn find_positive_blend(
     let mut alpha = 1.0;
     for _ in 0..12 {
         let candidate = blend_residual(raw, smooth, alpha);
-        if updated_state_is_physical(base, candidate, scale, gamma, min_pressure) {
+        if is_physical_conserved(
+            &state_after_increment(base, candidate, scale),
+            gamma,
+            min_pressure,
+        ) {
             return Some(candidate);
         }
         alpha *= 0.5;
     }
-    if updated_state_is_physical(base, raw, scale, gamma, min_pressure) {
+    if is_physical_conserved(
+        &state_after_increment(base, raw, scale),
+        gamma,
+        min_pressure,
+    ) {
         Some(raw)
     } else {
         None
     }
-}
-
-fn find_positive_scale(
-    base: &ConservedState,
-    residual: [Real; 5],
-    scale: Real,
-    gamma: Real,
-    min_pressure: Real,
-) -> Option<[Real; 5]> {
-    let mut alpha = 0.5;
-    for _ in 0..12 {
-        let candidate = residual.map(|value| alpha * value);
-        if updated_state_is_physical(base, candidate, scale, gamma, min_pressure) {
-            return Some(candidate);
-        }
-        alpha *= 0.5;
-    }
-    None
-}
-
-fn updated_state_is_physical(
-    base: &ConservedState,
-    residual: [Real; 5],
-    scale: Real,
-    gamma: Real,
-    min_pressure: Real,
-) -> bool {
-    let rho = base.density + scale * residual[0];
-    let momentum = [
-        base.momentum[0] + scale * residual[1],
-        base.momentum[1] + scale * residual[2],
-        base.momentum[2] + scale * residual[3],
-    ];
-    let total_energy = base.total_energy + scale * residual[4];
-    if rho <= 0.0 || !rho.is_finite() || !total_energy.is_finite() {
-        return false;
-    }
-    let ke = 0.5
-        * (momentum[0] * momentum[0] + momentum[1] * momentum[1] + momentum[2] * momentum[2])
-        / rho;
-    let min_internal = min_pressure.max(0.0) / (gamma - 1.0);
-    let internal = total_energy - ke;
-    internal.is_finite() && internal > min_internal
 }
 
 fn blend_residual(raw: [Real; 5], smooth: [Real; 5], alpha: Real) -> [Real; 5] {
