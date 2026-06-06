@@ -359,6 +359,8 @@ solution_vtk = false              # 为 true 时额外写 .vtu/.vts（需 featur
 
 `solution_cgns` / `solution_vtk` 流场含：`Density`、`VelocityX/Y/Z`、`Pressure`、`MachNumber`、`Temperature`（CGNS 为 Vertex 插值，VTK 为单元中心）。多块 3D case 的最终流场与 `solution_every` 间隔快照均写为单个 CGNS 文件、每个 block 一个 Structured Zone。
 
+配置 `residual_csv`（及可选 `residual_plot`）时，每次 `solution_every` 间隔流场快照写出后，会同步覆盖更新残差 CSV 与曲线图；算例结束时仍会再次写出最终版本。
+
 ### 7.2 `[observability]` — Chrome trace
 
 ```toml

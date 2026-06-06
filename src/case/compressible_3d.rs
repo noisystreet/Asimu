@@ -379,8 +379,15 @@ fn advance_multiblock_history(
         let aggregate = advance_multiblock_step(env, states)?;
         let stop = aggregate.is_final || aggregate.converged;
         log_multiblock_step(&aggregate, stop, aggregate.converged);
-        maybe_write_multiblock_snapshot(env.case, env.mesh, states, &aggregate, snapshot_paths)?;
         history.push(aggregate);
+        maybe_write_multiblock_snapshot(
+            env.case,
+            env.mesh,
+            states,
+            history.last().expect("history"),
+            &history,
+            snapshot_paths,
+        )?;
         if stop {
             break;
         }
@@ -393,15 +400,11 @@ fn maybe_write_multiblock_snapshot(
     mesh: &MultiBlockStructuredMesh3d,
     states: &[BlockRunState],
     step: &CompressibleStepInfo,
+    history: &[CompressibleStepInfo],
     paths: &mut Vec<std::path::PathBuf>,
 ) -> Result<()> {
     let _span = info_span!("maybe_write_multiblock_snapshot", step = step.step).entered();
-    let should_write = case.output.as_ref().is_some_and(|output| {
-        output
-            .solution_every
-            .is_some_and(|every| step.step % every == 0)
-    });
-    if !should_write {
+    if !super::output_3d::interval_output_due(case, step.step) {
         return Ok(());
     }
     let fields: Vec<ConservedFields> = {
@@ -414,6 +417,7 @@ fn maybe_write_multiblock_snapshot(
     {
         paths.push(path);
     }
+    let _ = super::output_3d::maybe_write_residual_outputs(case, history, step)?;
     Ok(())
 }
 
@@ -684,17 +688,25 @@ fn run_transient_3d_with_snapshots(
                 "log₁₀ 残差已达 [time].tolerance，提前停止"
             );
         }
+        history.push(step_info);
         if let Some(ref mut writer) = snapshot {
-            if let Some(path) = super::output_3d::maybe_write_flow_snapshot(
-                writer.case,
-                writer.mesh,
-                fields,
-                &step_info,
-            )? {
-                writer.paths.push(path);
+            let step_info = history.last().expect("history");
+            if super::output_3d::interval_output_due(writer.case, step_info.step) {
+                if let Some(path) = super::output_3d::maybe_write_flow_snapshot(
+                    writer.case,
+                    writer.mesh,
+                    fields,
+                    step_info,
+                )? {
+                    writer.paths.push(path);
+                }
+                let _ = super::output_3d::maybe_write_residual_outputs(
+                    writer.case,
+                    &history,
+                    step_info,
+                )?;
             }
         }
-        history.push(step_info);
         if stop {
             break;
         }

@@ -24,25 +24,7 @@ pub fn write_compressible_3d_outputs(
     let Some(output) = &case.output else {
         return Ok(Vec::new());
     };
-    let mut written = Vec::new();
-
-    if let Some(name) = &output.residual_csv {
-        let path = resolve_case_output_path(case.case_dir.as_deref(), &output.dir, name)?;
-        write_residual_csv(&path, history)?;
-        info!(path = %path.display(), "已写出残差 CSV");
-        written.push(path.clone());
-
-        if let Some(plot_name) = &output.residual_plot {
-            let plot_path =
-                resolve_case_output_path(case.case_dir.as_deref(), &output.dir, plot_name)?;
-            if let Err(err) = try_plot_residual(&path, &plot_path) {
-                warn!(error = %err, "残差曲线图未生成（需 python3 + matplotlib）");
-            } else {
-                info!(path = %plot_path.display(), "已写出残差曲线图");
-                written.push(plot_path);
-            }
-        }
-    }
+    let mut written = write_residual_outputs(case, history)?;
 
     if let Some(name) = &output.solution_cgns {
         let path = resolve_case_output_path(case.case_dir.as_deref(), &output.dir, name)?;
@@ -97,6 +79,35 @@ pub fn write_multiblock_compressible_3d_outputs(
     Ok(written)
 }
 
+/// 若当前步满足间隔输出条件，刷新残差 CSV 与曲线图。
+pub fn maybe_write_residual_outputs(
+    case: &CaseSpec,
+    history: &[CompressibleStepInfo],
+    step: &CompressibleStepInfo,
+) -> Result<Vec<PathBuf>> {
+    let Some(output) = &case.output else {
+        return Ok(Vec::new());
+    };
+    if !output.interval_output_due(step.step) {
+        return Ok(Vec::new());
+    }
+    let _span = info_span!(
+        "maybe_write_residual_outputs",
+        step = step.step,
+        steps = history.len()
+    )
+    .entered();
+    write_residual_outputs(case, history)
+}
+
+/// 当前步是否应写出间隔流场（及同步残差输出）。
+#[must_use]
+pub fn interval_output_due(case: &CaseSpec, step: u64) -> bool {
+    case.output
+        .as_ref()
+        .is_some_and(|output| output.interval_output_due(step))
+}
+
 /// 若当前步满足间隔条件，写出流场快照 CGNS。
 pub fn maybe_write_flow_snapshot(
     case: &CaseSpec,
@@ -111,13 +122,10 @@ pub fn maybe_write_flow_snapshot(
     )
     .entered();
     let output = match &case.output {
-        Some(o) if o.wants_interval_flow() => o,
+        Some(o) if o.interval_output_due(info.step) => o,
         _ => return Ok(None),
     };
     let every = output.solution_every.expect("wants_interval_flow");
-    if info.step % every != 0 {
-        return Ok(None);
-    }
     let base = output.solution_cgns.as_ref().expect("wants_interval_flow");
     let name = flow_cgns_name_for_step(base, info.step);
     let path = resolve_case_output_path(case.case_dir.as_deref(), &output.dir, &name)?;
@@ -160,13 +168,10 @@ pub fn maybe_write_multiblock_flow_snapshot(
     info: &CompressibleStepInfo,
 ) -> Result<Option<PathBuf>> {
     let output = match &case.output {
-        Some(o) if o.wants_interval_flow() => o,
+        Some(o) if o.interval_output_due(info.step) => o,
         _ => return Ok(None),
     };
     let every = output.solution_every.expect("wants_interval_flow");
-    if info.step % every != 0 {
-        return Ok(None);
-    }
     let base = output.solution_cgns.as_ref().expect("wants_interval_flow");
     let name = flow_cgns_name_for_step(base, info.step);
     let path = resolve_case_output_path(case.case_dir.as_deref(), &output.dir, &name)?;

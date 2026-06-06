@@ -35,6 +35,15 @@ impl CaseOutputConfig {
     pub fn wants_interval_flow(&self) -> bool {
         self.solution_cgns.is_some() && self.solution_every.is_some_and(|n| n > 0)
     }
+
+    /// 当前步是否应写出 `solution_every` 间隔流场（及同步残差输出）。
+    #[must_use]
+    pub fn interval_output_due(&self, step: u64) -> bool {
+        self.wants_interval_flow()
+            && self
+                .solution_every
+                .is_some_and(|every| every > 0 && step % every == 0)
+    }
 }
 
 /// 3D 可压缩 Euler 算例段（`[euler]`，离散格式；CFL 见 `[time].cfl`）。
@@ -359,5 +368,22 @@ reconstruction = "first_order"
         .expect("parse");
         assert!(case.is_navier_stokes());
         assert!(case.physics.viscous.is_some());
+    }
+
+    #[test]
+    fn interval_output_due_matches_solution_every() {
+        use std::path::PathBuf;
+
+        let output = super::CaseOutputConfig {
+            dir: PathBuf::from("output"),
+            residual_csv: Some("residual.csv".into()),
+            residual_plot: None,
+            solution_cgns: Some("flow.cgns".into()),
+            solution_every: Some(100),
+            solution_vtk: false,
+        };
+        assert!(!output.interval_output_due(99));
+        assert!(output.interval_output_due(100));
+        assert!(output.interval_output_due(200));
     }
 }
