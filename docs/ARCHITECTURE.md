@@ -802,6 +802,7 @@ crates/
 | [0007](adr/0007-vts-binary-io.md) | VTK VTS 二进制读入 |
 | [0008](adr/0008-cgns-io.md) | CGNS 读入与 VTS 导出 |
 | [0009](adr/0009-compressible-navier-stokes.md) | 三维可压缩 NS 求解器架构（FVM + 守恒变量 + HLLC） |
+| [0010](adr/0010-unstructured-mixed-mesh.md) | 非结构混合单元网格（面拓扑路线；M1–M4 分阶段） |
 
 ### 11.1 空间离散
 
@@ -929,7 +930,7 @@ crates/
 |------|------|------|
 | 线性代数后端 | v0.2 手写 CG；后期评估 faer | 部分决定，见 ADR 0002 |
 | 分布式 MPI | v2.x 单独 ADR | 开放 |
-| 非结构化网格 | v0.4+ 评估 | 开放 |
+| 非结构化网格 | [ADR 0010](adr/0010-unstructured-mixed-mesh.md) 面拓扑 + M1–M4 分阶段；M1 拓扑/度量已起步 | 部分决定 |
 | 湍流模型 | v1.x+ RANS 任选一种 | 开放 |
 | GPU 后端选型 | v1.2 首选 wgpu；CUDA 为服务器可选项 | 部分决定，见 ADR 0003 |
 | 混合精度策略 | v0.6 场 f32 + 残差 f64 | 部分决定，见 ADR 0003 |

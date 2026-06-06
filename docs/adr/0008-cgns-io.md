@@ -2,7 +2,7 @@
 
 - **状态**: 已接受
 - **日期**: 2026-05-29
-- **关联**: [ADR 0007](0007-vts-binary-io.md)、[CASE_FORMAT.md](../CASE_FORMAT.md)
+- **关联**: [ADR 0007](0007-vts-binary-io.md)、[ADR 0010](0010-unstructured-mixed-mesh.md)、[CASE_FORMAT.md](../CASE_FORMAT.md)
 
 ## 背景
 
@@ -17,12 +17,12 @@
 
 ### 2. 范围（首版）
 
-| 支持 | 不支持 |
-|------|--------|
-| CGNS ADF / HDF5（由系统 libcgns 处理） | Unstructured zone |
+| 支持 | 不支持（首版） |
+|------|----------------|
+| CGNS ADF / HDF5（由系统 libcgns 处理） | Unstructured zone（**M3 Tier 1 扩展**，见 [ADR 0010 §10](0010-unstructured-mixed-mesh.md)） |
 | Structured zone（`ZoneType_t=Structured`） | 多 base |
 | `CoordinateX/Y/Z` Float64 | 非标准坐标命名 |
-| 单 zone 读入 → `StructuredMesh3d` | PointData / BC 写出 |
+| 单 zone 读入 → `StructuredMesh3d` | PointData / BC 写出（流场写出另途） |
 | `export_cgns_zone_to_vts`（单 zone → `.vts`） | |
 | `export_cgns_to_vtm`（全部 zone → `.vtm` + 子 `.vts`） | 单文件多 `Piece` VTS（独立 block 不兼容 ParaView） |
 
@@ -50,3 +50,7 @@ CLI：`cargo run --example cgns_to_vts --features io-cgns-vts -- in.cgns out.vts
 
 - 构建环境须已安装 CGNS 开发包；无系统库时 `io-cgns` 链接失败。
 - 多 zone 文件（如 DLR-F6 26 blocks）按 zone 分别导出 VTS。
+
+## 修订（2026-06-06）
+
+关联 [ADR 0010](0010-unstructured-mixed-mesh.md)：**CGNS Unstructured zone**（混合 tet/hex/pyramid/prism）列入非结构路径 **Tier 1**，M3 与 VTU 并列交付，产出 `UnstructuredMesh3d`。链接方式、feature（`io-cgns`）、MLL 串行化等本节决策 **不变**；仅扩展读入范围与 API（规划 `load_cgns_unstructured_zone`）。

@@ -138,9 +138,10 @@ Planned `[numerics] precision` / `backend` — commented in `config/default.toml
 - [0007](../adr/0007-vts-binary-io.md) — VTS binary I/O
 - [0008](../adr/0008-cgns-io.md) — CGNS read / VTS export
 - [0009](../adr/0009-compressible-navier-stokes.md) — 3D compressible Navier-Stokes solver architecture
+- [0010](../adr/0010-unstructured-mixed-mesh.md) — Unstructured mixed-cell mesh (face-topology roadmap M1–M4)
 
 ## Open decisions
 
 - MPI parallelism (future ADR)
-- Unstructured mesh (v0.4+)
+- Unstructured mesh: see [ADR 0010](../adr/0010-unstructured-mixed-mesh.md) (M1 topology in progress)
 - Turbulence models (v1.x+)
