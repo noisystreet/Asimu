@@ -78,19 +78,56 @@ path = "mesh/cavity.vts"
 
 详见 [adr/0007-vts-binary-io.md](adr/0007-vts-binary-io.md)。
 
-### 3.4 外部 CGNS（feature `io-cgns-vts`）
+### 3.4 多块结构化 3D（首版：读入 / 诊断）
+
+```toml
+[mesh]
+kind = "multi_block_structured_3d"
+metric = "cartesian" # 可选：cartesian | curvilinear
+scale = 0.001        # 可选：统一缩放全部 block 坐标
+
+[[mesh.blocks]]
+name = "inlet"
+nx = 16
+ny = 8
+nz = 4
+lx = 1.0
+ly = 0.5
+lz = 0.25
+
+[[mesh.blocks]]
+name = "outlet"
+nx = 16
+ny = 8
+nz = 4
+lx = 1.0
+ly = 0.5
+lz = 0.25
+```
+
+| 项 | 约定 |
+|----|------|
+| 支持 | 多个均匀 `StructuredMesh3d` block，block 名称必须唯一 |
+| 统计 | `CaseMesh::num_cells()` 返回所有 block 单元总数 |
+| 诊断 | `mesh_check` 可做逐 block 几何预检与整体范围统计 |
+| 支持 | `[boundary]` 可按 `block_name/patch` 绑定到单个 block；1-to-1 接口通量可在 LU-SGS 多块路径中守恒装配 |
+| 暂不支持 | 多块 restart 初场、非 1-to-1 / overset / sliding 接口、合并 VTK 输出 |
+
+### 3.5 外部 CGNS（feature `io-cgns-vts`）
 
 ```toml
 [mesh]
 kind = "cgns"
 path = "mesh/wing.cgns"
-zone = 1
+scale = 0.001 # 可选：统一缩放全部 zone 坐标
 ```
 
 | 项 | 约定 |
 |----|------|
 | 依赖 | 系统 `libcgns-dev`（`build.rs` 链接 `-lcgns`） |
-| 支持 | Structured zone；ADF / HDF5 由 libcgns 处理 |
+| 支持 | Structured zone；单 zone 读为 `Structured3d`，多 zone 读为 `MultiBlockStructured3d`；ADF / HDF5 由 libcgns 处理 |
+| 边界 | `ZoneBC` 自动读入；`FamilyName` 为 `IN` / `OUT` / `WALL` 时映射为入口 / 出口 / 壁面 |
+| 求解 | 多 zone CGNS 可进入 3D 可压缩求解路径；当前按 block 同步推进，1-to-1 接口通过共享无粘通量守恒装配，最终 `solution_cgns` 写为单个多 Zone CGNS 文件；严格守恒多块路径要求 `time.scheme = "lu_sgs"` 且 `lusgs_sweep = false` |
 | 导出 | `export_cgns_zone_to_vts` 或 `make cgns-to-vts IN=... OUT=...` |
 
 详见 [adr/0008-cgns-io.md](adr/0008-cgns-io.md)。
@@ -304,7 +341,7 @@ solution_vtk = false              # 为 true 时额外写 .vtu/.vts（需 featur
 
 相对路径均相对 **算例文件所在目录**；写出文件落在 `dir` 下。
 
-`solution_cgns` / `solution_vtk` 流场含：`Density`、`VelocityX/Y/Z`、`Pressure`、`MachNumber`、`Temperature`（CGNS 为 Vertex 插值，VTK 为单元中心）。
+`solution_cgns` / `solution_vtk` 流场含：`Density`、`VelocityX/Y/Z`、`Pressure`、`MachNumber`、`Temperature`（CGNS 为 Vertex 插值，VTK 为单元中心）。多块 3D case 的最终流场与 `solution_every` 间隔快照均写为单个 CGNS 文件、每个 block 一个 Structured Zone。
 
 ### 7.2 `[observability]` — Chrome trace
 

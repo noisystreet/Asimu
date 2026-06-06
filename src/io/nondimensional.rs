@@ -7,7 +7,7 @@ use crate::core::Real;
 use crate::error::{AsimuError, Result};
 use crate::physics::{FreestreamParams, ReferenceScales, ViscousPhysicsConfig};
 
-use super::CaseSpec;
+use super::{CaseMesh, CaseSpec};
 
 fn scale_freestream(fs: &mut FreestreamParams, reference: &ReferenceScales, gamma: Real) {
     let _ = reference;
@@ -138,9 +138,14 @@ pub(super) fn apply_nondimensionalization_for_compressible(case: &mut CaseSpec) 
     if case.euler.is_none() && case.navier_stokes.is_none() {
         return Ok(());
     }
-    case.mesh
-        .as_3d()
-        .map_err(|_| AsimuError::Config("无量纲可压缩求解仅支持 structured_3d 网格".to_string()))?;
+    if !matches!(
+        case.mesh,
+        CaseMesh::Structured3d(_) | CaseMesh::MultiBlockStructured3d(_)
+    ) {
+        return Err(AsimuError::Config(
+            "无量纲可压缩求解仅支持 3D 网格".to_string(),
+        ));
+    }
     let fs = case
         .freestream
         .or(case.fluid_initial.freestream)

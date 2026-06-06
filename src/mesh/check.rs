@@ -8,8 +8,9 @@ use crate::core::FaceId;
 use crate::error::{AsimuError, Result};
 
 use super::{
-    LogicalFace3d, MeshDiagnostics, StructuredMesh1d, StructuredMesh2d, StructuredMesh3d,
-    mesh1d_diagnostics, mesh2d_diagnostics, mesh3d_diagnostics,
+    LogicalFace3d, MeshDiagnostics, MultiBlockStructuredMesh3d, StructuredMesh1d, StructuredMesh2d,
+    StructuredMesh3d, mesh1d_diagnostics, mesh2d_diagnostics, mesh3d_diagnostics,
+    multiblock_mesh3d_diagnostics,
 };
 
 /// 检查项严重级别。
@@ -386,6 +387,42 @@ pub fn check_mesh3d(
         diagnostics: mesh3d_diagnostics(mesh),
         boundary_patches,
         boundary_note: None,
+        findings,
+    })
+}
+
+/// 多块 3D 结构化网格预检（首版仅几何诊断，不检查跨 block 接口）。
+pub fn check_multiblock_mesh3d(
+    mesh: &MultiBlockStructuredMesh3d,
+    source: impl Into<String>,
+) -> Result<MeshCheckReport> {
+    let mut findings = Vec::new();
+    for block in mesh.blocks() {
+        let block_report = check_mesh3d(&block.mesh, None, format!("block {}", block.name))?;
+        for finding in block_report.findings {
+            if finding.code == "boundary_missing" {
+                continue;
+            }
+            findings.push(CheckFinding {
+                code: finding.code,
+                severity: finding.severity,
+                message: format!("block {}: {}", block.name, finding.message),
+            });
+        }
+    }
+    findings.push(CheckFinding::warn(
+        "multiblock_interfaces",
+        "多块网格首版未检查 block 间接口连通；求解器暂不跨 block 装配",
+    ));
+
+    Ok(MeshCheckReport {
+        source: source.into(),
+        diagnostics: multiblock_mesh3d_diagnostics(mesh),
+        boundary_patches: Vec::new(),
+        boundary_note: Some(format!(
+            "多块结构化 3D 网格：{} 个 block（仅几何诊断）",
+            mesh.num_blocks()
+        )),
         findings,
     })
 }

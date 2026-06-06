@@ -1,6 +1,9 @@
 //! 结构化网格几何诊断（坐标范围、间距、简单一致性检查）。
 
-use super::{StructuredMesh, StructuredMesh1d, StructuredMesh2d, StructuredMesh3d};
+use super::{
+    MultiBlockStructuredMesh3d, StructuredMesh, StructuredMesh1d, StructuredMesh2d,
+    StructuredMesh3d,
+};
 
 /// 单轴坐标范围。
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -133,6 +136,71 @@ pub fn mesh3d_diagnostics(mesh: &StructuredMesh3d) -> MeshDiagnostics {
         bounds,
         spacing,
         warnings,
+    }
+}
+
+#[must_use]
+pub fn multiblock_mesh3d_diagnostics(mesh: &MultiBlockStructuredMesh3d) -> MeshDiagnostics {
+    let mut bounds = MeshBounds {
+        x: CoordRange {
+            min: f64::INFINITY,
+            max: f64::NEG_INFINITY,
+        },
+        y: CoordRange {
+            min: f64::INFINITY,
+            max: f64::NEG_INFINITY,
+        },
+        z: CoordRange {
+            min: f64::INFINITY,
+            max: f64::NEG_INFINITY,
+        },
+    };
+    let mut spacing: Option<SpacingStats> = None;
+    let mut warnings = Vec::new();
+
+    for block in mesh.blocks() {
+        let diag = mesh3d_diagnostics(&block.mesh);
+        bounds.x = merge_range(bounds.x, diag.bounds.x);
+        bounds.y = merge_range(bounds.y, diag.bounds.y);
+        bounds.z = merge_range(bounds.z, diag.bounds.z);
+        spacing = merge_spacing(spacing, diag.spacing);
+        for warning in diag.warnings {
+            warnings.push(format!("block {}: {warning}", block.name));
+        }
+    }
+
+    warnings.push("多块网格首版仅支持读入/诊断，求解器尚不跨 block 装配".to_string());
+    MeshDiagnostics {
+        name: mesh.name.clone(),
+        dimension: 3,
+        nx: mesh.num_blocks(),
+        ny: 1,
+        nz: 1,
+        num_cells: mesh.num_cells(),
+        num_nodes: mesh.num_nodes(),
+        bounds,
+        spacing,
+        warnings,
+    }
+}
+
+fn merge_range(a: CoordRange, b: CoordRange) -> CoordRange {
+    CoordRange {
+        min: a.min.min(b.min),
+        max: a.max.max(b.max),
+    }
+}
+
+fn merge_spacing(a: Option<SpacingStats>, b: Option<SpacingStats>) -> Option<SpacingStats> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(SpacingStats {
+            dx: merge_range(a.dx, b.dx),
+            dy: merge_range(a.dy, b.dy),
+            dz: merge_range(a.dz, b.dz),
+        }),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
     }
 }
 

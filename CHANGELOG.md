@@ -25,9 +25,12 @@
 - GMRES 单元块预条件器：改为局部无粘 Jacobian 块近似，不再为每个分量触发全场 RHS 差分
 - GMRES profiling：`GMRES 隐式步诊断` 日志新增时间步、预条件器构造、线性求解、线搜索与更新后残差评估耗时
 - 可压缩正性下限：恢复来流静压 1% 的 `positivity_pressure_floor`，通量/输出 primitive 恢复钳制最低压力，避免极低温度伪解
+- CGNS case 读入：`mesh.kind = "cgns"` 现在自动读取全部 structured zone；多 zone 文件组装为 `MultiBlockStructured3d`，并按 `IN` / `OUT` / `WALL` family 名修正边界类型
+- 多块 3D 可压缩 case：新增同步 block 推进路径，可运行 `case_dualcone` 这类多 zone CGNS；1-to-1 接口按 CGNS transform 映射并通过共享无粘通量守恒装配，支持最终流场与间隔快照写出为单个多 Zone CGNS 文件
 
 ### Added
 
+- 多块结构化 3D 网格首版：`MultiBlockStructuredMesh3d`、`mesh.kind = "multi_block_structured_3d"` 与 `mesh_check` 诊断；跨 block 求解仍未启用
 - 可压缩 3D 边界面无粘通量接口：`BoundaryInviscidFluxInput` / `inviscid_boundary_face_flux`
 - 可压缩 3D 时间推进：`time.scheme = "gmres"` 现在启用 matrix-free GMRES 隐式伪时间步，支持 LU-SGS 标量对角与单元 5×5 块对角预条件器
 - 线性代数：矩阵无关 restarted GMRES、CSR 矩阵、ILU(0) 预条件器与 LU-SGS 对角预条件器

@@ -363,6 +363,7 @@ mod tests {
             gradient_scratch: crate::discretization::GradientFields::zeros(mesh.num_cells())
                 .expect("gradients"),
             viscous: None,
+            residual_correction: None,
         };
         for _ in 0..10 {
             solver
@@ -484,6 +485,7 @@ mod tests {
             gradient_scratch: crate::discretization::GradientFields::zeros(mesh.num_cells())
                 .expect("gradients"),
             viscous: None,
+            residual_correction: None,
         };
         for _ in 0..10 {
             solver

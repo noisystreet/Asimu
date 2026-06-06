@@ -1,0 +1,42 @@
+//! 可压缩 1D/3D 单步推进上下文。
+
+use std::{cell::RefCell, rc::Rc};
+
+use crate::boundary::BoundarySet;
+use crate::discretization::{BoundaryGhostBuffer, GradientFields};
+use crate::error::Result;
+use crate::field::{ConservedResidual, PrimitiveFields};
+use crate::mesh::{BoundaryMesh3d, StructuredMesh1d, StructuredMesh3d};
+use crate::physics::{FreestreamParams, IdealGasEoS, ReferenceScales, ViscousPhysicsConfig};
+
+pub trait ResidualCorrection3d {
+    fn apply(&mut self, residual: &mut ConservedResidual) -> Result<()>;
+}
+
+pub type ResidualCorrection3dHandle = Rc<RefCell<dyn ResidualCorrection3d>>;
+
+/// 3D 单步推进上下文（减少参数个数）。
+pub struct CompressibleAdvanceContext3d<'a> {
+    pub mesh: &'a dyn BoundaryMesh3d,
+    pub structured: &'a StructuredMesh3d,
+    pub patches: &'a BoundarySet,
+    pub ghosts: &'a mut BoundaryGhostBuffer,
+    pub eos: &'a IdealGasEoS,
+    pub freestream: &'a FreestreamParams,
+    pub reference: Option<&'a ReferenceScales>,
+    /// 每步 RHS 复用的原始变量缓冲（避免每 `evaluate_rhs` 重新分配）。
+    pub primitive_scratch: PrimitiveFields,
+    /// 粘性梯度缓冲（仅 NS 算例使用）。
+    pub gradient_scratch: GradientFields,
+    /// NS 物性（谱半径 / CFL 粘性扩散项；与 `CompressibleEulerConfig::viscous` 一致）。
+    pub viscous: Option<&'a ViscousPhysicsConfig>,
+    /// RHS 后处理修正（多块共享接口通量等）；单块路径保持 `None`。
+    pub residual_correction: Option<ResidualCorrection3dHandle>,
+}
+
+/// 1D 多步推进上下文。
+pub struct CompressibleAdvanceContext1d<'a> {
+    pub mesh: &'a StructuredMesh1d,
+    pub boundary: crate::discretization::InviscidBoundary1d,
+    pub eos: &'a IdealGasEoS,
+}

@@ -413,6 +413,9 @@ fn apply_patch_compressible(
     let p_floor = crate::field::positivity_pressure_floor(freestream.pressure);
     let handler = BoundaryRegistry::handler_for(&patch.kind);
     for &face in &patch.face_ids {
+        if matches!(handler, BcHandler::Periodic) && ghosts.get_face(face).is_some() {
+            continue;
+        }
         let owner_id = mesh.face_owner(face)?;
         let owner = fields.cell_state(owner_id.index() as usize)?;
         let geom = mesh.face_geometry_3d(face)?;

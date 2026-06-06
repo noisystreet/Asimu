@@ -44,8 +44,8 @@ pub mod prelude {
         Preconditioner,
     };
     pub use crate::mesh::{
-        BoundaryMesh, BoundaryMesh3d, Mesh, StructuredMesh, StructuredMesh1d, StructuredMesh2d,
-        StructuredMesh3d,
+        BoundaryMesh, BoundaryMesh3d, Mesh, MultiBlockStructuredMesh3d, StructuredBlock3d,
+        StructuredMesh, StructuredMesh1d, StructuredMesh2d, StructuredMesh3d,
     };
     pub use crate::physics::{
         FreestreamContext, FreestreamParams, IdealGasEoS, PhysicsConfig, PrimitiveState,
@@ -65,7 +65,8 @@ pub mod prelude {
     pub use crate::io::export_cgns_to_vtm;
     #[cfg(feature = "io-cgns")]
     pub use crate::io::{
-        CgnsLoadResult, CgnsMultiLoadResult, CgnsZoneInfo, export_cgns_to_vts,
+        Cgns1to1Connection, CgnsLoadResult, CgnsMultiLoadResult, CgnsZoneInfo, export_cgns_to_vts,
         export_cgns_zone_to_vts, list_cgns_zones, load_cgns_all_zones, load_cgns_zone,
+        write_multiblock_flow_cgns,
     };
 }

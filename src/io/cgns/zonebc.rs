@@ -106,11 +106,12 @@ fn detect_logical_face(range: &CgnsPointRange, nx: i32, ny: i32, nz: i32) -> Res
 pub fn patch_from_cgns(
     name: impl Into<String>,
     bctype: i32,
+    bctype_label: &str,
     range: CgnsPointRange,
     mesh: &StructuredMesh3d,
 ) -> Result<BoundaryPatch> {
     let name = name.into();
-    let kind = BoundaryKind::from_cgns_bctype(bctype, &name);
+    let kind = BoundaryKind::from_cgns_bctype(bctype, bctype_label);
     let face_ids = range.to_face_ids(mesh)?;
     Ok(BoundaryPatch::new(name, face_ids, kind))
 }

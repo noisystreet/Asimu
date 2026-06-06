@@ -3,17 +3,30 @@
 #![allow(unsafe_code)]
 
 use std::ffi::{CStr, CString};
+use std::os::raw::{c_char, c_int};
 use std::path::Path;
 
 use crate::error::{AsimuError, Result};
 use crate::field::ConservedFields;
 use crate::io::limits::{io_error, validate_input_path};
 use crate::io::vertex_field::gather_vertex_primitives;
-use crate::mesh::StructuredMesh3d;
+use crate::mesh::{MultiBlockStructuredMesh3d, StructuredMesh3d};
 use crate::physics::IdealGasEoS;
 
-use super::ffi::{CG_OK, asimu_cg_write_structured_flow, cg_get_error};
+use super::ffi::{
+    CG_OK, asimu_cg_write_multiblock_structured_flow, asimu_cg_write_structured_flow, cg_get_error,
+};
 use super::read::CGNS_LOCK;
+
+struct VertexFlowArrays {
+    rho: Vec<f64>,
+    u: Vec<f64>,
+    v: Vec<f64>,
+    w: Vec<f64>,
+    p: Vec<f64>,
+    mach: Vec<f64>,
+    temperature: Vec<f64>,
+}
 
 /// 将 3D 守恒场写出为 CGNS（坐标与 ρ/u/v/w/p 均在 Vertex；单元值经邻点平均）。
 pub fn write_flow_cgns(
@@ -25,40 +38,8 @@ pub fn write_flow_cgns(
     min_pressure: f64,
 ) -> Result<()> {
     validate_input_path(path)?;
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                io_error(
-                    e.kind(),
-                    format!("无法创建 CGNS 输出目录 {}: {e}", parent.display()),
-                )
-            })?;
-        }
-    }
-    if fields.num_cells() != mesh.num_cells() {
-        return Err(AsimuError::Field(format!(
-            "场单元数 {} 与网格 {} 不一致",
-            fields.num_cells(),
-            mesh.num_cells()
-        )));
-    }
-
-    let (rho, u, v, w, p, mach, temperature) =
-        gather_vertex_primitives(mesh, fields, eos, min_pressure)?;
-    let npts = mesh.num_nodes();
-    for (name, data) in [
-        ("Density", rho.len()),
-        ("VelocityX", u.len()),
-        ("Pressure", p.len()),
-        ("MachNumber", mach.len()),
-        ("Temperature", temperature.len()),
-    ] {
-        if data != npts {
-            return Err(AsimuError::Field(format!(
-                "CGNS Vertex 场 {name} 长度 {data} 与网格顶点数 {npts} 不一致"
-            )));
-        }
-    }
+    create_output_parent(path)?;
+    let arrays = prepare_vertex_flow_arrays(mesh, fields, eos, min_pressure)?;
 
     let cpath = CString::new(path.as_os_str().as_encoded_bytes())
         .map_err(|_| io_error(std::io::ErrorKind::InvalidInput, "CGNS 路径含内嵌 NUL 字节"))?;
@@ -78,6 +59,103 @@ pub fn write_flow_cgns(
             mesh.points_x.as_ptr(),
             mesh.points_y.as_ptr(),
             mesh.points_z.as_ptr(),
+            arrays.rho.as_ptr(),
+            arrays.u.as_ptr(),
+            arrays.v.as_ptr(),
+            arrays.w.as_ptr(),
+            arrays.p.as_ptr(),
+            arrays.mach.as_ptr(),
+            arrays.temperature.as_ptr(),
+            physical_time,
+        )
+    };
+    check_cg(err)
+}
+
+/// 将多块 3D 守恒场写出为单个 CGNS 文件（每个 block 一个 Structured Zone）。
+pub fn write_multiblock_flow_cgns(
+    path: &Path,
+    mesh: &MultiBlockStructuredMesh3d,
+    fields: &[ConservedFields],
+    eos: &IdealGasEoS,
+    physical_time: f64,
+    min_pressure: f64,
+) -> Result<()> {
+    validate_input_path(path)?;
+    create_output_parent(path)?;
+    if fields.len() != mesh.num_blocks() {
+        return Err(AsimuError::Field(format!(
+            "多块流场数量 {} 与 block 数 {} 不一致",
+            fields.len(),
+            mesh.num_blocks()
+        )));
+    }
+
+    let mut names = Vec::with_capacity(mesh.num_blocks());
+    let mut name_ptrs = Vec::with_capacity(mesh.num_blocks());
+    let mut nx = Vec::with_capacity(mesh.num_blocks());
+    let mut ny = Vec::with_capacity(mesh.num_blocks());
+    let mut nz = Vec::with_capacity(mesh.num_blocks());
+    let mut arrays = Vec::with_capacity(mesh.num_blocks());
+
+    for (block, field) in mesh.blocks().iter().zip(fields.iter()) {
+        names.push(
+            CString::new(block.name.as_str())
+                .unwrap_or_else(|_| CString::new("Zone").expect("zone")),
+        );
+        nx.push(block.mesh.nx as c_int);
+        ny.push(block.mesh.ny as c_int);
+        nz.push(block.mesh.nz as c_int);
+        arrays.push(prepare_vertex_flow_arrays(
+            &block.mesh,
+            field,
+            eos,
+            min_pressure,
+        )?);
+    }
+    for name in &names {
+        name_ptrs.push(name.as_ptr());
+    }
+
+    let point_x: Vec<*const f64> = mesh
+        .blocks()
+        .iter()
+        .map(|block| block.mesh.points_x.as_ptr())
+        .collect();
+    let point_y: Vec<*const f64> = mesh
+        .blocks()
+        .iter()
+        .map(|block| block.mesh.points_y.as_ptr())
+        .collect();
+    let point_z: Vec<*const f64> = mesh
+        .blocks()
+        .iter()
+        .map(|block| block.mesh.points_z.as_ptr())
+        .collect();
+    let rho = array_ptrs(&arrays, |a| a.rho.as_ptr());
+    let u = array_ptrs(&arrays, |a| a.u.as_ptr());
+    let v = array_ptrs(&arrays, |a| a.v.as_ptr());
+    let w = array_ptrs(&arrays, |a| a.w.as_ptr());
+    let p = array_ptrs(&arrays, |a| a.p.as_ptr());
+    let mach = array_ptrs(&arrays, |a| a.mach.as_ptr());
+    let temperature = array_ptrs(&arrays, |a| a.temperature.as_ptr());
+
+    let cpath = CString::new(path.as_os_str().as_encoded_bytes())
+        .map_err(|_| io_error(std::io::ErrorKind::InvalidInput, "CGNS 路径含内嵌 NUL 字节"))?;
+    let base = CString::new("Base").expect("base");
+    let _guard = CGNS_LOCK.lock().expect("CGNS lock");
+    let err = unsafe {
+        asimu_cg_write_multiblock_structured_flow(
+            cpath.as_ptr(),
+            base.as_ptr(),
+            mesh.num_blocks() as c_int,
+            name_ptrs.as_ptr().cast::<*const c_char>(),
+            nx.as_ptr(),
+            ny.as_ptr(),
+            nz.as_ptr(),
+            point_x.as_ptr(),
+            point_y.as_ptr(),
+            point_z.as_ptr(),
             rho.as_ptr(),
             u.as_ptr(),
             v.as_ptr(),
@@ -89,6 +167,79 @@ pub fn write_flow_cgns(
         )
     };
     check_cg(err)
+}
+
+fn create_output_parent(path: &Path) -> Result<()> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            io_error(
+                e.kind(),
+                format!("无法创建 CGNS 输出目录 {}: {e}", parent.display()),
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn prepare_vertex_flow_arrays(
+    mesh: &StructuredMesh3d,
+    fields: &ConservedFields,
+    eos: &IdealGasEoS,
+    min_pressure: f64,
+) -> Result<VertexFlowArrays> {
+    if fields.num_cells() != mesh.num_cells() {
+        return Err(AsimuError::Field(format!(
+            "场单元数 {} 与网格 {} 不一致",
+            fields.num_cells(),
+            mesh.num_cells()
+        )));
+    }
+    let (rho, u, v, w, p, mach, temperature) =
+        gather_vertex_primitives(mesh, fields, eos, min_pressure)?;
+    validate_vertex_flow_len(mesh, &rho, &u, &p, &mach, &temperature)?;
+    Ok(VertexFlowArrays {
+        rho,
+        u,
+        v,
+        w,
+        p,
+        mach,
+        temperature,
+    })
+}
+
+fn validate_vertex_flow_len(
+    mesh: &StructuredMesh3d,
+    rho: &[f64],
+    u: &[f64],
+    p: &[f64],
+    mach: &[f64],
+    temperature: &[f64],
+) -> Result<()> {
+    let npts = mesh.num_nodes();
+    for (name, data) in [
+        ("Density", rho.len()),
+        ("VelocityX", u.len()),
+        ("Pressure", p.len()),
+        ("MachNumber", mach.len()),
+        ("Temperature", temperature.len()),
+    ] {
+        if data != npts {
+            return Err(AsimuError::Field(format!(
+                "CGNS Vertex 场 {name} 长度 {data} 与网格顶点数 {npts} 不一致"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn array_ptrs(
+    arrays: &[VertexFlowArrays],
+    ptr: impl Fn(&VertexFlowArrays) -> *const f64,
+) -> Vec<*const f64> {
+    arrays.iter().map(ptr).collect()
 }
 
 fn check_cg(err: i32) -> Result<()> {
@@ -111,7 +262,7 @@ fn check_cg(err: i32) -> Result<()> {
 mod cgns_write_tests {
     use super::*;
     use crate::field::ConservedFields;
-    use crate::mesh::StructuredMesh3d;
+    use crate::mesh::{MultiBlockStructuredMesh3d, StructuredMesh3d};
     use crate::physics::{FreestreamParams, IdealGasEoS};
     use std::process::Command;
 
@@ -154,6 +305,53 @@ with h5py.File(p, "r") as f:
     if "gl" in found:
         gl = bytes(f[found["gl"]][()]).decode("ascii").replace("\x00", "").strip()
         assert gl == "Vertex", gl
+print("ok")
+"#,
+            path = path.display().to_string()
+        );
+        let status = Command::new("python3")
+            .arg("-c")
+            .arg(&script)
+            .status()
+            .expect("python");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(status.success(), "python verify failed");
+    }
+
+    #[test]
+    fn multiblock_flow_cgns_writes_multiple_zones() {
+        let a = StructuredMesh3d::uniform_box("a", 1, 1, 1, 1.0, 1.0, 1.0).expect("a");
+        let b = StructuredMesh3d::uniform_box("b", 1, 1, 1, 1.0, 1.0, 1.0).expect("b");
+        let mesh = MultiBlockStructuredMesh3d::new("multi", vec![a, b]).expect("multi");
+        let eos = IdealGasEoS::AIR_STANDARD;
+        let fs = FreestreamParams::default();
+        let fields = mesh
+            .blocks()
+            .iter()
+            .map(|block| ConservedFields::from_freestream(block.mesh.num_cells(), &eos, &fs))
+            .collect::<Result<Vec<_>>>()
+            .expect("fields");
+        let dir = std::env::temp_dir().join("asimu_cgns_multiblock_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join("flow.cgns");
+        write_multiblock_flow_cgns(&path, &mesh, &fields, &eos, 0.0, 1.0e-6).expect("write");
+
+        let script = format!(
+            r#"
+import h5py
+p = {path:?}
+found = {{"rho": 0, "cx": 0}}
+with h5py.File(p, "r") as f:
+    def visit(name, obj):
+        if not isinstance(obj, h5py.Dataset):
+            return
+        if name.endswith("FlowSolution/Density/ data"):
+            found["rho"] += 1
+        elif name.endswith("GridCoordinates/CoordinateX/ data"):
+            found["cx"] += 1
+    f.visititems(visit)
+assert found == {{"rho": 2, "cx": 2}}, found
 print("ok")
 "#,
             path = path.display().to_string()

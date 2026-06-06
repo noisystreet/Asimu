@@ -577,14 +577,14 @@ mod tests {
         let gamma = eos.gamma;
         let n = mesh.num_cells();
         let mut h_over_lam = Vec::with_capacity(n);
-        for i in 0..n {
+        for (i, length) in lengths.iter().enumerate().take(n) {
             let prim = primitives.cell_primitive(i);
             let rho = prim.density.max(1.0e-30);
             let u_mag =
                 (prim.velocity[0].powi(2) + prim.velocity[1].powi(2) + prim.velocity[2].powi(2))
                     .sqrt();
             let speed = u_mag + (gamma * prim.pressure.max(1.0e-30) / rho).sqrt();
-            h_over_lam.push(lengths[i] / speed.max(1.0e-30));
+            h_over_lam.push(*length / speed.max(1.0e-30));
         }
         let dts_h = h_over_lam.iter().map(|&hl| cfl * hl).collect::<Vec<_>>();
         let min_idx = dts

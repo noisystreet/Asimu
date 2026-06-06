@@ -184,5 +184,6 @@ fn test_context<'a>(
             .expect("primitives"),
         gradient_scratch: GradientFields::zeros(mesh.num_cells()).expect("gradients"),
         viscous: None,
+        residual_correction: None,
     }
 }

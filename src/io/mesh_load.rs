@@ -2,10 +2,12 @@
 
 use std::path::{Path, PathBuf};
 
+use serde::Deserialize;
+
 use crate::boundary::BoundarySet;
 use crate::core::Real;
 use crate::error::{AsimuError, Result};
-use crate::mesh::{MeshMetricMode, StructuredMesh1d, StructuredMesh3d};
+use crate::mesh::{MeshMetricMode, MultiBlockStructuredMesh3d, StructuredMesh1d, StructuredMesh3d};
 
 use super::CaseMesh;
 
@@ -23,9 +25,20 @@ pub(super) struct MeshTomlFields {
     pub ly: Option<Real>,
     pub lz: Option<Real>,
     pub path: Option<PathBuf>,
-    pub zone: Option<usize>,
     pub scale: Option<Real>,
     pub metric: Option<String>,
+    pub blocks: Vec<MeshBlockTomlFields>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(super) struct MeshBlockTomlFields {
+    pub name: String,
+    pub nx: usize,
+    pub ny: usize,
+    pub nz: usize,
+    pub lx: Option<Real>,
+    pub ly: Option<Real>,
+    pub lz: Option<Real>,
 }
 
 #[derive(Debug)]
@@ -43,7 +56,8 @@ pub(super) fn parse_mesh_from_toml(
     let mut parsed = match raw.kind.as_str() {
         "structured_1d" => parse_structured_1d(raw, name),
         "structured_3d" => parse_structured_3d(raw, name),
-        "cgns" => load_cgns_mesh(raw, case_dir),
+        "multi_block_structured_3d" => parse_multiblock_structured_3d(raw, name),
+        "cgns" => load_cgns_mesh(raw, name, case_dir),
         other => Err(AsimuError::Config(format!(
             "不支持的 mesh.kind \"{other}\""
         ))),
@@ -52,6 +66,10 @@ pub(super) fn parse_mesh_from_toml(
         parsed.mesh.scale_coordinates(scale)?;
     }
     if let CaseMesh::Structured3d(mesh) = &mut parsed.mesh {
+        mesh.set_metric_mode(metric_mode);
+        mesh.rebuild_metric_cache_if_needed()?;
+    }
+    if let CaseMesh::MultiBlockStructured3d(mesh) = &mut parsed.mesh {
         mesh.set_metric_mode(metric_mode);
         mesh.rebuild_metric_cache_if_needed()?;
     }
@@ -101,6 +119,30 @@ fn parse_structured_3d(raw: &MeshTomlFields, name: &str) -> Result<ParsedMesh> {
     })
 }
 
+fn parse_multiblock_structured_3d(raw: &MeshTomlFields, name: &str) -> Result<ParsedMesh> {
+    if raw.blocks.is_empty() {
+        return Err(AsimuError::Config(
+            "multi_block_structured_3d 缺少 [[mesh.blocks]]".to_string(),
+        ));
+    }
+    let mut blocks = Vec::with_capacity(raw.blocks.len());
+    for block in &raw.blocks {
+        blocks.push(StructuredMesh3d::uniform_box(
+            &block.name,
+            block.nx,
+            block.ny,
+            block.nz,
+            block.lx.unwrap_or(1.0),
+            block.ly.unwrap_or(1.0),
+            block.lz.unwrap_or(1.0),
+        )?);
+    }
+    Ok(ParsedMesh {
+        mesh: CaseMesh::MultiBlockStructured3d(MultiBlockStructuredMesh3d::new(name, blocks)?),
+        cgns_boundary: None,
+    })
+}
+
 fn parse_metric_mode(raw: &MeshTomlFields) -> Result<MeshMetricMode> {
     match raw.metric.as_deref() {
         None if raw.kind == "cgns" => Ok(MeshMetricMode::Curvilinear),
@@ -114,26 +156,68 @@ fn parse_metric_mode(raw: &MeshTomlFields) -> Result<MeshMetricMode> {
 }
 
 #[cfg(feature = "io-cgns")]
-fn load_cgns_mesh(raw: &MeshTomlFields, case_dir: Option<&Path>) -> Result<ParsedMesh> {
+fn load_cgns_mesh(raw: &MeshTomlFields, name: &str, case_dir: Option<&Path>) -> Result<ParsedMesh> {
     let rel = raw
         .path
         .as_ref()
         .ok_or_else(|| AsimuError::Config("cgns 网格缺少 path".to_string()))?;
     let path = resolve_mesh_path(rel.clone(), case_dir)?;
-    let zone = raw.zone.unwrap_or(1);
-    let result = crate::io::load_cgns_zone(&path, zone)?;
-    match result.mesh {
-        crate::mesh::StructuredMesh::D3(mesh) => Ok(ParsedMesh {
-            mesh: CaseMesh::Structured3d(mesh),
-            cgns_boundary: Some(result.boundary),
+    let loaded = crate::io::load_cgns_all_zones(&path)?;
+    let multiblock = loaded.zones.len() > 1;
+    let mut blocks = Vec::with_capacity(loaded.zones.len());
+    let mut patches = Vec::new();
+
+    for zone in loaded.zones {
+        let crate::io::CgnsLoadResult { mesh, boundary, .. } = zone;
+        let crate::mesh::StructuredMesh::D3(mesh) = mesh else {
+            return Err(AsimuError::Mesh("CGNS zone 须为 3D structured".to_string()));
+        };
+        for patch in boundary.patches() {
+            let mut patch = patch.clone();
+            if multiblock {
+                patch.name = format!("{}/{}", mesh.name, patch.name);
+            }
+            patches.push(patch);
+        }
+        blocks.push(mesh);
+    }
+
+    match blocks.len() {
+        0 => Err(AsimuError::Mesh(
+            "CGNS 文件不含 structured zone".to_string(),
+        )),
+        1 => Ok(ParsedMesh {
+            mesh: CaseMesh::Structured3d(blocks.remove(0)),
+            cgns_boundary: Some(BoundarySet::new(patches)),
         }),
-        _ => Err(AsimuError::Mesh("CGNS zone 须为 3D structured".to_string())),
+        _ => Ok(ParsedMesh {
+            mesh: CaseMesh::MultiBlockStructured3d(MultiBlockStructuredMesh3d::with_interfaces(
+                name,
+                blocks,
+                loaded
+                    .interfaces
+                    .into_iter()
+                    .map(|interface| crate::mesh::StructuredBlockInterface3d {
+                        owner_block: interface.zone_name,
+                        donor_block: interface.donor_name,
+                        owner_range: interface.range,
+                        donor_range: interface.donor_range,
+                        transform: interface.transform,
+                    })
+                    .collect(),
+            )?),
+            cgns_boundary: Some(BoundarySet::new(patches)),
+        }),
     }
 }
 
 #[cfg(not(feature = "io-cgns"))]
-fn load_cgns_mesh(raw: &MeshTomlFields, _case_dir: Option<&Path>) -> Result<ParsedMesh> {
-    let _ = (raw.path.as_ref(), raw.zone);
+fn load_cgns_mesh(
+    raw: &MeshTomlFields,
+    _name: &str,
+    _case_dir: Option<&Path>,
+) -> Result<ParsedMesh> {
+    let _ = raw.path.as_ref();
     Err(AsimuError::Config(
         "cgns 网格须启用 feature io-cgns".to_string(),
     ))

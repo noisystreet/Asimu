@@ -73,10 +73,12 @@ let result = solver.run(&mesh)?;
 |------|------|
 | `Mesh` | 网格元数据（`name`, `cell_count`） |
 | `StructuredMesh1d` | 1D 均匀网格 + `BoundaryMesh` |
+| `MultiBlockStructuredMesh3d` | 多块 3D 结构化网格容器；支持读入、缩放、metric 批量设置、接口元数据与诊断 |
+| `StructuredBlock3d` | 单个 block + 全局 `cell_offset` |
 | `BoundaryMesh` | 逻辑边界名 → 面 ID |
 | `MeshDiagnostics` | 坐标范围、间距统计、简单警告 |
 | `structured_mesh_diagnostics(&StructuredMesh) -> MeshDiagnostics` | 2D/3D 结构化网格诊断 |
-| `mesh1d_diagnostics` / `mesh3d_diagnostics` | 1D / 3D 专用诊断 |
+| `mesh1d_diagnostics` / `mesh3d_diagnostics` / `multiblock_mesh3d_diagnostics` | 1D / 3D / 多块 3D 专用诊断 |
 | `Mesh::new(name, cell_count) -> Result<Mesh>` | 构造；`cell_count == 0` 返回错误 |
 
 ### `asimu::solver`
@@ -119,7 +121,12 @@ let result = solver.run(&mesh)?;
 |-------------|------|
 | `list_cgns_zones(&Path) -> Result<Vec<CgnsZoneInfo>>` | 列出全部 structured zone |
 | `load_cgns_zone(&Path, zone_index) -> Result<CgnsLoadResult>` | 读取单 zone |
+| `load_cgns_all_zones(&Path) -> Result<CgnsMultiLoadResult>` | 读取全部 structured zone；case 解析会将多 zone CGNS 组装为 `MultiBlockStructured3d` |
+| `write_multiblock_flow_cgns(path, mesh, fields, eos, time, p_floor)` | 将多块结构化流场写为单个多 Zone CGNS 文件 |
 | `export_cgns_zone_to_vts(input, zone, output) -> Result<CgnsLoadResult>` | CGNS zone → VTS |
+| `export_cgns_to_vtm(input, output) -> Result<CgnsMultiLoadResult>` | CGNS 全部 zone → VTM + 多个 VTS |
+
+多 zone CGNS case 可进入 3D 可压缩求解路径；当前按 block 同步推进，1-to-1 接口按 CGNS transform 映射并用共享无粘通量守恒装配（一次计算、两侧等量反号），最终 `solution_cgns` 与 `solution_every` 快照写为单个多 Zone CGNS 文件。严格守恒多块路径目前要求 `time.scheme = "lu_sgs"` 且 `lusgs_sweep = false`。
 
 见 [adr/0008-cgns-io.md](adr/0008-cgns-io.md)。
 

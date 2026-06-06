@@ -2,7 +2,7 @@
 
 use tracing::info_span;
 
-use crate::boundary::BoundarySet;
+use crate::boundary::{BoundaryKind, BoundarySet};
 use crate::core::Real;
 use crate::discretization::{BoundaryGhostBuffer, InviscidFluxConfig};
 use crate::error::{AsimuError, Result};
@@ -214,6 +214,9 @@ fn assemble_boundary_faces_3d(
     let mesh = ctx.structured;
     let params = ctx.params;
     for patch in params.boundaries.patches() {
+        if matches!(patch.kind, BoundaryKind::Periodic { .. }) {
+            continue;
+        }
         for &face in &patch.face_ids {
             let owner_id = ctx.mesh.face_owner(face)?;
             let owner = owner_id.index() as usize;

@@ -8,10 +8,10 @@ use tracing::{info, warn};
 use crate::core::{Real, format_log_sci4};
 use crate::error::{AsimuError, Result};
 use crate::field::{ConservedFields, positivity_pressure_floor};
-#[cfg(feature = "io-cgns")]
-use crate::io::write_flow_cgns;
 use crate::io::{CaseSpec, resolve_case_output_path, write_residual_csv};
-use crate::mesh::StructuredMesh3d;
+#[cfg(feature = "io-cgns")]
+use crate::io::{write_flow_cgns, write_multiblock_flow_cgns};
+use crate::mesh::{MultiBlockStructuredMesh3d, StructuredMesh3d};
 use crate::physics::IdealGasEoS;
 use crate::solver::CompressibleStepInfo;
 
@@ -54,6 +54,37 @@ pub fn write_compressible_3d_outputs(
         if output.solution_vtk {
             written.push(flow_vtu_path(&path));
             written.push(flow_vts_path(&path));
+        }
+    }
+
+    Ok(written)
+}
+
+pub fn write_multiblock_compressible_3d_outputs(
+    case: &CaseSpec,
+    mesh: &MultiBlockStructuredMesh3d,
+    fields: &[ConservedFields],
+    history: &[CompressibleStepInfo],
+) -> Result<Vec<PathBuf>> {
+    let Some(output) = &case.output else {
+        return Ok(Vec::new());
+    };
+    let mut written = write_residual_outputs(case, history)?;
+
+    if let Some(name) = &output.solution_cgns {
+        let path = resolve_case_output_path(case.case_dir.as_deref(), &output.dir, name)?;
+        let physical_time = history.last().map(|s| s.physical_time).unwrap_or(0.0);
+        write_multiblock_solution_flow(&path, mesh, fields, physical_time, case)?;
+        info!(
+            path = %path.display(),
+            zones = mesh.num_blocks(),
+            t = %format_log_sci4(physical_time),
+            "已写出多块流场 CGNS"
+        );
+        written.push(path);
+        #[cfg(feature = "io-vtk")]
+        if output.solution_vtk {
+            warn!("多块 3D 求解暂不写出合并 VTU/VTS；已写出多 Zone CGNS");
         }
     }
 
@@ -105,6 +136,36 @@ pub fn maybe_write_flow_snapshot(
         t = %format_log_sci4(info.physical_time),
         every,
         "已写出间隔流场 CGNS"
+    );
+    Ok(Some(path))
+}
+
+/// 若当前步满足间隔条件，写出多块流场快照 CGNS（每个 block 一个 Zone）。
+pub fn maybe_write_multiblock_flow_snapshot(
+    case: &CaseSpec,
+    mesh: &MultiBlockStructuredMesh3d,
+    fields: &[ConservedFields],
+    info: &CompressibleStepInfo,
+) -> Result<Option<PathBuf>> {
+    let output = match &case.output {
+        Some(o) if o.wants_interval_flow() => o,
+        _ => return Ok(None),
+    };
+    let every = output.solution_every.expect("wants_interval_flow");
+    if info.step % every != 0 {
+        return Ok(None);
+    }
+    let base = output.solution_cgns.as_ref().expect("wants_interval_flow");
+    let name = flow_cgns_name_for_step(base, info.step);
+    let path = resolve_case_output_path(case.case_dir.as_deref(), &output.dir, &name)?;
+    write_multiblock_solution_flow(&path, mesh, fields, info.physical_time, case)?;
+    info!(
+        path = %path.display(),
+        zones = mesh.num_blocks(),
+        step = info.step,
+        t = %format_log_sci4(info.physical_time),
+        every,
+        "已写出多块间隔流场 CGNS"
     );
     Ok(Some(path))
 }
@@ -162,6 +223,26 @@ fn write_solution_flow(
     Ok(())
 }
 
+fn write_multiblock_solution_flow(
+    path: &Path,
+    mesh: &MultiBlockStructuredMesh3d,
+    fields: &[ConservedFields],
+    physical_time: Real,
+    case: &CaseSpec,
+) -> Result<()> {
+    let (fields_out, eos_out, time_out, p_floor) =
+        prepare_multiblock_dimensional_flow_output(case, fields, physical_time)?;
+    #[cfg(feature = "io-cgns")]
+    write_multiblock_flow_cgns(path, mesh, &fields_out, &eos_out, time_out, p_floor)?;
+    #[cfg(not(feature = "io-cgns"))]
+    let _ = path;
+    #[cfg(not(feature = "io-cgns"))]
+    let _ = (mesh, fields_out, eos_out, time_out, p_floor);
+    #[cfg(not(feature = "io-cgns"))]
+    warn!("solution_cgns 须启用 feature io-cgns");
+    Ok(())
+}
+
 fn prepare_dimensional_flow_output(
     case: &CaseSpec,
     fields: &ConservedFields,
@@ -180,6 +261,57 @@ fn prepare_dimensional_flow_output(
     let time_out = physical_time * reference.time_scale();
     let p_floor = p_floor_nd * reference.pressure;
     Ok((fields_out, eos_out, time_out, p_floor))
+}
+
+fn prepare_multiblock_dimensional_flow_output(
+    case: &CaseSpec,
+    fields: &[ConservedFields],
+    physical_time: Real,
+) -> Result<(Vec<ConservedFields>, IdealGasEoS, Real, Real)> {
+    let p_floor_nd = case
+        .freestream
+        .or(case.fluid_initial.freestream)
+        .map(|f| positivity_pressure_floor(f.pressure))
+        .unwrap_or(1.0e-6);
+    let reference = case.reference.as_ref().ok_or_else(|| {
+        crate::error::AsimuError::Config("可压缩流场输出须有无量纲 reference".to_string())
+    })?;
+    let fields_out = fields
+        .iter()
+        .map(|field| field.to_dimensional(reference))
+        .collect::<Result<Vec<_>>>()?;
+    let eos_out = case.dimensional_eos()?;
+    let time_out = physical_time * reference.time_scale();
+    let p_floor = p_floor_nd * reference.pressure;
+    Ok((fields_out, eos_out, time_out, p_floor))
+}
+
+fn write_residual_outputs(
+    case: &CaseSpec,
+    history: &[CompressibleStepInfo],
+) -> Result<Vec<PathBuf>> {
+    let Some(output) = &case.output else {
+        return Ok(Vec::new());
+    };
+    let mut written = Vec::new();
+    if let Some(name) = &output.residual_csv {
+        let path = resolve_case_output_path(case.case_dir.as_deref(), &output.dir, name)?;
+        write_residual_csv(&path, history)?;
+        info!(path = %path.display(), "已写出残差 CSV");
+        written.push(path.clone());
+
+        if let Some(plot_name) = &output.residual_plot {
+            let plot_path =
+                resolve_case_output_path(case.case_dir.as_deref(), &output.dir, plot_name)?;
+            if let Err(err) = try_plot_residual(&path, &plot_path) {
+                warn!(error = %err, "残差曲线图未生成（需 python3 + matplotlib）");
+            } else {
+                info!(path = %plot_path.display(), "已写出残差曲线图");
+                written.push(plot_path);
+            }
+        }
+    }
+    Ok(written)
 }
 
 /// 由 `flow.cgns` 或 `snapshots/flow.cgns` 生成间隔输出文件名。

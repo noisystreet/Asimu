@@ -16,7 +16,7 @@ use asimu::error::Result;
 use asimu::io::{CaseMesh, list_cgns_zones, load_case, load_cgns_zone};
 use asimu::mesh::{
     MeshCheckOptions, MeshCheckReport, MeshCheckReportDisplay, MeshMetricMode, StructuredMesh,
-    check_mesh1d, check_mesh2d, check_mesh3d,
+    check_mesh1d, check_mesh2d, check_mesh3d, check_multiblock_mesh3d,
 };
 
 #[derive(Debug, Parser)]
@@ -73,6 +73,7 @@ fn run(args: &Args) -> Result<()> {
             let mut report = match &case.mesh {
                 CaseMesh::Structured1d(mesh) => check_mesh1d(mesh, source),
                 CaseMesh::Structured3d(mesh) => check_mesh3d(mesh, Some(&case.boundary), source)?,
+                CaseMesh::MultiBlockStructured3d(mesh) => check_multiblock_mesh3d(mesh, source)?,
             };
             report.boundary_note =
                 Some("已按 case.toml 解析（含 [freestream] / [euler] 等修正）".to_string());

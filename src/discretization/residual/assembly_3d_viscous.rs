@@ -150,6 +150,9 @@ fn assemble_viscous_boundary_faces(
     temperatures: &[Real],
 ) -> Result<()> {
     for patch in params.boundaries.patches() {
+        if matches!(patch.kind, BoundaryKind::Periodic { .. }) {
+            continue;
+        }
         let (wall_heat, no_slip, is_wall) = match &patch.kind {
             BoundaryKind::Wall { heat, no_slip, .. } => (Some(*heat), *no_slip, true),
             _ => (None, false, false),

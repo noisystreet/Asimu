@@ -13,7 +13,7 @@ use tracing::{info, instrument};
 
 use crate::config::init_tracing;
 use crate::error::{AsimuError, Result};
-use crate::io::{CaseSpec, load_case};
+use crate::io::{CaseMesh, CaseSpec, load_case};
 
 pub use compressible_3d::Compressible3dRunMetrics;
 pub use diffusion::DiffusionRunMetrics;
@@ -77,7 +77,11 @@ fn detect_run_kind(case: &CaseSpec) -> Result<CaseRunKind> {
         return Ok(CaseRunKind::Sod1dTransient);
     }
     if case.is_compressible() {
-        if case.mesh.as_3d().is_ok() && (case.euler.is_some() || case.navier_stokes.is_some()) {
+        let is_3d = matches!(
+            case.mesh,
+            CaseMesh::Structured3d(_) | CaseMesh::MultiBlockStructured3d(_)
+        );
+        if is_3d && (case.euler.is_some() || case.navier_stokes.is_some()) {
             return Ok(CaseRunKind::Compressible3dTransient);
         }
         return Err(AsimuError::Config(
@@ -117,6 +121,52 @@ mod tests {
         assert_eq!(metrics.scheme, "muscl_roe");
         assert_eq!(metrics.limiter, "van_albada");
         assert!(metrics.l1_density < 0.02);
+    }
+
+    #[test]
+    fn runs_multiblock_compressible_smoke_case() {
+        let case = crate::io::parse_case_str(
+            r#"
+name = "multi_cns"
+[mesh]
+kind = "multi_block_structured_3d"
+
+[[mesh.blocks]]
+name = "a"
+nx = 1
+ny = 1
+nz = 1
+
+[[mesh.blocks]]
+name = "b"
+nx = 1
+ny = 1
+nz = 1
+
+[physics]
+gamma = 1.4
+gas_constant = 287.0
+
+[freestream]
+mach = 0.3
+pressure = 101325.0
+temperature = 288.15
+
+[euler]
+flux = "hllc"
+
+[time]
+scheme = "lu_sgs"
+local_time_step = true
+max_steps = 1
+"#,
+        )
+        .expect("parse");
+        let result = run_case(&case).expect("run");
+        assert_eq!(result.kind, CaseRunKind::Compressible3dTransient);
+        let metrics = result.compressible_3d.expect("metrics");
+        assert_eq!(metrics.steps, 1);
+        assert!(metrics.residual_rms.is_finite());
     }
 
     #[cfg(all(feature = "io-cgns", feature = "slow-tests"))]
@@ -274,6 +324,7 @@ mod tests {
             gradient_scratch: crate::discretization::GradientFields::zeros(mesh.num_cells())
                 .expect("gradients"),
             viscous: None,
+            residual_correction: None,
         };
         let step1 = solver
             .advance_step_3d(

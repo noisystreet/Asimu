@@ -1,6 +1,6 @@
 # asimu 数据模型
 
-> 本文描述核心数据结构的设计意图与字段约定。实现状态见 [ARCHITECTURE.md](ARCHITECTURE.md) §1.3。  
+> 本文描述核心数据结构的设计意图与字段约定。实现状态见 [ARCHITECTURE.md](ARCHITECTURE.md) §1.3。
 > 多精度与 GPU：[ARCHITECTURE.md](ARCHITECTURE.md) §8.4 · Run Manifest / Restart：[ARCHITECTURE.md](ARCHITECTURE.md) §8.5
 
 ---
@@ -74,6 +74,30 @@ pub struct StructuredMesh2d {
 ### 3.3 当前占位类型
 
 v0.1 的 `Mesh { name, cell_count }` 将在 v0.2 替换为上述结构，保留 `name` 作为调试标识。
+
+### 3.4 多块结构化网格（首版）
+
+当前实现提供 `MultiBlockStructuredMesh3d`，用于承载多个 `StructuredMesh3d` block：
+
+```rust
+pub struct StructuredBlock3d {
+    pub name: String,
+    pub mesh: StructuredMesh3d,
+    pub cell_offset: usize,
+}
+
+pub struct MultiBlockStructuredMesh3d {
+    pub name: String,
+    blocks: Vec<StructuredBlock3d>,
+}
+```
+
+约束：
+
+- block 名称必须唯一且非空。
+- `cell_offset` 按 block 顺序累加，用于后续全局场数组映射。
+- `num_cells()` / `num_nodes()` 返回所有 block 总数。
+- 首版只支持读入、缩放、metric 批量设置与 `mesh_check` 诊断；跨 block 接口、边界 patch 解析和求解器装配仍为规划。
 
 ---
 

@@ -181,9 +181,9 @@ impl BoundaryKind {
         }
     }
 
-    /// 由 CGNS `BCType_t` 映射（见 `io::cgns::zonebc`）。
+    /// 由 CGNS `BCType_t` 与 patch/family 名映射（见 `io::cgns::zonebc`）。
     pub fn from_cgns_bctype(bctype: i32, name: &str) -> Self {
-        map_cgns_bctype(bctype).with_cgns_name_note(name)
+        map_cgns_bctype(bctype, name).with_cgns_name_note(name)
     }
 
     fn with_cgns_name_note(self, _name: &str) -> Self {
@@ -282,7 +282,12 @@ impl BoundaryKind {
     }
 }
 
-fn map_cgns_bctype(bctype: i32) -> BoundaryKind {
+fn map_cgns_bctype(bctype: i32, name: &str) -> BoundaryKind {
+    if matches!(bctype, cgns_bc::BC_NULL | cgns_bc::BC_FAMILY_SPECIFIED) {
+        if let Some(kind) = map_cgns_name(name) {
+            return kind;
+        }
+    }
     if bctype == cgns_bc::BC_FARFIELD {
         return BoundaryKind::Farfield {
             mach: 0.0,
@@ -311,6 +316,24 @@ fn map_cgns_bctype(bctype: i32) -> BoundaryKind {
         return default_wall(true);
     }
     default_wall(true)
+}
+
+fn map_cgns_name(name: &str) -> Option<BoundaryKind> {
+    match name.trim().to_ascii_uppercase().as_str() {
+        // 部分工程 CGNS 只在 FamilyName 写 IN/OUT/WALL，FamilyBC 仍为 Null。
+        "IN" | "INLET" => Some(default_inlet(true)),
+        "OUT" | "OUTLET" => Some(default_outflow(true)),
+        "WALL" => Some(default_wall(true)),
+        "SYMMETRY" | "SYMM" => Some(BoundaryKind::Symmetry),
+        "FARFIELD" | "FAR" => Some(BoundaryKind::Farfield {
+            mach: 0.0,
+            pressure: 101_325.0,
+            temperature: 288.15,
+            alpha: 0.0,
+            beta: 0.0,
+        }),
+        _ => None,
+    }
 }
 
 fn default_inlet(supersonic: bool) -> BoundaryKind {
@@ -356,6 +379,7 @@ fn is_viscous_wall(bctype: i32) -> bool {
 
 /// CGNS BCType 常量（与 `cgnslib.h` 一致子集）。
 pub mod cgns_bc {
+    pub const BC_NULL: i32 = 2;
     pub const BC_EXTRAPOLATE: i32 = 6;
     pub const BC_FARFIELD: i32 = 7;
     pub const BC_INFLOW: i32 = 9;
@@ -402,6 +426,28 @@ mod tests {
                 }
             ));
         }
+    }
+
+    #[test]
+    fn cgns_family_name_maps_null_bc_type() {
+        assert!(matches!(
+            BoundaryKind::from_cgns_bctype(cgns_bc::BC_NULL, "IN"),
+            BoundaryKind::Inlet {
+                supersonic: true,
+                ..
+            }
+        ));
+        assert!(matches!(
+            BoundaryKind::from_cgns_bctype(cgns_bc::BC_NULL, "OUT"),
+            BoundaryKind::Outlet {
+                supersonic: true,
+                ..
+            }
+        ));
+        assert!(matches!(
+            BoundaryKind::from_cgns_bctype(cgns_bc::BC_NULL, "WALL"),
+            BoundaryKind::Wall { no_slip: true, .. }
+        ));
     }
 
     #[test]

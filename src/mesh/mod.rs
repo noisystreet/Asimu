@@ -4,6 +4,7 @@ mod boundary;
 mod check;
 mod diagnostics;
 mod metrics;
+mod multiblock;
 mod structured;
 mod structured_1d;
 mod structured_3d_boundary;
@@ -11,13 +12,18 @@ mod structured_3d_boundary;
 pub use boundary::BoundaryMesh;
 pub use check::{
     BoundaryPatchReport, CheckFinding, CheckSeverity, MeshCheckOptions, MeshCheckReport,
-    MeshCheckReportDisplay, check_mesh1d, check_mesh2d, check_mesh3d, write_mesh_check_report,
+    MeshCheckReportDisplay, check_mesh1d, check_mesh2d, check_mesh3d, check_multiblock_mesh3d,
+    write_mesh_check_report,
 };
 pub use diagnostics::{
     CoordRange, MeshBounds, MeshDiagnostics, SpacingStats, mesh1d_diagnostics, mesh2d_diagnostics,
-    mesh3d_diagnostics, structured_mesh_diagnostics,
+    mesh3d_diagnostics, multiblock_mesh3d_diagnostics, structured_mesh_diagnostics,
 };
 pub use metrics::{CellMetric, FaceMetric, MeshMetricMode, MetricCache3d, boundary_cell_spacing};
+pub use multiblock::{
+    MultiBlockStructuredMesh3d, StructuredBlock3d, StructuredBlockInterface3d,
+    StructuredIndexRange3d,
+};
 pub use structured::{StructuredMesh, StructuredMesh2d, StructuredMesh3d};
 pub use structured_1d::StructuredMesh1d;
 pub use structured_3d_boundary::{BoundaryMesh3d, FaceGeometry3d, LogicalFace3d};

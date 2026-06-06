@@ -5,7 +5,7 @@ use std::fmt;
 use crate::boundary::BoundarySet;
 use crate::mesh::{
     MeshDiagnostics, StructuredMesh, StructuredMesh1d, StructuredMesh3d, mesh1d_diagnostics,
-    mesh3d_diagnostics, structured_mesh_diagnostics,
+    mesh3d_diagnostics, multiblock_mesh3d_diagnostics, structured_mesh_diagnostics,
 };
 
 use super::CaseMesh;
@@ -143,6 +143,11 @@ pub fn report_case_mesh(
     match mesh {
         CaseMesh::Structured1d(m) => report_mesh1d(source, m, Some(boundary)),
         CaseMesh::Structured3d(m) => report_mesh3d(source, m, Some(boundary)),
+        CaseMesh::MultiBlockStructured3d(m) => MeshReport {
+            source: source.into(),
+            mesh: multiblock_mesh3d_diagnostics(m),
+            boundary: summarize_boundary(Some(boundary)),
+        },
     }
 }
 

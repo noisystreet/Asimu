@@ -1,5 +1,8 @@
 use super::*;
+use crate::boundary::BoundarySet;
 use crate::core::approx_eq;
+use crate::discretization::BoundaryGhostBuffer;
+use crate::field::PrimitiveFields;
 use crate::physics::{ConservedState, PrimitiveState};
 #[cfg(all(feature = "io-cgns", feature = "slow-tests"))]
 use std::collections::HashSet;
@@ -128,6 +131,7 @@ fn lusgs_3d_honors_fixed_dt() {
         gradient_scratch: crate::discretization::GradientFields::zeros(mesh.num_cells())
             .expect("gradients"),
         viscous: None,
+        residual_correction: None,
     };
     let info = solver
         .advance_step_3d(
@@ -201,6 +205,7 @@ fn cylinder_uniform_freestream_no_bc_time_advance_when_present() {
         gradient_scratch: crate::discretization::GradientFields::zeros(mesh.num_cells())
             .expect("gradients"),
         viscous: None,
+        residual_correction: None,
     };
 
     eprintln!("=== 圆柱网格 无 BC 均匀来流 时间推进 ({} 步) ===", steps);
@@ -301,6 +306,7 @@ fn cylinder_lusgs_post_residual_changes_with_cfl1_when_present() {
         gradient_scratch: crate::discretization::GradientFields::zeros(mesh.num_cells())
             .expect("gradients"),
         viscous: None,
+        residual_correction: None,
     };
     let rho_ref = fields.density.values().to_vec();
     let info1 = solver

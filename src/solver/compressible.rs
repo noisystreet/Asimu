@@ -5,6 +5,8 @@
 
 use std::time::Instant;
 
+#[path = "compressible_context.rs"]
+mod compressible_context;
 #[path = "compressible_rhs.rs"]
 mod compressible_rhs;
 #[path = "gmres_block_preconditioner_3d.rs"]
@@ -17,6 +19,10 @@ mod lu_sgs_sweep_3d;
 use crate::solver::spectral_radius::{
     SpectralRadius3dParams, cell_local_dt_spectral, cell_spectral_radius_3d,
 };
+pub use compressible_context::{
+    CompressibleAdvanceContext1d, CompressibleAdvanceContext3d, ResidualCorrection3d,
+    ResidualCorrection3dHandle,
+};
 use compressible_rhs::EvaluateRhs3d;
 pub use gmres_implicit_3d::{GmresImplicitConfig, GmresImplicitDelta, GmresPreconditionerKind};
 use gmres_implicit_3d::{
@@ -24,17 +30,14 @@ use gmres_implicit_3d::{
 };
 use lu_sgs_sweep_3d::{LuSgsSweep3dParams, lu_sgs_sweep_3d};
 
-use crate::boundary::BoundarySet;
 use crate::core::{Real, format_log_fixed4, format_log_sci4, log10_positive};
 use crate::discretization::{
-    BoundaryGhostBuffer, GradientFields, apply_compressible_boundary_conditions,
-    assemble_inviscid_residual_1d,
+    apply_compressible_boundary_conditions, assemble_inviscid_residual_1d,
 };
 use crate::error::Result;
-use crate::field::{ConservedFields, ConservedResidual, PrimitiveFields};
-use crate::mesh::{BoundaryMesh3d, StructuredMesh1d, StructuredMesh3d};
-use crate::physics::ViscousPhysicsConfig;
-use crate::physics::{FreestreamContext, FreestreamParams, IdealGasEoS, ReferenceScales};
+use crate::field::{ConservedFields, ConservedResidual};
+use crate::mesh::{StructuredMesh1d, StructuredMesh3d};
+use crate::physics::{FreestreamContext, FreestreamParams, IdealGasEoS, ViscousPhysicsConfig};
 use crate::solver::state::SolverState;
 use crate::solver::time::{
     CflSchedule, LuSgsConfig, ResidualSmoothingConfig, Rk4Storage, RungeKutta4Config,
@@ -103,30 +106,6 @@ pub struct CompressibleStepInfo {
     pub converged: bool,
 }
 
-/// 3D 单步推进上下文（减少参数个数）。
-pub struct CompressibleAdvanceContext3d<'a> {
-    pub mesh: &'a dyn BoundaryMesh3d,
-    pub structured: &'a StructuredMesh3d,
-    pub patches: &'a BoundarySet,
-    pub ghosts: &'a mut BoundaryGhostBuffer,
-    pub eos: &'a IdealGasEoS,
-    pub freestream: &'a FreestreamParams,
-    pub reference: Option<&'a ReferenceScales>,
-    /// 每步 RHS 复用的原始变量缓冲（避免每 `evaluate_rhs` 重新分配）。
-    pub primitive_scratch: PrimitiveFields,
-    /// 粘性梯度缓冲（仅 NS 算例使用）。
-    pub gradient_scratch: GradientFields,
-    /// NS 物性（谱半径 / CFL 粘性扩散项；与 `CompressibleEulerConfig::viscous` 一致）。
-    pub viscous: Option<&'a ViscousPhysicsConfig>,
-}
-
-/// 1D 多步推进上下文。
-pub struct CompressibleAdvanceContext1d<'a> {
-    pub mesh: &'a StructuredMesh1d,
-    pub boundary: crate::discretization::InviscidBoundary1d,
-    pub eos: &'a IdealGasEoS,
-}
-
 /// 可压缩 Euler 显式 RK4 求解器。
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompressibleEulerSolver {
@@ -158,6 +137,7 @@ impl CompressibleEulerSolver {
             min_pressure,
             primitive_scratch: &mut ctx.primitive_scratch,
             gradient_scratch: &mut ctx.gradient_scratch,
+            residual_correction: ctx.residual_correction.clone(),
         }
     }
 

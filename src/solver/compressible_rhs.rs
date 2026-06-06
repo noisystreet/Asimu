@@ -2,6 +2,7 @@
 
 use tracing::info_span;
 
+use super::ResidualCorrection3dHandle;
 use crate::boundary::BoundarySet;
 use crate::core::Real;
 use crate::discretization::residual::InviscidAssembly3dParams;
@@ -31,6 +32,7 @@ pub(crate) struct EvaluateRhs3d<'a> {
     pub min_pressure: Real,
     pub primitive_scratch: &'a mut PrimitiveFields,
     pub gradient_scratch: &'a mut GradientFields,
+    pub residual_correction: Option<ResidualCorrection3dHandle>,
 }
 
 impl EvaluateRhs3d<'_> {
@@ -74,6 +76,9 @@ impl EvaluateRhs3d<'_> {
                 gradient_scratch: self.gradient_scratch,
             };
             compute_gradients_and_assemble_viscous_3d(residual, &mut input)?;
+        }
+        if let Some(correction) = &self.residual_correction {
+            correction.borrow_mut().apply(residual)?;
         }
         Ok(())
     }

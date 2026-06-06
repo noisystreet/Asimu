@@ -80,6 +80,18 @@ unsafe extern "C" {
         normal_list: *mut c_void,
     ) -> c_int;
     pub fn cg_get_error() -> *const c_char;
+    pub fn cg_n1to1(fn_: c_int, base: c_int, zone: c_int, n1to1: *mut c_int) -> c_int;
+    pub fn cg_1to1_read(
+        fn_: c_int,
+        base: c_int,
+        zone: c_int,
+        connect: c_int,
+        connectname: *mut c_char,
+        donorname: *mut c_char,
+        range: *mut CgSize,
+        donor_range: *mut CgSize,
+        transform: *mut c_int,
+    ) -> c_int;
     pub fn asimu_cg_read_boco_family_name(
         fn_: c_int,
         base: c_int,
@@ -105,6 +117,26 @@ unsafe extern "C" {
         p: *const f64,
         mach: *const f64,
         temperature: *const f64,
+        physical_time: f64,
+    ) -> c_int;
+    pub fn asimu_cg_write_multiblock_structured_flow(
+        filename: *const c_char,
+        basename: *const c_char,
+        zone_count: c_int,
+        zonenames: *const *const c_char,
+        nx: *const c_int,
+        ny: *const c_int,
+        nz: *const c_int,
+        points_x: *const *const f64,
+        points_y: *const *const f64,
+        points_z: *const *const f64,
+        rho: *const *const f64,
+        u: *const *const f64,
+        v: *const *const f64,
+        w: *const *const f64,
+        p: *const *const f64,
+        mach: *const *const f64,
+        temperature: *const *const f64,
         physical_time: f64,
     ) -> c_int;
 }

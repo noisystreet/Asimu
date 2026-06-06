@@ -22,7 +22,7 @@ use crate::error::{AsimuError, Result};
 use crate::field::{
     Fields, FluidInitialConfig, InitialKind, InitialSet, ScalarField, ScalarInitial,
 };
-use crate::mesh::{BoundaryMesh, StructuredMesh1d, StructuredMesh3d};
+use crate::mesh::{BoundaryMesh, MultiBlockStructuredMesh3d, StructuredMesh1d, StructuredMesh3d};
 use crate::physics::{FreestreamParams, IdealGasEoS, PhysicsConfig, ReferenceScales};
 
 use super::validate_input_path;
@@ -36,6 +36,7 @@ use case_compressible::{
 pub enum CaseMesh {
     Structured1d(StructuredMesh1d),
     Structured3d(StructuredMesh3d),
+    MultiBlockStructured3d(MultiBlockStructuredMesh3d),
 }
 
 impl CaseMesh {
@@ -44,6 +45,7 @@ impl CaseMesh {
         match self {
             Self::Structured1d(m) => m.num_cells(),
             Self::Structured3d(m) => m.num_cells(),
+            Self::MultiBlockStructured3d(m) => m.num_cells(),
         }
     }
 
@@ -57,6 +59,9 @@ impl CaseMesh {
     pub fn as_3d(&self) -> Result<&StructuredMesh3d> {
         match self {
             Self::Structured3d(m) => Ok(m),
+            Self::MultiBlockStructured3d(_) => Err(AsimuError::Mesh(
+                "多块 3D 网格首版仅支持读入/诊断，求解器暂不支持".to_string(),
+            )),
             _ => Err(AsimuError::Mesh("算例非 3D 网格".to_string())),
         }
     }
@@ -72,8 +77,12 @@ impl CaseMesh {
                 mesh.length *= factor;
             }
             Self::Structured3d(mesh) => mesh.scale_coordinates(factor),
+            Self::MultiBlockStructured3d(mesh) => mesh.scale_coordinates(factor),
         }
         if let CaseMesh::Structured3d(mesh) = self {
+            mesh.rebuild_metric_cache_if_needed()?;
+        }
+        if let CaseMesh::MultiBlockStructured3d(mesh) = self {
             mesh.rebuild_metric_cache_if_needed()?;
         }
         Ok(())
@@ -314,10 +323,10 @@ struct MeshToml {
     lz: Option<Real>,
     #[cfg_attr(not(feature = "io-cgns"), allow(dead_code))]
     path: Option<PathBuf>,
-    #[cfg_attr(not(feature = "io-cgns"), allow(dead_code))]
-    zone: Option<usize>,
     scale: Option<Real>,
     metric: Option<String>,
+    #[serde(default)]
+    blocks: Vec<mesh_load::MeshBlockTomlFields>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -497,9 +506,9 @@ fn mesh_toml_fields(raw: &MeshToml) -> mesh_load::MeshTomlFields {
         ly: raw.ly,
         lz: raw.lz,
         path: raw.path.clone(),
-        zone: raw.zone,
         scale: raw.scale,
         metric: raw.metric.clone(),
+        blocks: raw.blocks.clone(),
     }
 }
 
@@ -649,6 +658,11 @@ fn resolve_boundary_set(
         let face_ids = match mesh {
             CaseMesh::Structured1d(m) => m.resolve_logical_boundary(logical_name)?,
             CaseMesh::Structured3d(m) => m.resolve_logical_boundary(logical_name)?,
+            CaseMesh::MultiBlockStructured3d(_) => {
+                return Err(AsimuError::Boundary(
+                    "多块 3D 网格首版尚不支持通过 [boundary] 解析全局边界 patch".to_string(),
+                ));
+            }
         };
         patches.push(BoundaryPatch::new(logical_name.clone(), face_ids, kind));
     }

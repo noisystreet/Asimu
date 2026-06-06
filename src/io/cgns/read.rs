@@ -8,13 +8,13 @@ use std::sync::Mutex;
 use crate::boundary::{BoundarySet, cgns_bc};
 use crate::error::{AsimuError, Result};
 use crate::io::limits::{io_error, validate_cell_count, validate_file_size, validate_input_path};
-use crate::mesh::{StructuredMesh, StructuredMesh3d};
+use crate::mesh::{StructuredIndexRange3d, StructuredMesh, StructuredMesh3d};
 
 use super::ffi::{
     BC_POINT_RANGE, CG_MODE_READ, CG_OK, CgSize, REAL_DOUBLE, ZONE_STRUCTURED,
-    asimu_cg_read_boco_family_name, cg_boco_info, cg_boco_read, cg_close, cg_coord_read,
-    cg_fambc_read, cg_family_read, cg_get_error, cg_nbocos, cg_nfamilies, cg_nzones, cg_open,
-    cg_zone_read, cg_zone_type,
+    asimu_cg_read_boco_family_name, cg_1to1_read, cg_boco_info, cg_boco_read, cg_close,
+    cg_coord_read, cg_fambc_read, cg_family_read, cg_get_error, cg_n1to1, cg_nbocos, cg_nfamilies,
+    cg_nzones, cg_open, cg_zone_read, cg_zone_type,
 };
 use super::zonebc::{CgnsPointRange, boundary_set_from_cgns, patch_from_cgns};
 
@@ -39,8 +39,24 @@ pub struct CgnsLoadResult {
     pub boundary: BoundarySet,
 }
 
+/// CGNS `GridConnectivity1to1_t` 连接元数据。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cgns1to1Connection {
+    pub zone_name: String,
+    pub connect_name: String,
+    pub donor_name: String,
+    pub range: StructuredIndexRange3d,
+    pub donor_range: StructuredIndexRange3d,
+    pub transform: [i32; 3],
+}
+
 struct CgnsFile {
     index: i32,
+}
+
+struct ResolvedBocoType {
+    bctype: i32,
+    label: String,
 }
 
 impl CgnsFile {
@@ -197,20 +213,24 @@ impl CgnsFile {
         zone: i32,
         boco: i32,
         bocotype: i32,
-        families: &HashMap<String, i32>,
-    ) -> Result<i32> {
+        _families: &HashMap<String, i32>,
+        boco_name: &str,
+    ) -> Result<ResolvedBocoType> {
         if bocotype != cgns_bc::BC_FAMILY_SPECIFIED {
-            return Ok(bocotype);
+            return Ok(ResolvedBocoType {
+                bctype: bocotype,
+                label: boco_name.to_string(),
+            });
         }
         let mut family_name = [0i8; 33];
         check_cg(unsafe {
             asimu_cg_read_boco_family_name(self.index, base, zone, boco, family_name.as_mut_ptr())
         })?;
         let family = c_str_to_string(&family_name)?;
-        families
-            .get(&family)
-            .copied()
-            .ok_or_else(|| AsimuError::Boundary(format!("CGNS BC 引用未知 Family \"{family}\"")))
+        Ok(ResolvedBocoType {
+            bctype: cgns_bc::BC_FAMILY_SPECIFIED,
+            label: family,
+        })
     }
 
     fn read_boco_point_range(&self, base: i32, zone: i32, boco: i32) -> Result<CgnsPointRange> {
@@ -233,6 +253,46 @@ impl CgnsFile {
             kmin: pnts[2],
             kmax: pnts[5],
         })
+    }
+
+    fn read_zone_1to1_connections(
+        &self,
+        base: i32,
+        zone: i32,
+        zone_name: &str,
+    ) -> Result<Vec<Cgns1to1Connection>> {
+        let mut count = 0;
+        check_cg(unsafe { cg_n1to1(self.index, base, zone, &mut count) })?;
+        let mut connections = Vec::with_capacity(count as usize);
+        for connect in 1..=count {
+            let mut connect_name = [0i8; 33];
+            let mut donor_name = [0i8; 33];
+            let mut range = [0 as CgSize; 6];
+            let mut donor_range = [0 as CgSize; 6];
+            let mut transform = [0i32; 3];
+            check_cg(unsafe {
+                cg_1to1_read(
+                    self.index,
+                    base,
+                    zone,
+                    connect,
+                    connect_name.as_mut_ptr(),
+                    donor_name.as_mut_ptr(),
+                    range.as_mut_ptr(),
+                    donor_range.as_mut_ptr(),
+                    transform.as_mut_ptr(),
+                )
+            })?;
+            connections.push(Cgns1to1Connection {
+                zone_name: zone_name.to_string(),
+                connect_name: c_str_to_string(&connect_name)?,
+                donor_name: c_str_to_string(&donor_name)?,
+                range: structured_range_from_cgns(range),
+                donor_range: structured_range_from_cgns(donor_range),
+                transform,
+            });
+        }
+        Ok(connections)
     }
 
     fn read_zone_bocos(
@@ -276,8 +336,15 @@ impl CgnsFile {
             }
             let range = self.read_boco_point_range(base, zone, boco)?;
             let boco_name = c_str_to_string(&name)?;
-            let resolved = self.resolve_boco_type(base, zone, boco, bocotype, &families)?;
-            patches.push(patch_from_cgns(boco_name, resolved, range, mesh)?);
+            let resolved =
+                self.resolve_boco_type(base, zone, boco, bocotype, &families, &boco_name)?;
+            patches.push(patch_from_cgns(
+                boco_name,
+                resolved.bctype,
+                &resolved.label,
+                range,
+                mesh,
+            )?);
         }
         Ok(boundary_set_from_cgns(patches))
     }
@@ -357,6 +424,7 @@ fn load_cgns_zone_locked(path: &Path, zone_index: usize) -> Result<CgnsLoadResul
 #[derive(Debug, Clone, PartialEq)]
 pub struct CgnsMultiLoadResult {
     pub zones: Vec<CgnsLoadResult>,
+    pub interfaces: Vec<Cgns1to1Connection>,
     /// 多 block 导出时生成的 `.vtm` 路径（仅 `export_cgns_to_vtm` 设置）。
     pub vtm_path: Option<std::path::PathBuf>,
 }
@@ -377,6 +445,7 @@ fn load_cgns_all_zones_locked(path: &Path) -> Result<CgnsMultiLoadResult> {
         .unwrap_or("cgns")
         .to_string();
     let mut zones = Vec::with_capacity(nzones);
+    let mut interfaces = Vec::new();
     for zone in 1..=nzones as i32 {
         let info = file.zone_info(BASE, zone)?;
         let (points_x, points_y, points_z) = file.read_coords(BASE, zone, &info)?;
@@ -395,6 +464,7 @@ fn load_cgns_all_zones_locked(path: &Path) -> Result<CgnsMultiLoadResult> {
             points_z,
         )?;
         let boundary = file.read_zone_bocos(BASE, zone, &mesh3d)?;
+        interfaces.extend(file.read_zone_1to1_connections(BASE, zone, &mesh_name)?);
         let mesh = StructuredMesh::D3(mesh3d);
         zones.push(CgnsLoadResult {
             zone: info,
@@ -404,6 +474,7 @@ fn load_cgns_all_zones_locked(path: &Path) -> Result<CgnsMultiLoadResult> {
     }
     Ok(CgnsMultiLoadResult {
         zones,
+        interfaces,
         vtm_path: None,
     })
 }
@@ -448,6 +519,7 @@ pub fn export_cgns_to_vtm(input: &Path, output: &Path) -> Result<CgnsMultiLoadRe
     crate::io::vtk::write_vtm(&block_refs, &vtm_path)?;
     Ok(CgnsMultiLoadResult {
         zones: loaded.zones,
+        interfaces: loaded.interfaces,
         vtm_path: Some(vtm_path),
     })
 }
@@ -494,6 +566,17 @@ fn c_str_to_string(buf: &[i8]) -> Result<String> {
     let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
     let bytes: Vec<u8> = buf[..end].iter().map(|&b| b as u8).collect();
     String::from_utf8(bytes).map_err(|e| AsimuError::Mesh(format!("zone 名称非 UTF-8: {e}")))
+}
+
+fn structured_range_from_cgns(range: [CgSize; 6]) -> StructuredIndexRange3d {
+    StructuredIndexRange3d {
+        imin: range[0],
+        imax: range[3],
+        jmin: range[1],
+        jmax: range[4],
+        kmin: range[2],
+        kmax: range[5],
+    }
 }
 
 fn check_cg(err: i32) -> Result<()> {

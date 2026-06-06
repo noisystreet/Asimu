@@ -58,6 +58,74 @@ static_pressure = 100000.0
 }
 
 #[test]
+fn parses_multiblock_structured_3d_mesh() {
+    let case = parse_case_toml(
+        r#"
+name = "multi"
+[mesh]
+kind = "multi_block_structured_3d"
+
+[[mesh.blocks]]
+name = "inlet"
+nx = 2
+ny = 1
+nz = 1
+lx = 2.0
+
+[[mesh.blocks]]
+name = "outlet"
+nx = 3
+ny = 1
+nz = 1
+lx = 3.0
+
+[physics]
+diffusivity = 1.0
+"#,
+        None,
+    )
+    .expect("parse");
+
+    let CaseMesh::MultiBlockStructured3d(mesh) = &case.mesh else {
+        panic!("expected multiblock mesh");
+    };
+    assert_eq!(mesh.num_blocks(), 2);
+    assert_eq!(mesh.num_cells(), 5);
+    assert_eq!(mesh.blocks()[1].cell_offset, 2);
+    assert_eq!(case.mesh.num_cells(), 5);
+}
+
+#[test]
+fn rejects_duplicate_multiblock_names() {
+    let err = parse_case_toml(
+        r#"
+name = "multi"
+[mesh]
+kind = "multi_block_structured_3d"
+
+[[mesh.blocks]]
+name = "block"
+nx = 1
+ny = 1
+nz = 1
+
+[[mesh.blocks]]
+name = "block"
+nx = 1
+ny = 1
+nz = 1
+
+[physics]
+diffusivity = 1.0
+"#,
+        None,
+    )
+    .expect_err("duplicate");
+
+    assert!(matches!(err, AsimuError::Mesh(_)));
+}
+
+#[test]
 fn parses_lu_sgs_time_scheme() {
     let content = r#"
 name = "lusgs_test"
