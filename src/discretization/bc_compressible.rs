@@ -37,6 +37,19 @@ impl BoundaryGhostBuffer {
         Self::default()
     }
 
+    #[must_use]
+    pub fn with_face_capacity(num_faces: usize) -> Self {
+        Self {
+            states: vec![None; num_faces],
+        }
+    }
+
+    pub fn ensure_face_capacity(&mut self, num_faces: usize) {
+        if self.states.len() < num_faces {
+            self.states.resize(num_faces, None);
+        }
+    }
+
     pub fn insert_face(&mut self, face: crate::core::FaceId, state: GhostCellState) {
         let index = face.index() as usize;
         if index >= self.states.len() {

@@ -22,7 +22,8 @@ pub use compressible::{
     GmresImplicitDelta, GmresPreconditionerKind,
 };
 pub use lu_sgs_sweep_unstructured::{
-    LuSgsSweepUnstructuredInput, LuSgsSweepUnstructuredParams, lu_sgs_sweep_unstructured,
+    LuSgsSweepUnstructuredInput, LuSgsSweepUnstructuredParams, LuSgsUnstructuredCouplings,
+    lu_sgs_sweep_unstructured,
 };
 pub use sod::{
     SodBenchmarkConfig, SodBenchmarkResult, run_sod_benchmark, sod_initial_fields,

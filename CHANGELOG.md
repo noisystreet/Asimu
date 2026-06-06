@@ -14,6 +14,7 @@
 
 ### Changed
 
+- 非结构求解性能：新增 `UnstructuredSolverMeshCache` 预计算面拓扑与 IDWLS 几何矩阵 \(A\)；`compute_unstructured_gradients_idw_lsq` 与粘性通量装配每步仅累加 RHS 并复用缓存面列表，数值与逐步枚举 `mesh` 等价
 - 3D 可压缩读入层统一：`structured_3d` 与单 zone CGNS 解析为 1-block `MultiBlockStructured3d`，求解入口不再 runtime 包装；移除 `CaseMesh::Structured3d` 变体
 - 有 1-to-1 接口的多块可压缩 case 在解析阶段校验 `time.scheme = lu_sgs` 且 `lusgs_sweep = false`；`mesh.zone` 废弃并告警
 - 3D 可压缩求解统一为 block 编排路径：输出/间隔快照/初场与多块共用一套逻辑；无接口时跳过共享通量装配，单块仍可使用 GMRES/RK4/LU-SGS sweep

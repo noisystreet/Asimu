@@ -37,6 +37,7 @@ pub struct LuSgsSweepUnstructuredInput<'a> {
     pub dt: &'a [Real],
     pub sigma: &'a [Real],
     pub volumes: &'a [Real],
+    pub couplings: &'a LuSgsUnstructuredCouplings,
     pub omega: Real,
     pub gamma: Real,
 }
@@ -46,6 +47,27 @@ struct CellCoupling {
     neighbor: usize,
     area: Real,
     normal: Vector3,
+}
+
+/// 非结构 LU-SGS 拓扑邻接缓存，仅依赖网格 face owner/neighbor。
+pub struct LuSgsUnstructuredCouplings {
+    cells: Vec<Vec<CellCoupling>>,
+}
+
+impl LuSgsUnstructuredCouplings {
+    pub fn from_mesh(mesh: &UnstructuredMesh3d) -> Result<Self> {
+        build_cell_couplings(mesh).map(|cells| Self { cells })
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.cells.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.cells.is_empty()
+    }
 }
 
 /// 非结构 LU-SGS 双扫，按 CellId 单调顺序定义下/上三角邻接。
@@ -60,12 +82,12 @@ pub fn lu_sgs_sweep_unstructured(
         || input.dt.len() != n
         || input.sigma.len() != n
         || input.volumes.len() != n
+        || input.couplings.len() != n
     {
         return Err(AsimuError::Solver(
             "lu_sgs_sweep_unstructured: 场/残差/dt/sigma/volume 长度不一致".to_string(),
         ));
     }
-    let couplings = build_cell_couplings(params.mesh)?;
     let u0 = fields.clone();
     let scalars = LuSgsSweepScalars {
         dt: input.dt,
@@ -76,11 +98,18 @@ pub fn lu_sgs_sweep_unstructured(
     };
     {
         let _span = info_span!("lu_sgs_unstructured_forward").entered();
-        forward_sweep(fields, &u0, residual, params, &couplings, &scalars)?;
+        forward_sweep(
+            fields,
+            &u0,
+            residual,
+            params,
+            &input.couplings.cells,
+            &scalars,
+        )?;
     }
     {
         let _span = info_span!("lu_sgs_unstructured_backward").entered();
-        backward_sweep(fields, &u0, params, &couplings, &scalars)?;
+        backward_sweep(fields, &u0, params, &input.couplings.cells, &scalars)?;
     }
     let u_sweep = fields.clone();
     stabilize_sweep_update(
@@ -423,6 +452,7 @@ mod tests {
             .expect("fill");
         let residual = ConservedResidual::zeros(mesh.num_cells()).expect("rhs");
         let volumes = mesh.cell_volumes();
+        let couplings = LuSgsUnstructuredCouplings::from_mesh(&mesh).expect("couplings");
         let dt = vec![0.01; mesh.num_cells()];
         let sigma = vec![10.0; mesh.num_cells()];
         let mut params = LuSgsSweepUnstructuredParams {
@@ -440,6 +470,7 @@ mod tests {
                 dt: &dt,
                 sigma: &sigma,
                 volumes: &volumes,
+                couplings: &couplings,
                 omega: 1.0,
                 gamma: eos.gamma,
             },

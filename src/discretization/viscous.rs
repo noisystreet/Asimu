@@ -2,7 +2,8 @@
 
 use crate::core::{Real, Vector3};
 use crate::discretization::InviscidFlux;
-use crate::discretization::gradient::VelocityGradient;
+use crate::discretization::gradient::{GradientFields, VelocityGradient, VelocityGradientSlices};
+use crate::field::PrimitiveFields;
 use crate::physics::{IdealGasEoS, PrimitiveState, ViscousPhysicsConfig};
 
 /// 粘性面通量（与无粘通量相同的守恒分量布局）。
@@ -25,6 +26,142 @@ pub fn viscous_face_flux(
         0.5 * (prim_l.velocity[1] + prim_r.velocity[1]),
         0.5 * (prim_l.velocity[2] + prim_r.velocity[2]),
     ];
+    viscous_face_flux_from_averaged(u, &grad, normal, mu, lambda)
+}
+
+/// 内面粘性通量：直接从 SoA 原始变量/梯度读取，避免 `PrimitiveState` 与 `VelocityGradient` 拷贝。
+#[must_use]
+pub fn viscous_interior_face_flux(
+    prim: &PrimitiveFields,
+    grad: &GradientFields,
+    left: usize,
+    right: usize,
+    normal: Vector3,
+    mu: Real,
+    lambda: Real,
+) -> ViscousFlux {
+    let ux = prim.velocity_x.values();
+    let uy = prim.velocity_y.values();
+    let uz = prim.velocity_z.values();
+    let u = [
+        0.5 * (ux[left] + ux[right]),
+        0.5 * (uy[left] + uy[right]),
+        0.5 * (uz[left] + uz[right]),
+    ];
+    let avg =
+        |field: &crate::field::ScalarField| 0.5 * (field.values()[left] + field.values()[right]);
+    let averaged = VelocityGradient {
+        du: [avg(&grad.du_dx), avg(&grad.du_dy), avg(&grad.du_dz)],
+        dv: [avg(&grad.dv_dx), avg(&grad.dv_dy), avg(&grad.dv_dz)],
+        dw: [avg(&grad.dw_dx), avg(&grad.dw_dy), avg(&grad.dw_dz)],
+        dt: [avg(&grad.dt_dx), avg(&grad.dt_dy), avg(&grad.dt_dz)],
+    };
+    viscous_face_flux_from_averaged(u, &averaged, normal, mu, lambda)
+}
+
+/// 内面粘性 scatter 的可变残差切片。
+pub(crate) struct InteriorViscousResidualMut<'a> {
+    pub mx: &'a mut [Real],
+    pub my: &'a mut [Real],
+    pub mz: &'a mut [Real],
+    pub energy: &'a mut [Real],
+}
+
+/// 内面粘性通量输入场切片。
+pub(crate) struct InteriorViscousFaceInputs<'a> {
+    pub grad: &'a VelocityGradientSlices<'a>,
+    pub ux: &'a [Real],
+    pub uy: &'a [Real],
+    pub uz: &'a [Real],
+}
+
+/// 单面几何与物性。
+pub(crate) struct InteriorViscousFaceGeom {
+    pub owner: usize,
+    pub neighbor: usize,
+    pub nx: Real,
+    pub ny: Real,
+    pub nz: Real,
+    pub mu: Real,
+    pub lambda: Real,
+    pub owner_scale: Real,
+    pub neighbor_scale: Real,
+}
+
+/// 内面粘性通量 + 残差 scatter 融合路径（无中间 `ViscousFlux`）。
+#[inline(always)]
+pub(crate) fn accumulate_fused_interior_viscous_face(
+    inputs: &InteriorViscousFaceInputs<'_>,
+    residual: &mut InteriorViscousResidualMut<'_>,
+    geom: InteriorViscousFaceGeom,
+) {
+    let grad = inputs.grad;
+    let ux = inputs.ux;
+    let uy = inputs.uy;
+    let uz = inputs.uz;
+    let owner = geom.owner;
+    let neighbor = geom.neighbor;
+    let nx = geom.nx;
+    let ny = geom.ny;
+    let nz = geom.nz;
+    let mu = geom.mu;
+    let lambda = geom.lambda;
+    let owner_scale = geom.owner_scale;
+    let neighbor_scale = geom.neighbor_scale;
+    let half = 0.5;
+    let u0 = half * (ux[owner] + ux[neighbor]);
+    let u1 = half * (uy[owner] + uy[neighbor]);
+    let u2 = half * (uz[owner] + uz[neighbor]);
+
+    let du0 = half * (grad.du_dx[owner] + grad.du_dx[neighbor]);
+    let du1 = half * (grad.du_dy[owner] + grad.du_dy[neighbor]);
+    let du2 = half * (grad.du_dz[owner] + grad.du_dz[neighbor]);
+    let dv0 = half * (grad.dv_dx[owner] + grad.dv_dx[neighbor]);
+    let dv1 = half * (grad.dv_dy[owner] + grad.dv_dy[neighbor]);
+    let dv2 = half * (grad.dv_dz[owner] + grad.dv_dz[neighbor]);
+    let dw0 = half * (grad.dw_dx[owner] + grad.dw_dx[neighbor]);
+    let dw1 = half * (grad.dw_dy[owner] + grad.dw_dy[neighbor]);
+    let dw2 = half * (grad.dw_dz[owner] + grad.dw_dz[neighbor]);
+    let dt0 = half * (grad.dt_dx[owner] + grad.dt_dx[neighbor]);
+    let dt1 = half * (grad.dt_dy[owner] + grad.dt_dy[neighbor]);
+    let dt2 = half * (grad.dt_dz[owner] + grad.dt_dz[neighbor]);
+
+    let div_u = du0 + dv1 + dw2;
+    let two_thirds = 2.0 / 3.0;
+    let tau_xx = mu * (2.0 * du0 - two_thirds * div_u);
+    let tau_yy = mu * (2.0 * dv1 - two_thirds * div_u);
+    let tau_zz = mu * (2.0 * dw2 - two_thirds * div_u);
+    let tau_xy = mu * (du1 + dv0);
+    let tau_xz = mu * (du2 + dw0);
+    let tau_yz = mu * (dv2 + dw1);
+
+    let tau_dot_n0 = tau_xx * nx + tau_xy * ny + tau_xz * nz;
+    let tau_dot_n1 = tau_xy * nx + tau_yy * ny + tau_yz * nz;
+    let tau_dot_n2 = tau_xz * nx + tau_yz * ny + tau_zz * nz;
+    let heat_flux = lambda * (dt0 * nx + dt1 * ny + dt2 * nz);
+    let energy_flux = -(heat_flux + tau_dot_n0 * u0 + tau_dot_n1 * u1 + tau_dot_n2 * u2);
+
+    let mx_flux = -tau_dot_n0;
+    let my_flux = -tau_dot_n1;
+    let mz_flux = -tau_dot_n2;
+
+    residual.mx[owner] += owner_scale * mx_flux;
+    residual.my[owner] += owner_scale * my_flux;
+    residual.mz[owner] += owner_scale * mz_flux;
+    residual.energy[owner] += owner_scale * energy_flux;
+    residual.mx[neighbor] += neighbor_scale * mx_flux;
+    residual.my[neighbor] += neighbor_scale * my_flux;
+    residual.mz[neighbor] += neighbor_scale * mz_flux;
+    residual.energy[neighbor] += neighbor_scale * energy_flux;
+}
+
+fn viscous_face_flux_from_averaged(
+    u: [Real; 3],
+    grad: &VelocityGradient,
+    normal: Vector3,
+    mu: Real,
+    lambda: Real,
+) -> ViscousFlux {
     let div_u = grad.du[0] + grad.dv[1] + grad.dw[2];
     let two_thirds = 2.0 / 3.0;
 
@@ -102,7 +239,150 @@ fn average_gradient(left: &VelocityGradient, right: &VelocityGradient) -> Veloci
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::field::PrimitiveFields;
     use crate::physics::{IdealGasEoS, ViscosityModel, ViscousPhysicsConfig};
+
+    #[test]
+    fn interior_soa_flux_matches_structured_path() {
+        let eos = IdealGasEoS::AIR_STANDARD;
+        let viscous =
+            ViscousPhysicsConfig::new(ViscosityModel::constant(1.0e-5).expect("mu"), 0.72)
+                .expect("cfg");
+        let base = eos
+            .freestream_primitive(0.0, 101_325.0, 300.0, [1.0, 0.0, 0.0])
+            .expect("prim");
+        let mut fast = base;
+        fast.velocity[0] = 100.0;
+        let grad_l = VelocityGradient {
+            du: [0.0; 3],
+            dv: [0.0; 3],
+            dw: [0.0; 3],
+            dt: [0.0; 3],
+        };
+        let grad_r = VelocityGradient {
+            du: [100.0, 0.0, 0.0],
+            dv: [0.0; 3],
+            dw: [0.0; 3],
+            dt: [0.0; 3],
+        };
+        let (mu, lambda) = face_transport_coefficients(300.0, 300.0, &viscous, &eos).expect("tc");
+        let normal = Vector3::new(1.0, 0.0, 0.0);
+        let reference = viscous_face_flux(&base, &grad_l, &fast, &grad_r, normal, mu, lambda);
+
+        let mut prim = PrimitiveFields::zeros(2).expect("prim");
+        for (cell, state) in [(0, base), (1, fast)] {
+            prim.density.values_mut()[cell] = state.density;
+            prim.velocity_x.values_mut()[cell] = state.velocity[0];
+            prim.velocity_y.values_mut()[cell] = state.velocity[1];
+            prim.velocity_z.values_mut()[cell] = state.velocity[2];
+            prim.pressure.values_mut()[cell] = state.pressure;
+        }
+        let mut grad = GradientFields::zeros(2).expect("grad");
+        for (cell, g) in [(0, grad_l), (1, grad_r)] {
+            grad.du_dx.values_mut()[cell] = g.du[0];
+            grad.du_dy.values_mut()[cell] = g.du[1];
+            grad.du_dz.values_mut()[cell] = g.du[2];
+            grad.dv_dx.values_mut()[cell] = g.dv[0];
+            grad.dv_dy.values_mut()[cell] = g.dv[1];
+            grad.dv_dz.values_mut()[cell] = g.dv[2];
+            grad.dw_dx.values_mut()[cell] = g.dw[0];
+            grad.dw_dy.values_mut()[cell] = g.dw[1];
+            grad.dw_dz.values_mut()[cell] = g.dw[2];
+            grad.dt_dx.values_mut()[cell] = g.dt[0];
+            grad.dt_dy.values_mut()[cell] = g.dt[1];
+            grad.dt_dz.values_mut()[cell] = g.dt[2];
+        }
+        let soa = viscous_interior_face_flux(&prim, &grad, 0, 1, normal, mu, lambda);
+        assert!((soa.mass - reference.mass).abs() < 1.0e-14);
+        for i in 0..3 {
+            assert!((soa.momentum[i] - reference.momentum[i]).abs() < 1.0e-14);
+        }
+        assert!((soa.energy - reference.energy).abs() < 1.0e-14);
+    }
+
+    #[test]
+    fn fused_interior_flux_matches_soa_path() {
+        let eos = IdealGasEoS::AIR_STANDARD;
+        let viscous =
+            ViscousPhysicsConfig::new(ViscosityModel::constant(1.0e-5).expect("mu"), 0.72)
+                .expect("cfg");
+        let base = eos
+            .freestream_primitive(0.0, 101_325.0, 300.0, [1.0, 0.0, 0.0])
+            .expect("prim");
+        let mut fast = base;
+        fast.velocity[0] = 100.0;
+        let grad_l = VelocityGradient {
+            du: [0.0; 3],
+            dv: [0.0; 3],
+            dw: [0.0; 3],
+            dt: [0.0; 3],
+        };
+        let grad_r = VelocityGradient {
+            du: [100.0, 0.0, 0.0],
+            dv: [0.0; 3],
+            dw: [0.0; 3],
+            dt: [0.0; 3],
+        };
+        let (mu, lambda) = face_transport_coefficients(300.0, 300.0, &viscous, &eos).expect("tc");
+        let normal = Vector3::new(1.0, 0.0, 0.0);
+
+        let mut prim = PrimitiveFields::zeros(2).expect("prim");
+        for (cell, state) in [(0, base), (1, fast)] {
+            prim.velocity_x.values_mut()[cell] = state.velocity[0];
+            prim.velocity_y.values_mut()[cell] = state.velocity[1];
+            prim.velocity_z.values_mut()[cell] = state.velocity[2];
+        }
+        let mut grad = GradientFields::zeros(2).expect("grad");
+        for (cell, g) in [(0, grad_l), (1, grad_r)] {
+            grad.du_dx.values_mut()[cell] = g.du[0];
+            grad.du_dy.values_mut()[cell] = g.du[1];
+            grad.du_dz.values_mut()[cell] = g.du[2];
+            grad.dv_dx.values_mut()[cell] = g.dv[0];
+            grad.dv_dy.values_mut()[cell] = g.dv[1];
+            grad.dv_dz.values_mut()[cell] = g.dv[2];
+            grad.dw_dx.values_mut()[cell] = g.dw[0];
+            grad.dw_dy.values_mut()[cell] = g.dw[1];
+            grad.dw_dz.values_mut()[cell] = g.dw[2];
+            grad.dt_dx.values_mut()[cell] = g.dt[0];
+            grad.dt_dy.values_mut()[cell] = g.dt[1];
+            grad.dt_dz.values_mut()[cell] = g.dt[2];
+        }
+
+        let soa = viscous_interior_face_flux(&prim, &grad, 0, 1, normal, mu, lambda);
+        let mut mx = [0.0; 2];
+        let mut my = [0.0; 2];
+        let mut mz = [0.0; 2];
+        let mut energy = [0.0; 2];
+        accumulate_fused_interior_viscous_face(
+            &InteriorViscousFaceInputs {
+                grad: &grad.velocity_gradient_slices(),
+                ux: prim.velocity_x.values(),
+                uy: prim.velocity_y.values(),
+                uz: prim.velocity_z.values(),
+            },
+            &mut InteriorViscousResidualMut {
+                mx: &mut mx,
+                my: &mut my,
+                mz: &mut mz,
+                energy: &mut energy,
+            },
+            InteriorViscousFaceGeom {
+                owner: 0,
+                neighbor: 1,
+                nx: normal.x,
+                ny: normal.y,
+                nz: normal.z,
+                mu,
+                lambda,
+                owner_scale: -1.0,
+                neighbor_scale: 1.0,
+            },
+        );
+        assert!((mx[0] - soa.momentum[0]).abs() < 1.0e-14);
+        assert!((mx[1] + soa.momentum[0]).abs() < 1.0e-14);
+        assert!((energy[0] + soa.energy).abs() < 1.0e-14);
+        assert!((energy[1] - soa.energy).abs() < 1.0e-14);
+    }
 
     #[test]
     fn uniform_state_has_zero_viscous_flux() {

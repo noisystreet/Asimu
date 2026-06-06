@@ -77,6 +77,41 @@ impl GradientFields {
             ],
         }
     }
+
+    /// 速度/温度梯度 SoA 切片（粘性通量热路径用）。
+    #[must_use]
+    pub fn velocity_gradient_slices(&self) -> VelocityGradientSlices<'_> {
+        VelocityGradientSlices {
+            du_dx: self.du_dx.values(),
+            du_dy: self.du_dy.values(),
+            du_dz: self.du_dz.values(),
+            dv_dx: self.dv_dx.values(),
+            dv_dy: self.dv_dy.values(),
+            dv_dz: self.dv_dz.values(),
+            dw_dx: self.dw_dx.values(),
+            dw_dy: self.dw_dy.values(),
+            dw_dz: self.dw_dz.values(),
+            dt_dx: self.dt_dx.values(),
+            dt_dy: self.dt_dy.values(),
+            dt_dz: self.dt_dz.values(),
+        }
+    }
+}
+
+/// 单元梯度 SoA 切片视图。
+pub struct VelocityGradientSlices<'a> {
+    pub du_dx: &'a [Real],
+    pub du_dy: &'a [Real],
+    pub du_dz: &'a [Real],
+    pub dv_dx: &'a [Real],
+    pub dv_dy: &'a [Real],
+    pub dv_dz: &'a [Real],
+    pub dw_dx: &'a [Real],
+    pub dw_dy: &'a [Real],
+    pub dw_dz: &'a [Real],
+    pub dt_dx: &'a [Real],
+    pub dt_dy: &'a [Real],
+    pub dt_dz: &'a [Real],
 }
 
 /// 单元 \((u,v,w,T)\) 梯度张量分量。
@@ -168,7 +203,19 @@ pub(crate) fn cell_temperatures(
 ) -> Result<Vec<Real>> {
     let n = primitives.num_cells();
     let mut t = vec![0.0; n];
-    for (i, ti) in t.iter_mut().enumerate().take(n) {
+    cell_temperatures_into(primitives, eos, viscous, &mut t)?;
+    Ok(t)
+}
+
+pub(crate) fn cell_temperatures_into(
+    primitives: &PrimitiveFields,
+    eos: &IdealGasEoS,
+    viscous: Option<&crate::physics::ViscousPhysicsConfig>,
+    out: &mut Vec<Real>,
+) -> Result<()> {
+    let n = primitives.num_cells();
+    out.resize(n, 0.0);
+    for (i, ti) in out.iter_mut().enumerate().take(n) {
         let rho = primitives.density.values()[i];
         let p = primitives.pressure.values()[i];
         if rho <= 0.0 || p <= 0.0 {
@@ -180,7 +227,7 @@ pub(crate) fn cell_temperatures(
             .map(|v| v.static_temperature(p, rho, eos))
             .unwrap_or(p / (rho * eos.gas_constant));
     }
-    Ok(t)
+    Ok(())
 }
 
 #[derive(Clone, Copy)]

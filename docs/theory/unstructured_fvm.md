@@ -79,6 +79,31 @@ w_m = \frac{1}{|\Delta \mathbf x_m|}.
 
 实现中对 \(u,v,w,T\) 分别累加同一个 \(3\times3\) 对称正规方程；若局部样本退化导致矩阵奇异，则返回网格错误而不静默给出梯度。
 
+将式 (5) 写成对称正规方程 \(A_i\mathbf g=\mathbf b_i\)：
+
+\[
+A_i = \sum_m w_m\,\Delta\mathbf x_m\,\Delta\mathbf x_m^{\mathsf T},
+\qquad
+\mathbf b_i = \sum_m w_m\,\Delta\phi_m\,\Delta\mathbf x_m .
+\tag{5a}
+\]
+
+其中 \(A_i\) 仅依赖网格几何与样本位置（内部面为相邻单元中心，边界面为镜像点），\(\mathbf b_i\) 随场变量每步变化。
+
+## 面拓扑与 IDWLS 几何预计算
+
+非结构粘性梯度与粘性通量面循环在每步重复遍历全部面。网格与边界 patch 在求解器 work 区初始化一次后不变，因此将几何固定部分预计算并缓存：
+
+1. **面拓扑** `UnstructuredFaceTopology`：内部面记录 owner/neighbor、面积、法向、两侧体积及 IDWLS 样本 \((\Delta\mathbf x_m, w_m)\)；边界面记录 `FaceId`、owner、度量、壁面粘性类别与边界样本权重。
+2. **IDWLS 几何矩阵** `LsqPrecomputedCell`：对每个单元累加式 (5a) 中的 \(A_i\)（6 个独立对称分量），存入 `UnstructuredSolverMeshCache::lsq_geometry`。
+
+每步梯度计算仅：
+
+- 由当前原始变量与 ghost 状态累加 \(\mathbf b_u,\mathbf b_v,\mathbf b_w,\mathbf b_T\)；
+- 用预计算 \(A_i\) 求解 \(\nabla u,\nabla v,\nabla w,\nabla T\)。
+
+粘性通量装配复用同一 `face_topology`，避免重复查询 `mesh.face_owner` / `face_neighbor` 与面度量。数值结果与逐步从 `mesh` 枚举面的旧路径等价；差异仅为热路径上的分配与索引开销。
+
 ## 粘性通量
 
 非结构 Navier-Stokes 首版复用结构化路径的 Newtonian 应力与 Fourier 热传导通量：
@@ -138,6 +163,8 @@ w_m = \frac{1}{|\Delta \mathbf x_m|}.
 | (2) | `FaceFluxInput::first_order` |
 | (3) | `apply_compressible_boundary_conditions` + `UnstructuredMesh3d::face_geometry_3d` |
 | (4)-(6) | `compute_unstructured_gradients_idw_lsq` |
+| (5a) 几何预计算 | `UnstructuredSolverMeshCache::from_mesh` |
+| 面拓扑缓存 | `UnstructuredFaceTopology`（`unstructured_face_cache`） |
 | (7) | `compute_gradients_and_assemble_viscous_unstructured` |
 | (8) | `cell_spectral_radius_unstructured` + `cell_local_dt_spectral` |
 | (9) | `ConservedFields::assign_lusgs_diagonal_update` |

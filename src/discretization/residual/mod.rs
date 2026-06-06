@@ -28,7 +28,9 @@ pub use assembly_unstructured::{
 };
 pub use assembly_unstructured_viscous::{
     ViscousAssemblyUnstructuredInput, ViscousAssemblyUnstructuredParams,
-    assemble_viscous_residual_unstructured, compute_gradients_and_assemble_viscous_unstructured,
+    ViscousAssemblyUnstructuredScratch, assemble_viscous_residual_unstructured,
+    compute_gradients_and_assemble_viscous_unstructured,
+    compute_gradients_and_assemble_viscous_unstructured_with_scratch,
 };
 pub use face_flux_3d::{
     BoundaryInviscidFluxInput, inviscid_boundary_face_flux,
