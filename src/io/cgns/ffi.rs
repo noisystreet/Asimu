@@ -8,14 +8,27 @@ pub const CG_MODE_READ: c_int = 0;
 pub const CG_OK: c_int = 0;
 
 pub const ZONE_STRUCTURED: ZoneType = 2;
+pub const ZONE_UNSTRUCTURED: ZoneType = 3;
 pub const REAL_DOUBLE: DataType = 4;
 /// CGNS 3.4 `PointSetType_t::PointRange`（旧版枚举值为 2）。
 pub const BC_POINT_RANGE: PointSetType = 4;
+pub const BC_POINT_LIST: PointSetType = 2;
+pub const BC_ELEMENT_RANGE: PointSetType = 6;
+pub const BC_ELEMENT_LIST: PointSetType = 7;
+pub const GRID_LOCATION_FACE_CENTER: c_int = 4;
 
 pub type ZoneType = c_int;
 pub type DataType = c_int;
 pub type PointSetType = c_int;
 pub type CgSize = c_int;
+
+pub const ELEM_TRI_3: c_int = 5;
+pub const ELEM_QUAD_4: c_int = 7;
+pub const ELEM_TETRA_4: c_int = 10;
+pub const ELEM_PYRA_5: c_int = 12;
+pub const ELEM_PENTA_6: c_int = 14;
+pub const ELEM_HEXA_8: c_int = 17;
+pub const ELEM_MIXED: c_int = 20;
 
 unsafe extern "C" {
     pub fn cg_open(filename: *const c_char, mode: c_int, fn_: *mut c_int) -> c_int;
@@ -79,6 +92,13 @@ unsafe extern "C" {
         pnts: *mut c_void,
         normal_list: *mut c_void,
     ) -> c_int;
+    pub fn cg_boco_gridlocation_read(
+        fn_: c_int,
+        base: c_int,
+        zone: c_int,
+        boco: c_int,
+        location: *mut c_int,
+    ) -> c_int;
     pub fn cg_get_error() -> *const c_char;
     pub fn cg_n1to1(fn_: c_int, base: c_int, zone: c_int, n1to1: *mut c_int) -> c_int;
     pub fn cg_1to1_read(
@@ -91,6 +111,34 @@ unsafe extern "C" {
         range: *mut CgSize,
         donor_range: *mut CgSize,
         transform: *mut c_int,
+    ) -> c_int;
+    pub fn cg_nsections(fn_: c_int, base: c_int, zone: c_int, nsections: *mut c_int) -> c_int;
+    pub fn cg_section_read(
+        fn_: c_int,
+        base: c_int,
+        zone: c_int,
+        section: c_int,
+        section_name: *mut c_char,
+        element_type: *mut c_int,
+        start: *mut CgSize,
+        end: *mut CgSize,
+        nbndry: *mut c_int,
+        parent_flag: *mut c_int,
+    ) -> c_int;
+    pub fn cg_ElementDataSize(
+        fn_: c_int,
+        base: c_int,
+        zone: c_int,
+        section: c_int,
+        element_data_size: *mut CgSize,
+    ) -> c_int;
+    pub fn cg_elements_read(
+        fn_: c_int,
+        base: c_int,
+        zone: c_int,
+        section: c_int,
+        elements: *mut CgSize,
+        parent_data: *mut CgSize,
     ) -> c_int;
     pub fn asimu_cg_read_boco_family_name(
         fn_: c_int,

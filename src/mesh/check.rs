@@ -30,7 +30,7 @@ pub struct CheckFinding {
 }
 
 impl CheckFinding {
-    fn info(code: &'static str, message: impl Into<String>) -> Self {
+    pub(crate) fn info(code: &'static str, message: impl Into<String>) -> Self {
         Self {
             code,
             severity: CheckSeverity::Info,
@@ -38,7 +38,7 @@ impl CheckFinding {
         }
     }
 
-    fn warn(code: &'static str, message: impl Into<String>) -> Self {
+    pub(crate) fn warn(code: &'static str, message: impl Into<String>) -> Self {
         Self {
             code,
             severity: CheckSeverity::Warn,
@@ -46,7 +46,7 @@ impl CheckFinding {
         }
     }
 
-    fn error(code: &'static str, message: impl Into<String>) -> Self {
+    pub(crate) fn error(code: &'static str, message: impl Into<String>) -> Self {
         Self {
             code,
             severity: CheckSeverity::Error,

@@ -2,7 +2,7 @@
 
 use super::{
     MultiBlockStructuredMesh3d, StructuredMesh, StructuredMesh1d, StructuredMesh2d,
-    StructuredMesh3d,
+    StructuredMesh3d, UnstructuredMesh3d,
 };
 
 /// 单轴坐标范围。
@@ -186,6 +186,30 @@ pub fn multiblock_mesh3d_diagnostics(mesh: &MultiBlockStructuredMesh3d) -> MeshD
         bounds,
         spacing,
         warnings,
+    }
+}
+
+#[must_use]
+pub fn unstructured_mesh3d_diagnostics(mesh: &UnstructuredMesh3d) -> MeshDiagnostics {
+    let mut xs = Vec::with_capacity(mesh.num_nodes());
+    let mut ys = Vec::with_capacity(mesh.num_nodes());
+    let mut zs = Vec::with_capacity(mesh.num_nodes());
+    for point in mesh.points() {
+        xs.push(point[0]);
+        ys.push(point[1]);
+        zs.push(point[2]);
+    }
+    MeshDiagnostics {
+        name: mesh.name().to_string(),
+        dimension: 3,
+        nx: mesh.num_cells(),
+        ny: 1,
+        nz: 1,
+        num_cells: mesh.num_cells(),
+        num_nodes: mesh.num_nodes(),
+        bounds: bounds_from_points(&xs, &ys, &zs),
+        spacing: None,
+        warnings: Vec::new(),
     }
 }
 

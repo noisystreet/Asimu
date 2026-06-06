@@ -102,7 +102,7 @@ let result = solver.run(&mesh)?;
 | `load_multiblock_conserved_fields(path, block_names)` / `write_multiblock_conserved_fields(path, blocks)` | 多块 restart TOML（version=2） |
 | `load_mesh_from_case(&Path) -> Result<Mesh>` | 从占位 case 文件加载网格 |
 
-#### VTK VTS 读入（feature `io-vtk`）
+#### VTK VTS / VTU 读入（feature `io-vtk`）
 
 启用：`cargo build --features io-vtk`（`make check` 默认已启用）。
 
@@ -110,11 +110,18 @@ let result = solver.run(&mesh)?;
 |-------------|------|
 | `load_vts(&Path) -> Result<VtsLoadResult>` | 读取 **二进制 appended** `.vts` |
 | `VtsLoadResult` | `{ mesh: StructuredMesh }`（`D2` / `D3`） |
+| `load_vtu(&Path) -> Result<VtuLoadResult>` | 读取 `.vtu` UnstructuredGrid（ASCII / inline binary Points + Cells） |
+| `VtuLoadResult` | `{ mesh: UnstructuredMesh3d }` |
 | `StructuredMesh2d` / `StructuredMesh3d` | 2D/3D 结构化网格（`nx`, `ny`[, `nz`]，节点坐标） |
+| `CellKind` | 非结构 3D 线性单元：Tet / Hex / Pyramid / Prism（VTK 10/12/13/14） |
+| `UnstructuredCell` | 单个非结构单元（`kind` + 全局节点索引） |
+| `UnstructuredMesh3d` | 混合单元非结构 3D 网格；构造期完成面拓扑（owner/neighbor）、体积与面度量 |
+
+**`UnstructuredMesh3d::new(name, points, cells)`**：节点顺序遵循 VTK；面合并按排序后的节点键（三角↔三角、四边↔四边）；非流形（≥3 单元共面）返回 `Mesh` 错误。Tier 1 读入：CGNS unstructured zone、VTU。规划见 [adr/0010-unstructured-mixed-mesh.md](adr/0010-unstructured-mixed-mesh.md)。
 
 | `write_vts(&StructuredMesh, &Path) -> Result<()>` | 写出 appended 二进制 VTS |
 
-**不支持**：ASCII VTS、非 zlib 压缩器、`.vtu`。见 [adr/0007-vts-binary-io.md](adr/0007-vts-binary-io.md)。
+**不支持**：ASCII VTS、非 zlib 压缩器、VTU appended / compressed DataArray。结构化 VTS 见 [adr/0007-vts-binary-io.md](adr/0007-vts-binary-io.md)。
 
 #### CGNS 读入与 VTS 导出（feature `io-cgns-vts`）
 
@@ -122,8 +129,9 @@ let result = solver.run(&mesh)?;
 
 | 函数 / 类型 | 说明 |
 |-------------|------|
-| `list_cgns_zones(&Path) -> Result<Vec<CgnsZoneInfo>>` | 列出全部 structured zone |
+| `list_cgns_zones(&Path) -> Result<Vec<CgnsZoneInfo>>` | 列出全部 structured / unstructured zone |
 | `load_cgns_zone(&Path, zone_index) -> Result<CgnsLoadResult>` | 读取单 zone |
+| `load_cgns_unstructured_zone(&Path, zone_index) -> Result<CgnsUnstructuredLoadResult>` | 读取 unstructured zone → `UnstructuredMesh3d` + `BoundarySet`（tet/hex/pyramid/prism；固定类型或 MIXED sections；FaceCenter ZoneBC） |
 | `load_cgns_all_zones(&Path) -> Result<CgnsMultiLoadResult>` | 读取全部 structured zone；case 解析会将多 zone CGNS 组装为 `MultiBlockStructured3d` |
 | `write_multiblock_flow_cgns(path, mesh, fields, eos, time, p_floor)` | 将多块结构化流场写为单个多 Zone CGNS 文件 |
 | `export_cgns_zone_to_vts(input, zone, output) -> Result<CgnsLoadResult>` | CGNS zone → VTS |
@@ -131,13 +139,14 @@ let result = solver.run(&mesh)?;
 
 多 zone CGNS case 可进入 3D 可压缩求解路径；当前按 block 同步推进，1-to-1 接口按 CGNS transform 映射并用共享无粘通量守恒装配（一次计算、两侧等量反号），最终 `solution_cgns` 与 `solution_every` 快照写为单个多 Zone CGNS 文件。严格守恒多块路径目前要求 `time.scheme = "lu_sgs"` 且 `lusgs_sweep = false`。
 
-见 [adr/0008-cgns-io.md](adr/0008-cgns-io.md)。
+见 [adr/0008-cgns-io.md](adr/0008-cgns-io.md)。Structured zone 与 Unstructured zone（混合单元）均已支持；非结构求解接入仍按 [adr/0010-unstructured-mixed-mesh.md](adr/0010-unstructured-mixed-mesh.md) 分阶段推进。
 
 #### 网格诊断报告
 
 | 函数 / 类型 | 说明 |
 |-------------|------|
 | `MeshReport` | 可读摘要（`Display`）：范围、间距、BC patch |
+| `check_unstructured_mesh3d(&UnstructuredMesh3d, Option<&BoundarySet>, source)` | 非结构网格几何/拓扑/边界预检：体积、面面积/法向、owner/neighbor、单元类型统计、patch face 引用与覆盖率 |
 | `report_structured_mesh` / `report_cgns_zone` / `report_vts` / `report_case_mesh` | 由网格或读入结果生成报告 |
 
 CLI 示例：`cargo run --example mesh_probe --features io-cgns-vts -- mesh.cgns`

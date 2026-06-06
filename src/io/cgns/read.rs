@@ -11,17 +11,16 @@ use crate::io::limits::{io_error, validate_cell_count, validate_file_size, valid
 use crate::mesh::{StructuredIndexRange3d, StructuredMesh, StructuredMesh3d};
 
 use super::ffi::{
-    BC_POINT_RANGE, CG_MODE_READ, CG_OK, CgSize, REAL_DOUBLE, ZONE_STRUCTURED,
+    BC_POINT_RANGE, CG_MODE_READ, CG_OK, CgSize, REAL_DOUBLE, ZONE_STRUCTURED, ZONE_UNSTRUCTURED,
     asimu_cg_read_boco_family_name, cg_1to1_read, cg_boco_info, cg_boco_read, cg_close,
     cg_coord_read, cg_fambc_read, cg_family_read, cg_get_error, cg_n1to1, cg_nbocos, cg_nfamilies,
     cg_nzones, cg_open, cg_zone_read, cg_zone_type,
 };
+use super::unstructured;
 use super::zonebc::{CgnsPointRange, boundary_set_from_cgns, patch_from_cgns};
 
-/// CGNS MLL 非线程安全，全局串行化所有调用。
 pub(crate) static CGNS_LOCK: Mutex<()> = Mutex::new(());
 
-/// CGNS zone 元数据。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CgnsZoneInfo {
     pub index: usize,
@@ -31,7 +30,6 @@ pub struct CgnsZoneInfo {
     pub nz: usize,
 }
 
-/// CGNS 单 zone 读入结果。
 #[derive(Debug, Clone, PartialEq)]
 pub struct CgnsLoadResult {
     pub zone: CgnsZoneInfo,
@@ -39,7 +37,6 @@ pub struct CgnsLoadResult {
     pub boundary: BoundarySet,
 }
 
-/// CGNS `GridConnectivity1to1_t` 连接元数据。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cgns1to1Connection {
     pub zone_name: String,
@@ -50,17 +47,17 @@ pub struct Cgns1to1Connection {
     pub transform: [i32; 3],
 }
 
-struct CgnsFile {
-    index: i32,
+pub(super) struct CgnsFile {
+    pub(super) index: i32,
 }
 
-struct ResolvedBocoType {
-    bctype: i32,
-    label: String,
+pub(super) struct ResolvedBocoType {
+    pub(super) bctype: i32,
+    pub(super) label: String,
 }
 
 impl CgnsFile {
-    fn open(path: &Path) -> Result<Self> {
+    pub(super) fn open(path: &Path) -> Result<Self> {
         validate_input_path(path)?;
         let bytes = std::fs::metadata(path)?;
         validate_file_size(bytes.len(), "CGNS 文件")?;
@@ -73,7 +70,7 @@ impl CgnsFile {
         Ok(Self { index })
     }
 
-    fn nzones(&self, base: i32) -> Result<usize> {
+    pub(super) fn nzones(&self, base: i32) -> Result<usize> {
         let mut nzones = 0;
         let err = unsafe { cg_nzones(self.index, base, &mut nzones) };
         check_cg(err)?;
@@ -126,6 +123,26 @@ impl CgnsFile {
         })
     }
 
+    fn any_zone_info(&self, base: i32, zone: i32) -> Result<CgnsZoneInfo> {
+        let zone_type = self.zone_type(base, zone)?;
+        if zone_type == ZONE_STRUCTURED {
+            self.zone_info(base, zone)
+        } else if zone_type == ZONE_UNSTRUCTURED {
+            unstructured::unstructured_zone_info(self, base, zone)
+        } else {
+            Err(AsimuError::Mesh(format!(
+                "zone {zone} 类型 {zone_type} 不支持"
+            )))
+        }
+    }
+
+    pub(super) fn zone_type(&self, base: i32, zone: i32) -> Result<i32> {
+        let mut zone_type = 0;
+        let err = unsafe { cg_zone_type(self.index, base, zone, &mut zone_type) };
+        check_cg(err)?;
+        Ok(zone_type)
+    }
+
     fn read_coords(
         &self,
         base: i32,
@@ -169,7 +186,7 @@ impl CgnsFile {
         Ok((points_x, points_y, points_z))
     }
 
-    fn read_family_bc_map(&self, base: i32) -> Result<HashMap<String, i32>> {
+    pub(super) fn read_family_bc_map(&self, base: i32) -> Result<HashMap<String, i32>> {
         let mut nfamilies = 0;
         check_cg(unsafe { cg_nfamilies(self.index, base, &mut nfamilies) })?;
         let mut map = HashMap::with_capacity(nfamilies as usize);
@@ -207,7 +224,7 @@ impl CgnsFile {
         Ok(map)
     }
 
-    fn resolve_boco_type(
+    pub(super) fn resolve_boco_type(
         &self,
         base: i32,
         zone: i32,
@@ -356,7 +373,6 @@ impl Drop for CgnsFile {
     }
 }
 
-/// 列出 CGNS 文件内全部 zone（base 1，1-based index）。
 pub fn list_cgns_zones(path: &Path) -> Result<Vec<CgnsZoneInfo>> {
     let _guard = CGNS_LOCK.lock().map_err(|_| cgns_lock_error())?;
     list_cgns_zones_locked(path)
@@ -368,12 +384,11 @@ fn list_cgns_zones_locked(path: &Path) -> Result<Vec<CgnsZoneInfo>> {
     let nzones = file.nzones(BASE)?;
     let mut zones = Vec::with_capacity(nzones);
     for zone in 1..=nzones as i32 {
-        zones.push(file.zone_info(BASE, zone)?);
+        zones.push(file.any_zone_info(BASE, zone)?);
     }
     Ok(zones)
 }
 
-/// 读取指定 zone（1-based）为 `StructuredMesh3d`。
 pub fn load_cgns_zone(path: &Path, zone_index: usize) -> Result<CgnsLoadResult> {
     let _guard = CGNS_LOCK.lock().map_err(|_| cgns_lock_error())?;
     load_cgns_zone_locked(path, zone_index)
@@ -420,7 +435,6 @@ fn load_cgns_zone_locked(path: &Path, zone_index: usize) -> Result<CgnsLoadResul
     })
 }
 
-/// CGNS 全部 zone 读入结果。
 #[derive(Debug, Clone, PartialEq)]
 pub struct CgnsMultiLoadResult {
     pub zones: Vec<CgnsLoadResult>,
@@ -429,7 +443,6 @@ pub struct CgnsMultiLoadResult {
     pub vtm_path: Option<std::path::PathBuf>,
 }
 
-/// 读取 CGNS 文件内全部 structured zone。
 pub fn load_cgns_all_zones(path: &Path) -> Result<CgnsMultiLoadResult> {
     let _guard = CGNS_LOCK.lock().map_err(|_| cgns_lock_error())?;
     load_cgns_all_zones_locked(path)
@@ -562,7 +575,7 @@ pub fn export_cgns_zone_to_vts(
     )))
 }
 
-fn c_str_to_string(buf: &[i8]) -> Result<String> {
+pub(super) fn c_str_to_string(buf: &[i8]) -> Result<String> {
     let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
     let bytes: Vec<u8> = buf[..end].iter().map(|&b| b as u8).collect();
     String::from_utf8(bytes).map_err(|e| AsimuError::Mesh(format!("zone 名称非 UTF-8: {e}")))
@@ -579,7 +592,7 @@ fn structured_range_from_cgns(range: [CgSize; 6]) -> StructuredIndexRange3d {
     }
 }
 
-fn check_cg(err: i32) -> Result<()> {
+pub(super) fn check_cg(err: i32) -> Result<()> {
     if err == CG_OK {
         return Ok(());
     }
@@ -594,7 +607,7 @@ fn check_cg(err: i32) -> Result<()> {
     )))
 }
 
-fn cgns_lock_error() -> AsimuError {
+pub(super) fn cgns_lock_error() -> AsimuError {
     AsimuError::Io(std::io::Error::other("CGNS 全局锁已损坏"))
 }
 

@@ -13,10 +13,12 @@ use std::process;
 use clap::Parser;
 
 use asimu::error::Result;
-use asimu::io::{CaseMesh, list_cgns_zones, load_case, load_cgns_zone};
+use asimu::io::{
+    CaseMesh, list_cgns_zones, load_case, load_cgns_unstructured_zone, load_cgns_zone,
+};
 use asimu::mesh::{
     MeshCheckOptions, MeshCheckReport, MeshCheckReportDisplay, MeshMetricMode, StructuredMesh,
-    check_mesh1d, check_mesh2d, check_mesh3d, check_multiblock_mesh3d,
+    check_mesh1d, check_mesh2d, check_mesh3d, check_multiblock_mesh3d, check_unstructured_mesh3d,
 };
 
 #[derive(Debug, Parser)]
@@ -86,9 +88,10 @@ fn run(args: &Args) -> Result<()> {
         }
         "cgns" => check_cgns(&args.input, args, opts),
         "vts" => check_vts(&args.input, opts),
+        "vtu" => check_vtu(&args.input, opts),
         other => Err(asimu::error::AsimuError::Io(std::io::Error::new(
             std::io::ErrorKind::Unsupported,
-            format!("不支持的文件类型 \"{other}\"（支持 .toml / .cgns / .vts）"),
+            format!("不支持的文件类型 \"{other}\"（支持 .toml / .cgns / .vts / .vtu）"),
         ))),
     }
 }
@@ -107,7 +110,22 @@ fn check_cgns(path: &Path, args: &Args, opts: MeshCheckOptions) -> Result<()> {
     }
 
     let zone_index = args.zone.unwrap_or(1);
-    let loaded = load_cgns_zone(path, zone_index)?;
+    let loaded = match load_cgns_zone(path, zone_index) {
+        Ok(loaded) => loaded,
+        Err(structured_err) => {
+            let unstructured =
+                load_cgns_unstructured_zone(path, zone_index).map_err(|_| structured_err)?;
+            let source = format!(
+                "CGNS {} zone {}/{}",
+                path.display(),
+                unstructured.zone.index,
+                unstructured.zone.name
+            );
+            let report =
+                check_unstructured_mesh3d(&unstructured.mesh, Some(&unstructured.boundary), source);
+            return print_report(&report, opts);
+        }
+    };
     let mut mesh = match loaded.mesh {
         StructuredMesh::D3(mesh) => mesh,
         _ => {
@@ -133,6 +151,23 @@ fn check_cgns(path: &Path, args: &Args, opts: MeshCheckOptions) -> Result<()> {
     report.boundary_note =
         Some("来自 CGNS ZoneBC（默认占位参数；未应用 case.toml 修正）".to_string());
     print_report(&report, opts)
+}
+
+#[cfg(feature = "io-vtk")]
+fn check_vtu(path: &Path, opts: MeshCheckOptions) -> Result<()> {
+    use asimu::io::load_vtu;
+
+    let loaded = load_vtu(path)?;
+    let report = check_unstructured_mesh3d(&loaded.mesh, None, format!("VTU {}", path.display()));
+    print_report(&report, opts)
+}
+
+#[cfg(not(feature = "io-vtk"))]
+fn check_vtu(path: &Path, _opts: MeshCheckOptions) -> Result<()> {
+    let _ = path;
+    Err(asimu::error::AsimuError::Config(
+        "VTU 读入须启用 feature io-vtk（建议使用 --features io-cgns-vts）".to_string(),
+    ))
 }
 
 #[cfg(feature = "io-vtk")]

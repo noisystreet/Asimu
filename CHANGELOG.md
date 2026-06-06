@@ -7,6 +7,7 @@
 
 ### Added
 
+- 非结构混合单元网格 M1：`UnstructuredMesh3d` 支持 tet / hex / pyramid / prism（VTK 10/12/13/14）面拓扑、owner/neighbor、体积与面度量；新增 `load_vtu`、`load_cgns_unstructured_zone` 与 `check_unstructured_mesh3d`，`mesh_check` 可检查 `.vtu` 与 CGNS unstructured zone，并支持 CGNS FaceCenter ZoneBC 边界 patch 读入与覆盖检查
 - 多块 3D 可压缩 case 支持 `[restart]` 初场：version=2 TOML 按 block 名称加载守恒量，单 block restart（version=1）仍可用于仅含 1 个 block 的多块网格
 
 ### Changed

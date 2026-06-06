@@ -46,15 +46,17 @@ pub use mesh_report::report_vts;
 
 #[cfg(feature = "io-vtk")]
 pub use vtk::{
-    VtmBlock, VtsLoadResult, load_vts, write_flow_vts, write_flow_vtu, write_vtm, write_vts,
+    VtmBlock, VtsLoadResult, VtuLoadResult, load_vts, load_vtu, write_flow_vts, write_flow_vtu,
+    write_vtm, write_vts,
 };
 
 #[cfg(feature = "io-cgns-vts")]
 pub use cgns::export_cgns_to_vtm;
 #[cfg(feature = "io-cgns")]
 pub use cgns::{
-    Cgns1to1Connection, CgnsLoadResult, CgnsMultiLoadResult, CgnsZoneInfo, export_cgns_to_vts,
-    export_cgns_zone_to_vts, list_cgns_zones, load_cgns_all_zones, load_cgns_zone, write_flow_cgns,
+    Cgns1to1Connection, CgnsLoadResult, CgnsMultiLoadResult, CgnsUnstructuredLoadResult,
+    CgnsZoneInfo, export_cgns_to_vts, export_cgns_zone_to_vts, list_cgns_zones,
+    load_cgns_all_zones, load_cgns_unstructured_zone, load_cgns_zone, write_flow_cgns,
     write_multiblock_flow_cgns,
 };
 
