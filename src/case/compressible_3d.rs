@@ -1,27 +1,28 @@
 //! 3D 可压缩 Euler / Navier-Stokes 算例编排（`[euler]` / `[navier_stokes]` + CGNS/结构化 3D 网格）。
 
+#[path = "compressible_3d_interface_flux.rs"]
+mod compressible_3d_interface_flux;
 #[path = "compressible_3d_multiblock.rs"]
 mod compressible_3d_multiblock;
 
-use std::{cell::RefCell, collections::BTreeSet, rc::Rc};
+use std::{cell::RefCell, rc::Rc};
 
+use compressible_3d_interface_flux::{
+    InterfaceResidualContribution, SharedInterfaceResidualParams, apply_interface_residuals,
+    compute_shared_interface_residuals,
+};
 use compressible_3d_multiblock::{BlockInterfaceLink, build_multiblock_interface_metadata};
 
-use tracing::{info, warn};
+use tracing::{info, info_span, warn};
 
 use crate::boundary::{BoundaryPatch, BoundarySet};
 use crate::case::{CaseRunKind, CaseRunResult};
 use crate::core::{Real, format_log_fixed4, format_log_sci4, log10_positive, residual_converged};
-use crate::discretization::residual::inviscid_boundary_face_flux;
-use crate::discretization::{
-    BoundaryGhostBuffer, BoundaryInviscidFluxInput, GhostCellState, GradientFields, InviscidFlux,
-};
+use crate::discretization::{BoundaryGhostBuffer, GhostCellState, GradientFields};
 use crate::error::{AsimuError, Result};
 use crate::field::{ConservedFields, PrimitiveFields};
 use crate::io::{CaseMesh, CaseSpec, CaseTimeMode};
-use crate::mesh::{
-    BoundaryMesh3d, MultiBlockStructuredMesh3d, StructuredBlock3d, StructuredMesh3d,
-};
+use crate::mesh::{MultiBlockStructuredMesh3d, StructuredBlock3d, StructuredMesh3d};
 use crate::physics::{FreestreamContext, FreestreamParams, IdealGasEoS};
 use crate::solver::compressible::ResidualCorrection3d;
 use crate::solver::{
@@ -123,34 +124,59 @@ fn run_structured(case: &CaseSpec, mesh: &StructuredMesh3d) -> Result<CaseRunRes
 }
 
 fn run_multiblock(case: &CaseSpec, mesh: &MultiBlockStructuredMesh3d) -> Result<CaseRunResult> {
-    validate_multiblock_case(case)?;
-    let disc = case.compressible_discretization()?;
-    let eos = case.physics.eos()?;
-    let freestream = case
-        .freestream
-        .or(case.fluid_initial.freestream)
-        .ok_or_else(|| AsimuError::Field("3D 可压缩算例须指定 [freestream]".to_string()))?;
-    let inviscid = disc.inviscid();
-    let solver = build_compressible_solver(case, &inviscid)?;
-    let scheme = inviscid.short_label().to_string();
-    let limiter = inviscid.limiter_label().to_string();
-    let time_mode = solver_time_mode(case.time.mode);
-    let local_time_step = case.time.uses_local_time_step();
+    let _span = info_span!(
+        "run_multiblock_compressible_3d",
+        blocks = mesh.num_blocks(),
+        interfaces = mesh.interfaces().len(),
+        cells = mesh.num_cells()
+    )
+    .entered();
+    let (eos, freestream, solver, scheme, limiter, time_mode, local_time_step) = {
+        let _span = info_span!("prepare_multiblock_solver").entered();
+        validate_multiblock_case(case)?;
+        let disc = case.compressible_discretization()?;
+        let eos = case.physics.eos()?;
+        let freestream = case
+            .freestream
+            .or(case.fluid_initial.freestream)
+            .ok_or_else(|| AsimuError::Field("3D 可压缩算例须指定 [freestream]".to_string()))?;
+        let inviscid = disc.inviscid();
+        let solver = build_compressible_solver(case, &inviscid)?;
+        let scheme = inviscid.short_label().to_string();
+        let limiter = inviscid.limiter_label().to_string();
+        let time_mode = solver_time_mode(case.time.mode);
+        let local_time_step = case.time.uses_local_time_step();
+        (
+            eos,
+            freestream,
+            solver,
+            scheme,
+            limiter,
+            time_mode,
+            local_time_step,
+        )
+    };
     let fs_ctx = FreestreamContext::new(
         &eos,
         case.reference.as_ref(),
         solver.config.viscous.as_ref(),
     );
     warn_multiblock_limitations(mesh.num_blocks(), mesh.interfaces().len());
-    let interfaces = build_multiblock_interface_metadata(mesh)?;
-    let mut states = build_multiblock_run_states(
-        case,
-        mesh.blocks(),
-        &interfaces.patches,
-        solver.config.time,
-        &fs_ctx,
-        &freestream,
-    )?;
+    let interfaces = {
+        let _span = info_span!("build_multiblock_interface_metadata").entered();
+        build_multiblock_interface_metadata(mesh)?
+    };
+    let mut states = {
+        let _span = info_span!("build_multiblock_run_states", blocks = mesh.num_blocks()).entered();
+        build_multiblock_run_states(
+            case,
+            mesh.blocks(),
+            &interfaces.patches,
+            solver.config.time,
+            &fs_ctx,
+            &freestream,
+        )?
+    };
     let mut snapshot_paths = Vec::new();
     let advance = MultiblockAdvanceEnv {
         case,
@@ -160,7 +186,10 @@ fn run_multiblock(case: &CaseSpec, mesh: &MultiBlockStructuredMesh3d) -> Result<
         mesh,
         links: &interfaces.links,
     };
-    let history = advance_multiblock_history(&advance, &mut states, &mut snapshot_paths)?;
+    let history = {
+        let _span = info_span!("advance_multiblock_history").entered();
+        advance_multiblock_history(&advance, &mut states, &mut snapshot_paths)?
+    };
 
     let last = history
         .last()
@@ -174,9 +203,14 @@ fn run_multiblock(case: &CaseSpec, mesh: &MultiBlockStructuredMesh3d) -> Result<
         local_time_step,
         case.mesh.num_cells(),
     );
-    let fields: Vec<ConservedFields> = states.iter().map(|state| state.fields.clone()).collect();
-    let output_paths =
-        super::output_3d::write_multiblock_compressible_3d_outputs(case, mesh, &fields, &history)?;
+    let fields: Vec<ConservedFields> = {
+        let _span = info_span!("collect_multiblock_output_fields", blocks = states.len()).entered();
+        states.iter().map(|state| state.fields.clone()).collect()
+    };
+    let output_paths = {
+        let _span = info_span!("write_multiblock_outputs").entered();
+        super::output_3d::write_multiblock_compressible_3d_outputs(case, mesh, &fields, &history)?
+    };
     log_written_paths(&snapshot_paths, &output_paths);
     Ok(build_case_run_result(
         case,
@@ -290,13 +324,6 @@ struct MultiblockAdvanceEnv<'a> {
     links: &'a [Vec<BlockInterfaceLink>],
 }
 
-#[derive(Debug, Clone)]
-struct InterfaceResidualContribution {
-    cell: usize,
-    flux: InviscidFlux,
-    scale: Real,
-}
-
 struct InterfaceResidualCorrection {
     contributions: Vec<InterfaceResidualContribution>,
 }
@@ -317,6 +344,13 @@ fn build_multiblock_run_states(
 ) -> Result<Vec<BlockRunState>> {
     let mut states = Vec::with_capacity(blocks.len());
     for (index, block) in blocks.iter().enumerate() {
+        let _span = info_span!(
+            "build_multiblock_block_state",
+            block = %block.name,
+            cells = block.mesh.num_cells(),
+            interfaces = interface_patches[index].len()
+        )
+        .entered();
         let mut patches = boundary_for_block(&case.boundary, &block.name)
             .patches()
             .to_vec();
@@ -371,6 +405,7 @@ fn maybe_write_multiblock_snapshot(
     step: &CompressibleStepInfo,
     paths: &mut Vec<std::path::PathBuf>,
 ) -> Result<()> {
+    let _span = info_span!("maybe_write_multiblock_snapshot", step = step.step).entered();
     let should_write = case.output.as_ref().is_some_and(|output| {
         output
             .solution_every
@@ -379,7 +414,11 @@ fn maybe_write_multiblock_snapshot(
     if !should_write {
         return Ok(());
     }
-    let fields: Vec<ConservedFields> = states.iter().map(|state| state.fields.clone()).collect();
+    let fields: Vec<ConservedFields> = {
+        let _span =
+            info_span!("collect_multiblock_snapshot_fields", blocks = states.len()).entered();
+        states.iter().map(|state| state.fields.clone()).collect()
+    };
     if let Some(path) =
         super::output_3d::maybe_write_multiblock_flow_snapshot(case, mesh, &fields, step)?
     {
@@ -392,15 +431,41 @@ fn advance_multiblock_step(
     env: &MultiblockAdvanceEnv<'_>,
     states: &mut [BlockRunState],
 ) -> Result<CompressibleStepInfo> {
-    let snapshots: Vec<ConservedFields> = states.iter().map(|state| state.fields.clone()).collect();
-    let interface_residuals = compute_shared_interface_residuals(env, &snapshots)?;
+    let _span = info_span!("advance_multiblock_step").entered();
+    let snapshots: Vec<ConservedFields> = {
+        let _span = info_span!("clone_multiblock_snapshots", blocks = states.len()).entered();
+        states.iter().map(|state| state.fields.clone()).collect()
+    };
+    let interface_residuals = {
+        let _span = info_span!(
+            "compute_shared_interface_residuals",
+            blocks = env.mesh.num_blocks()
+        )
+        .entered();
+        compute_shared_interface_residuals(&SharedInterfaceResidualParams {
+            blocks: env.mesh.blocks(),
+            links: env.links,
+            snapshots: &snapshots,
+            eos: env.eos,
+            freestream: env.freestream,
+            inviscid: &env.solver.config.inviscid,
+        })?
+    };
     let mut step_infos = Vec::with_capacity(states.len());
     for (block_index, block) in env.mesh.blocks().iter().enumerate() {
-        fill_interface_ghosts(
-            &mut states[block_index].ghosts,
-            &env.links[block_index],
-            &snapshots,
-        )?;
+        {
+            let _span = info_span!(
+                "fill_interface_ghosts",
+                block = %block.name,
+                links = env.links[block_index].len()
+            )
+            .entered();
+            fill_interface_ghosts(
+                &mut states[block_index].ghosts,
+                &env.links[block_index],
+                &snapshots,
+            )?;
+        }
         step_infos.push(advance_block_step(
             env.case,
             env.solver,
@@ -411,7 +476,10 @@ fn advance_multiblock_step(
             &interface_residuals[block_index],
         )?);
     }
-    let mut aggregate = aggregate_multiblock_step(&step_infos)?;
+    let mut aggregate = {
+        let _span = info_span!("aggregate_multiblock_step", blocks = step_infos.len()).entered();
+        aggregate_multiblock_step(&step_infos)?
+    };
     aggregate.converged = env
         .case
         .resolved_tolerance()
@@ -428,6 +496,13 @@ fn advance_block_step(
     state: &mut BlockRunState,
     interface_residual: &[InterfaceResidualContribution],
 ) -> Result<CompressibleStepInfo> {
+    let _span = info_span!(
+        "advance_multiblock_block",
+        block = %block.name,
+        cells = block.mesh.num_cells(),
+        interface_contributions = interface_residual.len()
+    )
+    .entered();
     let correction = InterfaceResidualCorrection {
         contributions: interface_residual.to_vec(),
     };
@@ -455,109 +530,6 @@ fn advance_block_step(
         .resolved_tolerance()
         .is_some_and(|tol| residual_converged(step_info.residual_log10, tol));
     Ok(step_info)
-}
-
-fn compute_shared_interface_residuals(
-    env: &MultiblockAdvanceEnv<'_>,
-    snapshots: &[ConservedFields],
-) -> Result<Vec<Vec<InterfaceResidualContribution>>> {
-    let mut primitives = Vec::with_capacity(env.mesh.num_blocks());
-    for (block, fields) in env.mesh.blocks().iter().zip(snapshots.iter()) {
-        let mut prim = PrimitiveFields::zeros(block.mesh.num_cells())?;
-        prim.fill_from_conserved(fields, env.eos, p_floor(env.freestream))?;
-        primitives.push(prim);
-    }
-    assemble_shared_interface_residuals(env, snapshots, &primitives)
-}
-
-fn assemble_shared_interface_residuals(
-    env: &MultiblockAdvanceEnv<'_>,
-    snapshots: &[ConservedFields],
-    primitives: &[PrimitiveFields],
-) -> Result<Vec<Vec<InterfaceResidualContribution>>> {
-    let mut out = (0..env.mesh.num_blocks())
-        .map(|_| Vec::new())
-        .collect::<Vec<_>>();
-    let mut seen = BTreeSet::new();
-    for (owner_block, links) in env.links.iter().enumerate() {
-        for link in links {
-            let key = canonical_interface_key(owner_block, link);
-            if !seen.insert(key) {
-                continue;
-            }
-            add_shared_interface_face(env, snapshots, primitives, owner_block, link, &mut out)?;
-        }
-    }
-    Ok(out)
-}
-
-fn canonical_interface_key(
-    owner_block: usize,
-    link: &BlockInterfaceLink,
-) -> (usize, usize, usize, usize) {
-    let a = (owner_block, link.owner_cell);
-    let b = (link.donor_block_index, link.donor_cell);
-    if a <= b {
-        (a.0, a.1, b.0, b.1)
-    } else {
-        (b.0, b.1, a.0, a.1)
-    }
-}
-
-fn add_shared_interface_face(
-    env: &MultiblockAdvanceEnv<'_>,
-    snapshots: &[ConservedFields],
-    primitives: &[PrimitiveFields],
-    owner_block: usize,
-    link: &BlockInterfaceLink,
-    out: &mut [Vec<InterfaceResidualContribution>],
-) -> Result<()> {
-    let owner_mesh = &env.mesh.blocks()[owner_block].mesh;
-    let donor_mesh = &env.mesh.blocks()[link.donor_block_index].mesh;
-    let exterior = snapshots[link.donor_block_index].cell_state(link.donor_cell)?;
-    let flux = inviscid_boundary_face_flux(BoundaryInviscidFluxInput {
-        mesh: owner_mesh,
-        structured: owner_mesh,
-        primitives: &primitives[owner_block],
-        eos: env.eos,
-        config: &env.solver.config.inviscid,
-        min_pressure: p_floor(env.freestream),
-        face: link.face,
-        exterior,
-    })?;
-    let geom = owner_mesh.face_geometry_3d(link.face)?;
-    let donor_volumes = donor_mesh.cell_volumes();
-    out[owner_block].push(InterfaceResidualContribution {
-        cell: link.owner_cell,
-        flux,
-        scale: -geom.area / owner_mesh.cell_volumes()[link.owner_cell],
-    });
-    out[link.donor_block_index].push(InterfaceResidualContribution {
-        cell: link.donor_cell,
-        flux,
-        scale: geom.area / donor_volumes[link.donor_cell],
-    });
-    Ok(())
-}
-
-fn apply_interface_residuals(
-    residual: &mut crate::field::ConservedResidual,
-    contributions: &[InterfaceResidualContribution],
-) -> Result<()> {
-    for contribution in contributions {
-        residual.add_flux_to_cell(
-            contribution.cell,
-            contribution.flux.mass,
-            contribution.flux.momentum,
-            contribution.flux.energy,
-            contribution.scale,
-        )?;
-    }
-    Ok(())
-}
-
-fn p_floor(freestream: &FreestreamParams) -> Real {
-    crate::field::positivity_pressure_floor(freestream.pressure)
 }
 
 fn fill_interface_ghosts(

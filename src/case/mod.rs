@@ -9,7 +9,7 @@ mod sod;
 
 use std::path::Path;
 
-use tracing::{info, instrument};
+use tracing::{info, info_span, instrument};
 
 use crate::config::init_tracing;
 use crate::error::{AsimuError, Result};
@@ -61,9 +61,20 @@ pub fn run_case_path_logged(
 /// 运行已解析算例。
 #[instrument(skip(case), fields(name = %case.name))]
 pub fn run_case(case: &CaseSpec) -> Result<CaseRunResult> {
-    let kind = detect_run_kind(case)?;
+    let kind = {
+        let _span = info_span!("detect_run_kind").entered();
+        detect_run_kind(case)?
+    };
     info!(name = %case.name, ?kind, "开始算例编排");
-    case.boundary.log_patches();
+    {
+        let _span = info_span!(
+            "log_boundary_patches",
+            patches = case.boundary.patches().len()
+        )
+        .entered();
+        case.boundary.log_patches();
+    }
+    let _span = info_span!("dispatch_case_run", ?kind).entered();
     match kind {
         CaseRunKind::Diffusion1dSteady => diffusion::run(case),
         CaseRunKind::Sod1dTransient => sod::run(case),

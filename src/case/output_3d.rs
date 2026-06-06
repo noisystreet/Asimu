@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use tracing::{info, warn};
+use tracing::{info, info_span, warn};
 
 use crate::core::{Real, format_log_sci4};
 use crate::error::{AsimuError, Result};
@@ -66,6 +66,12 @@ pub fn write_multiblock_compressible_3d_outputs(
     fields: &[ConservedFields],
     history: &[CompressibleStepInfo],
 ) -> Result<Vec<PathBuf>> {
+    let _span = info_span!(
+        "write_multiblock_compressible_3d_outputs",
+        zones = mesh.num_blocks(),
+        steps = history.len()
+    )
+    .entered();
     let Some(output) = &case.output else {
         return Ok(Vec::new());
     };
@@ -98,6 +104,12 @@ pub fn maybe_write_flow_snapshot(
     fields: &ConservedFields,
     info: &CompressibleStepInfo,
 ) -> Result<Option<PathBuf>> {
+    let _span = info_span!(
+        "maybe_write_flow_snapshot",
+        step = info.step,
+        cells = mesh.num_cells()
+    )
+    .entered();
     let output = match &case.output {
         Some(o) if o.wants_interval_flow() => o,
         _ => return Ok(None),
@@ -230,10 +242,24 @@ fn write_multiblock_solution_flow(
     physical_time: Real,
     case: &CaseSpec,
 ) -> Result<()> {
-    let (fields_out, eos_out, time_out, p_floor) =
-        prepare_multiblock_dimensional_flow_output(case, fields, physical_time)?;
+    let (fields_out, eos_out, time_out, p_floor) = {
+        let _span = info_span!(
+            "prepare_multiblock_dimensional_flow_output",
+            zones = fields.len()
+        )
+        .entered();
+        prepare_multiblock_dimensional_flow_output(case, fields, physical_time)?
+    };
     #[cfg(feature = "io-cgns")]
-    write_multiblock_flow_cgns(path, mesh, &fields_out, &eos_out, time_out, p_floor)?;
+    {
+        let _span = info_span!(
+            "write_multiblock_flow_cgns",
+            path = %path.display(),
+            zones = mesh.num_blocks()
+        )
+        .entered();
+        write_multiblock_flow_cgns(path, mesh, &fields_out, &eos_out, time_out, p_floor)?;
+    }
     #[cfg(not(feature = "io-cgns"))]
     let _ = path;
     #[cfg(not(feature = "io-cgns"))]
@@ -290,19 +316,24 @@ fn write_residual_outputs(
     case: &CaseSpec,
     history: &[CompressibleStepInfo],
 ) -> Result<Vec<PathBuf>> {
+    let _span = info_span!("write_residual_outputs", steps = history.len()).entered();
     let Some(output) = &case.output else {
         return Ok(Vec::new());
     };
     let mut written = Vec::new();
     if let Some(name) = &output.residual_csv {
         let path = resolve_case_output_path(case.case_dir.as_deref(), &output.dir, name)?;
-        write_residual_csv(&path, history)?;
+        {
+            let _span = info_span!("write_residual_csv", path = %path.display()).entered();
+            write_residual_csv(&path, history)?;
+        }
         info!(path = %path.display(), "已写出残差 CSV");
         written.push(path.clone());
 
         if let Some(plot_name) = &output.residual_plot {
             let plot_path =
                 resolve_case_output_path(case.case_dir.as_deref(), &output.dir, plot_name)?;
+            let _span = info_span!("plot_residual", path = %plot_path.display()).entered();
             if let Err(err) = try_plot_residual(&path, &plot_path) {
                 warn!(error = %err, "残差曲线图未生成（需 python3 + matplotlib）");
             } else {
