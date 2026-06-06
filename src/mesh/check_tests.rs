@@ -69,7 +69,7 @@ fn warns_on_empty_boundary_patch_list() {
 fn cylinder_cgns_passes_when_present() {
     use std::path::PathBuf;
 
-    use crate::io::{CaseMesh, load_case};
+    use crate::io::load_case;
 
     let case_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("case_cylinder/case.toml");
     if !case_path.is_file() {
@@ -79,9 +79,7 @@ fn cylinder_cgns_passes_when_present() {
         return;
     }
     let case = load_case(&case_path).expect("case");
-    let CaseMesh::Structured3d(mesh) = &case.mesh else {
-        panic!("3d");
-    };
+    let mesh = case.mesh.as_3d().expect("3d");
     let report = check_mesh3d(mesh, Some(&case.boundary), "cylinder").expect("check");
     assert!(
         report.passed(),

@@ -73,7 +73,7 @@ let result = solver.run(&mesh)?;
 |------|------|
 | `Mesh` | 网格元数据（`name`, `cell_count`） |
 | `StructuredMesh1d` | 1D 均匀网格 + `BoundaryMesh` |
-| `MultiBlockStructuredMesh3d` | 多块 3D 结构化网格容器；支持读入、缩放、metric 批量设置、接口元数据与诊断 |
+| `MultiBlockStructuredMesh3d` | 多块 3D 结构化网格容器；支持读入、缩放、metric 批量设置、接口元数据与诊断；`from_single_mesh` 将单块包装为 1-block 容器 |
 | `StructuredBlock3d` | 单个 block + 全局 `cell_offset` |
 | `BoundaryMesh` | 逻辑边界名 → 面 ID |
 | `MeshDiagnostics` | 坐标范围、间距统计、简单警告 |

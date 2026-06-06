@@ -65,10 +65,6 @@ pub(super) fn parse_mesh_from_toml(
     if let Some(scale) = raw.scale {
         parsed.mesh.scale_coordinates(scale)?;
     }
-    if let CaseMesh::Structured3d(mesh) = &mut parsed.mesh {
-        mesh.set_metric_mode(metric_mode);
-        mesh.rebuild_metric_cache_if_needed()?;
-    }
     if let CaseMesh::MultiBlockStructured3d(mesh) = &mut parsed.mesh {
         mesh.set_metric_mode(metric_mode);
         mesh.rebuild_metric_cache_if_needed()?;
@@ -114,7 +110,7 @@ fn parse_structured_3d(raw: &MeshTomlFields, name: &str) -> Result<ParsedMesh> {
         raw.lz.unwrap_or(1.0),
     )?;
     Ok(ParsedMesh {
-        mesh: CaseMesh::Structured3d(mesh),
+        mesh: CaseMesh::MultiBlockStructured3d(MultiBlockStructuredMesh3d::new(name, vec![mesh])?),
         cgns_boundary: None,
     })
 }
@@ -187,7 +183,7 @@ fn load_cgns_mesh(raw: &MeshTomlFields, name: &str, case_dir: Option<&Path>) -> 
             "CGNS 文件不含 structured zone".to_string(),
         )),
         1 => Ok(ParsedMesh {
-            mesh: CaseMesh::Structured3d(blocks.remove(0)),
+            mesh: CaseMesh::MultiBlockStructured3d(MultiBlockStructuredMesh3d::new(name, blocks)?),
             cgns_boundary: Some(BoundarySet::new(patches)),
         }),
         _ => Ok(ParsedMesh {

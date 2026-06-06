@@ -529,16 +529,14 @@ mod tests {
     fn cylinder_mach8_timestep_diagnostic_when_present() {
         use std::path::PathBuf;
 
-        use crate::io::{CaseMesh, load_case};
+        use crate::io::load_case;
 
         let case_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("case_cylinder/case.toml");
         if !case_path.is_file() {
             return;
         }
         let case = load_case(&case_path).expect("load case");
-        let CaseMesh::Structured3d(mesh) = &case.mesh else {
-            panic!("expected 3d mesh");
-        };
+        let mesh = case.mesh.as_3d().expect("expected 3d mesh");
         let eos = case.physics.eos().expect("eos");
         let fs = case.freestream.expect("freestream");
         let cfl = case.time.cfl.expect("cfl");

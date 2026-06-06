@@ -23,8 +23,8 @@ use crate::core::{Real, format_log_fixed4, format_log_sci4, log10_positive, resi
 use crate::discretization::{BoundaryGhostBuffer, GhostCellState, GradientFields};
 use crate::error::{AsimuError, Result};
 use crate::field::{ConservedFields, PrimitiveFields};
-use crate::io::{CaseMesh, CaseSpec, CaseTimeMode};
-use crate::mesh::{MultiBlockStructuredMesh3d, StructuredBlock3d, StructuredMesh3d};
+use crate::io::{CaseSpec, CaseTimeMode};
+use crate::mesh::{MultiBlockStructuredMesh3d, StructuredBlock3d};
 use crate::physics::{FreestreamParams, IdealGasEoS};
 use crate::solver::compressible::ResidualCorrection3d;
 use crate::solver::{
@@ -46,96 +46,24 @@ pub struct Compressible3dRunMetrics {
 }
 
 pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
-    match &case.mesh {
-        CaseMesh::Structured3d(mesh) => run_structured(case, mesh),
-        CaseMesh::MultiBlockStructured3d(mesh) => run_multiblock(case, mesh),
-        _ => Err(AsimuError::Mesh("3D 可压缩算例须使用 3D 网格".to_string())),
-    }
+    let mesh = case.mesh.as_multiblock_3d()?;
+    run_compressible_3d(case, mesh)
 }
 
-fn run_structured(case: &CaseSpec, mesh: &StructuredMesh3d) -> Result<CaseRunResult> {
-    let disc = case.compressible_discretization()?;
-    let eos = case.physics.eos()?;
-    let freestream = case
-        .freestream
-        .or(case.fluid_initial.freestream)
-        .ok_or_else(|| AsimuError::Field("3D 可压缩算例须指定 [freestream]".to_string()))?;
-    let inviscid = disc.inviscid();
-    let solver = build_compressible_solver(case, &inviscid)?;
-    let mut fields = case.build_conserved_fields()?;
-    let mut ghosts = BoundaryGhostBuffer::new();
-    let mut ctx = CompressibleAdvanceContext3d {
-        mesh,
-        structured: mesh,
-        patches: &case.boundary,
-        ghosts: &mut ghosts,
-        eos: &eos,
-        freestream: &freestream,
-        reference: case.reference.as_ref(),
-        primitive_scratch: PrimitiveFields::zeros(mesh.num_cells())?,
-        gradient_scratch: GradientFields::zeros(mesh.num_cells())?,
-        viscous: solver.config.viscous.as_ref(),
-        residual_correction: None,
-    };
-    let scheme = inviscid.short_label().to_string();
-    let limiter = inviscid.limiter_label().to_string();
-    let time_mode = solver_time_mode(case.time.mode);
-    let local_time_step = case.time.uses_local_time_step();
-    let interval_flow = case
-        .output
-        .as_ref()
-        .is_some_and(|o| o.wants_interval_flow());
-    let mut snapshot_paths: Vec<std::path::PathBuf> = Vec::new();
-    let history = run_transient_3d_with_snapshots(
-        &solver,
-        time_mode,
-        local_time_step,
-        &mut ctx,
-        &mut fields,
-        case.resolved_tolerance(),
-        interval_flow.then_some(SnapshotWriter {
-            case,
-            mesh,
-            paths: &mut snapshot_paths,
-        }),
-    )?;
-    let last = history
-        .last()
-        .ok_or_else(|| AsimuError::Solver("3D 可压缩推进未产生任何时间步".to_string()))?;
-    let metrics = build_run_metrics(last, &scheme, &limiter);
-    log_run_complete(
-        &metrics,
-        &scheme,
-        &limiter,
-        time_mode,
-        local_time_step,
-        mesh.num_cells(),
-    );
-    let output_paths =
-        super::output_3d::write_compressible_3d_outputs(case, mesh, &fields, &history)?;
-    log_written_paths(&snapshot_paths, &output_paths);
-    Ok(build_case_run_result(
-        case,
-        mesh.num_cells(),
-        &metrics,
-        &scheme,
-        &limiter,
-        time_mode,
-        local_time_step,
-    ))
-}
-
-fn run_multiblock(case: &CaseSpec, mesh: &MultiBlockStructuredMesh3d) -> Result<CaseRunResult> {
+fn run_compressible_3d(
+    case: &CaseSpec,
+    mesh: &MultiBlockStructuredMesh3d,
+) -> Result<CaseRunResult> {
     let _span = info_span!(
-        "run_multiblock_compressible_3d",
+        "run_compressible_3d",
         blocks = mesh.num_blocks(),
         interfaces = mesh.interfaces().len(),
         cells = mesh.num_cells()
     )
     .entered();
     let (eos, freestream, solver, scheme, limiter, time_mode, local_time_step) = {
-        let _span = info_span!("prepare_multiblock_solver").entered();
-        validate_multiblock_case(case)?;
+        let _span = info_span!("prepare_compressible_solver").entered();
+        validate_connected_blocks_case(case, mesh)?;
         let disc = case.compressible_discretization()?;
         let eos = case.physics.eos()?;
         let freestream = case
@@ -158,17 +86,23 @@ fn run_multiblock(case: &CaseSpec, mesh: &MultiBlockStructuredMesh3d) -> Result<
             local_time_step,
         )
     };
-    warn_multiblock_limitations(mesh.num_blocks(), mesh.interfaces().len());
+    if !mesh.interfaces().is_empty() {
+        warn!(
+            blocks = mesh.num_blocks(),
+            interfaces = mesh.interfaces().len(),
+            "多块 3D 求解按 block 同步推进，1-to-1 接口使用共享无粘通量守恒装配"
+        );
+    }
     let interfaces = {
-        let _span = info_span!("build_multiblock_interface_metadata").entered();
+        let _span = info_span!("build_block_interface_metadata").entered();
         build_multiblock_interface_metadata(mesh)?
     };
     let mut states = {
-        let _span = info_span!("build_multiblock_run_states", blocks = mesh.num_blocks()).entered();
-        build_multiblock_run_states(case, mesh.blocks(), &interfaces.patches, solver.config.time)?
+        let _span = info_span!("build_block_run_states", blocks = mesh.num_blocks()).entered();
+        build_block_run_states(case, mesh.blocks(), &interfaces.patches, solver.config.time)?
     };
     let mut snapshot_paths = Vec::new();
-    let advance = MultiblockAdvanceEnv {
+    let advance = BlockAdvanceEnv {
         case,
         solver: &solver,
         eos: &eos,
@@ -178,13 +112,13 @@ fn run_multiblock(case: &CaseSpec, mesh: &MultiBlockStructuredMesh3d) -> Result<
         shared_faces: &interfaces.shared_faces,
     };
     let history = {
-        let _span = info_span!("advance_multiblock_history").entered();
-        advance_multiblock_history(&advance, &mut states, &mut snapshot_paths)?
+        let _span = info_span!("advance_block_history").entered();
+        advance_block_history(&advance, &mut states, &mut snapshot_paths)?
     };
 
     let last = history
         .last()
-        .ok_or_else(|| AsimuError::Solver("多块 3D 推进未产生任何时间步".to_string()))?;
+        .ok_or_else(|| AsimuError::Solver("3D 可压缩推进未产生任何时间步".to_string()))?;
     let metrics = build_run_metrics(last, &scheme, &limiter);
     log_run_complete(
         &metrics,
@@ -192,20 +126,20 @@ fn run_multiblock(case: &CaseSpec, mesh: &MultiBlockStructuredMesh3d) -> Result<
         &limiter,
         time_mode,
         local_time_step,
-        case.mesh.num_cells(),
+        mesh.num_cells(),
     );
     let fields: Vec<ConservedFields> = {
-        let _span = info_span!("collect_multiblock_output_fields", blocks = states.len()).entered();
+        let _span = info_span!("collect_output_fields", blocks = states.len()).entered();
         states.iter().map(|state| state.fields.clone()).collect()
     };
     let output_paths = {
-        let _span = info_span!("write_multiblock_outputs").entered();
-        super::output_3d::write_multiblock_compressible_3d_outputs(case, mesh, &fields, &history)?
+        let _span = info_span!("write_compressible_outputs").entered();
+        super::output_3d::write_compressible_3d_outputs(case, mesh, &fields, &history)?
     };
     log_written_paths(&snapshot_paths, &output_paths);
     Ok(build_case_run_result(
         case,
-        case.mesh.num_cells(),
+        mesh.num_cells(),
         &metrics,
         &scheme,
         &limiter,
@@ -214,7 +148,13 @@ fn run_multiblock(case: &CaseSpec, mesh: &MultiBlockStructuredMesh3d) -> Result<
     ))
 }
 
-fn validate_multiblock_case(case: &CaseSpec) -> Result<()> {
+fn validate_connected_blocks_case(
+    case: &CaseSpec,
+    mesh: &MultiBlockStructuredMesh3d,
+) -> Result<()> {
+    if mesh.interfaces().is_empty() {
+        return Ok(());
+    }
     if case.time.resolved_time_scheme() != crate::solver::TimeIntegrationScheme::LuSgs {
         return Err(AsimuError::Config(
             "严格守恒多块 3D 求解当前要求 time.scheme = \"lu_sgs\"".to_string(),
@@ -226,13 +166,6 @@ fn validate_multiblock_case(case: &CaseSpec) -> Result<()> {
         ));
     }
     Ok(())
-}
-
-fn warn_multiblock_limitations(blocks: usize, interfaces: usize) {
-    warn!(
-        blocks,
-        interfaces, "多块 3D 求解按 block 同步推进，1-to-1 接口使用共享无粘通量守恒装配"
-    );
 }
 
 fn log_written_paths(snapshot_paths: &[std::path::PathBuf], output_paths: &[std::path::PathBuf]) {
@@ -292,6 +225,18 @@ fn boundary_for_block(boundary: &BoundarySet, block_name: &str) -> BoundarySet {
     BoundarySet::new(patches)
 }
 
+fn resolve_block_boundary(
+    boundary: &BoundarySet,
+    block: &StructuredBlock3d,
+    num_blocks: usize,
+) -> BoundarySet {
+    let block_boundary = boundary_for_block(boundary, &block.name);
+    if num_blocks == 1 && block_boundary.patches().is_empty() {
+        return boundary.clone();
+    }
+    block_boundary
+}
+
 struct BlockRunState {
     fields: ConservedFields,
     ghosts: BoundaryGhostBuffer,
@@ -301,7 +246,7 @@ struct BlockRunState {
     integrator: RungeKutta4Integrator,
 }
 
-struct MultiblockAdvanceEnv<'a> {
+struct BlockAdvanceEnv<'a> {
     case: &'a CaseSpec,
     solver: &'a CompressibleEulerSolver,
     eos: &'a IdealGasEoS,
@@ -321,7 +266,7 @@ impl ResidualCorrection3d for InterfaceResidualCorrection {
     }
 }
 
-fn build_multiblock_run_states(
+fn build_block_run_states(
     case: &CaseSpec,
     blocks: &[StructuredBlock3d],
     interface_patches: &[Vec<BoundaryPatch>],
@@ -329,7 +274,7 @@ fn build_multiblock_run_states(
 ) -> Result<Vec<BlockRunState>> {
     let block_fields = {
         let _span = info_span!(
-            "load_multiblock_initial_fields",
+            "load_block_initial_fields",
             blocks = blocks.len(),
             restart = case.restart.is_some()
         )
@@ -339,13 +284,13 @@ fn build_multiblock_run_states(
     let mut states = Vec::with_capacity(blocks.len());
     for (index, (block, fields)) in blocks.iter().zip(block_fields).enumerate() {
         let _span = info_span!(
-            "build_multiblock_block_state",
+            "build_block_state",
             block = %block.name,
             cells = block.mesh.num_cells(),
             interfaces = interface_patches[index].len()
         )
         .entered();
-        let mut patches = boundary_for_block(&case.boundary, &block.name)
+        let mut patches = resolve_block_boundary(&case.boundary, block, blocks.len())
             .patches()
             .to_vec();
         patches.extend(interface_patches[index].iter().cloned());
@@ -355,7 +300,7 @@ fn build_multiblock_run_states(
             cells = block.mesh.num_cells(),
             patches = boundary.patches().len(),
             interfaces = interface_patches[index].len(),
-            "初始化多块 3D 可压缩 block"
+            "初始化 3D 可压缩 block"
         );
         states.push(BlockRunState {
             fields,
@@ -369,18 +314,18 @@ fn build_multiblock_run_states(
     Ok(states)
 }
 
-fn advance_multiblock_history(
-    env: &MultiblockAdvanceEnv<'_>,
+fn advance_block_history(
+    env: &BlockAdvanceEnv<'_>,
     states: &mut [BlockRunState],
     snapshot_paths: &mut Vec<std::path::PathBuf>,
 ) -> Result<Vec<CompressibleStepInfo>> {
     let mut history = Vec::new();
     loop {
-        let aggregate = advance_multiblock_step(env, states)?;
+        let aggregate = advance_block_step(env, states)?;
         let stop = aggregate.is_final || aggregate.converged;
-        log_multiblock_step(&aggregate, stop, aggregate.converged);
+        log_block_step(env.mesh.num_blocks(), &aggregate, stop, aggregate.converged);
         history.push(aggregate);
-        maybe_write_multiblock_snapshot(
+        maybe_write_interval_snapshot(
             env.case,
             env.mesh,
             states,
@@ -395,7 +340,7 @@ fn advance_multiblock_history(
     Ok(history)
 }
 
-fn maybe_write_multiblock_snapshot(
+fn maybe_write_interval_snapshot(
     case: &CaseSpec,
     mesh: &MultiBlockStructuredMesh3d,
     states: &[BlockRunState],
@@ -403,17 +348,16 @@ fn maybe_write_multiblock_snapshot(
     history: &[CompressibleStepInfo],
     paths: &mut Vec<std::path::PathBuf>,
 ) -> Result<()> {
-    let _span = info_span!("maybe_write_multiblock_snapshot", step = step.step).entered();
+    let _span = info_span!("maybe_write_interval_snapshot", step = step.step).entered();
     if !super::output_3d::interval_output_due(case, step.step) {
         return Ok(());
     }
     let fields: Vec<ConservedFields> = {
-        let _span =
-            info_span!("collect_multiblock_snapshot_fields", blocks = states.len()).entered();
+        let _span = info_span!("collect_snapshot_fields", blocks = states.len()).entered();
         states.iter().map(|state| state.fields.clone()).collect()
     };
     if let Some(path) =
-        super::output_3d::maybe_write_multiblock_flow_snapshot(case, mesh, &fields, step)?
+        super::output_3d::maybe_write_interval_flow_snapshot(case, mesh, &fields, step)?
     {
         paths.push(path);
     }
@@ -421,16 +365,18 @@ fn maybe_write_multiblock_snapshot(
     Ok(())
 }
 
-fn advance_multiblock_step(
-    env: &MultiblockAdvanceEnv<'_>,
+fn advance_block_step(
+    env: &BlockAdvanceEnv<'_>,
     states: &mut [BlockRunState],
 ) -> Result<CompressibleStepInfo> {
-    let _span = info_span!("advance_multiblock_step").entered();
+    let _span = info_span!("advance_block_step").entered();
     let snapshots: Vec<ConservedFields> = {
-        let _span = info_span!("clone_multiblock_snapshots", blocks = states.len()).entered();
+        let _span = info_span!("clone_block_snapshots", blocks = states.len()).entered();
         states.iter().map(|state| state.fields.clone()).collect()
     };
-    let interface_residuals = {
+    let interface_residuals = if env.shared_faces.is_empty() {
+        vec![Vec::new(); states.len()]
+    } else {
         let _span = info_span!(
             "compute_shared_interface_residuals",
             blocks = env.mesh.num_blocks()
@@ -447,7 +393,7 @@ fn advance_multiblock_step(
     };
     let mut step_infos = Vec::with_capacity(states.len());
     for (block_index, block) in env.mesh.blocks().iter().enumerate() {
-        {
+        if !env.links[block_index].is_empty() {
             let _span = info_span!(
                 "fill_interface_ghosts",
                 block = %block.name,
@@ -460,7 +406,7 @@ fn advance_multiblock_step(
                 &snapshots,
             )?;
         }
-        step_infos.push(advance_block_step(
+        step_infos.push(advance_single_block_step(
             env.case,
             env.solver,
             env.eos,
@@ -471,8 +417,8 @@ fn advance_multiblock_step(
         )?);
     }
     let mut aggregate = {
-        let _span = info_span!("aggregate_multiblock_step", blocks = step_infos.len()).entered();
-        aggregate_multiblock_step(&step_infos)?
+        let _span = info_span!("aggregate_block_step", blocks = step_infos.len()).entered();
+        aggregate_block_step(&step_infos)?
     };
     aggregate.converged = env
         .case
@@ -481,7 +427,7 @@ fn advance_multiblock_step(
     Ok(aggregate)
 }
 
-fn advance_block_step(
+fn advance_single_block_step(
     case: &CaseSpec,
     solver: &CompressibleEulerSolver,
     eos: &IdealGasEoS,
@@ -491,15 +437,20 @@ fn advance_block_step(
     interface_residual: &[InterfaceResidualContribution],
 ) -> Result<CompressibleStepInfo> {
     let _span = info_span!(
-        "advance_multiblock_block",
+        "advance_single_block_step",
         block = %block.name,
         cells = block.mesh.num_cells(),
         interface_contributions = interface_residual.len()
     )
     .entered();
-    let correction = InterfaceResidualCorrection {
-        contributions: interface_residual.to_vec(),
-    };
+    let residual_correction: Option<Rc<RefCell<dyn ResidualCorrection3d>>> =
+        if interface_residual.is_empty() {
+            None
+        } else {
+            Some(Rc::new(RefCell::new(InterfaceResidualCorrection {
+                contributions: interface_residual.to_vec(),
+            })))
+        };
     let mut ctx = CompressibleAdvanceContext3d {
         mesh: &block.mesh,
         structured: &block.mesh,
@@ -511,7 +462,7 @@ fn advance_block_step(
         primitive_scratch: PrimitiveFields::zeros(block.mesh.num_cells())?,
         gradient_scratch: GradientFields::zeros(block.mesh.num_cells())?,
         viscous: solver.config.viscous.as_ref(),
-        residual_correction: Some(Rc::new(RefCell::new(correction))),
+        residual_correction,
     };
     let mut step_info = solver.advance_step_3d(
         &mut ctx,
@@ -538,7 +489,12 @@ fn fill_interface_ghosts(
     Ok(())
 }
 
-fn log_multiblock_step(step_info: &CompressibleStepInfo, stop: bool, converged: bool) {
+fn log_block_step(blocks: usize, step_info: &CompressibleStepInfo, stop: bool, converged: bool) {
+    let label = if blocks > 1 {
+        "多块聚合时间步"
+    } else {
+        "时间步"
+    };
     info!(
         step = step_info.step,
         dt = %format_log_sci4(step_info.dt),
@@ -547,14 +503,17 @@ fn log_multiblock_step(step_info: &CompressibleStepInfo, stop: bool, converged: 
         cfl = step_info.cfl,
         is_final = stop,
         converged,
-        "多块聚合时间步"
+        "{label}"
     );
 }
 
-fn aggregate_multiblock_step(steps: &[CompressibleStepInfo]) -> Result<CompressibleStepInfo> {
+fn aggregate_block_step(steps: &[CompressibleStepInfo]) -> Result<CompressibleStepInfo> {
     let first = steps
         .first()
-        .ok_or_else(|| AsimuError::Solver("多块 3D 求解没有 block 时间步".to_string()))?;
+        .ok_or_else(|| AsimuError::Solver("3D 求解没有 block 时间步".to_string()))?;
+    if steps.len() == 1 {
+        return Ok(first.clone());
+    }
     let residual_rms = steps
         .iter()
         .map(|step| step.residual_rms)
@@ -642,76 +601,6 @@ fn log_run_complete(
         "3D 可压缩 Euler {}求解完成",
         time_mode_label(time_mode),
     );
-}
-
-struct SnapshotWriter<'a> {
-    case: &'a CaseSpec,
-    mesh: &'a crate::mesh::StructuredMesh3d,
-    paths: &'a mut Vec<std::path::PathBuf>,
-}
-
-fn run_transient_3d_with_snapshots(
-    solver: &CompressibleEulerSolver,
-    _time_mode: CompressibleTimeMode,
-    _local_time_step: bool,
-    ctx: &mut CompressibleAdvanceContext3d<'_>,
-    fields: &mut crate::field::ConservedFields,
-    tolerance: Option<Real>,
-    mut snapshot: Option<SnapshotWriter<'_>>,
-) -> Result<Vec<CompressibleStepInfo>> {
-    let mut storage = Rk4Storage::new(ctx.structured.num_cells())?;
-    let mut state = SolverState::default();
-    let mut integrator = RungeKutta4Integrator::new(solver.config.time);
-    let mut history = Vec::new();
-    loop {
-        let mut step_info =
-            solver.advance_step_3d(ctx, fields, &mut storage, &mut state, &mut integrator)?;
-        let converged =
-            tolerance.is_some_and(|tol| residual_converged(step_info.residual_log10, tol));
-        step_info.converged = converged;
-        let stop = step_info.is_final || converged;
-        info!(
-            step = step_info.step,
-            dt = %format_log_sci4(step_info.dt),
-            t = %format_log_sci4(step_info.physical_time),
-            log10_residual = %format_log_fixed4(step_info.residual_log10),
-            cfl = step_info.cfl,
-            is_final = stop,
-            converged,
-            "时间步"
-        );
-        if converged {
-            info!(
-                step = step_info.step,
-                tolerance = ?tolerance,
-                log10_residual = %format_log_fixed4(step_info.residual_log10),
-                "log₁₀ 残差已达 [time].tolerance，提前停止"
-            );
-        }
-        history.push(step_info);
-        if let Some(ref mut writer) = snapshot {
-            let step_info = history.last().expect("history");
-            if super::output_3d::interval_output_due(writer.case, step_info.step) {
-                if let Some(path) = super::output_3d::maybe_write_flow_snapshot(
-                    writer.case,
-                    writer.mesh,
-                    fields,
-                    step_info,
-                )? {
-                    writer.paths.push(path);
-                }
-                let _ = super::output_3d::maybe_write_residual_outputs(
-                    writer.case,
-                    &history,
-                    step_info,
-                )?;
-            }
-        }
-        if stop {
-            break;
-        }
-    }
-    Ok(history)
 }
 
 fn time_mode_label(mode: CompressibleTimeMode) -> &'static str {

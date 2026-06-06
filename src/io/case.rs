@@ -1,5 +1,7 @@
 //! TOML 算例解析（扩散 1D + 可压缩 3D NS）。
 
+#[path = "case_boundary.rs"]
+mod case_boundary;
 #[path = "case_compressible.rs"]
 mod case_compressible;
 #[path = "mesh_load.rs"]
@@ -14,28 +16,26 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::boundary::{
-    BoundaryKind, BoundaryPatch, BoundaryRegistry, BoundarySet, BoundaryTomlFields,
-};
+use crate::boundary::BoundarySet;
 use crate::core::Real;
 use crate::error::{AsimuError, Result};
 use crate::field::{
     Fields, FluidInitialConfig, InitialKind, InitialSet, ScalarField, ScalarInitial,
 };
-use crate::mesh::{BoundaryMesh, MultiBlockStructuredMesh3d, StructuredMesh1d, StructuredMesh3d};
+use crate::mesh::{MultiBlockStructuredMesh3d, StructuredMesh1d, StructuredMesh3d};
 use crate::physics::{FreestreamParams, IdealGasEoS, PhysicsConfig, ReferenceScales};
+use case_boundary::resolve_case_boundary;
 
 use super::validate_input_path;
 use case_compressible::{
     EulerToml, ObservabilityToml, OutputToml, parse_euler_config, parse_observability, parse_output,
 };
 
-/// 算例网格（1D 扩散 / 3D 可压缩）。
+/// 算例网格（1D 扩散 / 3D 多块可压缩）。
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum CaseMesh {
     Structured1d(StructuredMesh1d),
-    Structured3d(StructuredMesh3d),
     MultiBlockStructured3d(MultiBlockStructuredMesh3d),
 }
 
@@ -44,7 +44,6 @@ impl CaseMesh {
     pub fn num_cells(&self) -> usize {
         match self {
             Self::Structured1d(m) => m.num_cells(),
-            Self::Structured3d(m) => m.num_cells(),
             Self::MultiBlockStructured3d(m) => m.num_cells(),
         }
     }
@@ -56,13 +55,27 @@ impl CaseMesh {
         }
     }
 
+    /// 单 block 3D 网格的便捷访问；多块时返回错误。
     pub fn as_3d(&self) -> Result<&StructuredMesh3d> {
         match self {
-            Self::Structured3d(m) => Ok(m),
-            Self::MultiBlockStructured3d(_) => Err(AsimuError::Mesh(
-                "多块 3D 网格首版仅支持读入/诊断，求解器暂不支持".to_string(),
-            )),
+            Self::MultiBlockStructured3d(m) => {
+                if m.num_blocks() == 1 {
+                    Ok(&m.blocks()[0].mesh)
+                } else {
+                    Err(AsimuError::Mesh(format!(
+                        "多块 3D 网格含 {} 个 block，请使用 as_multiblock_3d()",
+                        m.num_blocks()
+                    )))
+                }
+            }
             _ => Err(AsimuError::Mesh("算例非 3D 网格".to_string())),
+        }
+    }
+
+    pub fn as_multiblock_3d(&self) -> Result<&MultiBlockStructuredMesh3d> {
+        match self {
+            Self::MultiBlockStructured3d(m) => Ok(m),
+            _ => Err(AsimuError::Mesh("算例非 3D 多块网格".to_string())),
         }
     }
 
@@ -76,11 +89,7 @@ impl CaseMesh {
                 mesh.origin *= factor;
                 mesh.length *= factor;
             }
-            Self::Structured3d(mesh) => mesh.scale_coordinates(factor),
             Self::MultiBlockStructured3d(mesh) => mesh.scale_coordinates(factor),
-        }
-        if let CaseMesh::Structured3d(mesh) = self {
-            mesh.rebuild_metric_cache_if_needed()?;
         }
         if let CaseMesh::MultiBlockStructured3d(mesh) = self {
             mesh.rebuild_metric_cache_if_needed()?;
@@ -354,7 +363,7 @@ struct PhysicsToml {
 }
 
 #[derive(Debug, Deserialize)]
-struct BoundaryToml {
+pub(super) struct BoundaryToml {
     kind: String,
     value: Option<Real>,
     flux: Option<Real>,
@@ -525,35 +534,6 @@ fn mesh_toml_fields(raw: &MeshToml) -> mesh_load::MeshTomlFields {
     }
 }
 
-fn resolve_case_boundary(
-    mesh: &CaseMesh,
-    cgns_boundary: Option<BoundarySet>,
-    toml_boundary: &BTreeMap<String, BoundaryToml>,
-    freestream: Option<FreestreamParams>,
-    physics: &PhysicsConfig,
-    euler: bool,
-) -> Result<BoundarySet> {
-    let has_cgns_boundary = cgns_boundary.is_some();
-    let mut boundary = if let Some(cgns) = cgns_boundary {
-        cgns
-    } else if !toml_boundary.is_empty() {
-        resolve_boundary_set(mesh, toml_boundary)?
-    } else {
-        BoundarySet::default()
-    };
-    if has_cgns_boundary && !toml_boundary.is_empty() {
-        apply_boundary_overrides(&mut boundary, mesh, toml_boundary)?;
-    }
-    if let Some(fs) = freestream {
-        let eos = physics.eos()?;
-        boundary.apply_freestream(&fs, &eos)?;
-    }
-    if euler {
-        boundary.apply_inviscid_euler_walls();
-    }
-    Ok(boundary)
-}
-
 fn parse_physics(raw: &PhysicsToml, navier_stokes: bool) -> Result<PhysicsConfig> {
     use crate::physics::{ViscosityModel, ViscousPhysicsConfig};
     let eos = match (raw.gamma, raw.gas_constant) {
@@ -622,99 +602,6 @@ fn resolve_initial_set(initials: &BTreeMap<String, InitialToml>) -> Result<Initi
     let set = InitialSet::new(scalars);
     set.validate()?;
     Ok(set)
-}
-
-fn resolve_boundary_set(
-    mesh: &CaseMesh,
-    boundaries: &BTreeMap<String, BoundaryToml>,
-) -> Result<BoundarySet> {
-    let mut patches = Vec::with_capacity(boundaries.len());
-    for (logical_name, bc) in boundaries {
-        let fields = BoundaryTomlFields {
-            kind: &bc.kind,
-            value: bc.value,
-            flux: bc.flux,
-            mach: bc.mach,
-            pressure: bc.pressure,
-            temperature: bc.temperature,
-            alpha: bc.alpha,
-            beta: bc.beta,
-            total_pressure: bc.total_pressure,
-            total_temperature: bc.total_temperature,
-            static_pressure: bc.static_pressure,
-            velocity_direction: bc.velocity_direction,
-            no_slip: bc.no_slip,
-            heat: bc.heat.as_deref(),
-            wall_temperature: bc.wall_temperature,
-            heat_flux: bc.heat_flux,
-            partner: bc.partner.as_deref(),
-            turbulent_k: bc.turbulent_k,
-            turbulent_omega: bc.turbulent_omega,
-            supersonic: bc.supersonic,
-        };
-        let kind = BoundaryKind::from_toml(&fields).ok_or_else(|| {
-            AsimuError::Boundary(format!(
-                "边界 \"{logical_name}\" 无效：kind=\"{}\"",
-                bc.kind
-            ))
-        })?;
-        let face_ids = match mesh {
-            CaseMesh::Structured1d(m) => m.resolve_logical_boundary(logical_name)?,
-            CaseMesh::Structured3d(m) => m.resolve_logical_boundary(logical_name)?,
-            CaseMesh::MultiBlockStructured3d(_) => {
-                return Err(AsimuError::Boundary(
-                    "多块 3D 网格首版尚不支持通过 [boundary] 解析全局边界 patch".to_string(),
-                ));
-            }
-        };
-        patches.push(BoundaryPatch::new(logical_name.clone(), face_ids, kind));
-    }
-    BoundaryRegistry::validate_patches(&patches)?;
-    Ok(BoundarySet::new(patches))
-}
-
-/// 用 `[boundary]` 表覆盖 CGNS 已加载 patch（按 patch 名匹配）。
-fn apply_boundary_overrides(
-    boundary: &mut BoundarySet,
-    mesh: &CaseMesh,
-    overrides: &BTreeMap<String, BoundaryToml>,
-) -> Result<()> {
-    for (name, bc) in overrides {
-        let fields = BoundaryTomlFields {
-            kind: &bc.kind,
-            value: bc.value,
-            flux: bc.flux,
-            mach: bc.mach,
-            pressure: bc.pressure,
-            temperature: bc.temperature,
-            alpha: bc.alpha,
-            beta: bc.beta,
-            total_pressure: bc.total_pressure,
-            total_temperature: bc.total_temperature,
-            static_pressure: bc.static_pressure,
-            velocity_direction: bc.velocity_direction,
-            no_slip: bc.no_slip,
-            heat: bc.heat.as_deref(),
-            wall_temperature: bc.wall_temperature,
-            heat_flux: bc.heat_flux,
-            partner: bc.partner.as_deref(),
-            turbulent_k: bc.turbulent_k,
-            turbulent_omega: bc.turbulent_omega,
-            supersonic: bc.supersonic,
-        };
-        let kind = BoundaryKind::from_toml(&fields).ok_or_else(|| {
-            AsimuError::Boundary(format!("边界覆盖 \"{name}\" 无效：kind=\"{}\"", bc.kind))
-        })?;
-        if let Some(patch) = boundary.patches_mut().iter_mut().find(|p| p.name == *name) {
-            patch.kind = kind;
-        } else {
-            return Err(AsimuError::Boundary(format!(
-                "边界覆盖 \"{name}\" 在 CGNS patch 列表中不存在"
-            )));
-        }
-    }
-    let _ = mesh;
-    Ok(())
 }
 
 fn parse_time_config(raw: Option<&TimeToml>, has_sod: bool) -> Result<CaseTimeConfig> {

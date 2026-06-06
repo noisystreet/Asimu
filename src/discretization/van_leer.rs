@@ -317,7 +317,7 @@ mod tests {
         use std::path::PathBuf;
 
         use crate::discretization::BoundaryGhostBuffer;
-        use crate::io::{CaseMesh, load_case};
+        use crate::io::load_case;
         use crate::solver::{
             CompressibleAdvanceContext3d, CompressibleEulerConfig, CompressibleEulerSolver,
             Rk4Storage, RungeKutta4Integrator, SolverState,
@@ -328,9 +328,7 @@ mod tests {
             return;
         }
         let case = load_case(&case_path).expect("case");
-        let CaseMesh::Structured3d(mesh) = &case.mesh else {
-            panic!("3d");
-        };
+        let mesh = case.mesh.as_3d().expect("3d");
         let eos = case.physics.eos().expect("eos");
         let fs = case.freestream.expect("fs");
         let mut fields = case.build_conserved_fields().expect("fields");
@@ -438,7 +436,7 @@ mod tests {
         use std::path::PathBuf;
 
         use crate::discretization::BoundaryGhostBuffer;
-        use crate::io::{CaseMesh, load_case};
+        use crate::io::load_case;
         use crate::solver::{
             CompressibleAdvanceContext3d, CompressibleEulerConfig, CompressibleEulerSolver,
             Rk4Storage, RungeKutta4Integrator, SolverState,
@@ -450,9 +448,7 @@ mod tests {
         }
         let mut case = load_case(&case_path).expect("case");
         case.euler.as_mut().expect("euler").flux = Some("hanel_van_leer".to_string());
-        let CaseMesh::Structured3d(mesh) = &case.mesh else {
-            panic!("3d");
-        };
+        let mesh = case.mesh.as_3d().expect("3d");
         let eos = case.physics.eos().expect("eos");
         let fs = case.freestream.expect("fs");
         let inviscid = case.euler.as_ref().expect("euler").inviscid();

@@ -108,6 +108,7 @@ lz = 0.25
 | 项 | 约定 |
 |----|------|
 | 支持 | 多个均匀 `StructuredMesh3d` block，block 名称必须唯一 |
+| 求解 | 与单块 3D 共用 `BlockRunState` 推进框架；`structured_3d` 与单 zone CGNS 读入为 1-block `MultiBlockStructured3d`；无接口 block 可使用 GMRES/RK4/LU-SGS sweep，有 1-to-1 接口时要求 LU-SGS 对角隐式 |
 | 统计 | `CaseMesh::num_cells()` 返回所有 block 单元总数 |
 | 诊断 | `mesh_check` 可做逐 block 几何预检与整体范围统计 |
 | 支持 | `[boundary]` 可按 `block_name/patch` 绑定到单个 block；1-to-1 接口通量可在 LU-SGS 多块路径中守恒装配；`[restart]` 支持 version=2 多块 TOML 初场 |
@@ -125,7 +126,7 @@ scale = 0.001 # 可选：统一缩放全部 zone 坐标
 | 项 | 约定 |
 |----|------|
 | 依赖 | 系统 `libcgns-dev`（`build.rs` 链接 `-lcgns`） |
-| 支持 | Structured zone；单 zone 读为 `Structured3d`，多 zone 读为 `MultiBlockStructured3d`；ADF / HDF5 由 libcgns 处理 |
+| 支持 | Structured zone；单 zone 与多 zone 均读为 `MultiBlockStructured3d`（单 zone 为 1-block 容器）；ADF / HDF5 由 libcgns 处理 |
 | 边界 | `ZoneBC` 自动读入；`FamilyName` 为 `IN` / `OUT` / `WALL` 时映射为入口 / 出口 / 壁面 |
 | 求解 | 多 zone CGNS 可进入 3D 可压缩求解路径；当前按 block 同步推进，1-to-1 接口通过共享无粘通量守恒装配，最终 `solution_cgns` 写为单个多 Zone CGNS 文件；严格守恒多块路径要求 `time.scheme = "lu_sgs"` 且 `lusgs_sweep = false` |
 | 导出 | `export_cgns_zone_to_vts` 或 `make cgns-to-vts IN=... OUT=...` |

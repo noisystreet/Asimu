@@ -15,41 +15,15 @@ use crate::mesh::{MultiBlockStructuredMesh3d, StructuredMesh3d};
 use crate::physics::IdealGasEoS;
 use crate::solver::CompressibleStepInfo;
 
+/// 写出 3D 可压缩算例最终输出（残差 + 流场）；单块与多块共用。
 pub fn write_compressible_3d_outputs(
-    case: &CaseSpec,
-    mesh: &StructuredMesh3d,
-    fields: &ConservedFields,
-    history: &[CompressibleStepInfo],
-) -> Result<Vec<PathBuf>> {
-    let Some(output) = &case.output else {
-        return Ok(Vec::new());
-    };
-    let mut written = write_residual_outputs(case, history)?;
-
-    if let Some(name) = &output.solution_cgns {
-        let path = resolve_case_output_path(case.case_dir.as_deref(), &output.dir, name)?;
-        let physical_time = history.last().map(|s| s.physical_time).unwrap_or(0.0);
-        write_solution_flow(&path, mesh, fields, physical_time, case)?;
-        info!(path = %path.display(), t = %format_log_sci4(physical_time), "已写出流场 CGNS");
-        written.push(path.clone());
-        #[cfg(feature = "io-vtk")]
-        if output.solution_vtk {
-            written.push(flow_vtu_path(&path));
-            written.push(flow_vts_path(&path));
-        }
-    }
-
-    Ok(written)
-}
-
-pub fn write_multiblock_compressible_3d_outputs(
     case: &CaseSpec,
     mesh: &MultiBlockStructuredMesh3d,
     fields: &[ConservedFields],
     history: &[CompressibleStepInfo],
 ) -> Result<Vec<PathBuf>> {
     let _span = info_span!(
-        "write_multiblock_compressible_3d_outputs",
+        "write_compressible_3d_outputs",
         zones = mesh.num_blocks(),
         steps = history.len()
     )
@@ -62,17 +36,26 @@ pub fn write_multiblock_compressible_3d_outputs(
     if let Some(name) = &output.solution_cgns {
         let path = resolve_case_output_path(case.case_dir.as_deref(), &output.dir, name)?;
         let physical_time = history.last().map(|s| s.physical_time).unwrap_or(0.0);
-        write_multiblock_solution_flow(&path, mesh, fields, physical_time, case)?;
-        info!(
-            path = %path.display(),
-            zones = mesh.num_blocks(),
-            t = %format_log_sci4(physical_time),
-            "已写出多块流场 CGNS"
-        );
-        written.push(path);
+        write_block_solution_flow(&path, mesh, fields, physical_time, case)?;
+        if mesh.num_blocks() == 1 {
+            info!(path = %path.display(), t = %format_log_sci4(physical_time), "已写出流场 CGNS");
+        } else {
+            info!(
+                path = %path.display(),
+                zones = mesh.num_blocks(),
+                t = %format_log_sci4(physical_time),
+                "已写出多块流场 CGNS"
+            );
+        }
+        written.push(path.clone());
         #[cfg(feature = "io-vtk")]
         if output.solution_vtk {
-            warn!("多块 3D 求解暂不写出合并 VTU/VTS；已写出多 Zone CGNS");
+            if mesh.num_blocks() == 1 {
+                written.push(flow_vtu_path(&path));
+                written.push(flow_vts_path(&path));
+            } else {
+                warn!("多块 3D 求解暂不写出合并 VTU/VTS；已写出多 Zone CGNS");
+            }
         }
     }
 
@@ -109,16 +92,16 @@ pub fn interval_output_due(case: &CaseSpec, step: u64) -> bool {
 }
 
 /// 若当前步满足间隔条件，写出流场快照 CGNS。
-pub fn maybe_write_flow_snapshot(
+pub fn maybe_write_interval_flow_snapshot(
     case: &CaseSpec,
-    mesh: &StructuredMesh3d,
-    fields: &ConservedFields,
+    mesh: &MultiBlockStructuredMesh3d,
+    fields: &[ConservedFields],
     info: &CompressibleStepInfo,
 ) -> Result<Option<PathBuf>> {
     let _span = info_span!(
-        "maybe_write_flow_snapshot",
+        "maybe_write_interval_flow_snapshot",
         step = info.step,
-        cells = mesh.num_cells()
+        zones = mesh.num_blocks()
     )
     .entered();
     let output = match &case.output {
@@ -129,18 +112,28 @@ pub fn maybe_write_flow_snapshot(
     let base = output.solution_cgns.as_ref().expect("wants_interval_flow");
     let name = flow_cgns_name_for_step(base, info.step);
     let path = resolve_case_output_path(case.case_dir.as_deref(), &output.dir, &name)?;
-    write_solution_flow(&path, mesh, fields, info.physical_time, case)?;
-    #[cfg(feature = "io-vtk")]
-    if output.solution_vtk {
-        info!(
-            cgns = %path.display(),
-            vtu = %flow_vtu_path(&path).display(),
-            step = info.step,
-            t = %format_log_sci4(info.physical_time),
-            every,
-            "已写出间隔流场（ParaView 请打开 .vtu）"
-        );
-    } else {
+    write_block_solution_flow(&path, mesh, fields, info.physical_time, case)?;
+    if mesh.num_blocks() == 1 {
+        #[cfg(feature = "io-vtk")]
+        if output.solution_vtk {
+            info!(
+                cgns = %path.display(),
+                vtu = %flow_vtu_path(&path).display(),
+                step = info.step,
+                t = %format_log_sci4(info.physical_time),
+                every,
+                "已写出间隔流场（ParaView 请打开 .vtu）"
+            );
+        } else {
+            info!(
+                path = %path.display(),
+                step = info.step,
+                t = %format_log_sci4(info.physical_time),
+                every,
+                "已写出间隔流场 CGNS"
+            );
+        }
+        #[cfg(all(feature = "io-cgns", not(feature = "io-vtk")))]
         info!(
             path = %path.display(),
             step = info.step,
@@ -148,42 +141,16 @@ pub fn maybe_write_flow_snapshot(
             every,
             "已写出间隔流场 CGNS"
         );
+    } else {
+        info!(
+            path = %path.display(),
+            zones = mesh.num_blocks(),
+            step = info.step,
+            t = %format_log_sci4(info.physical_time),
+            every,
+            "已写出间隔流场 CGNS"
+        );
     }
-    #[cfg(all(feature = "io-cgns", not(feature = "io-vtk")))]
-    info!(
-        path = %path.display(),
-        step = info.step,
-        t = %format_log_sci4(info.physical_time),
-        every,
-        "已写出间隔流场 CGNS"
-    );
-    Ok(Some(path))
-}
-
-/// 若当前步满足间隔条件，写出多块流场快照 CGNS（每个 block 一个 Zone）。
-pub fn maybe_write_multiblock_flow_snapshot(
-    case: &CaseSpec,
-    mesh: &MultiBlockStructuredMesh3d,
-    fields: &[ConservedFields],
-    info: &CompressibleStepInfo,
-) -> Result<Option<PathBuf>> {
-    let output = match &case.output {
-        Some(o) if o.interval_output_due(info.step) => o,
-        _ => return Ok(None),
-    };
-    let every = output.solution_every.expect("wants_interval_flow");
-    let base = output.solution_cgns.as_ref().expect("wants_interval_flow");
-    let name = flow_cgns_name_for_step(base, info.step);
-    let path = resolve_case_output_path(case.case_dir.as_deref(), &output.dir, &name)?;
-    write_multiblock_solution_flow(&path, mesh, fields, info.physical_time, case)?;
-    info!(
-        path = %path.display(),
-        zones = mesh.num_blocks(),
-        step = info.step,
-        t = %format_log_sci4(info.physical_time),
-        every,
-        "已写出多块间隔流场 CGNS"
-    );
     Ok(Some(path))
 }
 
@@ -201,7 +168,34 @@ pub fn flow_vtu_path(cgns: &Path) -> PathBuf {
     cgns.with_extension("vtu")
 }
 
-fn write_solution_flow(
+fn write_block_solution_flow(
+    path: &Path,
+    mesh: &MultiBlockStructuredMesh3d,
+    fields: &[ConservedFields],
+    physical_time: Real,
+    case: &CaseSpec,
+) -> Result<()> {
+    if fields.len() != mesh.num_blocks() {
+        return Err(AsimuError::Field(format!(
+            "流场 block 数 {} 与 mesh block 数 {} 不一致",
+            fields.len(),
+            mesh.num_blocks()
+        )));
+    }
+    if mesh.num_blocks() == 1 {
+        write_single_block_solution_flow(
+            path,
+            &mesh.blocks()[0].mesh,
+            &fields[0],
+            physical_time,
+            case,
+        )
+    } else {
+        write_multiblock_solution_flow(path, mesh, fields, physical_time, case)
+    }
+}
+
+fn write_single_block_solution_flow(
     path: &Path,
     mesh: &StructuredMesh3d,
     fields: &ConservedFields,

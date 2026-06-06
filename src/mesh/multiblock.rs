@@ -50,6 +50,12 @@ pub struct MultiBlockStructuredMesh3d {
 }
 
 impl MultiBlockStructuredMesh3d {
+    /// 将单块结构化网格包装为 1-block 多块容器（无接口）。
+    pub fn from_single_mesh(mesh: StructuredMesh3d) -> Result<Self> {
+        let name = mesh.name.clone();
+        Self::new(name, vec![mesh])
+    }
+
     pub fn new(name: impl Into<String>, meshes: Vec<StructuredMesh3d>) -> Result<Self> {
         Self::with_interfaces(name, meshes, Vec::new())
     }
@@ -181,6 +187,14 @@ mod tests {
 
     fn block(name: &str, nx: usize) -> StructuredMesh3d {
         StructuredMesh3d::uniform_box(name, nx, 1, 1, nx as Real, 1.0, 1.0).expect("block")
+    }
+
+    #[test]
+    fn wraps_single_structured_mesh() {
+        let mesh = MultiBlockStructuredMesh3d::from_single_mesh(block("solo", 4)).expect("wrap");
+        assert_eq!(mesh.num_blocks(), 1);
+        assert_eq!(mesh.num_cells(), 4);
+        assert!(mesh.interfaces().is_empty());
     }
 
     #[test]

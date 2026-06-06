@@ -365,7 +365,7 @@ mod tests {
         use std::path::PathBuf;
 
         use crate::discretization::{BoundaryGhostBuffer, apply_compressible_boundary_conditions};
-        use crate::io::{CaseMesh, load_case};
+        use crate::io::load_case;
         use crate::mesh::BoundaryMesh;
         use crate::physics::FreestreamContext;
 
@@ -377,9 +377,7 @@ mod tests {
             return;
         }
         let case = load_case(&case_path).expect("load case");
-        let CaseMesh::Structured3d(mesh) = &case.mesh else {
-            panic!("expected 3d mesh");
-        };
+        let mesh = case.mesh.as_3d().expect("expected 3d mesh");
         let eos = case.physics.eos().expect("eos");
         let fs = case.freestream.expect("freestream");
         let fields = ConservedFields::from_freestream(mesh.num_cells(), &eos, &fs).expect("fields");

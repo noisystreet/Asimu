@@ -153,7 +153,7 @@ fn cylinder_uniform_freestream_no_bc_time_advance_when_present() {
 
     use crate::boundary::BoundarySet;
     use crate::discretization::{BoundaryGhostBuffer, InviscidFluxConfig};
-    use crate::io::{CaseMesh, load_case};
+    use crate::io::load_case;
     use crate::solver::time::{CflSchedule, RungeKutta4Integrator};
 
     let case_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("case_cylinder/case.toml");
@@ -161,9 +161,7 @@ fn cylinder_uniform_freestream_no_bc_time_advance_when_present() {
         return;
     }
     let case = load_case(&case_path).expect("load case");
-    let CaseMesh::Structured3d(mesh) = &case.mesh else {
-        panic!("expected 3d");
-    };
+    let mesh = case.mesh.as_3d().expect("expected 3d");
     let eos = case.physics.eos().expect("eos");
     let fs = case.freestream.expect("freestream");
     let mut fields = ConservedFields::from_freestream(mesh.num_cells(), &eos, &fs).expect("fields");
@@ -250,7 +248,7 @@ fn cylinder_lusgs_post_residual_changes_with_cfl1_when_present() {
 
     use crate::discretization::BoundaryGhostBuffer;
     use crate::field::PrimitiveFields;
-    use crate::io::{CaseMesh, load_case};
+    use crate::io::load_case;
     use crate::solver::time::{
         CflSchedule, LuSgsConfig, RungeKutta4Integrator, TimeIntegrationScheme,
     };
@@ -260,9 +258,7 @@ fn cylinder_lusgs_post_residual_changes_with_cfl1_when_present() {
         return;
     }
     let case = load_case(&case_path).expect("load case");
-    let CaseMesh::Structured3d(mesh) = &case.mesh else {
-        panic!("expected 3d");
-    };
+    let mesh = case.mesh.as_3d().expect("expected 3d");
     let eos = case.physics.eos().expect("eos");
     let fs = case.freestream.expect("freestream");
     let inviscid = case.euler.as_ref().expect("euler").inviscid();
@@ -362,7 +358,7 @@ fn cylinder_uniform_freestream_interior_only_advance_when_present() {
         BoundaryGhostBuffer, InviscidFluxConfig, assemble_inviscid_residual_3d,
     };
     use crate::field::ConservedResidual;
-    use crate::io::{CaseMesh, load_case};
+    use crate::io::load_case;
     use crate::solver::time::{CflSchedule, RungeKutta4Integrator};
 
     let case_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("case_cylinder/case.toml");
@@ -370,9 +366,7 @@ fn cylinder_uniform_freestream_interior_only_advance_when_present() {
         return;
     }
     let case = load_case(&case_path).expect("load case");
-    let CaseMesh::Structured3d(mesh) = &case.mesh else {
-        panic!("expected 3d");
-    };
+    let mesh = case.mesh.as_3d().expect("expected 3d");
     let eos = case.physics.eos().expect("eos");
     let fs = case.freestream.expect("freestream");
     let mut fields = ConservedFields::from_freestream(mesh.num_cells(), &eos, &fs).expect("fields");

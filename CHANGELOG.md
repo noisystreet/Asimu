@@ -11,6 +11,9 @@
 
 ### Changed
 
+- 3D 可压缩读入层统一：`structured_3d` 与单 zone CGNS 解析为 1-block `MultiBlockStructured3d`，求解入口不再 runtime 包装；移除 `CaseMesh::Structured3d` 变体
+- 3D 可压缩求解统一为 block 编排路径：输出/间隔快照/初场与多块共用一套逻辑；无接口时跳过共享通量装配，单块仍可使用 GMRES/RK4/LU-SGS sweep
+
 - 可压缩算例仅保留无量纲求解：移除 `[nondimensional] enabled` 开关，可压缩算例解析后必定缩放为 \(*\) 变量
 - 无量纲热传导 \(\lambda^*\)：修正 \(c_p^*=1/(\gamma-1)\)（此前误用 \(\gamma R^*\) 导致壁面热通量偏大）
 - CFL 爬升：`max_steps < cfl_ramp_steps` 时仍按 `cfl_ramp_steps` 线性增 CFL，不再压缩到 `max_steps` 内达 `cfl_max`

@@ -88,10 +88,7 @@ fn detect_run_kind(case: &CaseSpec) -> Result<CaseRunKind> {
         return Ok(CaseRunKind::Sod1dTransient);
     }
     if case.is_compressible() {
-        let is_3d = matches!(
-            case.mesh,
-            CaseMesh::Structured3d(_) | CaseMesh::MultiBlockStructured3d(_)
-        );
+        let is_3d = matches!(case.mesh, CaseMesh::MultiBlockStructured3d(_));
         if is_3d && (case.euler.is_some() || case.navier_stokes.is_some()) {
             return Ok(CaseRunKind::Compressible3dTransient);
         }

@@ -51,6 +51,11 @@ static_pressure = 100000.0
 "#;
     let case = parse_case_toml(content, None).expect("parse");
     assert!(case.is_compressible());
+    let CaseMesh::MultiBlockStructured3d(mesh) = &case.mesh else {
+        panic!("structured_3d 应读入为 1-block MultiBlockStructured3d");
+    };
+    assert_eq!(mesh.num_blocks(), 1);
+    assert!(mesh.interfaces().is_empty());
     assert_eq!(case.mesh.num_cells(), 64);
     assert_eq!(case.boundary.patches().len(), 6);
     let fields = case.build_conserved_fields().expect("ic");

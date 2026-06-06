@@ -72,8 +72,13 @@ fn run(args: &Args) -> Result<()> {
             let source = args.input.display().to_string();
             let mut report = match &case.mesh {
                 CaseMesh::Structured1d(mesh) => check_mesh1d(mesh, source),
-                CaseMesh::Structured3d(mesh) => check_mesh3d(mesh, Some(&case.boundary), source)?,
-                CaseMesh::MultiBlockStructured3d(mesh) => check_multiblock_mesh3d(mesh, source)?,
+                CaseMesh::MultiBlockStructured3d(mesh) => {
+                    if mesh.num_blocks() == 1 && mesh.interfaces().is_empty() {
+                        check_mesh3d(&mesh.blocks()[0].mesh, Some(&case.boundary), source)?
+                    } else {
+                        check_multiblock_mesh3d(mesh, source)?
+                    }
+                }
             };
             report.boundary_note =
                 Some("已按 case.toml 解析（含 [freestream] / [euler] 等修正）".to_string());

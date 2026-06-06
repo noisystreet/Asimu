@@ -9,7 +9,7 @@ use crate::discretization::residual::muscl_stencil_3d::{
 use crate::discretization::residual::{accumulate_boundary_face, is_degenerate_volume};
 use crate::discretization::{BoundaryGhostBuffer, apply_compressible_boundary_conditions};
 use crate::field::{ConservedFields, ConservedResidual};
-use crate::io::{CaseMesh, load_case};
+use crate::io::load_case;
 use crate::mesh::{BoundaryMesh, BoundaryMesh3d, FaceMetric, LogicalFace3d, StructuredMesh3d};
 use crate::physics::FreestreamContext;
 use crate::physics::IdealGasEoS;
@@ -26,9 +26,7 @@ fn cylinder_boundary_flux_decomposition_when_present() {
         return;
     }
     let case = load_case(&case_path).expect("load case");
-    let CaseMesh::Structured3d(mesh) = &case.mesh else {
-        panic!("expected 3d mesh");
-    };
+    let mesh = case.mesh.as_3d().expect("expected 3d mesh");
     let eos = case.physics.eos().expect("eos");
     let fs = case.freestream.expect("freestream");
     let fs_ctx = FreestreamContext::new(&eos, case.reference.as_ref(), None);

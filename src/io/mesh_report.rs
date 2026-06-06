@@ -142,12 +142,17 @@ pub fn report_case_mesh(
 ) -> MeshReport {
     match mesh {
         CaseMesh::Structured1d(m) => report_mesh1d(source, m, Some(boundary)),
-        CaseMesh::Structured3d(m) => report_mesh3d(source, m, Some(boundary)),
-        CaseMesh::MultiBlockStructured3d(m) => MeshReport {
-            source: source.into(),
-            mesh: multiblock_mesh3d_diagnostics(m),
-            boundary: summarize_boundary(Some(boundary)),
-        },
+        CaseMesh::MultiBlockStructured3d(m) => {
+            if m.num_blocks() == 1 && m.interfaces().is_empty() {
+                report_mesh3d(source, &m.blocks()[0].mesh, Some(boundary))
+            } else {
+                MeshReport {
+                    source: source.into(),
+                    mesh: multiblock_mesh3d_diagnostics(m),
+                    boundary: summarize_boundary(Some(boundary)),
+                }
+            }
+        }
     }
 }
 
