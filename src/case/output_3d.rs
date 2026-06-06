@@ -268,7 +268,7 @@ fn write_multiblock_solution_flow(
     Ok(())
 }
 
-fn prepare_dimensional_flow_output(
+pub(crate) fn prepare_dimensional_flow_output(
     case: &CaseSpec,
     fields: &ConservedFields,
     physical_time: Real,
@@ -311,7 +311,7 @@ fn prepare_multiblock_dimensional_flow_output(
     Ok((fields_out, eos_out, time_out, p_floor))
 }
 
-fn write_residual_outputs(
+pub(crate) fn write_residual_outputs(
     case: &CaseSpec,
     history: &[CompressibleStepInfo],
 ) -> Result<Vec<PathBuf>> {

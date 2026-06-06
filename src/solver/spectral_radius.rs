@@ -103,14 +103,14 @@ fn add_i_viscous_parabolic_sigma(
                 let owner = mesh.cell_index(i, j, k);
                 let neighbor = mesh.cell_index(i + 1, j, k);
                 let face = mesh.i_face_metric(i, j, k);
-                add_viscous_face_contribution(
+                add_viscous_parabolic_face_sigma(
                     sigma,
                     diffusivity,
                     owner,
                     face.area,
                     mesh.cell_metric(i, j, k).volume,
                 );
-                add_viscous_face_contribution(
+                add_viscous_parabolic_face_sigma(
                     sigma,
                     diffusivity,
                     neighbor,
@@ -133,14 +133,14 @@ fn add_j_viscous_parabolic_sigma(
                 let owner = mesh.cell_index(i, j, k);
                 let neighbor = mesh.cell_index(i, j + 1, k);
                 let face = mesh.j_face_metric(i, j, k);
-                add_viscous_face_contribution(
+                add_viscous_parabolic_face_sigma(
                     sigma,
                     diffusivity,
                     owner,
                     face.area,
                     mesh.cell_metric(i, j, k).volume,
                 );
-                add_viscous_face_contribution(
+                add_viscous_parabolic_face_sigma(
                     sigma,
                     diffusivity,
                     neighbor,
@@ -163,14 +163,14 @@ fn add_k_viscous_parabolic_sigma(
                 let owner = mesh.cell_index(i, j, k);
                 let neighbor = mesh.cell_index(i, j, k + 1);
                 let face = mesh.k_face_metric(i, j, k);
-                add_viscous_face_contribution(
+                add_viscous_parabolic_face_sigma(
                     sigma,
                     diffusivity,
                     owner,
                     face.area,
                     mesh.cell_metric(i, j, k).volume,
                 );
-                add_viscous_face_contribution(
+                add_viscous_parabolic_face_sigma(
                     sigma,
                     diffusivity,
                     neighbor,
@@ -194,7 +194,7 @@ fn add_boundary_viscous_parabolic_sigma(
             let geom = params.boundary_mesh.face_geometry_3d(face)?;
             let (logical, local) = LogicalFace3d::decode(face)?;
             let (i, j, k) = mesh.face_ij(logical, local)?;
-            add_viscous_face_contribution(
+            add_viscous_parabolic_face_sigma(
                 sigma,
                 diffusivity,
                 owner,
@@ -206,7 +206,7 @@ fn add_boundary_viscous_parabolic_sigma(
     Ok(())
 }
 
-fn add_viscous_face_contribution(
+pub(crate) fn add_viscous_parabolic_face_sigma(
     sigma: &mut [Real],
     diffusivity: &[Real],
     cell: usize,

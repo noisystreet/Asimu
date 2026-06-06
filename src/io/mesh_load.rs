@@ -158,7 +158,17 @@ fn load_cgns_mesh(raw: &MeshTomlFields, name: &str, case_dir: Option<&Path>) -> 
         .as_ref()
         .ok_or_else(|| AsimuError::Config("cgns 网格缺少 path".to_string()))?;
     let path = resolve_mesh_path(rel.clone(), case_dir)?;
-    let loaded = crate::io::load_cgns_all_zones(&path)?;
+    let loaded = match crate::io::load_cgns_all_zones(&path) {
+        Ok(loaded) => loaded,
+        Err(structured_err) => {
+            let unstructured =
+                crate::io::load_cgns_unstructured_zone(&path, 1).map_err(|_| structured_err)?;
+            return Ok(ParsedMesh {
+                mesh: CaseMesh::Unstructured3d(unstructured.mesh),
+                cgns_boundary: Some(unstructured.boundary),
+            });
+        }
+    };
     let multiblock = loaded.zones.len() > 1;
     let mut blocks = Vec::with_capacity(loaded.zones.len());
     let mut patches = Vec::new();

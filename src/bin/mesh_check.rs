@@ -81,6 +81,9 @@ fn run(args: &Args) -> Result<()> {
                         check_multiblock_mesh3d(mesh, source)?
                     }
                 }
+                CaseMesh::Unstructured3d(mesh) => {
+                    check_unstructured_mesh3d(mesh, Some(&case.boundary), source)
+                }
             };
             report.boundary_note =
                 Some("已按 case.toml 解析（含 [freestream] / [euler] 等修正）".to_string());

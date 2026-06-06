@@ -67,8 +67,8 @@ asimu 当前 3D 可压缩路径以 **多块结构化网格**（`MultiBlockStruct
 | 阶段 | 范围 | 出口标准 |
 |------|------|----------|
 | **M1** | `UnstructuredMesh3d` 拓扑 + 几何度量；tet/hex/pyramid/prism | 单单元/两单元共面/非流形单测；`make check` |
-| **M2** | `discretization` 非结构面循环；一阶 Euler 无粘通量 + 现有 Riemann 求解器 | 均匀来流 tet/hex 混合网格 \(\|\mathrm{RHS}\|\) 近零 |
-| **M3** | **Tier 1** 读入：CGNS unstructured zone + VTU；`CaseMesh::Unstructured3d` + case 解析 | 读 CGNS / VTU 示例网格，跑稳态 smoke |
+| **M2** | `discretization` 非结构面循环；一阶 Euler 无粘通量 + 现有 Riemann 求解器 | **已实现首版**：均匀来流闭合 tet \(\|\mathrm{RHS}\|\) 近零 |
+| **M3** | **Tier 1** 读入：CGNS unstructured zone + VTU；`CaseMesh::Unstructured3d` + case 解析 | **已实现首版**：CGNS/VTU 读入、CGNS FaceCenter ZoneBC、单域非结构 case smoke |
 | **M4** | MUSCL 梯度/重构、粘性通量、边界 patch、网格检查与 V&V 算例 | 与结构化路径共享 BC/通量格式；benchmark README |
 
 **M4 之后**（单独评估，不在本 ADR 承诺）：
@@ -90,10 +90,10 @@ case  → io, mesh, solver, config
 |------|------|------|
 | `CellKind` / `UnstructuredCell` | `mesh` | 单元类型与全局节点索引 |
 | `UnstructuredMesh3d` | `mesh` | 点、单元、面列表、owner/neighbor、`CellMetric`/`FaceMetric` |
-| `FaceMeshLoop`（规划） | `discretization` | 遍历面、调用 `FluxScheme`、累加 owner/neighbor RHS |
-| `load_vtu`（规划） | `io` | Parse → Validate → `UnstructuredMesh3d`（Tier 1） |
-| `load_cgns_unstructured_zone`（规划） | `io` | CGNS `ZoneType_t=Unstructured` → `UnstructuredMesh3d`（Tier 1） |
-| `CaseMesh::Unstructured3d`（规划） | `case` / `io` | 算例编排入口 |
+| `assemble_inviscid_residual_unstructured` | `discretization` | 遍历面、调用 `FluxScheme`、累加 owner/neighbor RHS |
+| `load_vtu` | `io` | Parse → Validate → `UnstructuredMesh3d`（Tier 1） |
+| `load_cgns_unstructured_zone` | `io` | CGNS `ZoneType_t=Unstructured` → `UnstructuredMesh3d` + `BoundarySet`（Tier 1） |
+| `CaseMesh::Unstructured3d` | `case` / `io` | 单域非结构算例编排入口 |
 
 **不**在 M1–M3 引入非结构专用 `MetricCache`  trait 体系；热路径保持 `UnstructuredMesh3d` 具体类型 + 预计算 `Vec<FaceMetric>`（构造期一次分配，面循环零分配）。
 
@@ -187,10 +187,10 @@ M1 测试以 **两 hex 共四边形面**、**两 tet 共三角面** 验证拓扑
 | 项 | 状态 |
 |----|------|
 | `UnstructuredMesh3d` / `CellKind` / 面模板 | M1 已合入工作区 |
-| `CaseMesh::Unstructured3d` | 未开始 |
-| 非结构面循环 / Euler 装配 | M2 |
-| `load_vtu` | M3 Tier 1 |
-| `load_cgns_unstructured_zone` | M3 Tier 1 |
+| `CaseMesh::Unstructured3d` | 已实现（单域） |
+| 非结构面循环 / Euler 装配 | 已实现（一阶无粘） |
+| `load_vtu` | 已实现 |
+| `load_cgns_unstructured_zone` | 已实现（含 FaceCenter ZoneBC） |
 | hex–tri conformal | M4+ 评估 |
 
 修订本 ADR 时 **不删除** 已有决策条目；重大变更（如引入 polyhedral）应新开 ADR 或显式「修订」段落。

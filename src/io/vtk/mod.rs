@@ -16,4 +16,4 @@ pub use vts::{VtsLoadResult, load_vts};
 #[cfg(feature = "io-vtk")]
 pub use vts_write::{write_flow_vts, write_vts};
 pub use vtu::{VtuLoadResult, load_vtu};
-pub use vtu_write::write_flow_vtu;
+pub use vtu_write::{write_flow_vtu, write_flow_vtu_unstructured};

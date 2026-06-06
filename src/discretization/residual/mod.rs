@@ -5,6 +5,8 @@
 mod assembly_1d;
 mod assembly_3d;
 mod assembly_3d_viscous;
+mod assembly_unstructured;
+mod assembly_unstructured_viscous;
 mod face_flux_3d;
 mod muscl_stencil_3d;
 
@@ -20,6 +22,13 @@ pub use assembly_3d::{InviscidAssembly3dParams, assemble_inviscid_residual_3d};
 pub use assembly_3d_viscous::{
     ViscousAssembly3dInput, ViscousAssembly3dParams, assemble_viscous_residual_3d,
     compute_gradients_and_assemble_viscous_3d,
+};
+pub use assembly_unstructured::{
+    InviscidAssemblyUnstructuredParams, assemble_inviscid_residual_unstructured,
+};
+pub use assembly_unstructured_viscous::{
+    ViscousAssemblyUnstructuredInput, ViscousAssemblyUnstructuredParams,
+    assemble_viscous_residual_unstructured, compute_gradients_and_assemble_viscous_unstructured,
 };
 pub use face_flux_3d::{
     BoundaryInviscidFluxInput, inviscid_boundary_face_flux,

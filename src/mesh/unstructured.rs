@@ -15,8 +15,10 @@ use std::collections::HashMap;
 
 use crate::core::{CellId, FaceId, NodeId, Real, Vector3};
 use crate::error::{AsimuError, Result};
+use crate::mesh::boundary::BoundaryMesh;
 
 use super::metrics::{CellMetric, FaceMetric};
+use super::{BoundaryMesh3d, FaceGeometry3d};
 use geometry::{
     cell_center, orient_metric_outward_from, quad_face_metric, reverse_face_nodes, tri_face_metric,
     volume_from_outward_faces,
@@ -146,6 +148,31 @@ impl UnstructuredMesh3d {
         &self.points
     }
 
+    pub fn scale_coordinates(&mut self, factor: Real) -> Result<()> {
+        if factor <= 0.0 || !factor.is_finite() {
+            return Err(AsimuError::Mesh(format!(
+                "非结构网格缩放因子必须为正且有限，实际 {factor}"
+            )));
+        }
+        for point in &mut self.points {
+            point[0] *= factor;
+            point[1] *= factor;
+            point[2] *= factor;
+        }
+        let area_scale = factor * factor;
+        let volume_scale = area_scale * factor;
+        for metric in &mut self.cell_metrics {
+            metric.volume *= volume_scale;
+            metric.center = scale_vector(metric.center, factor);
+        }
+        for metric in &mut self.face_metrics {
+            metric.area_vector = scale_vector(metric.area_vector, area_scale);
+            metric.area *= area_scale;
+            metric.center = scale_vector(metric.center, factor);
+        }
+        Ok(())
+    }
+
     #[must_use]
     pub fn cells(&self) -> &[UnstructuredCell] {
         &self.cells
@@ -201,6 +228,62 @@ impl UnstructuredMesh3d {
             .map(|nodes| nodes.as_slice())
             .ok_or_else(|| AsimuError::Mesh(format!("无效 FaceId({})", face.index())))
     }
+
+    #[must_use]
+    pub fn cell_volumes(&self) -> Vec<Real> {
+        self.cell_metrics
+            .iter()
+            .map(|metric| metric.volume)
+            .collect()
+    }
+}
+
+impl BoundaryMesh for UnstructuredMesh3d {
+    fn num_cells(&self) -> usize {
+        self.num_cells()
+    }
+
+    fn face_owner(&self, face: FaceId) -> Result<CellId> {
+        UnstructuredMesh3d::face_owner(self, face)
+    }
+
+    fn face_spacing(&self, face: FaceId) -> Result<Real> {
+        let owner = self.face_owner(face)?;
+        let owner_metric = self.cell_metric(owner);
+        let face_metric = self.face_metric(face);
+        if face_metric.area <= Real::EPSILON {
+            Ok(Real::INFINITY)
+        } else {
+            Ok(Vector3::new(
+                owner_metric.center.x - face_metric.center.x,
+                owner_metric.center.y - face_metric.center.y,
+                owner_metric.center.z - face_metric.center.z,
+            )
+            .magnitude())
+        }
+    }
+
+    fn face_outward_normal(&self, face: FaceId) -> Result<Real> {
+        Ok(self.face_metric(face).normal.x)
+    }
+
+    fn resolve_logical_boundary(&self, name: &str) -> Result<Vec<FaceId>> {
+        Err(AsimuError::Mesh(format!(
+            "非结构网格不支持逻辑边界名 \"{name}\"；请使用显式 BoundaryPatch"
+        )))
+    }
+}
+
+impl BoundaryMesh3d for UnstructuredMesh3d {
+    fn face_geometry_3d(&self, face: FaceId) -> Result<FaceGeometry3d> {
+        let metric = self.face_metric(face);
+        Ok(FaceGeometry3d {
+            normal: metric.normal,
+            spacing: self.face_spacing(face)?,
+            area: metric.area,
+            center: metric.center,
+        })
+    }
 }
 
 struct TopologyBuild {
@@ -252,6 +335,10 @@ fn validate_cells(points: &[[Real; 3]], cells: &[UnstructuredCell]) -> Result<()
         }
     }
     Ok(())
+}
+
+fn scale_vector(vector: Vector3, factor: Real) -> Vector3 {
+    Vector3::new(vector.x * factor, vector.y * factor, vector.z * factor)
 }
 
 fn build_face_topology(points: &[[Real; 3]], cells: &[UnstructuredCell]) -> Result<TopologyBuild> {

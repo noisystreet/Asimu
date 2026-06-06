@@ -23,7 +23,9 @@ use crate::error::{AsimuError, Result};
 use crate::field::{
     Fields, FluidInitialConfig, InitialKind, InitialSet, ScalarField, ScalarInitial,
 };
-use crate::mesh::{MultiBlockStructuredMesh3d, StructuredMesh1d, StructuredMesh3d};
+use crate::mesh::{
+    MultiBlockStructuredMesh3d, StructuredMesh1d, StructuredMesh3d, UnstructuredMesh3d,
+};
 use crate::physics::{FreestreamParams, IdealGasEoS, PhysicsConfig, ReferenceScales};
 use case_boundary::resolve_case_boundary;
 
@@ -38,6 +40,7 @@ use case_compressible::{
 pub enum CaseMesh {
     Structured1d(StructuredMesh1d),
     MultiBlockStructured3d(MultiBlockStructuredMesh3d),
+    Unstructured3d(UnstructuredMesh3d),
 }
 
 impl CaseMesh {
@@ -46,6 +49,7 @@ impl CaseMesh {
         match self {
             Self::Structured1d(m) => m.num_cells(),
             Self::MultiBlockStructured3d(m) => m.num_cells(),
+            Self::Unstructured3d(m) => m.num_cells(),
         }
     }
 
@@ -80,6 +84,13 @@ impl CaseMesh {
         }
     }
 
+    pub fn as_unstructured_3d(&self) -> Result<&UnstructuredMesh3d> {
+        match self {
+            Self::Unstructured3d(m) => Ok(m),
+            _ => Err(AsimuError::Mesh("算例非 3D 非结构网格".to_string())),
+        }
+    }
+
     /// 将所有节点坐标乘以 `factor`。
     pub fn scale_coordinates(&mut self, factor: Real) -> Result<()> {
         if factor <= 0.0 {
@@ -91,6 +102,7 @@ impl CaseMesh {
                 mesh.length *= factor;
             }
             Self::MultiBlockStructured3d(mesh) => mesh.scale_coordinates(factor),
+            Self::Unstructured3d(mesh) => mesh.scale_coordinates(factor)?,
         }
         if let CaseMesh::MultiBlockStructured3d(mesh) = self {
             mesh.rebuild_metric_cache_if_needed()?;
@@ -282,7 +294,9 @@ impl CaseSpec {
         if !self.is_compressible() || (self.euler.is_none() && self.navier_stokes.is_none()) {
             return Ok(());
         }
-        let mesh = self.mesh.as_multiblock_3d()?;
+        let CaseMesh::MultiBlockStructured3d(mesh) = &self.mesh else {
+            return Ok(());
+        };
         if mesh.interfaces().is_empty() {
             return Ok(());
         }

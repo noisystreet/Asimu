@@ -1,8 +1,10 @@
 //! CFD 求解器入口（占位实现：返回收敛占位结果）。
 
 pub mod compressible;
+pub mod lu_sgs_sweep_unstructured;
 pub mod sod;
 pub mod spectral_radius;
+pub mod spectral_radius_unstructured;
 pub mod state;
 pub mod time;
 pub mod wave_speed;
@@ -19,6 +21,9 @@ pub use compressible::{
     CompressibleEulerSolver, CompressibleStepInfo, CompressibleTimeMode, GmresImplicitConfig,
     GmresImplicitDelta, GmresPreconditionerKind,
 };
+pub use lu_sgs_sweep_unstructured::{
+    LuSgsSweepUnstructuredInput, LuSgsSweepUnstructuredParams, lu_sgs_sweep_unstructured,
+};
 pub use sod::{
     SodBenchmarkConfig, SodBenchmarkResult, run_sod_benchmark, sod_initial_fields,
     write_sod_compare_profile, write_sod_profile,
@@ -26,6 +31,9 @@ pub use sod::{
 pub use spectral_radius::{
     SpectralRadius3dParams, cell_local_dt_cfl_3d, cell_local_dt_spectral, cell_spectral_radius_3d,
     cell_viscous_diffusivity_max, local_pseudo_dt_lusgs,
+};
+pub use spectral_radius_unstructured::{
+    SpectralRadiusUnstructuredParams, cell_spectral_radius_unstructured,
 };
 pub use state::SolverState;
 pub use time::{

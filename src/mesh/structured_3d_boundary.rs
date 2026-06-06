@@ -86,7 +86,12 @@ pub struct FaceGeometry3d {
 
 /// 3D 边界网格接口。
 pub trait BoundaryMesh3d: BoundaryMesh {
-    fn structured_3d(&self) -> Result<&StructuredMesh3d>;
+    fn structured_3d(&self) -> Result<&StructuredMesh3d> {
+        Err(AsimuError::Mesh(
+            "该 3D 边界网格不是 StructuredMesh3d".to_string(),
+        ))
+    }
+
     fn face_geometry_3d(&self, face: FaceId) -> Result<FaceGeometry3d>;
     fn face_normal_3d(&self, face: FaceId) -> Result<Vector3> {
         Ok(self.face_geometry_3d(face)?.normal)

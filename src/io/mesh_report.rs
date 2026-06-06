@@ -6,6 +6,7 @@ use crate::boundary::BoundarySet;
 use crate::mesh::{
     MeshDiagnostics, StructuredMesh, StructuredMesh1d, StructuredMesh3d, mesh1d_diagnostics,
     mesh3d_diagnostics, multiblock_mesh3d_diagnostics, structured_mesh_diagnostics,
+    unstructured_mesh3d_diagnostics,
 };
 
 use super::CaseMesh;
@@ -153,6 +154,11 @@ pub fn report_case_mesh(
                 }
             }
         }
+        CaseMesh::Unstructured3d(m) => MeshReport {
+            source: source.into(),
+            mesh: unstructured_mesh3d_diagnostics(m),
+            boundary: summarize_boundary(Some(boundary)),
+        },
     }
 }
 

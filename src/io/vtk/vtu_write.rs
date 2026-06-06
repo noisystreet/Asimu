@@ -11,7 +11,7 @@ use crate::error::Result;
 use crate::field::ConservedFields;
 use crate::io::limits::validate_input_path;
 use crate::io::vertex_field::gather_cell_primitives;
-use crate::mesh::StructuredMesh3d;
+use crate::mesh::{StructuredMesh3d, UnstructuredMesh3d};
 use crate::physics::IdealGasEoS;
 
 /// VTK_HEXAHEDRON
@@ -73,6 +73,86 @@ pub fn write_flow_vtu(
     std::fs::write(path, xml).map_err(crate::error::AsimuError::from)
 }
 
+/// 非结构 3D 流场 VTU（保留原始混合单元 connectivity/type）。
+pub fn write_flow_vtu_unstructured(
+    path: &Path,
+    mesh: &UnstructuredMesh3d,
+    fields: &ConservedFields,
+    eos: &IdealGasEoS,
+    min_pressure: f64,
+) -> Result<()> {
+    validate_input_path(path)?;
+    let (rho, u, v, w, p, mach, temperature) =
+        gather_unstructured_cell_primitives(fields, eos, min_pressure)?;
+    let npts = mesh.num_nodes();
+    let ncells = mesh.num_cells();
+    let mut connectivity = Vec::new();
+    let mut offsets = Vec::with_capacity(ncells);
+    let mut types = Vec::with_capacity(ncells);
+    for cell in mesh.cells() {
+        connectivity.extend(cell.nodes.iter().map(|node| node.index() as usize));
+        offsets.push(connectivity.len());
+        types.push(cell.kind.vtk_type());
+    }
+    let scalars = FlowScalarsB64 {
+        rho: encode_f64_block(&rho),
+        p: encode_f64_block(&p),
+        u: encode_f64_block(&u),
+        v: encode_f64_block(&v),
+        w: encode_f64_block(&w),
+        mach: encode_f64_block(&mach),
+        temperature: encode_f64_block(&temperature),
+    };
+    let topo = FlowVtuTopologyB64 {
+        pts: encode_unstructured_points_block(mesh),
+        conn: encode_i64_block(&connectivity),
+        off: encode_i64_block_usize(&offsets),
+        types: encode_u8_block(&types),
+    };
+    let xml = format_flow_vtu_xml(npts, ncells, &scalars, &topo);
+    std::fs::write(path, xml).map_err(crate::error::AsimuError::from)
+}
+
+type CellPrimitiveArrays = (
+    Vec<f64>,
+    Vec<f64>,
+    Vec<f64>,
+    Vec<f64>,
+    Vec<f64>,
+    Vec<f64>,
+    Vec<f64>,
+);
+
+fn gather_unstructured_cell_primitives(
+    fields: &ConservedFields,
+    eos: &IdealGasEoS,
+    min_pressure: f64,
+) -> Result<CellPrimitiveArrays> {
+    let n = fields.num_cells();
+    let mut rho = Vec::with_capacity(n);
+    let mut u = Vec::with_capacity(n);
+    let mut v = Vec::with_capacity(n);
+    let mut w = Vec::with_capacity(n);
+    let mut p = Vec::with_capacity(n);
+    let mut mach = Vec::with_capacity(n);
+    let mut temperature = Vec::with_capacity(n);
+    for cell in 0..n {
+        let prim = fields.primitive_at(cell, eos, min_pressure)?;
+        let speed2 = prim.velocity[0] * prim.velocity[0]
+            + prim.velocity[1] * prim.velocity[1]
+            + prim.velocity[2] * prim.velocity[2];
+        let a = (eos.gamma * prim.pressure / prim.density.max(1.0e-30)).sqrt();
+        rho.push(prim.density);
+        u.push(prim.velocity[0]);
+        v.push(prim.velocity[1]);
+        w.push(prim.velocity[2]);
+        p.push(prim.pressure);
+        mach.push(speed2.sqrt() / a.max(1.0e-30));
+        temperature.push(prim.pressure / (prim.density.max(1.0e-30) * eos.gas_constant));
+    }
+    Ok((rho, u, v, w, p, mach, temperature))
+}
+
 fn encode_points_block(mesh: &StructuredMesh3d) -> String {
     let mut payload = Vec::new();
     for k in 0..=mesh.nz {
@@ -83,6 +163,16 @@ fn encode_points_block(mesh: &StructuredMesh3d) -> String {
                 write_f64(&mut payload, mesh.node_z(i, j, k));
             }
         }
+    }
+    encode_binary_array(&payload)
+}
+
+fn encode_unstructured_points_block(mesh: &UnstructuredMesh3d) -> String {
+    let mut payload = Vec::new();
+    for point in mesh.points() {
+        write_f64(&mut payload, point[0]);
+        write_f64(&mut payload, point[1]);
+        write_f64(&mut payload, point[2]);
     }
     encode_binary_array(&payload)
 }
@@ -191,6 +281,7 @@ fn write_f64(out: &mut Vec<u8>, value: f64) {
 mod tests {
     use super::*;
     use crate::field::ConservedFields;
+    use crate::mesh::{CellKind, UnstructuredCell};
     use crate::physics::{FreestreamParams, IdealGasEoS};
     use std::env;
 
@@ -216,6 +307,55 @@ assert all(g.GetCell(i).GetNumberOfPoints() == 8 for i in range(g.GetNumberOfCel
 d = g.GetCellData().GetArray("Density")
 lo, hi = d.GetRange()
 assert 0 < lo <= hi < 1e6, (lo, hi)
+print("ok")
+"#,
+                path = path.display().to_string()
+            ))
+            .status()
+            .expect("python");
+        assert!(status.success(), "vtk python read failed");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn flow_vtu_unstructured_offsets_match_vtk_cells() {
+        let path = env::temp_dir().join("asimu_flow_unstructured_vtu_offsets_test.vtu");
+        let mesh = UnstructuredMesh3d::new(
+            "mixed",
+            vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [1.0, 1.0, 0.0],
+                [1.0, 0.0, 1.0],
+                [0.0, 1.0, 1.0],
+            ],
+            vec![
+                UnstructuredCell::new(CellKind::Tet, vec![0, 1, 2, 3]).expect("tet"),
+                UnstructuredCell::new(CellKind::Prism, vec![1, 4, 2, 5, 6, 3]).expect("wedge"),
+            ],
+        )
+        .expect("mesh");
+        let eos = IdealGasEoS::AIR_STANDARD;
+        let fields =
+            ConservedFields::from_freestream(mesh.num_cells(), &eos, &FreestreamParams::default())
+                .expect("fields");
+        write_flow_vtu_unstructured(&path, &mesh, &fields, &eos, 1.0e-6).expect("write");
+        let status = std::process::Command::new("python3")
+            .arg("-c")
+            .arg(format!(
+                r#"
+import vtk
+r = vtk.vtkXMLUnstructuredGridReader()
+r.SetFileName({path:?})
+r.Update()
+g = r.GetOutput()
+assert g.GetNumberOfCells() == 2, g.GetNumberOfCells()
+assert g.GetCell(0).GetNumberOfPoints() == 4, g.GetCell(0).GetNumberOfPoints()
+assert g.GetCell(1).GetNumberOfPoints() == 6, g.GetCell(1).GetNumberOfPoints()
+assert g.GetCell(0).GetCellType() == 10, g.GetCell(0).GetCellType()
+assert g.GetCell(1).GetCellType() == 13, g.GetCell(1).GetCellType()
 print("ok")
 "#,
                 path = path.display().to_string()

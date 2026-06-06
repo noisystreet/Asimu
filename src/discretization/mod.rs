@@ -11,6 +11,7 @@ pub mod face_flux;
 pub mod flux_common;
 pub mod flux_config;
 pub mod gradient;
+pub mod gradient_unstructured;
 pub mod hllc;
 pub mod inviscid;
 pub mod reconstruction;
@@ -39,6 +40,9 @@ pub use diffusion_1d::assemble_diffusion_1d;
 pub use face_flux::{FaceFluxInput, face_inviscid_flux};
 pub use flux_config::{FluxScheme, InviscidFluxConfig, ReconstructionKind, SlopeLimiter};
 pub use gradient::{GradientFields, VelocityGradient, compute_structured_gradients_3d};
+pub use gradient_unstructured::{
+    UnstructuredGradientLsqInput, compute_unstructured_gradients_idw_lsq,
+};
 pub use hllc::hllc_flux;
 pub use inviscid::{InviscidFlux, physical_inviscid_flux};
 pub use reconstruction::{
@@ -46,10 +50,13 @@ pub use reconstruction::{
     reconstruct_face_primitives, reconstruct_first_order,
 };
 pub use residual::{
-    BoundaryGhosts1d, BoundaryInviscidFluxInput, InviscidBoundary1d, ViscousAssembly3dInput,
-    ViscousAssembly3dParams, accumulate_boundary_face, accumulate_interior_face,
-    assemble_inviscid_residual_1d, assemble_inviscid_residual_3d, assemble_viscous_residual_3d,
-    compute_gradients_and_assemble_viscous_3d, zero_gradient_ghosts_1d,
+    BoundaryGhosts1d, BoundaryInviscidFluxInput, InviscidAssemblyUnstructuredParams,
+    InviscidBoundary1d, ViscousAssembly3dInput, ViscousAssembly3dParams,
+    ViscousAssemblyUnstructuredInput, ViscousAssemblyUnstructuredParams, accumulate_boundary_face,
+    accumulate_interior_face, assemble_inviscid_residual_1d, assemble_inviscid_residual_3d,
+    assemble_inviscid_residual_unstructured, assemble_viscous_residual_3d,
+    assemble_viscous_residual_unstructured, compute_gradients_and_assemble_viscous_3d,
+    compute_gradients_and_assemble_viscous_unstructured, zero_gradient_ghosts_1d,
 };
 pub use roe::{RoeFluxConfig, roe_flux};
 pub use slau2::slau2_flux;

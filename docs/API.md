@@ -112,12 +112,13 @@ let result = solver.run(&mesh)?;
 | `VtsLoadResult` | `{ mesh: StructuredMesh }`（`D2` / `D3`） |
 | `load_vtu(&Path) -> Result<VtuLoadResult>` | 读取 `.vtu` UnstructuredGrid（ASCII / inline binary Points + Cells） |
 | `VtuLoadResult` | `{ mesh: UnstructuredMesh3d }` |
+| `write_flow_vtu_unstructured(path, mesh, fields, eos, p_floor)` | 写出非结构混合单元流场 VTU（CellData） |
 | `StructuredMesh2d` / `StructuredMesh3d` | 2D/3D 结构化网格（`nx`, `ny`[, `nz`]，节点坐标） |
 | `CellKind` | 非结构 3D 线性单元：Tet / Hex / Pyramid / Prism（VTK 10/12/13/14） |
 | `UnstructuredCell` | 单个非结构单元（`kind` + 全局节点索引） |
 | `UnstructuredMesh3d` | 混合单元非结构 3D 网格；构造期完成面拓扑（owner/neighbor）、体积与面度量 |
 
-**`UnstructuredMesh3d::new(name, points, cells)`**：节点顺序遵循 VTK；面合并按排序后的节点键（三角↔三角、四边↔四边）；非流形（≥3 单元共面）返回 `Mesh` 错误。Tier 1 读入：CGNS unstructured zone、VTU。规划见 [adr/0010-unstructured-mixed-mesh.md](adr/0010-unstructured-mixed-mesh.md)。
+**`UnstructuredMesh3d::new(name, points, cells)`**：节点顺序遵循 VTK；面合并按排序后的节点键（三角↔三角、四边↔四边）；非流形（≥3 单元共面）返回 `Mesh` 错误。Tier 1 读入：CGNS unstructured zone、VTU。非结构 case 首版支持单域一阶无粘 Euler 面循环、IDWLS 粘性梯度与 Navier-Stokes 粘性通量、含粘性抛物项的 local time step、显式 Euler/RK4、对角 LU-SGS 与按 CellId 拓扑邻接的 LU-SGS sweep；MUSCL、GMRES 与非结构 CGNS 流场写出暂未实现。规划见 [adr/0010-unstructured-mixed-mesh.md](adr/0010-unstructured-mixed-mesh.md)。
 
 | `write_vts(&StructuredMesh, &Path) -> Result<()>` | 写出 appended 二进制 VTS |
 
@@ -139,7 +140,7 @@ let result = solver.run(&mesh)?;
 
 多 zone CGNS case 可进入 3D 可压缩求解路径；当前按 block 同步推进，1-to-1 接口按 CGNS transform 映射并用共享无粘通量守恒装配（一次计算、两侧等量反号），最终 `solution_cgns` 与 `solution_every` 快照写为单个多 Zone CGNS 文件。严格守恒多块路径目前要求 `time.scheme = "lu_sgs"` 且 `lusgs_sweep = false`。
 
-见 [adr/0008-cgns-io.md](adr/0008-cgns-io.md)。Structured zone 与 Unstructured zone（混合单元）均已支持；非结构求解接入仍按 [adr/0010-unstructured-mixed-mesh.md](adr/0010-unstructured-mixed-mesh.md) 分阶段推进。
+见 [adr/0008-cgns-io.md](adr/0008-cgns-io.md)。Structured zone 与 Unstructured zone（混合单元）均已支持；`mesh.kind = "cgns"` 会按 zone 类型进入多块结构化或单域非结构路径。非结构求解接入按 [adr/0010-unstructured-mixed-mesh.md](adr/0010-unstructured-mixed-mesh.md) 分阶段推进。
 
 #### 网格诊断报告
 
@@ -223,6 +224,8 @@ name=<mesh_name>;cells=<count>
 | `assemble_diffusion_1d` | 1D 内部面扩散装配 |
 | `apply_boundary_conditions` | 按 patch 顺序施加 BC |
 | `apply_dirichlet_face` / `apply_neumann` | 单面 BC |
+| `UnstructuredGradientLsqInput` / `compute_unstructured_gradients_idw_lsq` | `UnstructuredMesh3d` 上的逆距离加权最小二乘梯度；内部面用相邻单元中心，边界面用 ghost 镜像样本 |
+| `ViscousAssemblyUnstructuredInput` / `compute_gradients_and_assemble_viscous_unstructured` | `UnstructuredMesh3d` 上计算 IDWLS 梯度并叠加 Newtonian/Fourier 粘性通量残差 |
 | `assemble_diffusion_placeholder` | 尺寸校验 + RHS 清零占位 |
 
 ### `asimu::solver`（扩展）

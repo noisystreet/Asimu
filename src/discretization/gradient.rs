@@ -161,7 +161,7 @@ struct ScalarSample {
     t: Real,
 }
 
-fn cell_temperatures(
+pub(crate) fn cell_temperatures(
     primitives: &PrimitiveFields,
     eos: &IdealGasEoS,
     viscous: Option<&crate::physics::ViscousPhysicsConfig>,
@@ -397,7 +397,7 @@ fn vec_dot(a: Vector3, b: Vector3) -> Real {
 }
 
 impl GradientFields {
-    fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         for f in [
             &mut self.du_dx,
             &mut self.du_dy,

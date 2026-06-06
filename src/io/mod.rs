@@ -47,7 +47,7 @@ pub use mesh_report::report_vts;
 #[cfg(feature = "io-vtk")]
 pub use vtk::{
     VtmBlock, VtsLoadResult, VtuLoadResult, load_vts, load_vtu, write_flow_vts, write_flow_vtu,
-    write_vtm, write_vts,
+    write_flow_vtu_unstructured, write_vtm, write_vts,
 };
 
 #[cfg(feature = "io-cgns-vts")]

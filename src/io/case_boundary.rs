@@ -116,5 +116,8 @@ fn resolve_mesh_logical_boundary(mesh: &CaseMesh, logical_name: &str) -> Result<
                 ))
             }
         }
+        CaseMesh::Unstructured3d(_) => Err(AsimuError::Boundary(format!(
+            "非结构网格不支持逻辑边界 \"{logical_name}\"；请使用网格文件中的 ZoneBC patch"
+        ))),
     }
 }

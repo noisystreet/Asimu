@@ -3,6 +3,7 @@
 //! 应用层（`app`）与集成测试共用本模块，避免在 CLI 中重复装配逻辑。
 
 mod compressible_3d;
+mod compressible_unstructured_3d;
 mod diffusion;
 mod output_3d;
 mod sod;
@@ -78,7 +79,10 @@ pub fn run_case(case: &CaseSpec) -> Result<CaseRunResult> {
     match kind {
         CaseRunKind::Diffusion1dSteady => diffusion::run(case),
         CaseRunKind::Sod1dTransient => sod::run(case),
-        CaseRunKind::Compressible3dTransient => compressible_3d::run(case),
+        CaseRunKind::Compressible3dTransient => match case.mesh {
+            CaseMesh::Unstructured3d(_) => compressible_unstructured_3d::run(case),
+            _ => compressible_3d::run(case),
+        },
     }
 }
 
@@ -88,7 +92,10 @@ fn detect_run_kind(case: &CaseSpec) -> Result<CaseRunKind> {
         return Ok(CaseRunKind::Sod1dTransient);
     }
     if case.is_compressible() {
-        let is_3d = matches!(case.mesh, CaseMesh::MultiBlockStructured3d(_));
+        let is_3d = matches!(
+            case.mesh,
+            CaseMesh::MultiBlockStructured3d(_) | CaseMesh::Unstructured3d(_)
+        );
         if is_3d && (case.euler.is_some() || case.navier_stokes.is_some()) {
             return Ok(CaseRunKind::Compressible3dTransient);
         }

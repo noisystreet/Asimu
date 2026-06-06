@@ -138,7 +138,10 @@ pub(super) fn apply_nondimensionalization_for_compressible(case: &mut CaseSpec) 
     if case.euler.is_none() && case.navier_stokes.is_none() {
         return Ok(());
     }
-    if !matches!(case.mesh, CaseMesh::MultiBlockStructured3d(_)) {
+    if !matches!(
+        case.mesh,
+        CaseMesh::MultiBlockStructured3d(_) | CaseMesh::Unstructured3d(_)
+    ) {
         return Err(AsimuError::Config(
             "无量纲可压缩求解仅支持 3D 网格".to_string(),
         ));
