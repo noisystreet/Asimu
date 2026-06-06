@@ -2,6 +2,7 @@
 
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::time::Instant;
 
 use tracing::{info, info_span, warn};
 
@@ -31,7 +32,7 @@ use crate::solver::{
 
 use super::{CaseRunKind, CaseRunResult, Compressible3dRunMetrics};
 
-pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
+pub(super) fn run(case: &CaseSpec) -> Result<CaseRunResult> {
     let mesh = case.mesh.as_unstructured_3d()?;
     run_compressible_unstructured_3d(case, mesh)
 }
@@ -46,15 +47,27 @@ fn run_compressible_unstructured_3d(
         faces = mesh.num_faces(),
     )
     .entered();
-    let disc = case.compressible_discretization()?;
-    let inviscid = disc.inviscid();
-    validate_unstructured_config(case, &inviscid)?;
-    validate_boundary_coverage(mesh, &case.boundary)?;
-    let eos = case.physics.eos()?;
-    let freestream = case
-        .freestream
-        .or(case.fluid_initial.freestream)
-        .ok_or_else(|| AsimuError::Field("3D 可压缩算例须指定 [freestream]".to_string()))?;
+    let (inviscid, eos, freestream) = {
+        let _span = info_span!("prepare_unstructured_solver").entered();
+        let disc = case.compressible_discretization()?;
+        let inviscid = disc.inviscid();
+        validate_unstructured_config(case, &inviscid)?;
+        {
+            let _span = info_span!(
+                "validate_unstructured_boundary",
+                patches = case.boundary.patches().len(),
+                faces = mesh.num_faces(),
+            )
+            .entered();
+            validate_boundary_coverage(mesh, &case.boundary)?;
+        }
+        let eos = case.physics.eos()?;
+        let freestream = case
+            .freestream
+            .or(case.fluid_initial.freestream)
+            .ok_or_else(|| AsimuError::Field("3D 可压缩算例须指定 [freestream]".to_string()))?;
+        (inviscid, eos, freestream)
+    };
     let mut env = UnstructuredRunEnv {
         case,
         mesh,
@@ -62,8 +75,18 @@ fn run_compressible_unstructured_3d(
         freestream: &freestream,
         inviscid,
     };
-    let mut fields = case.build_conserved_fields()?;
-    let history = advance_unstructured_history(&mut env, &mut fields)?;
+    let mut fields = {
+        let _span = info_span!(
+            "build_unstructured_initial_fields",
+            cells = mesh.num_cells()
+        )
+        .entered();
+        case.build_conserved_fields()?
+    };
+    let history = {
+        let _span = info_span!("advance_unstructured_history").entered();
+        advance_unstructured_history(&mut env, &mut fields)?
+    };
     let last = history
         .last()
         .ok_or_else(|| AsimuError::Solver("非结构 3D 推进未产生任何时间步".to_string()))?;
@@ -84,7 +107,10 @@ fn run_compressible_unstructured_3d(
         mesh,
         equation_label,
     );
-    let output_paths = write_unstructured_outputs(case, mesh, &fields, &history)?;
+    let output_paths = {
+        let _span = info_span!("write_unstructured_outputs").entered();
+        write_unstructured_outputs(case, mesh, &fields, &history)?
+    };
     for path in output_paths {
         info!(path = %path.display(), "非结构算例输出");
     }
@@ -130,16 +156,19 @@ fn advance_unstructured_history(
     fields: &mut ConservedFields,
 ) -> Result<Vec<CompressibleStepInfo>> {
     let n = env.mesh.num_cells();
-    let mut work = UnstructuredStepWork {
-        storage: Rk4Storage::new(n)?,
-        state: SolverState::default(),
-        integrator: RungeKutta4Integrator::new(RungeKutta4Config {
-            dt: env.case.time.dt.unwrap_or(0.0),
-            max_steps: env.case.resolved_max_steps(),
-        }),
-        ghosts: BoundaryGhostBuffer::new(),
-        primitives: PrimitiveFields::zeros(n)?,
-        gradients: GradientFields::zeros(n)?,
+    let mut work = {
+        let _span = info_span!("allocate_unstructured_work", cells = n).entered();
+        UnstructuredStepWork {
+            storage: Rk4Storage::new(n)?,
+            state: SolverState::default(),
+            integrator: RungeKutta4Integrator::new(RungeKutta4Config {
+                dt: env.case.time.dt.unwrap_or(0.0),
+                max_steps: env.case.resolved_max_steps(),
+            }),
+            ghosts: BoundaryGhostBuffer::new(),
+            primitives: PrimitiveFields::zeros(n)?,
+            gradients: GradientFields::zeros(n)?,
+        }
     };
     let mut history = Vec::new();
     loop {
@@ -180,39 +209,89 @@ fn advance_unstructured_step(
     fields: &mut ConservedFields,
     work: &mut UnstructuredStepWork,
 ) -> Result<CompressibleStepInfo> {
+    let step_start = Instant::now();
     let cfl = env.case.cfl_schedule()?.at_step(
         work.state.time_step.saturating_add(1),
         env.case.resolved_max_steps(),
     );
     let p_floor = crate::field::positivity_pressure_floor(env.freestream.pressure);
-    let (cell_dts, sigma) = prepare_unstructured_timestep(env, fields, work, cfl, p_floor)?;
+    let compute_dt_start = Instant::now();
+    let (cell_dts, sigma) = {
+        let _span = info_span!(
+            "compute_unstructured_dt",
+            cells = env.mesh.num_cells(),
+            faces = env.mesh.num_faces(),
+            cfl = cfl,
+            viscous = env.case.physics.viscous.is_some(),
+        )
+        .entered();
+        prepare_unstructured_timestep(env, fields, work, cfl, p_floor)?
+    };
+    let compute_dt_ms = elapsed_ms(compute_dt_start);
     let dt = min_positive_dt(&cell_dts);
     work.integrator.config.dt = dt;
-    match env.case.time.resolved_time_scheme() {
-        TimeIntegrationScheme::LuSgs => {
-            advance_unstructured_lusgs(env, fields, work, &cell_dts, &sigma, p_floor)?;
-        }
-        TimeIntegrationScheme::Euler | TimeIntegrationScheme::Rk4 => {
-            advance_unstructured_explicit(env, fields, work, dt, &cell_dts, p_floor)?;
-        }
-        TimeIntegrationScheme::Gmres => {
-            return Err(AsimuError::Config(
-                "非结构网格暂不支持 time.scheme = \"gmres\"".to_string(),
-            ));
+    let scheme = env.case.time.resolved_time_scheme();
+    let time_integration_start = Instant::now();
+    {
+        let _span = info_span!(
+            "unstructured_time_integration",
+            scheme = scheme.label(),
+            local_time_step = env.case.time.uses_local_time_step(),
+        )
+        .entered();
+        match scheme {
+            TimeIntegrationScheme::LuSgs => {
+                advance_unstructured_lusgs(env, fields, work, &cell_dts, &sigma, p_floor)?;
+            }
+            TimeIntegrationScheme::Euler | TimeIntegrationScheme::Rk4 => {
+                advance_unstructured_explicit(env, fields, work, dt, &cell_dts, p_floor)?;
+            }
+            TimeIntegrationScheme::Gmres => {
+                return Err(AsimuError::Config(
+                    "非结构网格暂不支持 time.scheme = \"gmres\"".to_string(),
+                ));
+            }
         }
     }
-    fields.enforce_positivity(env.eos, p_floor);
-    evaluate_unstructured_rhs(
-        env,
-        fields,
-        &mut work.storage.k1,
-        &mut work.ghosts,
-        &mut work.primitives,
-        &mut work.gradients,
-        p_floor,
-    )?;
-    let residual = work.storage.k1.density_rms_norm();
-    let time_info = work.integrator.advance(&mut work.state)?;
+    let time_integration_ms = elapsed_ms(time_integration_start);
+    {
+        let _span = info_span!("unstructured_enforce_positivity_post").entered();
+        fields.enforce_positivity(env.eos, p_floor);
+    }
+    let post_rhs_start = Instant::now();
+    let residual = {
+        let _span = info_span!("unstructured_rhs_post").entered();
+        evaluate_unstructured_rhs(
+            env,
+            fields,
+            &mut work.storage.k1,
+            &mut work.ghosts,
+            &mut work.primitives,
+            &mut work.gradients,
+            p_floor,
+        )?;
+        work.storage.k1.density_rms_norm()
+    };
+    let post_rhs_ms = elapsed_ms(post_rhs_start);
+    let advance_clock_start = Instant::now();
+    let time_info = {
+        let _span = info_span!("unstructured_advance_clock").entered();
+        work.integrator.advance(&mut work.state)?
+    };
+    let advance_clock_ms = elapsed_ms(advance_clock_start);
+    let step_total_ms = elapsed_ms(step_start);
+    info!(
+        step = work.state.time_step,
+        scheme = scheme.label(),
+        cells = env.mesh.num_cells(),
+        faces = env.mesh.num_faces(),
+        profile_compute_dt_ms = %format_log_fixed4(compute_dt_ms),
+        profile_time_integration_ms = %format_log_fixed4(time_integration_ms),
+        profile_post_rhs_ms = %format_log_fixed4(post_rhs_ms),
+        profile_advance_clock_ms = %format_log_fixed4(advance_clock_ms),
+        profile_step_total_ms = %format_log_fixed4(step_total_ms),
+        "非结构时间步 profiling",
+    );
     Ok(CompressibleStepInfo {
         dt: time_info.dt,
         physical_time: time_info.physical_time,
@@ -240,6 +319,7 @@ fn advance_unstructured_explicit(
     let primitives = &mut work.primitives;
     let gradients = &mut work.gradients;
     let evaluate = |u: &ConservedFields, r: &mut ConservedResidual| {
+        let _span = info_span!("unstructured_explicit_rhs").entered();
         evaluate_unstructured_rhs(env, u, r, ghosts, primitives, gradients, p_floor)
     };
     match (scheme, local) {
@@ -283,18 +363,27 @@ fn advance_unstructured_lusgs(
         ));
     }
     let lu_sgs = env.case.time.resolved_lusgs_config()?;
-    work.storage.u0.copy_from(fields)?;
-    evaluate_unstructured_rhs(
-        env,
-        &work.storage.u0,
-        &mut work.storage.k1,
-        &mut work.ghosts,
-        &mut work.primitives,
-        &mut work.gradients,
-        p_floor,
-    )?;
+    {
+        let _span = info_span!("unstructured_lusgs_copy_base").entered();
+        work.storage.u0.copy_from(fields)?;
+    }
+    {
+        let _span = info_span!("unstructured_lusgs_rhs").entered();
+        evaluate_unstructured_rhs(
+            env,
+            &work.storage.u0,
+            &mut work.storage.k1,
+            &mut work.ghosts,
+            &mut work.primitives,
+            &mut work.gradients,
+            p_floor,
+        )?;
+    }
     if lu_sgs.sweep {
-        let volumes = env.mesh.cell_volumes();
+        let volumes = {
+            let _span = info_span!("unstructured_lusgs_cell_volumes").entered();
+            env.mesh.cell_volumes()
+        };
         let mut sweep_params = LuSgsSweepUnstructuredParams {
             mesh: env.mesh,
             eos: env.eos,
@@ -302,6 +391,7 @@ fn advance_unstructured_lusgs(
             min_pressure: p_floor,
             backward_damping: lu_sgs.sweep_backward_damping,
         };
+        let _span = info_span!("unstructured_lusgs_sweep").entered();
         lu_sgs_sweep_unstructured(
             fields,
             &work.storage.k1,
@@ -315,15 +405,19 @@ fn advance_unstructured_lusgs(
             },
         )
     } else {
-        work.storage.stage.assign_lusgs_diagonal_update(
-            &work.storage.u0,
-            &work.storage.k1,
-            sigma,
-            cell_dts,
-            lu_sgs.omega,
-            env.eos.gamma,
-            p_floor,
-        )?;
+        {
+            let _span = info_span!("unstructured_lusgs_diagonal_update").entered();
+            work.storage.stage.assign_lusgs_diagonal_update(
+                &work.storage.u0,
+                &work.storage.k1,
+                sigma,
+                cell_dts,
+                lu_sgs.omega,
+                env.eos.gamma,
+                p_floor,
+            )?;
+        }
+        let _span = info_span!("unstructured_lusgs_copy_stage").entered();
         fields.copy_from(&work.storage.stage)
     }
 }
@@ -335,14 +429,20 @@ fn prepare_unstructured_timestep(
     cfl: Real,
     p_floor: Real,
 ) -> Result<(Vec<Real>, Vec<Real>)> {
-    fields.enforce_positivity(env.eos, p_floor);
-    refresh_unstructured_ghosts_and_primitives(
-        env,
-        fields,
-        &mut work.ghosts,
-        &mut work.primitives,
-        p_floor,
-    )?;
+    {
+        let _span = info_span!("unstructured_dt_enforce_positivity").entered();
+        fields.enforce_positivity(env.eos, p_floor);
+    }
+    {
+        let _span = info_span!("unstructured_dt_refresh_state").entered();
+        refresh_unstructured_ghosts_and_primitives(
+            env,
+            fields,
+            &mut work.ghosts,
+            &mut work.primitives,
+            p_floor,
+        )?;
+    }
     let params = SpectralRadiusUnstructuredParams {
         mesh: env.mesh,
         boundaries: &env.case.boundary,
@@ -352,9 +452,18 @@ fn prepare_unstructured_timestep(
         min_pressure: p_floor,
         viscous: env.case.physics.viscous.as_ref(),
     };
-    let sigma = cell_spectral_radius_unstructured(&params)?;
-    let volumes = env.mesh.cell_volumes();
-    let mut cell_dts = cell_local_dt_spectral(&volumes, &sigma, cfl)?;
+    let sigma = {
+        let _span = info_span!("unstructured_cell_spectral_radius").entered();
+        cell_spectral_radius_unstructured(&params)?
+    };
+    let volumes = {
+        let _span = info_span!("unstructured_cell_volumes").entered();
+        env.mesh.cell_volumes()
+    };
+    let mut cell_dts = {
+        let _span = info_span!("unstructured_local_dt_spectral").entered();
+        cell_local_dt_spectral(&volumes, &sigma, cfl)?
+    };
     if let Some(dt) = env.case.time.dt.filter(|dt| *dt > 0.0 && dt.is_finite()) {
         cell_dts.fill(dt);
     } else if !env.case.time.uses_local_time_step() {
@@ -373,7 +482,10 @@ fn evaluate_unstructured_rhs(
     gradients: &mut GradientFields,
     p_floor: Real,
 ) -> Result<()> {
-    refresh_unstructured_ghosts_and_primitives(env, fields, ghosts, primitives, p_floor)?;
+    {
+        let _span = info_span!("unstructured_rhs_refresh_state").entered();
+        refresh_unstructured_ghosts_and_primitives(env, fields, ghosts, primitives, p_floor)?;
+    }
     let params = InviscidAssemblyUnstructuredParams {
         mesh: env.mesh,
         eos: env.eos,
@@ -382,7 +494,10 @@ fn evaluate_unstructured_rhs(
         ghosts,
         primitives,
     };
-    assemble_inviscid_residual_unstructured(fields, residual, &params)?;
+    {
+        let _span = info_span!("assemble_unstructured_inviscid_residual").entered();
+        assemble_inviscid_residual_unstructured(fields, residual, &params)?;
+    }
     if let Some(viscous) = env.case.physics.viscous.as_ref() {
         let mut input = crate::discretization::ViscousAssemblyUnstructuredInput {
             mesh: env.mesh,
@@ -394,6 +509,7 @@ fn evaluate_unstructured_rhs(
             min_pressure: p_floor,
             gradient_scratch: gradients,
         };
+        let _span = info_span!("assemble_unstructured_viscous_residual").entered();
         compute_gradients_and_assemble_viscous_unstructured(residual, &mut input)?;
     }
     Ok(())
@@ -408,15 +524,23 @@ fn refresh_unstructured_ghosts_and_primitives(
 ) -> Result<()> {
     let viscous = env.case.physics.viscous.as_ref();
     let fs_ctx = FreestreamContext::new(env.eos, env.case.reference.as_ref(), viscous);
-    apply_compressible_boundary_conditions(
-        env.mesh,
-        &env.case.boundary,
-        fields,
-        ghosts,
-        &fs_ctx,
-        env.freestream,
-        viscous,
-    )?;
+    {
+        let _span = info_span!(
+            "apply_unstructured_boundary_conditions",
+            patches = env.case.boundary.patches().len(),
+        )
+        .entered();
+        apply_compressible_boundary_conditions(
+            env.mesh,
+            &env.case.boundary,
+            fields,
+            ghosts,
+            &fs_ctx,
+            env.freestream,
+            viscous,
+        )?;
+    }
+    let _span = info_span!("fill_unstructured_primitives", cells = fields.num_cells()).entered();
     primitives.fill_from_conserved(fields, env.eos, p_floor)
 }
 
@@ -505,6 +629,10 @@ fn unstructured_equation_label(case: &CaseSpec) -> &'static str {
     }
 }
 
+fn elapsed_ms(start: Instant) -> Real {
+    start.elapsed().as_secs_f64() * 1000.0
+}
+
 fn maybe_write_unstructured_interval(
     case: &CaseSpec,
     mesh: &UnstructuredMesh3d,
@@ -579,143 +707,5 @@ fn write_unstructured_vtu(
         Err(AsimuError::Config(
             "非结构流场 VTU 写出须启用 feature io-vtk".to_string(),
         ))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::boundary::{BoundaryKind, BoundaryPatch, BoundarySet};
-    use crate::io::{CaseMesh, parse_case_str};
-    use crate::mesh::{CellKind, UnstructuredCell};
-
-    #[test]
-    fn runs_single_tet_unstructured_smoke_step() {
-        let mut case = parse_case_str(
-            r#"
-name = "unstructured_smoke"
-[mesh]
-kind = "structured_3d"
-nx = 1
-ny = 1
-nz = 1
-
-[physics]
-gamma = 1.4
-gas_constant = 287.0
-
-[freestream]
-mach = 0.3
-pressure = 101325.0
-temperature = 288.15
-
-[euler]
-flux = "hllc"
-reconstruction = "first_order"
-
-[time]
-scheme = "euler"
-local_time_step = true
-max_steps = 1
-"#,
-        )
-        .expect("parse");
-        let mesh = UnstructuredMesh3d::new(
-            "tet",
-            vec![
-                [0.0, 0.0, 0.0],
-                [1.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0],
-                [0.0, 0.0, 1.0],
-            ],
-            vec![UnstructuredCell::new(CellKind::Tet, vec![0, 1, 2, 3]).expect("cell")],
-        )
-        .expect("mesh");
-        let faces = (0..mesh.num_faces())
-            .map(|face| crate::core::FaceId(face as u32))
-            .collect::<Vec<_>>();
-        let fs = case.freestream.expect("freestream");
-        case.mesh = CaseMesh::Unstructured3d(mesh);
-        case.boundary = BoundarySet::new(vec![BoundaryPatch::new(
-            "farfield",
-            faces,
-            BoundaryKind::Farfield {
-                mach: fs.mach,
-                pressure: fs.pressure,
-                temperature: fs.temperature,
-                alpha: fs.alpha,
-                beta: fs.beta,
-            },
-        )]);
-        let result = run(&case).expect("run");
-        let metrics = result.compressible_3d.expect("metrics");
-        assert_eq!(metrics.steps, 1);
-        assert!(metrics.residual_rms.is_finite());
-    }
-
-    #[test]
-    fn runs_single_tet_unstructured_lusgs_sweep_step() {
-        let mut case = parse_case_str(
-            r#"
-name = "unstructured_lusgs_sweep"
-[mesh]
-kind = "structured_3d"
-nx = 1
-ny = 1
-nz = 1
-
-[physics]
-gamma = 1.4
-gas_constant = 287.0
-
-[freestream]
-mach = 0.3
-pressure = 101325.0
-temperature = 288.15
-
-[euler]
-flux = "hllc"
-reconstruction = "first_order"
-
-[time]
-scheme = "lu_sgs"
-local_time_step = true
-lusgs_sweep = true
-lusgs_sweep_backward_damping = 0.5
-max_steps = 1
-"#,
-        )
-        .expect("parse");
-        let mesh = UnstructuredMesh3d::new(
-            "tet",
-            vec![
-                [0.0, 0.0, 0.0],
-                [1.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0],
-                [0.0, 0.0, 1.0],
-            ],
-            vec![UnstructuredCell::new(CellKind::Tet, vec![0, 1, 2, 3]).expect("cell")],
-        )
-        .expect("mesh");
-        let faces = (0..mesh.num_faces())
-            .map(|face| crate::core::FaceId(face as u32))
-            .collect::<Vec<_>>();
-        let fs = case.freestream.expect("freestream");
-        case.mesh = CaseMesh::Unstructured3d(mesh);
-        case.boundary = BoundarySet::new(vec![BoundaryPatch::new(
-            "farfield",
-            faces,
-            BoundaryKind::Farfield {
-                mach: fs.mach,
-                pressure: fs.pressure,
-                temperature: fs.temperature,
-                alpha: fs.alpha,
-                beta: fs.beta,
-            },
-        )]);
-        let result = run(&case).expect("run");
-        let metrics = result.compressible_3d.expect("metrics");
-        assert_eq!(metrics.steps, 1);
-        assert!(metrics.residual_rms.is_finite());
     }
 }

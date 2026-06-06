@@ -4,6 +4,8 @@
 
 mod compressible_3d;
 mod compressible_unstructured_3d;
+#[cfg(test)]
+mod compressible_unstructured_3d_tests;
 mod diffusion;
 mod output_3d;
 mod sod;
