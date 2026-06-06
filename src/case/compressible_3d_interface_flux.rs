@@ -1,16 +1,14 @@
 //! 多块 1-to-1 接口共享无粘通量装配。
 
-use std::collections::BTreeSet;
-
 use tracing::info_span;
 
-use super::BlockInterfaceLink;
+use super::SharedInterfaceFace;
 use crate::core::Real;
-use crate::discretization::residual::inviscid_boundary_face_flux;
+use crate::discretization::residual::inviscid_boundary_face_flux_with_normal;
 use crate::discretization::{BoundaryInviscidFluxInput, InviscidFlux};
 use crate::error::Result;
 use crate::field::{ConservedFields, ConservedResidual, PrimitiveFields};
-use crate::mesh::{BoundaryMesh3d, StructuredBlock3d};
+use crate::mesh::StructuredBlock3d;
 use crate::physics::{FreestreamParams, IdealGasEoS};
 
 #[derive(Debug, Clone)]
@@ -22,7 +20,7 @@ pub(super) struct InterfaceResidualContribution {
 
 pub(super) struct SharedInterfaceResidualParams<'a> {
     pub(super) blocks: &'a [StructuredBlock3d],
-    pub(super) links: &'a [Vec<BlockInterfaceLink>],
+    pub(super) shared_faces: &'a [SharedInterfaceFace],
     pub(super) snapshots: &'a [ConservedFields],
     pub(super) eos: &'a IdealGasEoS,
     pub(super) freestream: &'a FreestreamParams,
@@ -54,66 +52,55 @@ fn assemble_shared_interface_residuals(
     params: &SharedInterfaceResidualParams<'_>,
     primitives: &[PrimitiveFields],
 ) -> Result<Vec<Vec<InterfaceResidualContribution>>> {
-    let mut out = (0..params.blocks.len())
-        .map(|_| Vec::new())
-        .collect::<Vec<_>>();
-    let mut seen = BTreeSet::new();
-    for (owner_block, links) in params.links.iter().enumerate() {
-        for link in links {
-            let key = canonical_interface_key(owner_block, link);
-            if !seen.insert(key) {
-                continue;
-            }
-            add_shared_interface_face(params, primitives, owner_block, link, &mut out)?;
-        }
+    let mut out = new_contribution_buffers(params.blocks.len(), params.shared_faces);
+    for face in params.shared_faces {
+        add_shared_interface_face(params, primitives, face, &mut out)?;
     }
     Ok(out)
 }
 
-fn canonical_interface_key(
-    owner_block: usize,
-    link: &BlockInterfaceLink,
-) -> (usize, usize, usize, usize) {
-    let a = (owner_block, link.owner_cell);
-    let b = (link.donor_block_index, link.donor_cell);
-    if a <= b {
-        (a.0, a.1, b.0, b.1)
-    } else {
-        (b.0, b.1, a.0, a.1)
+fn new_contribution_buffers(
+    blocks: usize,
+    shared_faces: &[SharedInterfaceFace],
+) -> Vec<Vec<InterfaceResidualContribution>> {
+    let mut counts = vec![0usize; blocks];
+    for face in shared_faces {
+        counts[face.owner_block_index] += 1;
+        counts[face.donor_block_index] += 1;
     }
+    counts.into_iter().map(Vec::with_capacity).collect()
 }
 
 fn add_shared_interface_face(
     params: &SharedInterfaceResidualParams<'_>,
     primitives: &[PrimitiveFields],
-    owner_block: usize,
-    link: &BlockInterfaceLink,
+    face: &SharedInterfaceFace,
     out: &mut [Vec<InterfaceResidualContribution>],
 ) -> Result<()> {
-    let owner_mesh = &params.blocks[owner_block].mesh;
-    let donor_mesh = &params.blocks[link.donor_block_index].mesh;
-    let exterior = params.snapshots[link.donor_block_index].cell_state(link.donor_cell)?;
-    let flux = inviscid_boundary_face_flux(BoundaryInviscidFluxInput {
-        mesh: owner_mesh,
-        structured: owner_mesh,
-        primitives: &primitives[owner_block],
-        eos: params.eos,
-        config: params.inviscid,
-        min_pressure: p_floor(params.freestream),
-        face: link.face,
-        exterior,
-    })?;
-    let geom = owner_mesh.face_geometry_3d(link.face)?;
-    let donor_volumes = donor_mesh.cell_volumes();
-    out[owner_block].push(InterfaceResidualContribution {
-        cell: link.owner_cell,
+    let owner_mesh = &params.blocks[face.owner_block_index].mesh;
+    let exterior = params.snapshots[face.donor_block_index].cell_state(face.donor_cell)?;
+    let flux = inviscid_boundary_face_flux_with_normal(
+        BoundaryInviscidFluxInput {
+            mesh: owner_mesh,
+            structured: owner_mesh,
+            primitives: &primitives[face.owner_block_index],
+            eos: params.eos,
+            config: params.inviscid,
+            min_pressure: p_floor(params.freestream),
+            face: face.face,
+            exterior,
+        },
+        face.normal,
+    )?;
+    out[face.owner_block_index].push(InterfaceResidualContribution {
+        cell: face.owner_cell,
         flux,
-        scale: -geom.area / owner_mesh.cell_volumes()[link.owner_cell],
+        scale: face.owner_scale,
     });
-    out[link.donor_block_index].push(InterfaceResidualContribution {
-        cell: link.donor_cell,
+    out[face.donor_block_index].push(InterfaceResidualContribution {
+        cell: face.donor_cell,
         flux,
-        scale: geom.area / donor_volumes[link.donor_cell],
+        scale: face.donor_scale,
     });
     Ok(())
 }

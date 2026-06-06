@@ -11,7 +11,9 @@ use compressible_3d_interface_flux::{
     InterfaceResidualContribution, SharedInterfaceResidualParams, apply_interface_residuals,
     compute_shared_interface_residuals,
 };
-use compressible_3d_multiblock::{BlockInterfaceLink, build_multiblock_interface_metadata};
+use compressible_3d_multiblock::{
+    BlockInterfaceLink, SharedInterfaceFace, build_multiblock_interface_metadata,
+};
 
 use tracing::{info, info_span, warn};
 
@@ -23,7 +25,7 @@ use crate::error::{AsimuError, Result};
 use crate::field::{ConservedFields, PrimitiveFields};
 use crate::io::{CaseMesh, CaseSpec, CaseTimeMode};
 use crate::mesh::{MultiBlockStructuredMesh3d, StructuredBlock3d, StructuredMesh3d};
-use crate::physics::{FreestreamContext, FreestreamParams, IdealGasEoS};
+use crate::physics::{FreestreamParams, IdealGasEoS};
 use crate::solver::compressible::ResidualCorrection3d;
 use crate::solver::{
     CompressibleAdvanceContext3d, CompressibleEulerConfig, CompressibleEulerSolver,
@@ -156,11 +158,6 @@ fn run_multiblock(case: &CaseSpec, mesh: &MultiBlockStructuredMesh3d) -> Result<
             local_time_step,
         )
     };
-    let fs_ctx = FreestreamContext::new(
-        &eos,
-        case.reference.as_ref(),
-        solver.config.viscous.as_ref(),
-    );
     warn_multiblock_limitations(mesh.num_blocks(), mesh.interfaces().len());
     let interfaces = {
         let _span = info_span!("build_multiblock_interface_metadata").entered();
@@ -168,14 +165,7 @@ fn run_multiblock(case: &CaseSpec, mesh: &MultiBlockStructuredMesh3d) -> Result<
     };
     let mut states = {
         let _span = info_span!("build_multiblock_run_states", blocks = mesh.num_blocks()).entered();
-        build_multiblock_run_states(
-            case,
-            mesh.blocks(),
-            &interfaces.patches,
-            solver.config.time,
-            &fs_ctx,
-            &freestream,
-        )?
+        build_multiblock_run_states(case, mesh.blocks(), &interfaces.patches, solver.config.time)?
     };
     let mut snapshot_paths = Vec::new();
     let advance = MultiblockAdvanceEnv {
@@ -185,6 +175,7 @@ fn run_multiblock(case: &CaseSpec, mesh: &MultiBlockStructuredMesh3d) -> Result<
         freestream: &freestream,
         mesh,
         links: &interfaces.links,
+        shared_faces: &interfaces.shared_faces,
     };
     let history = {
         let _span = info_span!("advance_multiblock_history").entered();
@@ -224,11 +215,6 @@ fn run_multiblock(case: &CaseSpec, mesh: &MultiBlockStructuredMesh3d) -> Result<
 }
 
 fn validate_multiblock_case(case: &CaseSpec) -> Result<()> {
-    if case.restart.is_some() {
-        return Err(AsimuError::Config(
-            "多块 3D 求解暂不支持 [restart] 初场".to_string(),
-        ));
-    }
     if case.time.resolved_time_scheme() != crate::solver::TimeIntegrationScheme::LuSgs {
         return Err(AsimuError::Config(
             "严格守恒多块 3D 求解当前要求 time.scheme = \"lu_sgs\"".to_string(),
@@ -322,6 +308,7 @@ struct MultiblockAdvanceEnv<'a> {
     freestream: &'a FreestreamParams,
     mesh: &'a MultiBlockStructuredMesh3d,
     links: &'a [Vec<BlockInterfaceLink>],
+    shared_faces: &'a [SharedInterfaceFace],
 }
 
 struct InterfaceResidualCorrection {
@@ -339,11 +326,18 @@ fn build_multiblock_run_states(
     blocks: &[StructuredBlock3d],
     interface_patches: &[Vec<BoundaryPatch>],
     time_config: RungeKutta4Config,
-    fs_ctx: &FreestreamContext<'_>,
-    freestream: &crate::physics::FreestreamParams,
 ) -> Result<Vec<BlockRunState>> {
+    let block_fields = {
+        let _span = info_span!(
+            "load_multiblock_initial_fields",
+            blocks = blocks.len(),
+            restart = case.restart.is_some()
+        )
+        .entered();
+        case.build_multiblock_conserved_fields(blocks)?
+    };
     let mut states = Vec::with_capacity(blocks.len());
-    for (index, block) in blocks.iter().enumerate() {
+    for (index, (block, fields)) in blocks.iter().zip(block_fields).enumerate() {
         let _span = info_span!(
             "build_multiblock_block_state",
             block = %block.name,
@@ -364,11 +358,7 @@ fn build_multiblock_run_states(
             "初始化多块 3D 可压缩 block"
         );
         states.push(BlockRunState {
-            fields: ConservedFields::from_freestream_context(
-                block.mesh.num_cells(),
-                fs_ctx,
-                freestream,
-            )?,
+            fields,
             ghosts: BoundaryGhostBuffer::new(),
             boundary,
             storage: Rk4Storage::new(block.mesh.num_cells())?,
@@ -444,7 +434,7 @@ fn advance_multiblock_step(
         .entered();
         compute_shared_interface_residuals(&SharedInterfaceResidualParams {
             blocks: env.mesh.blocks(),
-            links: env.links,
+            shared_faces: env.shared_faces,
             snapshots: &snapshots,
             eos: env.eos,
             freestream: env.freestream,

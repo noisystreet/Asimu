@@ -239,17 +239,28 @@ impl CaseSpec {
         if let Some(path) = &self.restart {
             return super::restart::load_conserved_fields(path);
         }
-        let eos = self.physics.eos()?;
-        let fs = self
-            .freestream
-            .or(self.fluid_initial.freestream)
-            .ok_or_else(|| AsimuError::Field("须指定 [freestream] 或 [restart]".to_string()))?;
-        let ctx = crate::physics::FreestreamContext::new(
-            &eos,
+        super::restart::initial_freestream_conserved_fields(
+            self.mesh.num_cells(),
+            &self.physics.eos()?,
             self.reference.as_ref(),
             self.physics.viscous.as_ref(),
-        );
-        crate::field::ConservedFields::from_freestream_context(self.mesh.num_cells(), &ctx, &fs)
+            self.freestream.or(self.fluid_initial.freestream),
+        )
+    }
+
+    /// 按 block 顺序构建多块守恒初场；`[restart]` 使用 version=2 多块 TOML。
+    pub fn build_multiblock_conserved_fields(
+        &self,
+        blocks: &[crate::mesh::StructuredBlock3d],
+    ) -> Result<Vec<crate::field::ConservedFields>> {
+        super::restart::initial_multiblock_conserved_fields(
+            self.restart.as_deref(),
+            blocks,
+            &self.physics.eos()?,
+            self.reference.as_ref(),
+            self.physics.viscous.as_ref(),
+            self.freestream.or(self.fluid_initial.freestream),
+        )
     }
 
     pub fn is_compressible(&self) -> bool {
@@ -452,7 +463,9 @@ fn parse_case_toml(content: &str, case_dir: Option<&Path>) -> Result<CaseSpec> {
         freestream,
         scalars: initial.clone(),
     };
-    let restart = raw.restart.map(|r| resolve_restart_path(r.path, case_dir));
+    let restart = raw
+        .restart
+        .map(|r| super::restart::resolve_restart_path(r.path, case_dir));
 
     if raw.euler.is_some() && raw.navier_stokes.is_some() {
         return Err(AsimuError::Config(
@@ -584,16 +597,6 @@ fn parse_physics(raw: &PhysicsToml, navier_stokes: bool) -> Result<PhysicsConfig
         eos,
         viscous,
     })
-}
-
-fn resolve_restart_path(path: PathBuf, case_dir: Option<&Path>) -> PathBuf {
-    if path.is_absolute() {
-        path
-    } else if let Some(dir) = case_dir {
-        dir.join(path)
-    } else {
-        path
-    }
 }
 
 fn parse_freestream(raw: &FreestreamToml) -> FreestreamParams {

@@ -110,8 +110,8 @@ lz = 0.25
 | 支持 | 多个均匀 `StructuredMesh3d` block，block 名称必须唯一 |
 | 统计 | `CaseMesh::num_cells()` 返回所有 block 单元总数 |
 | 诊断 | `mesh_check` 可做逐 block 几何预检与整体范围统计 |
-| 支持 | `[boundary]` 可按 `block_name/patch` 绑定到单个 block；1-to-1 接口通量可在 LU-SGS 多块路径中守恒装配 |
-| 暂不支持 | 多块 restart 初场、非 1-to-1 / overset / sliding 接口、合并 VTK 输出 |
+| 支持 | `[boundary]` 可按 `block_name/patch` 绑定到单个 block；1-to-1 接口通量可在 LU-SGS 多块路径中守恒装配；`[restart]` 支持 version=2 多块 TOML 初场 |
+| 暂不支持 | 非 1-to-1 / overset / sliding 接口、合并 VTK 输出 |
 
 ### 3.5 外部 CGNS（feature `io-cgns-vts`）
 
@@ -322,7 +322,23 @@ NS 粘性项含 \(1/\mathrm{Re}\)；流场 CGNS/VTK 输出自动还原 SI。
 
 静温：有量纲 \(T=p/(\rho R)\)；无量纲 \(T^*=p^*\gamma/\rho^*\) → `ViscousPhysicsConfig::static_temperature`（见理论手册式 (1)(2)）。
 
-须配合 `[freestream]`；与 `[mesh].scale` 独立（后者仅做网格单位换算）。
+须配合 `[freestream]` 或 `[restart]`；与 `[mesh].scale` 独立（后者仅做网格单位换算）。
+
+### `[restart]` 初场
+
+单 block 与多块均通过 case TOML 的 `[restart]` 段指定 restart 文件路径（相对算例目录）：
+
+```toml
+[restart]
+path = "restart.toml"
+```
+
+| 版本 | 适用 | 格式 |
+|------|------|------|
+| `version = 1` | 单 block 3D / 1D | 顶层 `num_cells` + `density` / `momentum_*` / `total_energy` |
+| `version = 2` | 多块 3D | `[[blocks]]` 数组，每项含 `name`（须与 mesh block 名一致）及守恒量数组 |
+
+多块 restart 仍须配置 `[freestream]` 以驱动边界 ghost；初场守恒量来自 restart 文件。API：`CaseSpec::build_multiblock_conserved_fields()`、`io::load_multiblock_conserved_fields()`、`io::write_multiblock_conserved_fields()`。
 
 ---
 

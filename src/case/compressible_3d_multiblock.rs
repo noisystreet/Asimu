@@ -1,11 +1,13 @@
 //! 多块 3D 可压缩求解的接口映射。
 
+use std::collections::BTreeSet;
+
 use crate::boundary::{BoundaryKind, BoundaryPatch};
-use crate::core::FaceId;
+use crate::core::{FaceId, Real, Vector3};
 use crate::error::{AsimuError, Result};
 use crate::mesh::{
-    LogicalFace3d, MultiBlockStructuredMesh3d, StructuredBlock3d, StructuredIndexRange3d,
-    StructuredMesh3d,
+    BoundaryMesh3d, LogicalFace3d, MultiBlockStructuredMesh3d, StructuredBlock3d,
+    StructuredIndexRange3d, StructuredMesh3d,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,9 +18,22 @@ pub(super) struct BlockInterfaceLink {
     pub(super) donor_cell: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct SharedInterfaceFace {
+    pub(super) owner_block_index: usize,
+    pub(super) owner_cell: usize,
+    pub(super) donor_block_index: usize,
+    pub(super) donor_cell: usize,
+    pub(super) face: FaceId,
+    pub(super) normal: Vector3,
+    pub(super) owner_scale: Real,
+    pub(super) donor_scale: Real,
+}
+
 pub(super) struct MultiblockInterfaceMetadata {
     pub(super) links: Vec<Vec<BlockInterfaceLink>>,
     pub(super) patches: Vec<Vec<BoundaryPatch>>,
+    pub(super) shared_faces: Vec<SharedInterfaceFace>,
 }
 
 pub(super) fn build_multiblock_interface_metadata(
@@ -27,7 +42,14 @@ pub(super) fn build_multiblock_interface_metadata(
     let mut metadata = MultiblockInterfaceMetadata {
         links: (0..mesh.num_blocks()).map(|_| Vec::new()).collect(),
         patches: (0..mesh.num_blocks()).map(|_| Vec::new()).collect(),
+        shared_faces: Vec::new(),
     };
+    let mut seen_faces = BTreeSet::new();
+    let block_volumes: Vec<Vec<Real>> = mesh
+        .blocks()
+        .iter()
+        .map(|block| block.mesh.cell_volumes())
+        .collect();
     for (interface_index, interface) in mesh.interfaces().iter().enumerate() {
         let owner_index = block_index(mesh.blocks(), &interface.owner_block)?;
         let donor_index = block_index(mesh.blocks(), &interface.donor_block)?;
@@ -58,20 +80,49 @@ pub(super) fn build_multiblock_interface_metadata(
                 partner: interface.donor_block.clone(),
             },
         ));
-        metadata.links[owner_index].extend(owner_entries.into_iter().zip(donor_cells).map(
-            |(entry, donor_cell)| BlockInterfaceLink {
+        for (entry, donor_cell) in owner_entries.into_iter().zip(donor_cells) {
+            let owner_cell = owner_block.mesh.cell_index(
+                (entry.cell_coord[0] - 1) as usize,
+                (entry.cell_coord[1] - 1) as usize,
+                (entry.cell_coord[2] - 1) as usize,
+            );
+            let link = BlockInterfaceLink {
                 face: entry.face,
-                owner_cell: owner_block.mesh.cell_index(
-                    (entry.cell_coord[0] - 1) as usize,
-                    (entry.cell_coord[1] - 1) as usize,
-                    (entry.cell_coord[2] - 1) as usize,
-                ),
+                owner_cell,
                 donor_block_index: donor_index,
                 donor_cell,
-            },
-        ));
+            };
+            let key = canonical_interface_key(owner_index, &link);
+            if seen_faces.insert(key) {
+                let geom = owner_block.mesh.face_geometry_3d(entry.face)?;
+                metadata.shared_faces.push(SharedInterfaceFace {
+                    owner_block_index: owner_index,
+                    owner_cell,
+                    donor_block_index: donor_index,
+                    donor_cell,
+                    face: entry.face,
+                    normal: geom.normal,
+                    owner_scale: -geom.area / block_volumes[owner_index][owner_cell],
+                    donor_scale: geom.area / block_volumes[donor_index][donor_cell],
+                });
+            }
+            metadata.links[owner_index].push(link);
+        }
     }
     Ok(metadata)
+}
+
+fn canonical_interface_key(
+    owner_block: usize,
+    link: &BlockInterfaceLink,
+) -> (usize, usize, usize, usize) {
+    let a = (owner_block, link.owner_cell);
+    let b = (link.donor_block_index, link.donor_cell);
+    if a <= b {
+        (a.0, a.1, b.0, b.1)
+    } else {
+        (b.0, b.1, a.0, a.1)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

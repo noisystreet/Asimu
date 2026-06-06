@@ -16,7 +16,10 @@ pub use case::{
     SodCaseConfig, load_case, parse_case_str, resolve_case_output_path,
 };
 pub use residual::write_residual_csv;
-pub use restart::{load_conserved_fields, write_conserved_fields};
+pub use restart::{
+    initial_multiblock_conserved_fields, load_conserved_fields, load_multiblock_conserved_fields,
+    write_conserved_fields, write_multiblock_conserved_fields,
+};
 
 #[cfg(feature = "io-cgns")]
 pub mod cgns;

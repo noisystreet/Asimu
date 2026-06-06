@@ -22,8 +22,9 @@ pub use assembly_3d_viscous::{
     compute_gradients_and_assemble_viscous_3d,
 };
 pub use face_flux_3d::{
-    BoundaryInviscidFluxInput, inviscid_boundary_face_flux, inviscid_i_face_flux,
-    inviscid_j_face_flux, inviscid_k_face_flux,
+    BoundaryInviscidFluxInput, inviscid_boundary_face_flux,
+    inviscid_boundary_face_flux_with_normal, inviscid_i_face_flux, inviscid_j_face_flux,
+    inviscid_k_face_flux,
 };
 
 /// 忽略退化（零体积）控制体的体积下限。

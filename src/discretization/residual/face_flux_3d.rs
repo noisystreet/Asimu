@@ -60,6 +60,14 @@ pub fn inviscid_k_face_flux(
 
 pub fn inviscid_boundary_face_flux(input: BoundaryInviscidFluxInput<'_>) -> Result<InviscidFlux> {
     let geom = input.mesh.face_geometry_3d(input.face)?;
+    inviscid_boundary_face_flux_with_normal(input, geom.normal)
+}
+
+/// 使用调用方预先缓存的面法向计算 3D 边界面无粘通量。
+pub fn inviscid_boundary_face_flux_with_normal(
+    input: BoundaryInviscidFluxInput<'_>,
+    normal: Vector3,
+) -> Result<InviscidFlux> {
     let ctx = BoundaryFaceFlux3d {
         primitives: input.primitives,
         mesh: input.structured,
@@ -67,7 +75,7 @@ pub fn inviscid_boundary_face_flux(input: BoundaryInviscidFluxInput<'_>) -> Resu
         config: input.config,
         min_pressure: input.min_pressure,
     };
-    flux_at_boundary_face(&ctx, input.face, input.exterior, geom.normal)
+    flux_at_boundary_face(&ctx, input.face, input.exterior, normal)
 }
 
 fn interior_flux(

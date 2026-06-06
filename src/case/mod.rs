@@ -180,6 +180,77 @@ max_steps = 1
         assert!(metrics.residual_rms.is_finite());
     }
 
+    #[test]
+    fn runs_multiblock_compressible_restart_case() {
+        use crate::io::write_multiblock_conserved_fields;
+        use crate::physics::{FreestreamParams, IdealGasEoS};
+
+        let eos = IdealGasEoS::AIR_STANDARD;
+        let fs = FreestreamParams {
+            mach: 0.3,
+            ..FreestreamParams::default()
+        };
+        let block_a = crate::field::ConservedFields::from_freestream(1, &eos, &fs).expect("a");
+        let block_b = crate::field::ConservedFields::from_freestream(1, &eos, &fs).expect("b");
+        let path = std::env::temp_dir().join("asimu_multiblock_case_restart.toml");
+        write_multiblock_conserved_fields(&path, &[("a", &block_a), ("b", &block_b)])
+            .expect("write restart");
+
+        let case = crate::io::parse_case_str(&format!(
+            r#"
+name = "multi_cns_restart"
+[mesh]
+kind = "multi_block_structured_3d"
+
+[[mesh.blocks]]
+name = "a"
+nx = 1
+ny = 1
+nz = 1
+
+[[mesh.blocks]]
+name = "b"
+nx = 1
+ny = 1
+nz = 1
+
+[physics]
+gamma = 1.4
+gas_constant = 287.0
+
+[freestream]
+mach = 0.3
+pressure = 101325.0
+temperature = 288.15
+
+[restart]
+path = "{}"
+
+[euler]
+flux = "hllc"
+
+[time]
+scheme = "lu_sgs"
+local_time_step = true
+max_steps = 1
+"#,
+            path.display()
+        ))
+        .expect("parse");
+        let mesh = match &case.mesh {
+            crate::io::CaseMesh::MultiBlockStructured3d(mesh) => mesh,
+            _ => panic!("expected multiblock mesh"),
+        };
+        let loaded = case
+            .build_multiblock_conserved_fields(mesh.blocks())
+            .expect("restart fields");
+        assert_eq!(loaded[0].density.values(), block_a.density.values());
+        assert_eq!(loaded[1].density.values(), block_b.density.values());
+        let result = run_case(&case).expect("run");
+        assert_eq!(result.kind, CaseRunKind::Compressible3dTransient);
+        let _ = std::fs::remove_file(path);
+    }
+
     #[cfg(all(feature = "io-cgns", feature = "slow-tests"))]
     #[test]
     fn runs_cylinder_mach8_when_cgns_present() {

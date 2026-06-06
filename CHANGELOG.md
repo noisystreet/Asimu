@@ -5,6 +5,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- 多块 3D 可压缩 case 支持 `[restart]` 初场：version=2 TOML 按 block 名称加载守恒量，单 block restart（version=1）仍可用于仅含 1 个 block 的多块网格
+
 ### Changed
 
 - 可压缩算例仅保留无量纲求解：移除 `[nondimensional] enabled` 开关，可压缩算例解析后必定缩放为 \(*\) 变量
