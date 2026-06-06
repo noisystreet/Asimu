@@ -391,7 +391,7 @@ pub fn check_mesh3d(
     })
 }
 
-/// 多块 3D 结构化网格预检（首版仅几何诊断，不检查跨 block 接口）。
+/// 多块 3D 结构化网格预检（逐 block 几何诊断；接口连通校验待补充）。
 pub fn check_multiblock_mesh3d(
     mesh: &MultiBlockStructuredMesh3d,
     source: impl Into<String>,
@@ -410,18 +410,29 @@ pub fn check_multiblock_mesh3d(
             });
         }
     }
-    findings.push(CheckFinding::warn(
-        "multiblock_interfaces",
-        "多块网格首版未检查 block 间接口连通；求解器暂不跨 block 装配",
-    ));
+    if !mesh.interfaces().is_empty() {
+        findings.push(CheckFinding::warn(
+            "multiblock_interfaces",
+            format!(
+                "多块网格含 {} 条 1-to-1 接口：暂未校验接口几何连通；可压缩求解仅支持 LU-SGS 对角隐式",
+                mesh.interfaces().len()
+            ),
+        ));
+    } else if mesh.num_blocks() > 1 {
+        findings.push(CheckFinding::warn(
+            "multiblock_no_interfaces",
+            "多块网格无 block 间接口：各 block 独立同步推进",
+        ));
+    }
 
     Ok(MeshCheckReport {
         source: source.into(),
         diagnostics: multiblock_mesh3d_diagnostics(mesh),
         boundary_patches: Vec::new(),
         boundary_note: Some(format!(
-            "多块结构化 3D 网格：{} 个 block（仅几何诊断）",
-            mesh.num_blocks()
+            "多块结构化 3D 网格：{} 个 block，{} 条接口",
+            mesh.num_blocks(),
+            mesh.interfaces().len()
         )),
         findings,
     })

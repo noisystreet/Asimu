@@ -108,7 +108,7 @@ lz = 0.25
 | 项 | 约定 |
 |----|------|
 | 支持 | 多个均匀 `StructuredMesh3d` block，block 名称必须唯一 |
-| 求解 | 与单块 3D 共用 `BlockRunState` 推进框架；`structured_3d` 与单 zone CGNS 读入为 1-block `MultiBlockStructured3d`；无接口 block 可使用 GMRES/RK4/LU-SGS sweep，有 1-to-1 接口时要求 LU-SGS 对角隐式 |
+| 求解 | 与单块 3D 共用 `BlockRunState` 推进框架；`structured_3d` 与单 zone CGNS 读入为 1-block `MultiBlockStructured3d`；无接口 block 可使用 GMRES/RK4/LU-SGS sweep，有 1-to-1 接口时要求 LU-SGS 对角隐式（**case 解析阶段校验**） |
 | 统计 | `CaseMesh::num_cells()` 返回所有 block 单元总数 |
 | 诊断 | `mesh_check` 可做逐 block 几何预检与整体范围统计 |
 | 支持 | `[boundary]` 可按 `block_name/patch` 绑定到单个 block；1-to-1 接口通量可在 LU-SGS 多块路径中守恒装配；`[restart]` 支持 version=2 多块 TOML 初场 |

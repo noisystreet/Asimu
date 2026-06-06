@@ -169,7 +169,12 @@ pub fn multiblock_mesh3d_diagnostics(mesh: &MultiBlockStructuredMesh3d) -> MeshD
         }
     }
 
-    warnings.push("多块网格首版仅支持读入/诊断，求解器尚不跨 block 装配".to_string());
+    if !mesh.interfaces().is_empty() {
+        warnings.push(format!(
+            "多块网格含 {} 条 1-to-1 接口：可压缩求解仅支持 time.scheme = lu_sgs 且 lusgs_sweep = false",
+            mesh.interfaces().len()
+        ));
+    }
     MeshDiagnostics {
         name: mesh.name.clone(),
         dimension: 3,

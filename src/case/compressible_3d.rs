@@ -63,7 +63,7 @@ fn run_compressible_3d(
     .entered();
     let (eos, freestream, solver, scheme, limiter, time_mode, local_time_step) = {
         let _span = info_span!("prepare_compressible_solver").entered();
-        validate_connected_blocks_case(case, mesh)?;
+        case.validate_multiblock_compressible()?;
         let disc = case.compressible_discretization()?;
         let eos = case.physics.eos()?;
         let freestream = case
@@ -146,26 +146,6 @@ fn run_compressible_3d(
         time_mode,
         local_time_step,
     ))
-}
-
-fn validate_connected_blocks_case(
-    case: &CaseSpec,
-    mesh: &MultiBlockStructuredMesh3d,
-) -> Result<()> {
-    if mesh.interfaces().is_empty() {
-        return Ok(());
-    }
-    if case.time.resolved_time_scheme() != crate::solver::TimeIntegrationScheme::LuSgs {
-        return Err(AsimuError::Config(
-            "严格守恒多块 3D 求解当前要求 time.scheme = \"lu_sgs\"".to_string(),
-        ));
-    }
-    if case.time.resolved_lusgs_config()?.sweep {
-        return Err(AsimuError::Config(
-            "严格守恒多块 3D 求解暂不支持 lusgs_sweep = true".to_string(),
-        ));
-    }
-    Ok(())
 }
 
 fn log_written_paths(snapshot_paths: &[std::path::PathBuf], output_paths: &[std::path::PathBuf]) {

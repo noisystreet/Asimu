@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
+use tracing::warn;
 
 use crate::boundary::BoundarySet;
 use crate::core::Real;
@@ -276,6 +277,28 @@ impl CaseSpec {
         self.physics.eos.is_some()
     }
 
+    /// 有 1-to-1 接口的多块可压缩算例须满足 LU-SGS 对角隐式约束。
+    pub fn validate_multiblock_compressible(&self) -> Result<()> {
+        if !self.is_compressible() || (self.euler.is_none() && self.navier_stokes.is_none()) {
+            return Ok(());
+        }
+        let mesh = self.mesh.as_multiblock_3d()?;
+        if mesh.interfaces().is_empty() {
+            return Ok(());
+        }
+        if self.time.resolved_time_scheme() != crate::solver::TimeIntegrationScheme::LuSgs {
+            return Err(AsimuError::Config(
+                "有 1-to-1 接口的多块 3D 可压缩算例当前仅支持 time.scheme = \"lu_sgs\"".to_string(),
+            ));
+        }
+        if self.time.resolved_lusgs_config()?.sweep {
+            return Err(AsimuError::Config(
+                "有 1-to-1 接口的多块 3D 可压缩算例暂不支持 lusgs_sweep = true".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     /// 3D 可压缩离散段：`[navier_stokes]` 优先，否则 `[euler]`。
     pub fn compressible_discretization(&self) -> Result<&EulerCaseConfig> {
         if let Some(ns) = &self.navier_stokes {
@@ -345,6 +368,8 @@ struct MeshToml {
     path: Option<PathBuf>,
     scale: Option<Real>,
     metric: Option<String>,
+    /// 已废弃：`cgns` 读入现自动加载全部 structured zone。
+    zone: Option<usize>,
     #[serde(default)]
     blocks: Vec<mesh_load::MeshBlockTomlFields>,
 }
@@ -490,6 +515,7 @@ fn parse_case_toml(content: &str, case_dir: Option<&Path>) -> Result<CaseSpec> {
     let time = parse_time_config(raw.time.as_ref(), raw.sod.is_some())?;
     let sod = raw.sod.as_ref().map(parse_sod_config);
 
+    let deprecated_mesh_zone = raw.mesh.zone;
     let mut case = CaseSpec {
         name: raw.name,
         benchmark_id: raw.benchmark_id,
@@ -509,9 +535,20 @@ fn parse_case_toml(content: &str, case_dir: Option<&Path>) -> Result<CaseSpec> {
         case_dir: case_dir.map(Path::to_path_buf),
         reference: None,
     };
-    case.warn_config_inconsistencies();
-    super::nondimensional::apply_nondimensionalization_for_compressible(&mut case)?;
+    finalize_parsed_case(deprecated_mesh_zone, &mut case)?;
     Ok(case)
+}
+
+fn finalize_parsed_case(deprecated_mesh_zone: Option<usize>, case: &mut CaseSpec) -> Result<()> {
+    case.warn_config_inconsistencies();
+    if deprecated_mesh_zone.is_some() {
+        warn!(
+            zone = ?deprecated_mesh_zone,
+            "mesh.zone 已废弃：cgns 读入现自动加载全部 structured zone，该字段被忽略"
+        );
+    }
+    super::nondimensional::apply_nondimensionalization_for_compressible(case)?;
+    case.validate_multiblock_compressible()
 }
 
 fn mesh_toml_fields(raw: &MeshToml) -> mesh_load::MeshTomlFields {

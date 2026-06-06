@@ -437,3 +437,127 @@ kind = "wall"
     let case = parse_case_toml(content, None).expect("parse");
     assert!(case.boundary.find("i_min").is_some());
 }
+
+#[test]
+fn rejects_gmres_for_connected_multiblock_at_parse() {
+    use crate::io::nondimensional;
+    use crate::mesh::{
+        MultiBlockStructuredMesh3d, StructuredBlockInterface3d, StructuredIndexRange3d,
+        StructuredMesh3d,
+    };
+    use crate::physics::IdealGasEoS;
+    use crate::solver::time::{LuSgsConfig, ResidualSmoothingConfig, TimeIntegrationScheme};
+
+    let mesh = MultiBlockStructuredMesh3d::with_interfaces(
+        "connected",
+        vec![
+            StructuredMesh3d::uniform_box("a", 2, 1, 1, 1.0, 1.0, 1.0).expect("a"),
+            StructuredMesh3d::uniform_box("b", 2, 1, 1, 1.0, 1.0, 1.0).expect("b"),
+        ],
+        vec![StructuredBlockInterface3d {
+            owner_block: "a".to_string(),
+            donor_block: "b".to_string(),
+            owner_range: StructuredIndexRange3d {
+                imin: 2,
+                imax: 2,
+                jmin: 1,
+                jmax: 2,
+                kmin: 1,
+                kmax: 2,
+            },
+            donor_range: StructuredIndexRange3d {
+                imin: 1,
+                imax: 1,
+                jmin: 1,
+                jmax: 2,
+                kmin: 1,
+                kmax: 2,
+            },
+            transform: [1, 2, 3],
+        }],
+    )
+    .expect("mesh");
+
+    let mut case = CaseSpec {
+        name: "connected".to_string(),
+        benchmark_id: None,
+        mesh: CaseMesh::MultiBlockStructured3d(mesh),
+        physics: crate::physics::PhysicsConfig {
+            diffusivity: None,
+            eos: Some(IdealGasEoS::new(1.4, 287.0).expect("eos")),
+            viscous: None,
+        },
+        boundary: BoundarySet::default(),
+        initial: InitialSet::default(),
+        fluid_initial: FluidInitialConfig {
+            freestream: Some(FreestreamParams {
+                mach: 0.3,
+                pressure: 101_325.0,
+                temperature: 288.15,
+                velocity_direction: [1.0, 0.0, 0.0],
+                alpha: 0.0,
+                beta: 0.0,
+            }),
+            scalars: InitialSet::default(),
+        },
+        freestream: Some(FreestreamParams {
+            mach: 0.3,
+            pressure: 101_325.0,
+            temperature: 288.15,
+            velocity_direction: [1.0, 0.0, 0.0],
+            alpha: 0.0,
+            beta: 0.0,
+        }),
+        restart: None,
+        time: CaseTimeConfig {
+            mode: CaseTimeMode::Steady,
+            scheme: Some(TimeIntegrationScheme::Gmres),
+            lusgs_sweep: None,
+            lusgs_omega: None,
+            lusgs_sweep_backward_damping: None,
+            residual_smoothing: ResidualSmoothingConfig {
+                enabled: false,
+                epsilon: 0.0,
+                sweeps: 0,
+            },
+            gmres_preconditioner: None,
+            dt: None,
+            cfl: Some(0.5),
+            cfl_max: None,
+            final_time: None,
+            max_steps: Some(10),
+            tolerance: None,
+            local_time_step: false,
+            cfl_ramp_steps: None,
+        },
+        sod: None,
+        euler: Some(EulerCaseConfig {
+            final_time: None,
+            max_steps: None,
+            reconstruction: None,
+            flux: None,
+            limiter: None,
+        }),
+        navier_stokes: None,
+        output: None,
+        observability: None,
+        case_dir: None,
+        reference: None,
+    };
+    nondimensional::apply_nondimensionalization_for_compressible(&mut case).expect("nd");
+
+    let err = case.validate_multiblock_compressible().expect_err("gmres");
+    assert!(matches!(err, AsimuError::Config(_)));
+    assert!(err.to_string().contains("lu_sgs"), "unexpected: {err}");
+
+    case.time.scheme = Some(TimeIntegrationScheme::LuSgs);
+    case.time.lusgs_sweep = Some(true);
+    let _ = LuSgsConfig::parse(
+        case.time.lusgs_omega,
+        case.time.lusgs_sweep,
+        case.time.lusgs_sweep_backward_damping,
+    )
+    .expect("lusgs cfg");
+    let err = case.validate_multiblock_compressible().expect_err("sweep");
+    assert!(err.to_string().contains("lusgs_sweep"));
+}

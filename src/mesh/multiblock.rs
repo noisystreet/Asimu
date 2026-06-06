@@ -38,8 +38,7 @@ pub struct StructuredBlock3d {
 
 /// 多块结构化 3D 网格。
 ///
-/// 首版只表达 block 集合与全局单元编号范围；跨块接口连通、守恒通量交换
-/// 和多块求解器会在后续阶段接入。
+/// 表达 block 集合、全局单元编号范围与 1-to-1 接口元数据；可压缩求解经共享无粘通量守恒装配跨 block 耦合。
 #[derive(Debug, Clone, PartialEq)]
 pub struct MultiBlockStructuredMesh3d {
     pub name: String,
