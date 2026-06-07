@@ -8,6 +8,7 @@ use crate::core::{Real, Vector3};
 use crate::discretization::BoundaryGhostBuffer;
 use crate::discretization::gradient::{GradientFields, cell_temperatures_into};
 use crate::discretization::unstructured_face_cache::{
+    LsqRhsCellIncidence, UnstructuredBoundaryFace, UnstructuredInteriorFace,
     UnstructuredSolverMeshCache, accumulate_lsq_rhs_component, solve_lsq_gradient,
 };
 use crate::error::{AsimuError, Result};
@@ -149,86 +150,212 @@ fn accumulate_lsq_rhs(
     input: &UnstructuredGradientLsqInput<'_>,
     scratch: &mut UnstructuredGradientScratch,
 ) -> Result<()> {
-    let topology = &input.mesh_cache.face_topology;
-    for face in &topology.interior {
-        let u_o = input.primitives.velocity_x.values()[face.owner];
-        let v_o = input.primitives.velocity_y.values()[face.owner];
-        let w_o = input.primitives.velocity_z.values()[face.owner];
-        let t_o = scratch.temperatures[face.owner];
-        let u_n = input.primitives.velocity_x.values()[face.neighbor];
-        let v_n = input.primitives.velocity_y.values()[face.neighbor];
-        let w_n = input.primitives.velocity_z.values()[face.neighbor];
-        let t_n = scratch.temperatures[face.neighbor];
-        accumulate_lsq_rhs_component(
-            &mut scratch.bu[face.owner],
-            face.lsq_dr,
-            face.lsq_w,
-            u_n - u_o,
-        );
-        accumulate_lsq_rhs_component(
-            &mut scratch.bv[face.owner],
-            face.lsq_dr,
-            face.lsq_w,
-            v_n - v_o,
-        );
-        accumulate_lsq_rhs_component(
-            &mut scratch.bw[face.owner],
-            face.lsq_dr,
-            face.lsq_w,
-            w_n - w_o,
-        );
-        accumulate_lsq_rhs_component(
-            &mut scratch.bt[face.owner],
-            face.lsq_dr,
-            face.lsq_w,
-            t_n - t_o,
-        );
-        let dr_n = Vector3::new(-face.lsq_dr.x, -face.lsq_dr.y, -face.lsq_dr.z);
-        accumulate_lsq_rhs_component(&mut scratch.bu[face.neighbor], dr_n, face.lsq_w, u_o - u_n);
-        accumulate_lsq_rhs_component(&mut scratch.bv[face.neighbor], dr_n, face.lsq_w, v_o - v_n);
-        accumulate_lsq_rhs_component(&mut scratch.bw[face.neighbor], dr_n, face.lsq_w, w_o - w_n);
-        accumulate_lsq_rhs_component(&mut scratch.bt[face.neighbor], dr_n, face.lsq_w, t_o - t_n);
+    #[cfg(feature = "parallel-fvm")]
+    {
+        accumulate_lsq_rhs_cell_parallel(input, scratch)
     }
+    #[cfg(not(feature = "parallel-fvm"))]
+    {
+        accumulate_lsq_rhs_face_serial(input, scratch)
+    }
+}
 
+#[cfg(any(not(feature = "parallel-fvm"), test))]
+fn accumulate_lsq_rhs_face_serial(
+    input: &UnstructuredGradientLsqInput<'_>,
+    scratch: &mut UnstructuredGradientScratch,
+) -> Result<()> {
+    let topology = &input.mesh_cache.face_topology;
+    let temperatures = &scratch.temperatures;
+    for face in &topology.interior {
+        accumulate_lsq_interior_as_owner(
+            input,
+            face,
+            temperatures,
+            &mut scratch.bu[face.owner],
+            &mut scratch.bv[face.owner],
+            &mut scratch.bw[face.owner],
+            &mut scratch.bt[face.owner],
+        )?;
+        accumulate_lsq_interior_as_neighbor(
+            input,
+            face,
+            temperatures,
+            &mut scratch.bu[face.neighbor],
+            &mut scratch.bv[face.neighbor],
+            &mut scratch.bw[face.neighbor],
+            &mut scratch.bt[face.neighbor],
+        )?;
+    }
     for face in &topology.boundary {
-        let owner = face.owner;
-        let u_o = input.primitives.velocity_x.values()[owner];
-        let v_o = input.primitives.velocity_y.values()[owner];
-        let w_o = input.primitives.velocity_z.values()[owner];
-        let t_o = scratch.temperatures[owner];
-        let ghost = input.ghosts.get_face(face.face).ok_or_else(|| {
-            AsimuError::Boundary(format!(
-                "非结构梯度边界面 FaceId({}) 缺少 ghost",
-                face.face.index()
-            ))
-        })?;
-        let ghost_sample = ghost_scalar_sample(input, ghost.conserved)?;
-        accumulate_lsq_rhs_component(
-            &mut scratch.bu[owner],
-            face.lsq_dr,
-            face.lsq_w,
-            ghost_sample.u - u_o,
-        );
-        accumulate_lsq_rhs_component(
-            &mut scratch.bv[owner],
-            face.lsq_dr,
-            face.lsq_w,
-            ghost_sample.v - v_o,
-        );
-        accumulate_lsq_rhs_component(
-            &mut scratch.bw[owner],
-            face.lsq_dr,
-            face.lsq_w,
-            ghost_sample.w - w_o,
-        );
-        accumulate_lsq_rhs_component(
-            &mut scratch.bt[owner],
-            face.lsq_dr,
-            face.lsq_w,
-            ghost_sample.t - t_o,
-        );
+        accumulate_lsq_boundary_face(
+            input,
+            face,
+            temperatures,
+            &mut scratch.bu[face.owner],
+            &mut scratch.bv[face.owner],
+            &mut scratch.bw[face.owner],
+            &mut scratch.bt[face.owner],
+        )?;
     }
     Ok(())
+}
+
+#[cfg(feature = "parallel-fvm")]
+fn accumulate_lsq_rhs_cell_parallel(
+    input: &UnstructuredGradientLsqInput<'_>,
+    scratch: &mut UnstructuredGradientScratch,
+) -> Result<()> {
+    use rayon::prelude::*;
+
+    let topology = &input.mesh_cache.face_topology;
+    let incidence = &input.mesh_cache.lsq_rhs_incidence;
+    let temperatures = &scratch.temperatures;
+    (
+        scratch.bu.par_iter_mut(),
+        scratch.bv.par_iter_mut(),
+        scratch.bw.par_iter_mut(),
+        scratch.bt.par_iter_mut(),
+    )
+        .into_par_iter()
+        .enumerate()
+        .try_for_each(|(cell, (bu, bv, bw, bt))| {
+            let mut rhs = LsqViscousCellRhsMut { bu, bv, bw, bt };
+            accumulate_lsq_rhs_one_cell(input, topology, incidence, temperatures, cell, &mut rhs)
+        })
+}
+
+struct LsqViscousCellRhsMut<'a> {
+    bu: &'a mut Vector3,
+    bv: &'a mut Vector3,
+    bw: &'a mut Vector3,
+    bt: &'a mut Vector3,
+}
+
+#[cfg(feature = "parallel-fvm")]
+fn accumulate_lsq_rhs_one_cell(
+    input: &UnstructuredGradientLsqInput<'_>,
+    topology: &crate::discretization::unstructured_face_cache::UnstructuredFaceTopology,
+    incidence: &LsqRhsCellIncidence,
+    temperatures: &[Real],
+    cell: usize,
+    rhs: &mut LsqViscousCellRhsMut<'_>,
+) -> Result<()> {
+    for &face_idx in &incidence.interior_as_owner[cell] {
+        accumulate_lsq_interior_as_owner(
+            input,
+            &topology.interior[face_idx],
+            temperatures,
+            rhs.bu,
+            rhs.bv,
+            rhs.bw,
+            rhs.bt,
+        )?;
+    }
+    for &face_idx in &incidence.interior_as_neighbor[cell] {
+        accumulate_lsq_interior_as_neighbor(
+            input,
+            &topology.interior[face_idx],
+            temperatures,
+            rhs.bu,
+            rhs.bv,
+            rhs.bw,
+            rhs.bt,
+        )?;
+    }
+    for &boundary_idx in &incidence.boundary_faces[cell] {
+        accumulate_lsq_boundary_face(
+            input,
+            &topology.boundary[boundary_idx],
+            temperatures,
+            rhs.bu,
+            rhs.bv,
+            rhs.bw,
+            rhs.bt,
+        )?;
+    }
+    Ok(())
+}
+
+fn accumulate_lsq_interior_as_owner(
+    input: &UnstructuredGradientLsqInput<'_>,
+    face: &UnstructuredInteriorFace,
+    temperatures: &[Real],
+    bu: &mut Vector3,
+    bv: &mut Vector3,
+    bw: &mut Vector3,
+    bt: &mut Vector3,
+) -> Result<()> {
+    let u_o = input.primitives.velocity_x.values()[face.owner];
+    let v_o = input.primitives.velocity_y.values()[face.owner];
+    let w_o = input.primitives.velocity_z.values()[face.owner];
+    let t_o = temperatures[face.owner];
+    let u_n = input.primitives.velocity_x.values()[face.neighbor];
+    let v_n = input.primitives.velocity_y.values()[face.neighbor];
+    let w_n = input.primitives.velocity_z.values()[face.neighbor];
+    let t_n = temperatures[face.neighbor];
+    accumulate_lsq_rhs_component(bu, face.lsq_dr, face.lsq_w, u_n - u_o);
+    accumulate_lsq_rhs_component(bv, face.lsq_dr, face.lsq_w, v_n - v_o);
+    accumulate_lsq_rhs_component(bw, face.lsq_dr, face.lsq_w, w_n - w_o);
+    accumulate_lsq_rhs_component(bt, face.lsq_dr, face.lsq_w, t_n - t_o);
+    Ok(())
+}
+
+fn accumulate_lsq_interior_as_neighbor(
+    input: &UnstructuredGradientLsqInput<'_>,
+    face: &UnstructuredInteriorFace,
+    temperatures: &[Real],
+    bu: &mut Vector3,
+    bv: &mut Vector3,
+    bw: &mut Vector3,
+    bt: &mut Vector3,
+) -> Result<()> {
+    let u_o = input.primitives.velocity_x.values()[face.owner];
+    let v_o = input.primitives.velocity_y.values()[face.owner];
+    let w_o = input.primitives.velocity_z.values()[face.owner];
+    let t_o = temperatures[face.owner];
+    let u_n = input.primitives.velocity_x.values()[face.neighbor];
+    let v_n = input.primitives.velocity_y.values()[face.neighbor];
+    let w_n = input.primitives.velocity_z.values()[face.neighbor];
+    let t_n = temperatures[face.neighbor];
+    let dr_n = neg_vector(face.lsq_dr);
+    accumulate_lsq_rhs_component(bu, dr_n, face.lsq_w, u_o - u_n);
+    accumulate_lsq_rhs_component(bv, dr_n, face.lsq_w, v_o - v_n);
+    accumulate_lsq_rhs_component(bw, dr_n, face.lsq_w, w_o - w_n);
+    accumulate_lsq_rhs_component(bt, dr_n, face.lsq_w, t_o - t_n);
+    Ok(())
+}
+
+fn accumulate_lsq_boundary_face(
+    input: &UnstructuredGradientLsqInput<'_>,
+    face: &UnstructuredBoundaryFace,
+    temperatures: &[Real],
+    bu: &mut Vector3,
+    bv: &mut Vector3,
+    bw: &mut Vector3,
+    bt: &mut Vector3,
+) -> Result<()> {
+    let owner = face.owner;
+    let u_o = input.primitives.velocity_x.values()[owner];
+    let v_o = input.primitives.velocity_y.values()[owner];
+    let w_o = input.primitives.velocity_z.values()[owner];
+    let t_o = temperatures[owner];
+    let ghost = input.ghosts.get_face(face.face).ok_or_else(|| {
+        AsimuError::Boundary(format!(
+            "非结构梯度边界面 FaceId({}) 缺少 ghost",
+            face.face.index()
+        ))
+    })?;
+    let ghost_sample = ghost_scalar_sample(input, ghost.conserved)?;
+    accumulate_lsq_rhs_component(bu, face.lsq_dr, face.lsq_w, ghost_sample.u - u_o);
+    accumulate_lsq_rhs_component(bv, face.lsq_dr, face.lsq_w, ghost_sample.v - v_o);
+    accumulate_lsq_rhs_component(bw, face.lsq_dr, face.lsq_w, ghost_sample.w - w_o);
+    accumulate_lsq_rhs_component(bt, face.lsq_dr, face.lsq_w, ghost_sample.t - t_o);
+    Ok(())
+}
+
+fn neg_vector(v: Vector3) -> Vector3 {
+    Vector3::new(-v.x, -v.y, -v.z)
 }
 
 #[derive(Clone, Copy)]
@@ -330,116 +457,223 @@ fn accumulate_lsq_rhs_inviscid_linear_reconstruction(
     input: &UnstructuredGradientLsqInput<'_>,
     scratch: &mut UnstructuredGradientScratch,
 ) -> Result<()> {
+    #[cfg(feature = "parallel-fvm")]
+    {
+        accumulate_lsq_rhs_inviscid_cell_parallel(input, scratch)
+    }
+    #[cfg(not(feature = "parallel-fvm"))]
+    {
+        accumulate_lsq_rhs_inviscid_face_serial(input, scratch)
+    }
+}
+
+#[cfg(any(not(feature = "parallel-fvm"), test))]
+fn accumulate_lsq_rhs_inviscid_face_serial(
+    input: &UnstructuredGradientLsqInput<'_>,
+    scratch: &mut UnstructuredGradientScratch,
+) -> Result<()> {
     let topology = &input.mesh_cache.face_topology;
-    let prim = input.primitives;
     for face in &topology.interior {
-        let rho_o = prim.density.values()[face.owner];
-        let p_o = prim.pressure.values()[face.owner];
-        let u_o = prim.velocity_x.values()[face.owner];
-        let v_o = prim.velocity_y.values()[face.owner];
-        let w_o = prim.velocity_z.values()[face.owner];
-        let rho_n = prim.density.values()[face.neighbor];
-        let p_n = prim.pressure.values()[face.neighbor];
-        let u_n = prim.velocity_x.values()[face.neighbor];
-        let v_n = prim.velocity_y.values()[face.neighbor];
-        let w_n = prim.velocity_z.values()[face.neighbor];
-        accumulate_inviscid_component(
+        accumulate_inviscid_interior_as_owner(
+            input,
+            face,
             &mut scratch.br[face.owner],
-            face.lsq_dr,
-            face.lsq_w,
-            rho_n - rho_o,
-        );
-        accumulate_inviscid_component(
             &mut scratch.bp[face.owner],
-            face.lsq_dr,
-            face.lsq_w,
-            p_n - p_o,
-        );
-        accumulate_inviscid_component(
             &mut scratch.bu[face.owner],
-            face.lsq_dr,
-            face.lsq_w,
-            u_n - u_o,
-        );
-        accumulate_inviscid_component(
             &mut scratch.bv[face.owner],
-            face.lsq_dr,
-            face.lsq_w,
-            v_n - v_o,
-        );
-        accumulate_inviscid_component(
             &mut scratch.bw[face.owner],
-            face.lsq_dr,
-            face.lsq_w,
-            w_n - w_o,
-        );
-        let dr_n = neg_vector(face.lsq_dr);
-        accumulate_inviscid_component(
+        )?;
+        accumulate_inviscid_interior_as_neighbor(
+            input,
+            face,
             &mut scratch.br[face.neighbor],
-            dr_n,
-            face.lsq_w,
-            rho_o - rho_n,
-        );
-        accumulate_inviscid_component(&mut scratch.bp[face.neighbor], dr_n, face.lsq_w, p_o - p_n);
-        accumulate_inviscid_component(&mut scratch.bu[face.neighbor], dr_n, face.lsq_w, u_o - u_n);
-        accumulate_inviscid_component(&mut scratch.bv[face.neighbor], dr_n, face.lsq_w, v_o - v_n);
-        accumulate_inviscid_component(&mut scratch.bw[face.neighbor], dr_n, face.lsq_w, w_o - w_n);
+            &mut scratch.bp[face.neighbor],
+            &mut scratch.bu[face.neighbor],
+            &mut scratch.bv[face.neighbor],
+            &mut scratch.bw[face.neighbor],
+        )?;
     }
     for face in &topology.boundary {
-        let owner = face.owner;
-        let ghost = input.ghosts.get_face(face.face).ok_or_else(|| {
-            AsimuError::Boundary(format!(
-                "非结构无粘梯度边界面 FaceId({}) 缺少 ghost",
-                face.face.index()
-            ))
-        })?;
-        let ghost_prim =
-            primitive_from_conserved_relaxed(input.eos, &ghost.conserved, input.min_pressure)?;
-        let rho_o = prim.density.values()[owner];
-        let p_o = prim.pressure.values()[owner];
-        let u_o = prim.velocity_x.values()[owner];
-        let v_o = prim.velocity_y.values()[owner];
-        let w_o = prim.velocity_z.values()[owner];
-        accumulate_inviscid_component(
-            &mut scratch.br[owner],
-            face.lsq_dr,
-            face.lsq_w,
-            ghost_prim.density - rho_o,
-        );
-        accumulate_inviscid_component(
-            &mut scratch.bp[owner],
-            face.lsq_dr,
-            face.lsq_w,
-            ghost_prim.pressure - p_o,
-        );
-        accumulate_inviscid_component(
-            &mut scratch.bu[owner],
-            face.lsq_dr,
-            face.lsq_w,
-            ghost_prim.velocity[0] - u_o,
-        );
-        accumulate_inviscid_component(
-            &mut scratch.bv[owner],
-            face.lsq_dr,
-            face.lsq_w,
-            ghost_prim.velocity[1] - v_o,
-        );
-        accumulate_inviscid_component(
-            &mut scratch.bw[owner],
-            face.lsq_dr,
-            face.lsq_w,
-            ghost_prim.velocity[2] - w_o,
-        );
+        accumulate_inviscid_boundary_face(
+            input,
+            face,
+            &mut scratch.br[face.owner],
+            &mut scratch.bp[face.owner],
+            &mut scratch.bu[face.owner],
+            &mut scratch.bv[face.owner],
+            &mut scratch.bw[face.owner],
+        )?;
     }
+    Ok(())
+}
+
+#[cfg(feature = "parallel-fvm")]
+fn accumulate_lsq_rhs_inviscid_cell_parallel(
+    input: &UnstructuredGradientLsqInput<'_>,
+    scratch: &mut UnstructuredGradientScratch,
+) -> Result<()> {
+    use rayon::prelude::*;
+
+    let topology = &input.mesh_cache.face_topology;
+    let incidence = &input.mesh_cache.lsq_rhs_incidence;
+    (
+        scratch.br.par_iter_mut(),
+        scratch.bp.par_iter_mut(),
+        scratch.bu.par_iter_mut(),
+        scratch.bv.par_iter_mut(),
+        scratch.bw.par_iter_mut(),
+    )
+        .into_par_iter()
+        .enumerate()
+        .try_for_each(|(cell, (br, bp, bu, bv, bw))| {
+            let mut rhs = LsqInviscidCellRhsMut { br, bp, bu, bv, bw };
+            accumulate_lsq_rhs_inviscid_one_cell(input, topology, incidence, cell, &mut rhs)
+        })
+}
+
+struct LsqInviscidCellRhsMut<'a> {
+    br: &'a mut Vector3,
+    bp: &'a mut Vector3,
+    bu: &'a mut Vector3,
+    bv: &'a mut Vector3,
+    bw: &'a mut Vector3,
+}
+
+#[cfg(feature = "parallel-fvm")]
+fn accumulate_lsq_rhs_inviscid_one_cell(
+    input: &UnstructuredGradientLsqInput<'_>,
+    topology: &crate::discretization::unstructured_face_cache::UnstructuredFaceTopology,
+    incidence: &LsqRhsCellIncidence,
+    cell: usize,
+    rhs: &mut LsqInviscidCellRhsMut<'_>,
+) -> Result<()> {
+    for &face_idx in &incidence.interior_as_owner[cell] {
+        accumulate_inviscid_interior_as_owner(
+            input,
+            &topology.interior[face_idx],
+            rhs.br,
+            rhs.bp,
+            rhs.bu,
+            rhs.bv,
+            rhs.bw,
+        )?;
+    }
+    for &face_idx in &incidence.interior_as_neighbor[cell] {
+        accumulate_inviscid_interior_as_neighbor(
+            input,
+            &topology.interior[face_idx],
+            rhs.br,
+            rhs.bp,
+            rhs.bu,
+            rhs.bv,
+            rhs.bw,
+        )?;
+    }
+    for &boundary_idx in &incidence.boundary_faces[cell] {
+        accumulate_inviscid_boundary_face(
+            input,
+            &topology.boundary[boundary_idx],
+            rhs.br,
+            rhs.bp,
+            rhs.bu,
+            rhs.bv,
+            rhs.bw,
+        )?;
+    }
+    Ok(())
+}
+
+fn accumulate_inviscid_interior_as_owner(
+    input: &UnstructuredGradientLsqInput<'_>,
+    face: &UnstructuredInteriorFace,
+    br: &mut Vector3,
+    bp: &mut Vector3,
+    bu: &mut Vector3,
+    bv: &mut Vector3,
+    bw: &mut Vector3,
+) -> Result<()> {
+    let prim = input.primitives;
+    let rho_o = prim.density.values()[face.owner];
+    let p_o = prim.pressure.values()[face.owner];
+    let u_o = prim.velocity_x.values()[face.owner];
+    let v_o = prim.velocity_y.values()[face.owner];
+    let w_o = prim.velocity_z.values()[face.owner];
+    let rho_n = prim.density.values()[face.neighbor];
+    let p_n = prim.pressure.values()[face.neighbor];
+    let u_n = prim.velocity_x.values()[face.neighbor];
+    let v_n = prim.velocity_y.values()[face.neighbor];
+    let w_n = prim.velocity_z.values()[face.neighbor];
+    accumulate_inviscid_component(br, face.lsq_dr, face.lsq_w, rho_n - rho_o);
+    accumulate_inviscid_component(bp, face.lsq_dr, face.lsq_w, p_n - p_o);
+    accumulate_inviscid_component(bu, face.lsq_dr, face.lsq_w, u_n - u_o);
+    accumulate_inviscid_component(bv, face.lsq_dr, face.lsq_w, v_n - v_o);
+    accumulate_inviscid_component(bw, face.lsq_dr, face.lsq_w, w_n - w_o);
+    Ok(())
+}
+
+fn accumulate_inviscid_interior_as_neighbor(
+    input: &UnstructuredGradientLsqInput<'_>,
+    face: &UnstructuredInteriorFace,
+    br: &mut Vector3,
+    bp: &mut Vector3,
+    bu: &mut Vector3,
+    bv: &mut Vector3,
+    bw: &mut Vector3,
+) -> Result<()> {
+    let prim = input.primitives;
+    let rho_o = prim.density.values()[face.owner];
+    let p_o = prim.pressure.values()[face.owner];
+    let u_o = prim.velocity_x.values()[face.owner];
+    let v_o = prim.velocity_y.values()[face.owner];
+    let w_o = prim.velocity_z.values()[face.owner];
+    let rho_n = prim.density.values()[face.neighbor];
+    let p_n = prim.pressure.values()[face.neighbor];
+    let u_n = prim.velocity_x.values()[face.neighbor];
+    let v_n = prim.velocity_y.values()[face.neighbor];
+    let w_n = prim.velocity_z.values()[face.neighbor];
+    let dr_n = neg_vector(face.lsq_dr);
+    accumulate_inviscid_component(br, dr_n, face.lsq_w, rho_o - rho_n);
+    accumulate_inviscid_component(bp, dr_n, face.lsq_w, p_o - p_n);
+    accumulate_inviscid_component(bu, dr_n, face.lsq_w, u_o - u_n);
+    accumulate_inviscid_component(bv, dr_n, face.lsq_w, v_o - v_n);
+    accumulate_inviscid_component(bw, dr_n, face.lsq_w, w_o - w_n);
+    Ok(())
+}
+
+fn accumulate_inviscid_boundary_face(
+    input: &UnstructuredGradientLsqInput<'_>,
+    face: &UnstructuredBoundaryFace,
+    br: &mut Vector3,
+    bp: &mut Vector3,
+    bu: &mut Vector3,
+    bv: &mut Vector3,
+    bw: &mut Vector3,
+) -> Result<()> {
+    let owner = face.owner;
+    let prim = input.primitives;
+    let ghost = input.ghosts.get_face(face.face).ok_or_else(|| {
+        AsimuError::Boundary(format!(
+            "非结构无粘梯度边界面 FaceId({}) 缺少 ghost",
+            face.face.index()
+        ))
+    })?;
+    let ghost_prim =
+        primitive_from_conserved_relaxed(input.eos, &ghost.conserved, input.min_pressure)?;
+    let rho_o = prim.density.values()[owner];
+    let p_o = prim.pressure.values()[owner];
+    let u_o = prim.velocity_x.values()[owner];
+    let v_o = prim.velocity_y.values()[owner];
+    let w_o = prim.velocity_z.values()[owner];
+    accumulate_inviscid_component(br, face.lsq_dr, face.lsq_w, ghost_prim.density - rho_o);
+    accumulate_inviscid_component(bp, face.lsq_dr, face.lsq_w, ghost_prim.pressure - p_o);
+    accumulate_inviscid_component(bu, face.lsq_dr, face.lsq_w, ghost_prim.velocity[0] - u_o);
+    accumulate_inviscid_component(bv, face.lsq_dr, face.lsq_w, ghost_prim.velocity[1] - v_o);
+    accumulate_inviscid_component(bw, face.lsq_dr, face.lsq_w, ghost_prim.velocity[2] - w_o);
     Ok(())
 }
 
 fn accumulate_inviscid_component(rhs: &mut Vector3, dr: Vector3, w: Real, delta: Real) {
     accumulate_lsq_rhs_component(rhs, dr, w, delta);
-}
-
-fn neg_vector(v: Vector3) -> Vector3 {
-    Vector3::new(-v.x, -v.y, -v.z)
 }
 
 fn write_lsq_inviscid_linear_reconstruction_gradients(
@@ -483,111 +717,5 @@ fn write_lsq_inviscid_linear_reconstruction_gradients(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::boundary::{BoundaryKind, BoundaryPatch, BoundarySet};
-    use crate::discretization::GhostCellState;
-    use crate::discretization::unstructured_face_cache::mirrored_face_sample_point;
-    use crate::mesh::{CellKind, UnstructuredCell};
-    use crate::physics::{ConservedState, PrimitiveState};
-
-    #[test]
-    fn linear_field_recovers_constant_unstructured_idw_lsq_gradient() {
-        let mesh = UnstructuredMesh3d::new(
-            "hex",
-            vec![
-                [0.0, 0.0, 0.0],
-                [1.0, 0.0, 0.0],
-                [1.0, 1.0, 0.0],
-                [0.0, 1.0, 0.0],
-                [0.0, 0.0, 1.0],
-                [1.0, 0.0, 1.0],
-                [1.0, 1.0, 1.0],
-                [0.0, 1.0, 1.0],
-            ],
-            vec![UnstructuredCell::new(CellKind::Hex, vec![0, 1, 2, 3, 4, 5, 6, 7]).expect("cell")],
-        )
-        .expect("mesh");
-        let eos = IdealGasEoS::AIR_STANDARD;
-        let cell_center = mesh.cell_metric(crate::core::CellId(0)).center;
-        let mut prim = PrimitiveFields::zeros(mesh.num_cells()).expect("prim");
-        let cell_prim = linear_primitive_at(cell_center, &eos);
-        prim.density.values_mut()[0] = cell_prim.density;
-        prim.pressure.values_mut()[0] = cell_prim.pressure;
-        prim.velocity_x.values_mut()[0] = cell_prim.velocity[0];
-        prim.velocity_y.values_mut()[0] = cell_prim.velocity[1];
-        prim.velocity_z.values_mut()[0] = cell_prim.velocity[2];
-
-        let faces = (0..mesh.num_faces())
-            .map(|face| crate::core::FaceId(face as u32))
-            .collect::<Vec<_>>();
-        let mut ghosts = BoundaryGhostBuffer::new();
-        for &face in &faces {
-            let sample_point =
-                mirrored_face_sample_point(cell_center, mesh.face_metric(face).center);
-            let ghost_prim = linear_primitive_at(sample_point, &eos);
-            ghosts.insert_face(
-                face,
-                GhostCellState {
-                    conserved: ConservedState::from_primitive(&eos, &ghost_prim).expect("cons"),
-                },
-            );
-        }
-        let boundary = BoundarySet::new(vec![BoundaryPatch::new(
-            "all",
-            faces,
-            BoundaryKind::Farfield {
-                mach: 0.0,
-                pressure: 101_325.0,
-                temperature: 300.0,
-                alpha: 0.0,
-                beta: 0.0,
-            },
-        )]);
-        let mesh_cache = UnstructuredSolverMeshCache::from_mesh(&mesh, &boundary).expect("cache");
-
-        let mut grad = GradientFields::zeros(mesh.num_cells()).expect("grad");
-        compute_unstructured_gradients_idw_lsq(
-            UnstructuredGradientLsqInput {
-                mesh: &mesh,
-                mesh_cache: &mesh_cache,
-                primitives: &prim,
-                eos: &eos,
-                ghosts: &ghosts,
-                min_pressure: 1.0e-8,
-                viscous: None,
-            },
-            &mut grad,
-        )
-        .expect("grad");
-
-        let g = grad.velocity_grad_at(0);
-        assert!((g.du[0] - 2.0).abs() < 1.0e-12);
-        assert!((g.du[1] + 3.0).abs() < 1.0e-12);
-        assert!((g.du[2] - 0.5).abs() < 1.0e-12);
-        assert!((g.dv[0] + 1.5).abs() < 1.0e-12);
-        assert!((g.dv[1] - 0.25).abs() < 1.0e-12);
-        assert!((g.dv[2] - 4.0).abs() < 1.0e-12);
-        assert!((g.dw[0] - 0.75).abs() < 1.0e-12);
-        assert!((g.dw[1] - 1.25).abs() < 1.0e-12);
-        assert!((g.dw[2] + 2.5).abs() < 1.0e-12);
-        assert!((grad.dt_dx.values()[0] - 10.0).abs() < 1.0e-12);
-        assert!((grad.dt_dy.values()[0] + 5.0).abs() < 1.0e-12);
-        assert!((grad.dt_dz.values()[0] - 2.0).abs() < 1.0e-12);
-    }
-
-    fn linear_primitive_at(point: crate::core::Vector3, eos: &IdealGasEoS) -> PrimitiveState {
-        let density = 1.0;
-        let temperature = 300.0 + 10.0 * point.x - 5.0 * point.y + 2.0 * point.z;
-        PrimitiveState {
-            density,
-            velocity: [
-                2.0 * point.x - 3.0 * point.y + 0.5 * point.z,
-                -1.5 * point.x + 0.25 * point.y + 4.0 * point.z,
-                0.75 * point.x + 1.25 * point.y - 2.5 * point.z,
-            ],
-            pressure: density * eos.gas_constant * temperature,
-            temperature,
-        }
-    }
-}
+#[path = "gradient_unstructured_tests.rs"]
+mod tests;

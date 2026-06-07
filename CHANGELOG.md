@@ -9,13 +9,16 @@
 
 - ADR 0012：非结构二阶线性重构与梯度限制器（Barth–Jespersen / Venkatakrishnan）；与结构化 `SlopeLimiter` 分离，case 校验禁止混用
 - 非结构 M4 二阶无粘：`reconstruction = muscl`（实现为**二阶线性重构**，非 MUSCL 宽模板）+ `[euler].unstructured_limiter`；IDWLS \(\nabla\rho,\nabla p\) + BJ/V 限制器 + `assemble_inviscid_residual_unstructured` 二阶面循环；benchmark `unstructured_freestream`
-- 非结构内面 **graph coloring**（`InteriorFaceColoring`）：粘性/无粘内面共用着色桶；可选 feature `parallel-fvm`（rayon 桶内 flux 并行 + scatter 串行）；golden 测试覆盖着色顺序、缓存 vs mesh 循环、并行 vs 串行（见 ADR 0011）
+- 非结构内面 **graph coloring**（`InteriorFaceColoring`）：粘性/无粘内面共用着色桶；feature `parallel-fvm`（rayon 桶内 flux 并行 + scatter 串行，**默认启用**）；golden 测试覆盖着色顺序、缓存 vs mesh 循环、并行 vs 串行（见 ADR 0011）
 - 非结构混合单元网格 M1：`UnstructuredMesh3d` 支持 tet / hex / pyramid / prism（VTK 10/12/13/14）面拓扑、owner/neighbor、体积与面度量；新增 `load_vtu`、`load_cgns_unstructured_zone` 与 `check_unstructured_mesh3d`，`mesh_check` 可检查 `.vtu` 与 CGNS unstructured zone，并支持 CGNS FaceCenter ZoneBC 边界 patch 读入与覆盖检查
 - 非结构 CGNS case 求解首版：`CaseMesh::Unstructured3d` 支持单域混合网格一阶无粘 Euler 面循环、IDWLS 粘性梯度与 Navier-Stokes 粘性通量、含粘性抛物项的 local time step、显式 Euler/RK4、对角 LU-SGS 与非结构 LU-SGS sweep，并将非结构流场写出为 VTU
 - 非结构网格梯度：新增 `compute_unstructured_gradients_idw_lsq`，使用逆距离加权最小二乘法计算 `UnstructuredMesh3d` 单元中心速度与温度梯度
 - 多块 3D 可压缩 case 支持 `[restart]` 初场：version=2 TOML 按 block 名称加载守恒量，单 block restart（version=1）仍可用于仅含 1 个 block 的多块网格
 
 ### Changed
+
+- **`parallel-fvm` 默认启用**：`Cargo.toml` `default = ["parallel-fvm"]`；`make check` / CI / pre-commit 含 `io-vtk,parallel-fvm`（dual_ellipsoid trace：475 万内面 / 9 色桶；见 ADR 0011 修订）
+- **IDWLS RHS 单元并行累加**（`parallel-fvm`）：`LsqRhsCellIncidence` + 单元 `rayon` 路径；粘性梯度与二阶线性重构 \(\nabla\rho,\nabla p\) 共用；golden `parallel_idw_lsq_accumulate_matches_face_serial`
 
 - 结构/非结构可压缩路径共用化：LU-SGS 稳定化（`lu_sgs_common`）、粘性边界面通量（`viscous_assembly`）、BC/原始变量刷新与时间步策略（`compressible_helpers`）；结构化粘性内面改走 `accumulate_fused_interior_viscous_face`；谱半径双曲项共用 `accumulate_hyperbolic_face_sigma`
 - 非结构求解性能：新增 `UnstructuredSolverMeshCache` 预计算面拓扑与 IDWLS 几何矩阵 \(A\)；`compute_unstructured_gradients_idw_lsq` 与粘性通量装配每步仅累加 RHS 并复用缓存面列表，数值与逐步枚举 `mesh` 等价

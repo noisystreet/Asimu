@@ -36,7 +36,7 @@ jobs:
         run: cargo fmt --check
 
       - name: Clippy
-        run: cargo clippy --all-targets --features io-vtk -- -D warnings
+        run: cargo clippy --all-targets --features io-vtk,parallel-fvm -- -D warnings
 
       - name: Install Python tools
         run: pip install -r scripts/requirements.txt
@@ -47,7 +47,7 @@ jobs:
           python3 scripts/test_complexity_check.py
 
       - name: Run tests
-        run: cargo test --features io-vtk --verbose
+        run: cargo test --features io-vtk,parallel-fvm --verbose
 
   cgns:
     name: CGNS I/O (libcgns)
@@ -65,10 +65,10 @@ jobs:
           components: clippy
 
       - name: Clippy (io-cgns-vts)
-        run: cargo clippy --all-targets --features io-cgns-vts -- -D warnings
+        run: cargo clippy --all-targets --features io-cgns-vts,parallel-fvm -- -D warnings
 
       - name: Run CGNS tests
-        run: cargo test --features io-cgns-vts --verbose
+        run: cargo test --features io-cgns-vts,parallel-fvm --verbose
 
   audit:
     name: Dependency audit

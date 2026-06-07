@@ -150,6 +150,17 @@ impl LsqPrecomputedCell {
     }
 }
 
+/// IDWLS RHS 累加用的单元–面关联（单元并行路径：每单元只写自身 \(b_i\)）。
+#[derive(Debug, Clone)]
+pub struct LsqRhsCellIncidence {
+    /// 单元作为 owner 的内面索引。
+    pub interior_as_owner: Vec<Vec<usize>>,
+    /// 单元作为 neighbor 的内面索引。
+    pub interior_as_neighbor: Vec<Vec<usize>>,
+    /// 单元拥有的边界面在 `face_topology.boundary` 中的索引。
+    pub boundary_faces: Vec<Vec<usize>>,
+}
+
 /// 非结构求解器网格缓存：面拓扑 + IDWLS 几何矩阵。
 #[derive(Debug, Clone)]
 pub struct UnstructuredSolverMeshCache {
@@ -157,19 +168,45 @@ pub struct UnstructuredSolverMeshCache {
     pub lsq_geometry: Vec<LsqPrecomputedCell>,
     /// 每单元 IDWLS / 限制器样本（内部邻单元 + 边界 ghost 镜像点）。
     pub cell_gradient_samples: Vec<Vec<GradientLimiterSample>>,
+    /// IDWLS RHS 单元–面关联（`parallel-fvm` 单元并行累加用）。
+    pub lsq_rhs_incidence: LsqRhsCellIncidence,
 }
 
 impl UnstructuredSolverMeshCache {
     /// 由网格与边界 patch 构建面拓扑，并预计算 IDWLS 矩阵 \(A\)。
     pub fn from_mesh(mesh: &UnstructuredMesh3d, boundaries: &BoundarySet) -> Result<Self> {
         let face_topology = build_face_topology(mesh, boundaries)?;
-        let lsq_geometry = precompute_lsq_geometry(mesh.num_cells(), &face_topology);
-        let cell_gradient_samples = build_cell_gradient_samples(mesh.num_cells(), &face_topology);
+        let num_cells = mesh.num_cells();
+        let lsq_geometry = precompute_lsq_geometry(num_cells, &face_topology);
+        let cell_gradient_samples = build_cell_gradient_samples(num_cells, &face_topology);
+        let lsq_rhs_incidence = build_lsq_rhs_cell_incidence(num_cells, &face_topology);
         Ok(Self {
             face_topology,
             lsq_geometry,
             cell_gradient_samples,
+            lsq_rhs_incidence,
         })
+    }
+}
+
+fn build_lsq_rhs_cell_incidence(
+    num_cells: usize,
+    topology: &UnstructuredFaceTopology,
+) -> LsqRhsCellIncidence {
+    let mut interior_as_owner = vec![Vec::new(); num_cells];
+    let mut interior_as_neighbor = vec![Vec::new(); num_cells];
+    let mut boundary_faces = vec![Vec::new(); num_cells];
+    for (face_idx, face) in topology.interior.iter().enumerate() {
+        interior_as_owner[face.owner].push(face_idx);
+        interior_as_neighbor[face.neighbor].push(face_idx);
+    }
+    for (boundary_idx, face) in topology.boundary.iter().enumerate() {
+        boundary_faces[face.owner].push(boundary_idx);
+    }
+    LsqRhsCellIncidence {
+        interior_as_owner,
+        interior_as_neighbor,
+        boundary_faces,
     }
 }
 
@@ -550,6 +587,33 @@ mod tests {
             ],
         )
         .expect("mesh")
+    }
+
+    #[test]
+    fn lsq_rhs_incidence_covers_all_interior_faces() {
+        let mesh = two_tet_mesh();
+        let faces = (0..mesh.num_faces())
+            .map(|face| FaceId(face as u32))
+            .collect::<Vec<_>>();
+        let boundaries = BoundarySet::new(vec![BoundaryPatch::new(
+            "farfield",
+            faces,
+            BoundaryKind::Farfield {
+                mach: 0.0,
+                pressure: 101_325.0,
+                temperature: 300.0,
+                alpha: 0.0,
+                beta: 0.0,
+            },
+        )]);
+        let cache = UnstructuredSolverMeshCache::from_mesh(&mesh, &boundaries).expect("cache");
+        let topology = &cache.face_topology;
+        let inc = &cache.lsq_rhs_incidence;
+        assert_eq!(inc.interior_as_owner.len(), mesh.num_cells());
+        let owner_count: usize = inc.interior_as_owner.iter().map(Vec::len).sum();
+        let neighbor_count: usize = inc.interior_as_neighbor.iter().map(Vec::len).sum();
+        assert_eq!(owner_count, topology.interior.len());
+        assert_eq!(neighbor_count, topology.interior.len());
     }
 
     #[test]

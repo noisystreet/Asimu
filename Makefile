@@ -2,7 +2,7 @@
 
 CARGO := cargo
 PYTHON := python3
-CARGO_FLAGS := --features io-vtk
+CARGO_FLAGS := --features io-vtk,parallel-fvm
 
 .PHONY: help build run test test-parallel-fvm lint fmt complexity check check-parallel-fvm clean setup audit doc
 
@@ -39,9 +39,8 @@ fmt:
 
 check: lint test
 
-check-parallel-fvm: lint
-	$(CARGO) clippy --all-targets $(CARGO_FLAGS),parallel-fvm -- -D warnings
-	$(CARGO) test $(CARGO_FLAGS),parallel-fvm
+check-parallel-fvm: check
+	@echo "parallel-fvm 已包含在默认 CARGO_FLAGS / Cargo default features 中"
 
 clean:
 	$(CARGO) clean

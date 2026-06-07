@@ -228,7 +228,15 @@ A_i = \sum_m w_m\,\Delta\mathbf x_m\,\Delta\mathbf x_m^{\mathsf T},
 
 `UnstructuredSolverMeshCache` 在网格初始化时对 `face_topology.interior` 做贪心着色，结果存于 `InteriorFaceColoring::buckets`。当前 v0.x 仍按桶顺序**串行**累加（与面索引顺序在加法结合律意义下等价；浮点非结合性可能导致末位差异）。
 
-启用 Cargo feature `parallel-fvm` 时，粘性/无粘内面路径对每个颜色桶做 **rayon 并行 flux 计算 + 串行 scatter**（`unsafe_code` 禁止下避免并行写同一 `&mut [f64]`）。决策与 CI 约定见 [ADR 0011](../adr/0011-parallel-fvm-face-coloring.md)。
+启用 Cargo feature `parallel-fvm`（**默认开启**）时，粘性/无粘内面路径对每个颜色桶做 **rayon 并行 flux 计算 + 串行 scatter**（`unsafe_code` 禁止下避免并行写同一 `&mut [f64]`）。决策与 CI 约定见 [ADR 0011](../adr/0011-parallel-fvm-face-coloring.md)。
+
+### IDWLS RHS 单元并行（P0）
+
+IDWLS 梯度每步需对每个单元累加最小二乘右端项 \(b_i\)。与 flux scatter 不同，**每单元只写自身** `scratch.bu[i]` 等分量，无需面着色即可安全并行：
+
+1. 网格初始化时构建 `LsqRhsCellIncidence`（每单元作为 owner/neighbor 的内面列表 + 边界面）。
+2. `parallel-fvm` 下对 `bu/bv/bw/bt`（粘性）或 `br/bp/bu/bv/bw`（二阶无粘）做 `par_iter_mut().enumerate()`，每单元遍历关联面并累加。
+3. 未启用 `parallel-fvm` 时仍用面循环串行路径；golden 测试 `parallel_idw_lsq_accumulate_matches_face_serial` 对齐两路径。
 
 ## 实现映射
 
