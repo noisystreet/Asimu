@@ -18,9 +18,9 @@ use crate::error::{AsimuError, Result};
 use crate::field::{PrimitiveFields, primitive_from_conserved_relaxed};
 use crate::physics::{IdealGasEoS, PrimitiveState};
 
-/// 非结构 MUSCL 面重构共享上下文（避免热路径参数过多）。
+/// 非结构二阶线性重构面重构共享上下文（避免热路径参数过多）。
 #[derive(Debug, Clone, Copy)]
-pub struct UnstructuredMusclReconstructionCtx<'a> {
+pub struct UnstructuredLinearReconstructionCtx<'a> {
     pub mesh_cache: &'a UnstructuredSolverMeshCache,
     pub primitives: &'a PrimitiveFields,
     pub ghosts: &'a BoundaryGhostBuffer,
@@ -32,7 +32,7 @@ pub struct UnstructuredMusclReconstructionCtx<'a> {
 /// 非结构内部面原始变量重构。
 pub fn reconstruct_unstructured_interior_face(
     face: &UnstructuredInteriorFace,
-    ctx: UnstructuredMusclReconstructionCtx<'_>,
+    ctx: UnstructuredLinearReconstructionCtx<'_>,
     owner_grad: InviscidPrimitiveGradients,
     neighbor_grad: InviscidPrimitiveGradients,
 ) -> Result<InterfacePrimitiveStates> {
@@ -55,7 +55,7 @@ pub fn reconstruct_unstructured_interior_face(
 /// 非结构边界面 owner 侧外推；ghost 侧取 BC 原始变量。
 pub fn reconstruct_unstructured_boundary_face(
     face: &UnstructuredBoundaryFace,
-    ctx: UnstructuredMusclReconstructionCtx<'_>,
+    ctx: UnstructuredLinearReconstructionCtx<'_>,
     owner_grad: InviscidPrimitiveGradients,
 ) -> Result<InterfacePrimitiveStates> {
     let owner = face.owner;
@@ -80,7 +80,7 @@ fn extrapolate_cell_primitive(
     prim: &PrimitiveState,
     grad: InviscidPrimitiveGradients,
     dr_to_face: Vector3,
-    ctx: UnstructuredMusclReconstructionCtx<'_>,
+    ctx: UnstructuredLinearReconstructionCtx<'_>,
 ) -> Result<PrimitiveState> {
     let samples = sample_phi_extrema_and_list(
         cell,
@@ -255,7 +255,7 @@ mod tests {
     use crate::physics::{FreestreamParams, IdealGasEoS};
 
     #[test]
-    fn uniform_freestream_muscl_reconstruction_matches_cell_values() {
+    fn uniform_freestream_linear_reconstruction_matches_cell_values() {
         let mesh = UnstructuredMesh3d::new(
             "two_tets",
             vec![
@@ -313,14 +313,14 @@ mod tests {
             viscous: None,
         };
         let mut scratch = crate::discretization::UnstructuredGradientScratch::new(mesh.num_cells());
-        crate::discretization::compute_unstructured_inviscid_muscl_gradients_idw_lsq(
+        crate::discretization::compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq(
             input,
             &mut gradients,
             &mut scratch,
         )
         .expect("grad");
         let face = &cache.face_topology.interior[0];
-        let ctx = UnstructuredMusclReconstructionCtx {
+        let ctx = UnstructuredLinearReconstructionCtx {
             mesh_cache: &cache,
             primitives: &primitives,
             ghosts: &ghosts,

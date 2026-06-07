@@ -7,7 +7,7 @@ use crate::discretization::unstructured_face_cache::{
 };
 use crate::discretization::{
     BoundaryGhostBuffer, FaceFluxInput, GradientFields, InviscidFlux, InviscidFluxConfig,
-    ReconstructionKind, UnstructuredGradientLimiter, UnstructuredMusclReconstructionCtx,
+    ReconstructionKind, UnstructuredGradientLimiter, UnstructuredLinearReconstructionCtx,
     face_inviscid_flux, face_inviscid_flux_from_interface, reconstruct_unstructured_boundary_face,
     reconstruct_unstructured_interior_face,
 };
@@ -58,7 +58,7 @@ pub fn assemble_inviscid_residual_unstructured(
         )));
     }
     if params.config.reconstruction == ReconstructionKind::Muscl {
-        validate_unstructured_muscl_params(params)?;
+        validate_unstructured_linear_reconstruction_params(params)?;
     }
     residual.clear();
     if let Some(topology) = params.face_topology {
@@ -69,17 +69,17 @@ pub fn assemble_inviscid_residual_unstructured(
     assemble_boundary_faces(residual, params)
 }
 
-fn validate_unstructured_muscl_params(
+fn validate_unstructured_linear_reconstruction_params(
     params: &InviscidAssemblyUnstructuredParams<'_>,
 ) -> Result<()> {
     if params.mesh_cache.is_none() || params.face_topology.is_none() || params.gradients.is_none() {
         return Err(AsimuError::Config(
-            "非结构 MUSCL 须同时提供 mesh_cache、face_topology 与 gradients".to_string(),
+            "非结构二阶线性重构须同时提供 mesh_cache、face_topology 与 gradients".to_string(),
         ));
     }
     if params.config.unstructured_gradient_limiter.is_none() {
         return Err(AsimuError::Config(
-            "非结构 MUSCL 须设置 unstructured_limiter（barth_jespersen 或 venkatakrishnan）"
+            "非结构二阶线性重构须设置 unstructured_limiter（barth_jespersen 或 venkatakrishnan）"
                 .to_string(),
         ));
     }
@@ -105,10 +105,10 @@ fn compute_interior_inviscid_face_contribution(
         return Ok(None);
     }
     let flux = if params.config.reconstruction == ReconstructionKind::Muscl {
-        let mesh_cache = params.mesh_cache.expect("muscl cache");
-        let gradients = params.gradients.expect("muscl gradients");
+        let mesh_cache = params.mesh_cache.expect("linear reconstruction cache");
+        let gradients = params.gradients.expect("linear reconstruction gradients");
         let limiter = unstructured_limiter(params);
-        let ctx = UnstructuredMusclReconstructionCtx {
+        let ctx = UnstructuredLinearReconstructionCtx {
             mesh_cache,
             primitives: params.primitives,
             ghosts: params.ghosts,
@@ -249,19 +249,19 @@ fn assemble_boundary_faces(
     params: &InviscidAssemblyUnstructuredParams<'_>,
 ) -> Result<()> {
     if params.config.reconstruction == ReconstructionKind::Muscl {
-        assemble_boundary_faces_muscl(residual, params)
+        assemble_boundary_faces_linear_reconstruction(residual, params)
     } else {
         assemble_boundary_faces_first_order(residual, params)
     }
 }
 
-fn assemble_boundary_faces_muscl(
+fn assemble_boundary_faces_linear_reconstruction(
     residual: &mut ConservedResidual,
     params: &InviscidAssemblyUnstructuredParams<'_>,
 ) -> Result<()> {
-    let mesh_cache = params.mesh_cache.expect("muscl cache");
-    let gradients = params.gradients.expect("muscl gradients");
-    let ctx = UnstructuredMusclReconstructionCtx {
+    let mesh_cache = params.mesh_cache.expect("linear reconstruction cache");
+    let gradients = params.gradients.expect("linear reconstruction gradients");
+    let ctx = UnstructuredLinearReconstructionCtx {
         mesh_cache,
         primitives: params.primitives,
         ghosts: params.ghosts,
@@ -331,7 +331,7 @@ mod tests {
     use crate::discretization::{
         GradientFields, InviscidFluxConfig, UnstructuredGradientLimiter,
         UnstructuredGradientLsqInput, UnstructuredGradientScratch, UnstructuredSolverMeshCache,
-        compute_unstructured_inviscid_muscl_gradients_idw_lsq,
+        compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq,
     };
     use crate::field::ConservedFields;
     use crate::mesh::{CellKind, UnstructuredCell};
@@ -486,7 +486,9 @@ mod tests {
         assert!(residual.density_rms_norm() < 1.0e-10);
     }
 
-    fn closed_tet_freestream_muscl_rhs(limiter: UnstructuredGradientLimiter) -> Real {
+    fn closed_tet_freestream_linear_reconstruction_rhs(
+        limiter: UnstructuredGradientLimiter,
+    ) -> Real {
         let mesh = UnstructuredMesh3d::new(
             "tet",
             vec![
@@ -533,7 +535,7 @@ mod tests {
         let mesh_cache = UnstructuredSolverMeshCache::from_mesh(&mesh, &boundary).expect("cache");
         let mut gradients = GradientFields::zeros(mesh.num_cells()).expect("grad");
         let mut scratch = UnstructuredGradientScratch::new(mesh.num_cells());
-        compute_unstructured_inviscid_muscl_gradients_idw_lsq(
+        compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq(
             UnstructuredGradientLsqInput {
                 mesh: &mesh,
                 mesh_cache: &mesh_cache,
@@ -566,16 +568,20 @@ mod tests {
     }
 
     #[test]
-    fn uniform_freestream_muscl_bj_rhs_near_zero() {
+    fn uniform_freestream_linear_reconstruction_bj_rhs_near_zero() {
         assert!(
-            closed_tet_freestream_muscl_rhs(UnstructuredGradientLimiter::BarthJespersen) < 1.0e-9
+            closed_tet_freestream_linear_reconstruction_rhs(
+                UnstructuredGradientLimiter::BarthJespersen
+            ) < 1.0e-9
         );
     }
 
     #[test]
-    fn uniform_freestream_muscl_venk_rhs_near_zero() {
+    fn uniform_freestream_linear_reconstruction_venk_rhs_near_zero() {
         assert!(
-            closed_tet_freestream_muscl_rhs(UnstructuredGradientLimiter::Venkatakrishnan) < 1.0e-9
+            closed_tet_freestream_linear_reconstruction_rhs(
+                UnstructuredGradientLimiter::Venkatakrishnan
+            ) < 1.0e-9
         );
     }
 

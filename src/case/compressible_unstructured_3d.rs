@@ -572,13 +572,13 @@ fn validate_unstructured_config(
             if inviscid.unstructured_gradient_limiter.is_none() {
                 if disc.limiter.is_some() {
                     return Err(AsimuError::Config(
-                        "非结构 MUSCL 须设置 unstructured_limiter = barth_jespersen | venkatakrishnan；\
+                        "非结构二阶线性重构须设置 unstructured_limiter = barth_jespersen | venkatakrishnan；\
                          结构化 limiter（minmod/van_leer/van_albada）不可在非结构 case 中复用（见 ADR 0012）"
                             .to_string(),
                     ));
                 }
                 return Err(AsimuError::Config(
-                    "非结构 MUSCL 须设置 unstructured_limiter = barth_jespersen | venkatakrishnan"
+                    "非结构二阶线性重构须设置 unstructured_limiter = barth_jespersen | venkatakrishnan"
                         .to_string(),
                 ));
             }
@@ -586,7 +586,7 @@ fn validate_unstructured_config(
                 warn!(
                     limiter = ?disc.limiter,
                     unstructured_limiter = ?disc.unstructured_limiter,
-                    "非结构 MUSCL 忽略 [euler].limiter，使用 unstructured_limiter"
+                    "非结构二阶线性重构忽略 [euler].limiter，使用 unstructured_limiter"
                 );
             }
             if let Some(name) = disc.unstructured_limiter.as_deref() {

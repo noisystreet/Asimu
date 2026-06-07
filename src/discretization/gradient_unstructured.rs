@@ -71,7 +71,7 @@ impl UnstructuredGradientScratch {
         }
     }
 
-    fn prepare_inviscid_muscl(&mut self, num_cells: usize) {
+    fn prepare_inviscid_linear_reconstruction(&mut self, num_cells: usize) {
         let zero = Vector3::new(0.0, 0.0, 0.0);
         self.bu.resize(num_cells, zero);
         self.bv.resize(num_cells, zero);
@@ -290,8 +290,8 @@ fn write_lsq_gradients(
     Ok(())
 }
 
-/// 非结构二阶无粘重构用 IDWLS 梯度（\(\rho,u,v,w,p\)）。
-pub fn compute_unstructured_inviscid_muscl_gradients_idw_lsq(
+/// 非结构二阶线性重构用 IDWLS 梯度（\(\rho,u,v,w,p\)）。
+pub fn compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq(
     input: UnstructuredGradientLsqInput<'_>,
     out: &mut GradientFields,
     scratch: &mut UnstructuredGradientScratch,
@@ -307,19 +307,26 @@ pub fn compute_unstructured_inviscid_muscl_gradients_idw_lsq(
             "非结构 IDWLS 几何缓存与网格单元数不一致".to_string(),
         ));
     }
-    scratch.prepare_inviscid_muscl(n);
+    scratch.prepare_inviscid_linear_reconstruction(n);
     {
-        let _span =
-            info_span!("unstructured_inviscid_muscl_lsq_accumulate_rhs", cells = n).entered();
-        accumulate_lsq_rhs_inviscid_muscl(&input, scratch)?;
+        let _span = info_span!(
+            "unstructured_inviscid_linear_reconstruction_lsq_accumulate_rhs",
+            cells = n
+        )
+        .entered();
+        accumulate_lsq_rhs_inviscid_linear_reconstruction(&input, scratch)?;
     }
     {
-        let _span = info_span!("unstructured_inviscid_muscl_lsq_solve", cells = n).entered();
-        write_lsq_inviscid_muscl_gradients(input.mesh_cache, scratch, out)
+        let _span = info_span!(
+            "unstructured_inviscid_linear_reconstruction_lsq_solve",
+            cells = n
+        )
+        .entered();
+        write_lsq_inviscid_linear_reconstruction_gradients(input.mesh_cache, scratch, out)
     }
 }
 
-fn accumulate_lsq_rhs_inviscid_muscl(
+fn accumulate_lsq_rhs_inviscid_linear_reconstruction(
     input: &UnstructuredGradientLsqInput<'_>,
     scratch: &mut UnstructuredGradientScratch,
 ) -> Result<()> {
@@ -435,7 +442,7 @@ fn neg_vector(v: Vector3) -> Vector3 {
     Vector3::new(-v.x, -v.y, -v.z)
 }
 
-fn write_lsq_inviscid_muscl_gradients(
+fn write_lsq_inviscid_linear_reconstruction_gradients(
     mesh_cache: &UnstructuredSolverMeshCache,
     scratch: &UnstructuredGradientScratch,
     out: &mut GradientFields,

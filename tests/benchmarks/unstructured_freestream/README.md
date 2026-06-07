@@ -7,7 +7,7 @@
 验证非结构 FVM 在**均匀来流**下无粘 RHS 近零（离散守恒 / 重构一致性）。覆盖：
 
 - 一阶 Godunov（`reconstruction = first_order`）
-- 二阶 IDWLS + Barth–Jespersen / Venkatakrishnan（`reconstruction = muscl` + `unstructured_limiter`）
+- 二阶线性重构（IDWLS 梯度外推 + Barth–Jespersen / Venkatakrishnan；TOML 仍写 `reconstruction = muscl` + `unstructured_limiter`）
 
 理论见 [ADR 0012](../../../docs/adr/0012-unstructured-gradient-limiters.md)、[unstructured_fvm.md](../../../docs/theory/unstructured_fvm.md)。
 
@@ -20,7 +20,7 @@
 单元 / 集成测试（推荐）：
 
 ```bash
-cargo test uniform_field_on_closed_tet uniform_freestream_muscl -- --nocapture
+cargo test uniform_field_on_closed_tet uniform_freestream_linear_reconstruction -- --nocapture
 cargo test runs_single_tet_unstructured -- --nocapture
 ```
 
@@ -30,6 +30,6 @@ cargo test runs_single_tet_unstructured -- --nocapture
 
 | 量 | 期望 | 容差 |
 |----|------|------|
-| RMS(\(\dot\rho\)) | 0 | \(10^{-9}\)（MUSCL） / \(10^{-10}\)（一阶） |
+| RMS(\(\dot\rho\)) | 0 | \(10^{-9}\)（二阶线性重构） / \(10^{-10}\)（一阶） |
 
 见 `expected.json` 与 `assembly_unstructured` 内 golden 测试。

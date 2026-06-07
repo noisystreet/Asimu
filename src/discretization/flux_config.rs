@@ -42,7 +42,7 @@ pub struct InviscidFluxConfig {
     pub reconstruction: ReconstructionKind,
     pub limiter: SlopeLimiter,
     pub scheme: FluxScheme,
-    /// 非结构二阶路径专用；结构化 MUSCL 忽略。
+    /// 非结构二阶线性重构专用；结构化 MUSCL 忽略。
     pub unstructured_gradient_limiter: Option<UnstructuredGradientLimiter>,
 }
 

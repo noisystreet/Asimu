@@ -10,7 +10,7 @@ use crate::discretization::{
     ViscousAssemblyUnstructuredScratch, apply_compressible_boundary_conditions,
     assemble_inviscid_residual_unstructured,
     compute_gradients_and_assemble_viscous_unstructured_with_scratch,
-    compute_unstructured_inviscid_muscl_gradients_idw_lsq,
+    compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq,
 };
 use crate::error::Result;
 use crate::field::{ConservedFields, ConservedResidual, PrimitiveFields};
@@ -118,7 +118,7 @@ impl EvaluateRhsUnstructured<'_> {
                 min_pressure: self.min_pressure,
                 viscous: self.viscous,
             };
-            compute_unstructured_inviscid_muscl_gradients_idw_lsq(
+            compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq(
                 grad_input,
                 self.gradients,
                 &mut self.viscous_scratch.gradient,

@@ -49,7 +49,7 @@ pub use gradient::{
 pub use gradient_unstructured::{
     UnstructuredGradientLsqInput, UnstructuredGradientScratch,
     compute_unstructured_gradients_idw_lsq, compute_unstructured_gradients_idw_lsq_with_scratch,
-    compute_unstructured_inviscid_muscl_gradients_idw_lsq,
+    compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq,
 };
 pub use hllc::hllc_flux;
 pub use inviscid::{InviscidFlux, physical_inviscid_flux};
@@ -58,7 +58,7 @@ pub use reconstruction::{
     reconstruct_face_primitives, reconstruct_first_order,
 };
 pub use reconstruction_unstructured::{
-    UnstructuredMusclReconstructionCtx, reconstruct_unstructured_boundary_face,
+    UnstructuredLinearReconstructionCtx, reconstruct_unstructured_boundary_face,
     reconstruct_unstructured_interior_face,
 };
 pub use residual::{

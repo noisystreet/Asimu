@@ -81,10 +81,10 @@ max_steps = 1
 }
 
 #[test]
-fn runs_single_tet_unstructured_muscl_smoke_step() {
+fn runs_single_tet_unstructured_second_order_smoke_step() {
     let mut case = parse_case_str(
         r#"
-name = "unstructured_muscl_smoke"
+name = "unstructured_second_order_smoke"
 [mesh]
 kind = "structured_3d"
 nx = 1
@@ -121,10 +121,10 @@ max_steps = 1
 }
 
 #[test]
-fn rejects_muscl_without_unstructured_limiter() {
+fn rejects_second_order_without_unstructured_limiter() {
     let mut case = parse_case_str(
         r#"
-name = "unstructured_muscl_bad"
+name = "unstructured_second_order_bad"
 [mesh]
 kind = "structured_3d"
 nx = 1
