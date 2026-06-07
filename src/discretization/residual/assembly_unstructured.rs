@@ -1,10 +1,11 @@
 //! 非结构 3D 网格无粘残差装配（一阶面循环）。
 
 use crate::boundary::{BoundaryKind, BoundarySet};
-use crate::core::FaceId;
+use crate::core::{FaceId, Real};
 use crate::discretization::unstructured_face_cache::UnstructuredFaceTopology;
 use crate::discretization::{
-    BoundaryGhostBuffer, FaceFluxInput, InviscidFluxConfig, ReconstructionKind, face_inviscid_flux,
+    BoundaryGhostBuffer, FaceFluxInput, InviscidFlux, InviscidFluxConfig, ReconstructionKind,
+    face_inviscid_flux,
 };
 use crate::error::{AsimuError, Result};
 use crate::field::{ConservedFields, ConservedResidual, PrimitiveFields};
@@ -22,6 +23,16 @@ pub struct InviscidAssemblyUnstructuredParams<'a> {
     pub primitives: &'a PrimitiveFields,
     /// 若提供，内面走缓存拓扑 + 着色桶顺序（与粘性共用 `InteriorFaceColoring`）。
     pub face_topology: Option<&'a UnstructuredFaceTopology>,
+}
+
+/// scatter 阶段所需的内面几何（与 `UnstructuredInteriorFace` 子集一致）。
+#[derive(Debug, Clone, Copy)]
+struct InteriorInviscidScatterGeom {
+    owner: usize,
+    neighbor: usize,
+    area: Real,
+    owner_volume: Real,
+    neighbor_volume: Real,
 }
 
 /// 非结构一阶 Euler 残差：遍历显式 face owner/neighbor 拓扑。
@@ -51,35 +62,89 @@ pub fn assemble_inviscid_residual_unstructured(
     assemble_boundary_faces(mesh, residual, params)
 }
 
+fn compute_interior_inviscid_face_contribution(
+    face_idx: usize,
+    params: &InviscidAssemblyUnstructuredParams<'_>,
+    topology: &UnstructuredFaceTopology,
+) -> Result<Option<(InteriorInviscidScatterGeom, InviscidFlux)>> {
+    let face = &topology.interior[face_idx];
+    if is_degenerate_volume(face.owner_volume) || is_degenerate_volume(face.neighbor_volume) {
+        return Ok(None);
+    }
+    let owner_prim = params.primitives.cell_primitive(face.owner);
+    let neighbor_prim = params.primitives.cell_primitive(face.neighbor);
+    let flux = face_inviscid_flux(
+        FaceFluxInput::first_order(&owner_prim, &neighbor_prim),
+        face.normal,
+        params.eos,
+        params.config,
+    )?;
+    let geom = InteriorInviscidScatterGeom {
+        owner: face.owner,
+        neighbor: face.neighbor,
+        area: face.area,
+        owner_volume: face.owner_volume,
+        neighbor_volume: face.neighbor_volume,
+    };
+    Ok(Some((geom, flux)))
+}
+
+fn scatter_interior_inviscid_face(
+    residual: &mut ConservedResidual,
+    geom: &InteriorInviscidScatterGeom,
+    flux: &InviscidFlux,
+) -> Result<()> {
+    accumulate_interior_face(
+        residual,
+        geom.owner,
+        geom.neighbor,
+        flux,
+        geom.area,
+        geom.owner_volume,
+        geom.neighbor_volume,
+    )
+}
+
+#[cfg(any(not(feature = "parallel-fvm"), test))]
+fn accumulate_one_interior_inviscid_face(
+    face_idx: usize,
+    residual: &mut ConservedResidual,
+    params: &InviscidAssemblyUnstructuredParams<'_>,
+    topology: &UnstructuredFaceTopology,
+) -> Result<()> {
+    if let Some((geom, flux)) =
+        compute_interior_inviscid_face_contribution(face_idx, params, topology)?
+    {
+        scatter_interior_inviscid_face(residual, &geom, &flux)?;
+    }
+    Ok(())
+}
+
 fn assemble_interior_faces_cached(
     residual: &mut ConservedResidual,
     params: &InviscidAssemblyUnstructuredParams<'_>,
     topology: &UnstructuredFaceTopology,
 ) -> Result<()> {
-    for bucket in &topology.interior_coloring.buckets {
-        for &face_idx in bucket {
-            let face = &topology.interior[face_idx];
-            if is_degenerate_volume(face.owner_volume) || is_degenerate_volume(face.neighbor_volume)
-            {
-                continue;
+    #[cfg(not(feature = "parallel-fvm"))]
+    {
+        for bucket in &topology.interior_coloring.buckets {
+            for &face_idx in bucket {
+                accumulate_one_interior_inviscid_face(face_idx, residual, params, topology)?;
             }
-            let owner_prim = params.primitives.cell_primitive(face.owner);
-            let neighbor_prim = params.primitives.cell_primitive(face.neighbor);
-            let flux = face_inviscid_flux(
-                FaceFluxInput::first_order(&owner_prim, &neighbor_prim),
-                face.normal,
-                params.eos,
-                params.config,
-            )?;
-            accumulate_interior_face(
-                residual,
-                face.owner,
-                face.neighbor,
-                &flux,
-                face.area,
-                face.owner_volume,
-                face.neighbor_volume,
-            )?;
+        }
+    }
+
+    #[cfg(feature = "parallel-fvm")]
+    {
+        let bucket_results = topology.interior_coloring.par_map_buckets(|face_idx| {
+            compute_interior_inviscid_face_contribution(face_idx, params, topology)
+        });
+        for bucket in bucket_results {
+            for item in bucket {
+                if let Some((geom, flux)) = item? {
+                    scatter_interior_inviscid_face(residual, &geom, &flux)?;
+                }
+            }
         }
     }
     Ok(())
@@ -167,10 +232,98 @@ fn assemble_boundary_faces(
 mod tests {
     use super::*;
     use crate::boundary::{BoundaryKind, BoundaryPatch, BoundarySet};
-    use crate::discretization::InviscidFluxConfig;
+    use crate::core::approx_eq;
+    use crate::discretization::{InviscidFluxConfig, UnstructuredSolverMeshCache};
     use crate::field::ConservedFields;
     use crate::mesh::{CellKind, UnstructuredCell};
     use crate::physics::{FreestreamParams, IdealGasEoS};
+
+    fn two_tet_mesh_and_boundary() -> (UnstructuredMesh3d, BoundarySet) {
+        let mesh = UnstructuredMesh3d::new(
+            "two_tets",
+            vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [1.0, 1.0, 1.0],
+            ],
+            vec![
+                UnstructuredCell::new(CellKind::Tet, vec![0, 1, 2, 3]).expect("cell"),
+                UnstructuredCell::new(CellKind::Tet, vec![1, 2, 3, 4]).expect("cell"),
+            ],
+        )
+        .expect("mesh");
+        let faces = (0..mesh.num_faces())
+            .map(|face| FaceId(face as u32))
+            .collect::<Vec<_>>();
+        let boundary = BoundarySet::new(vec![BoundaryPatch::new(
+            "farfield",
+            faces,
+            BoundaryKind::Farfield {
+                mach: 0.0,
+                pressure: 101_325.0,
+                temperature: 300.0,
+                alpha: 0.0,
+                beta: 0.0,
+            },
+        )]);
+        (mesh, boundary)
+    }
+
+    fn perturbed_two_tet_primitives(mesh: &UnstructuredMesh3d) -> PrimitiveFields {
+        let eos = IdealGasEoS::AIR_STANDARD;
+        let fields = ConservedFields::from_freestream(
+            mesh.num_cells(),
+            &eos,
+            &FreestreamParams {
+                mach: 0.3,
+                ..FreestreamParams::default()
+            },
+        )
+        .expect("fields");
+        let mut primitives = PrimitiveFields::zeros(mesh.num_cells()).expect("prim");
+        primitives
+            .fill_from_conserved(&fields, &eos, 1.0e-8)
+            .expect("fill");
+        for (cell, ux) in primitives.velocity_x.values_mut().iter_mut().enumerate() {
+            *ux = 100.0 + cell as f64 * 50.0;
+        }
+        primitives
+    }
+
+    fn inviscid_interior_only_residual(
+        params: &InviscidAssemblyUnstructuredParams<'_>,
+        linear_order: bool,
+    ) -> ConservedResidual {
+        let mut residual = ConservedResidual::zeros(params.mesh.num_cells()).expect("rhs");
+        let topology = params.face_topology.expect("topology");
+        let coloring = &topology.interior_coloring;
+        if linear_order {
+            coloring.for_each_face_index_linear(topology.interior.len(), |face_idx| {
+                accumulate_one_interior_inviscid_face(face_idx, &mut residual, params, topology)
+                    .expect("face");
+            });
+        } else {
+            coloring.for_each_face_index(|face_idx| {
+                accumulate_one_interior_inviscid_face(face_idx, &mut residual, params, topology)
+                    .expect("face");
+            });
+        }
+        residual
+    }
+
+    fn assert_residuals_match(a: &ConservedResidual, b: &ConservedResidual) {
+        for (va, vb) in a.density.values().iter().zip(b.density.values()) {
+            assert!(approx_eq(*va, *vb, 1.0e-12));
+        }
+        for (va, vb) in a.momentum_x.values().iter().zip(b.momentum_x.values()) {
+            assert!(approx_eq(*va, *vb, 1.0e-12));
+        }
+        for (va, vb) in a.total_energy.values().iter().zip(b.total_energy.values()) {
+            assert!(approx_eq(*va, *vb, 1.0e-12));
+        }
+    }
 
     #[test]
     fn uniform_field_on_closed_tet_has_near_zero_rhs() {
@@ -229,5 +382,93 @@ mod tests {
         };
         assemble_inviscid_residual_unstructured(&fields, &mut residual, &params).expect("rhs");
         assert!(residual.density_rms_norm() < 1.0e-10);
+    }
+
+    #[test]
+    fn cached_interior_inviscid_matches_mesh_face_loop() {
+        let (mesh, boundary) = two_tet_mesh_and_boundary();
+        let mesh_cache = UnstructuredSolverMeshCache::from_mesh(&mesh, &boundary).expect("cache");
+        let eos = IdealGasEoS::AIR_STANDARD;
+        let fs = FreestreamParams {
+            mach: 0.3,
+            ..FreestreamParams::default()
+        };
+        let fields = ConservedFields::from_freestream(mesh.num_cells(), &eos, &fs).expect("fields");
+        let primitives = perturbed_two_tet_primitives(&mesh);
+        let mut ghosts = BoundaryGhostBuffer::new();
+        let state = fields.cell_state(0).expect("state");
+        let faces = (0..mesh.num_faces())
+            .map(|face| FaceId(face as u32))
+            .collect::<Vec<_>>();
+        for &face in &faces {
+            ghosts.insert_face(
+                face,
+                crate::discretization::GhostCellState { conserved: state },
+            );
+        }
+        let config = InviscidFluxConfig::roe_first_order();
+        let params_mesh = InviscidAssemblyUnstructuredParams {
+            mesh: &mesh,
+            eos: &eos,
+            config: &config,
+            boundaries: &boundary,
+            ghosts: &ghosts,
+            primitives: &primitives,
+            face_topology: None,
+        };
+        let params_cached = InviscidAssemblyUnstructuredParams {
+            face_topology: Some(&mesh_cache.face_topology),
+            ..params_mesh
+        };
+        let mut mesh_loop = ConservedResidual::zeros(mesh.num_cells()).expect("rhs");
+        let mut cached = ConservedResidual::zeros(mesh.num_cells()).expect("rhs");
+        assemble_inviscid_residual_unstructured(&fields, &mut mesh_loop, &params_mesh).expect("m");
+        assemble_inviscid_residual_unstructured(&fields, &mut cached, &params_cached).expect("c");
+        assert_residuals_match(&mesh_loop, &cached);
+    }
+
+    #[test]
+    fn colored_interior_inviscid_matches_linear_face_order() {
+        let (mesh, boundary) = two_tet_mesh_and_boundary();
+        let mesh_cache = UnstructuredSolverMeshCache::from_mesh(&mesh, &boundary).expect("cache");
+        let eos = IdealGasEoS::AIR_STANDARD;
+        let primitives = perturbed_two_tet_primitives(&mesh);
+        let config = InviscidFluxConfig::roe_first_order();
+        let params = InviscidAssemblyUnstructuredParams {
+            mesh: &mesh,
+            eos: &eos,
+            config: &config,
+            boundaries: &boundary,
+            ghosts: &BoundaryGhostBuffer::new(),
+            primitives: &primitives,
+            face_topology: Some(&mesh_cache.face_topology),
+        };
+        let linear = inviscid_interior_only_residual(&params, true);
+        let colored = inviscid_interior_only_residual(&params, false);
+        assert_residuals_match(&linear, &colored);
+    }
+
+    #[cfg(feature = "parallel-fvm")]
+    #[test]
+    fn parallel_interior_inviscid_matches_colored_serial() {
+        let (mesh, boundary) = two_tet_mesh_and_boundary();
+        let mesh_cache = UnstructuredSolverMeshCache::from_mesh(&mesh, &boundary).expect("cache");
+        let eos = IdealGasEoS::AIR_STANDARD;
+        let primitives = perturbed_two_tet_primitives(&mesh);
+        let config = InviscidFluxConfig::roe_first_order();
+        let params = InviscidAssemblyUnstructuredParams {
+            mesh: &mesh,
+            eos: &eos,
+            config: &config,
+            boundaries: &boundary,
+            ghosts: &BoundaryGhostBuffer::new(),
+            primitives: &primitives,
+            face_topology: Some(&mesh_cache.face_topology),
+        };
+        let serial = inviscid_interior_only_residual(&params, false);
+        let mut parallel = ConservedResidual::zeros(mesh.num_cells()).expect("rhs");
+        assemble_interior_faces_cached(&mut parallel, &params, &mesh_cache.face_topology)
+            .expect("par");
+        assert_residuals_match(&serial, &parallel);
     }
 }

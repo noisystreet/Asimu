@@ -102,6 +102,16 @@ let result = solver.run(&mesh)?;
 | `load_multiblock_conserved_fields(path, block_names)` / `write_multiblock_conserved_fields(path, blocks)` | 多块 restart TOML（version=2） |
 | `load_mesh_from_case(&Path) -> Result<Mesh>` | 从占位 case 文件加载网格 |
 
+#### 非结构 FVM 内面并行（feature `parallel-fvm`，可选）
+
+启用：`cargo test --features io-vtk,parallel-fvm` 或 `make check-parallel-fvm`。默认 **不** 启用；见 [ADR 0011](adr/0011-parallel-fvm-face-coloring.md)。
+
+| 项 | 说明 |
+|----|------|
+| `parallel-fvm` | 依赖 `rayon`；粘性/无粘内面桶内 flux compute 并行、scatter 串行 |
+| `InteriorFaceColoring::par_map_buckets` | 仅在此 feature 下编译 |
+| CI | `make check` 不含本 feature；`make check-parallel-fvm` 含 clippy + 全量测试 |
+
 #### VTK VTS / VTU 读入（feature `io-vtk`）
 
 启用：`cargo build --features io-vtk`（`make check` 默认已启用）。

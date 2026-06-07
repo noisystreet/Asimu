@@ -165,7 +165,7 @@ A_i = \sum_m w_m\,\Delta\mathbf x_m\,\Delta\mathbf x_m^{\mathsf T},
 
 `UnstructuredSolverMeshCache` 在网格初始化时对 `face_topology.interior` 做贪心着色，结果存于 `InteriorFaceColoring::buckets`。当前 v0.x 仍按桶顺序**串行**累加（与面索引顺序在加法结合律意义下等价；浮点非结合性可能导致末位差异）。
 
-启用 Cargo feature `parallel-fvm` 时，粘性内面路径对每个颜色桶做 **rayon 并行 flux 计算 + 串行 scatter**（`unsafe_code` 禁止下避免并行写同一 `&mut [f64]`）。无粘内面装配在提供 `face_topology` 时同样走着色桶顺序。
+启用 Cargo feature `parallel-fvm` 时，粘性/无粘内面路径对每个颜色桶做 **rayon 并行 flux 计算 + 串行 scatter**（`unsafe_code` 禁止下避免并行写同一 `&mut [f64]`）。决策与 CI 约定见 [ADR 0011](../adr/0011-parallel-fvm-face-coloring.md)。
 
 ## 实现映射
 

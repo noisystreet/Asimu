@@ -40,6 +40,7 @@ fmt:
 check: lint test
 
 check-parallel-fvm: lint
+	$(CARGO) clippy --all-targets $(CARGO_FLAGS),parallel-fvm -- -D warnings
 	$(CARGO) test $(CARGO_FLAGS),parallel-fvm
 
 clean:
