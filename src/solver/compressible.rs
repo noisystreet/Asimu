@@ -202,16 +202,7 @@ impl CompressibleEulerSolver {
             )
         };
         self.advance_explicit_step(fields, storage, dt, None, evaluate, None)?;
-        let boundaries = ctx.boundary.resolve(fields)?;
-        assemble_inviscid_residual_1d(
-            ctx.mesh,
-            fields,
-            &mut storage.k1,
-            ctx.eos,
-            &self.config.inviscid,
-            &boundaries,
-            p_floor,
-        )?;
+        // 监控量 = ‖R(U^n)‖：显式推进 stage1/euler_rhs 已写入 k1，勿再步末重算。
         let last_residual = storage.k1.density_rms_norm();
         let time_info = integrator.advance(state)?;
         Ok(CompressibleStepInfo {
@@ -274,7 +265,6 @@ impl CompressibleEulerSolver {
                     .to_string(),
             ));
         }
-        let inviscid = self.config.inviscid;
         let compute_dt_start = Instant::now();
         let (dt, cell_dts, sigma) = {
             let _span = info_span!("compute_dt").entered();
@@ -311,14 +301,8 @@ impl CompressibleEulerSolver {
             )?
         };
         let line_search_ms = elapsed_ms(line_search_start);
-        let post_residual_start = Instant::now();
-        let step_residual = {
-            let _span = info_span!("gmres_residual_post").entered();
-            self.rhs_context_3d(ctx, &inviscid, p_floor)
-                .run(fields, &mut storage.k1)?;
-            storage.k1.density_rms_norm()
-        };
-        let post_residual_ms = elapsed_ms(post_residual_start);
+        // 监控量 = ‖R(U^0)‖：隐式求解阶段已装配 base_residual，勿再步末重算。
+        let step_residual = delta.base_residual_rms;
         let step_total_ms = elapsed_ms(step_start);
         log_gmres_step_diagnostics(GmresStepLog {
             step: state.time_step.saturating_add(1),
@@ -331,7 +315,7 @@ impl CompressibleEulerSolver {
                 compute_dt_ms,
                 implicit_solve_ms,
                 line_search_ms,
-                post_residual_ms,
+                post_residual_ms: 0.0,
                 step_total_ms,
             },
         });
@@ -534,11 +518,9 @@ impl CompressibleEulerSolver {
             }
             fields.enforce_positivity(eos, p_floor);
         }
-        // 稳态监控须用更新后场的 RHS；更新前 k1 在 dt 极小时几乎不变，会误判为“残差不下降”。
+        // 监控量 = ‖R(U^0)‖：k1 在 lu_sgs_rhs 已装配，扫掠/对角更新不覆盖 k1。
         let step_residual = {
-            let _span = info_span!("lu_sgs_residual_post").entered();
-            self.rhs_context_3d(ctx, &inviscid, p_floor)
-                .run(fields, &mut storage.k1)?;
+            let _span = info_span!("rhs_monitor").entered();
             storage.k1.density_rms_norm()
         };
         fields.enforce_positivity(ctx.eos, p_floor);

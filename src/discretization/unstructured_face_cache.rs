@@ -124,6 +124,7 @@ impl InteriorFaceColoring {
     }
 
     /// 桶内并行 map、桶间串行（`parallel-fvm`）：适用于 compute/scatter 分离路径。
+    /// `simd-fvm` batch 路径同样遵循「各色 bucket 串行、桶内 `par_iter`」；勿改为 bucket 间 `par_iter`（dual_ellipsoid 实测约 26% 回归，见 CHANGELOG）。
     #[cfg(feature = "parallel-fvm")]
     pub fn par_map_buckets<T, F>(&self, f: F) -> Vec<Vec<T>>
     where

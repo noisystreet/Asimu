@@ -207,7 +207,7 @@ A_i = \sum_m w_m\,\Delta\mathbf x_m\,\Delta\mathbf x_m^{\mathsf T},
 \tag{9}
 \]
 
-**对角 LU-SGS 残差监控**：稳态监控须用更新后场的 \(R(U^{n+1})\)；若复用更新前 \(R(U^n)\)，在 \(\Delta t_i\) 极小时相邻步 `log10_residual` 几乎不变（与结构化 `advance_lusgs_step_3d` 注释一致）。非结构对角与 sweep 路径均在 `rhs_post` 阶段对更新后守恒量重算 RHS。
+**残差监控（`log10_residual`）**：所有时间积分路径（显式 Euler/RK4、LU-SGS、GMRES）统一取步初 \(\|R(U^0)\|\)（`storage.k1` 的 RMS），不再步末重算 RHS。显式 RK4/Euler 的 stage1 与 LU-SGS 的 `lusgs_rhs` 已写入 `k1`；GMRES 复用隐式线性化阶段的 `base_residual`。避免重复 IDWLS/装配，且相邻步因 \(U^0\) 已更新而监控曲线仍反映收敛趋势。
 
 当 `lusgs_sweep = true` 时，非结构路径按 `CellId` 顺序定义下/上三角邻接并执行前/后扫：
 

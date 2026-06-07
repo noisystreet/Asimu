@@ -62,7 +62,6 @@ pub(super) fn try_assemble_interior_faces_cached(
 
     #[cfg(feature = "parallel-fvm")]
     {
-        use rayon::prelude::*;
         let bucket_results = {
             let _span = info_span!(
                 "unstructured_inviscid_interior_flux_compute",
@@ -71,14 +70,15 @@ pub(super) fn try_assemble_interior_faces_cached(
                 colors = topology.interior_coloring.num_colors,
             )
             .entered();
+            // 与 `InteriorFaceColoring::par_map_buckets` 一致：各色 bucket 串行、桶内并行。
             topology
                 .interior_coloring
                 .bucket_batch_layouts
-                .par_iter()
+                .iter()
                 .map(|layout| {
                     compute_inviscid_bucket_batch4_to_vec(layout, fields, params, topology, scheme)
                 })
-                .collect::<Vec<_>>()
+                .collect::<Result<Vec<_>>>()?
         };
         {
             let _span = info_span!(
@@ -89,7 +89,7 @@ pub(super) fn try_assemble_interior_faces_cached(
             .entered();
             let mut residual_mut = interior_inviscid_residual_mut(residual);
             for bucket in bucket_results {
-                for (geom, flux) in bucket?.into_iter().flatten() {
+                for (geom, flux) in bucket.into_iter().flatten() {
                     scatter_fused_interior_inviscid_face(&mut residual_mut, &geom, &flux);
                 }
             }
@@ -240,6 +240,7 @@ fn accumulate_inviscid_bucket_batch4(
     Ok(())
 }
 
+#[cfg(all(feature = "simd-fvm", feature = "parallel-fvm"))]
 fn compute_inviscid_bucket_batch4_to_vec(
     layout: &InteriorFaceBucketBatchLayout,
     fields: &ConservedFields,
@@ -247,22 +248,42 @@ fn compute_inviscid_bucket_batch4_to_vec(
     topology: &UnstructuredFaceTopology,
     scheme: FirstOrderSimdScheme,
 ) -> Result<Vec<Option<(InteriorInviscidScatterGeom, InviscidFlux)>>> {
+    use rayon::prelude::*;
+
     let mut out = Vec::with_capacity(layout.num_faces());
-    for batch in &layout.full_batches {
-        if let Some(items) = interior_inviscid_batch4(batch, fields, params, scheme)? {
-            out.extend(items.into_iter().map(Some));
-            continue;
-        }
-        for &face_idx in &batch.face_indices {
-            out.push(compute_interior_inviscid_face_contribution(
-                face_idx, params, topology,
-            )?);
-        }
+    let batch_parts: Result<Vec<Vec<Option<(InteriorInviscidScatterGeom, InviscidFlux)>>>> = layout
+        .full_batches
+        .par_iter()
+        .with_min_len(128)
+        .map(|batch| compute_inviscid_full_batch_to_vec(batch, fields, params, topology, scheme))
+        .collect();
+    for part in batch_parts? {
+        out.extend(part);
     }
-    for &face_idx in &layout.remainder {
-        out.push(compute_interior_inviscid_face_contribution(
-            face_idx, params, topology,
-        )?);
-    }
+    let remainder: Result<Vec<_>> = layout
+        .remainder
+        .par_iter()
+        .with_min_len(1024)
+        .map(|&face_idx| compute_interior_inviscid_face_contribution(face_idx, params, topology))
+        .collect();
+    out.extend(remainder?);
     Ok(out)
+}
+
+#[cfg(all(feature = "simd-fvm", feature = "parallel-fvm"))]
+fn compute_inviscid_full_batch_to_vec(
+    batch: &InteriorFaceBatchStatic4,
+    fields: &ConservedFields,
+    params: &InviscidAssemblyUnstructuredParams<'_>,
+    topology: &UnstructuredFaceTopology,
+    scheme: FirstOrderSimdScheme,
+) -> Result<Vec<Option<(InteriorInviscidScatterGeom, InviscidFlux)>>> {
+    if let Some(items) = interior_inviscid_batch4(batch, fields, params, scheme)? {
+        return Ok(items.into_iter().map(Some).collect());
+    }
+    batch
+        .face_indices
+        .iter()
+        .map(|&face_idx| compute_interior_inviscid_face_contribution(face_idx, params, topology))
+        .collect()
 }

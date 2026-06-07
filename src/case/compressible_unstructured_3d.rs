@@ -274,20 +274,13 @@ fn advance_unstructured_step(
         let _span = info_span!("unstructured_enforce_positivity_post").entered();
         fields.enforce_positivity(env.eos, p_floor);
     }
-    let post_rhs_start = Instant::now();
+    let rhs_monitor_start = Instant::now();
     let residual = {
-        let _span = info_span!("unstructured_rhs_post").entered();
-        let mut rhs_work = UnstructuredRhsWork {
-            ghosts: &mut work.ghosts,
-            primitives: &mut work.primitives,
-            gradients: &mut work.gradients,
-            viscous_scratch: &mut work.viscous_scratch,
-            mesh_cache: &work.mesh_cache,
-        };
-        evaluate_unstructured_rhs(env, fields, &mut work.storage.k1, &mut rhs_work, p_floor)?;
+        let _span = info_span!("unstructured_rhs_monitor").entered();
+        // 监控量 = ‖R(U^0)‖：显式 RK4/Euler stage1 与 LU-SGS lusgs_rhs 均已写入 k1。
         work.storage.k1.density_rms_norm()
     };
-    let post_rhs_ms = elapsed_ms(post_rhs_start);
+    let rhs_monitor_ms = elapsed_ms(rhs_monitor_start);
     let advance_clock_start = Instant::now();
     let time_info = {
         let _span = info_span!("unstructured_advance_clock").entered();
@@ -302,7 +295,7 @@ fn advance_unstructured_step(
         faces = env.mesh.num_faces(),
         profile_compute_dt_ms = %format_log_fixed4(compute_dt_ms),
         profile_time_integration_ms = %format_log_fixed4(time_integration_ms),
-        profile_post_rhs_ms = %format_log_fixed4(post_rhs_ms),
+        profile_rhs_monitor_ms = %format_log_fixed4(rhs_monitor_ms),
         profile_advance_clock_ms = %format_log_fixed4(advance_clock_ms),
         profile_step_total_ms = %format_log_fixed4(step_total_ms),
         "非结构时间步 profiling",
@@ -525,32 +518,6 @@ fn rhs_evaluator<'a>(
         gradients: work.gradients,
         viscous_scratch: work.viscous_scratch,
     }
-}
-
-fn evaluate_unstructured_rhs(
-    env: &UnstructuredRunEnv<'_>,
-    fields: &ConservedFields,
-    residual: &mut ConservedResidual,
-    work: &mut UnstructuredRhsWork<'_>,
-    p_floor: Real,
-) -> Result<()> {
-    {
-        let _span = info_span!("unstructured_rhs_refresh_state").entered();
-        work.ghosts.ensure_face_capacity(env.mesh.num_faces());
-        refresh_compressible_ghosts_and_primitives(RefreshCompressibleStateInput {
-            boundary_mesh: env.mesh,
-            patches: &env.case.boundary,
-            fields,
-            ghosts: work.ghosts,
-            eos: env.eos,
-            freestream: env.freestream,
-            reference: env.case.reference.as_ref(),
-            viscous: env.case.physics.viscous.as_ref(),
-            min_pressure: p_floor,
-            primitives: work.primitives,
-        })?;
-    }
-    assemble_unstructured_rhs_from_current_state(env, fields, residual, work, p_floor)
 }
 
 fn assemble_unstructured_rhs_from_current_state(

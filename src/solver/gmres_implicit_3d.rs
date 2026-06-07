@@ -27,6 +27,8 @@ pub(super) const CONSERVED_COMPONENTS_3D: usize = 5;
 pub struct GmresImplicitDelta {
     pub delta: Vec<Real>,
     pub report: GmresReport,
+    /// 步初 \(R(U^0)\) 的 RMS（与 `log10_residual` 监控语义一致）。
+    pub base_residual_rms: Real,
     pub diagnostics: GmresImplicitDiagnostics,
 }
 
@@ -118,7 +120,7 @@ pub(crate) fn log_gmres_step_diagnostics(params: GmresStepLog<'_>) {
         update_min_scale = %format_log_sci4(params.update.min_update_scale),
         perturb_limited_evals = params.delta.diagnostics.perturbation_limited_evals,
         perturb_min_scale = %format_log_sci4(params.delta.diagnostics.min_perturbation_scale),
-        log10_residual_post = %format_log_fixed4(log10_positive(params.residual_rms)),
+        log10_residual = %format_log_fixed4(log10_positive(params.residual_rms)),
         profile_compute_dt_ms = %format_log_fixed4(params.timing.compute_dt_ms),
         profile_implicit_solve_ms = %format_log_fixed4(params.timing.implicit_solve_ms),
         profile_base_residual_ms = %format_log_fixed4(inner.base_residual_ms),
@@ -255,6 +257,7 @@ impl CompressibleEulerSolver {
         self.rhs_context_3d(ctx, &inviscid, p_floor)
             .run(fields, &mut base_residual)?;
         let base_residual_ms = elapsed_ms(base_residual_start);
+        let base_residual_rms = base_residual.density_rms_norm();
         let rhs = residual_to_vector(&base_residual);
         let preconditioner_kind = config.preconditioner;
         let preconditioner_start = Instant::now();
@@ -299,6 +302,7 @@ impl CompressibleEulerSolver {
         Ok(GmresImplicitDelta {
             delta,
             report,
+            base_residual_rms,
             diagnostics,
         })
     }

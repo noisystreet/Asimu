@@ -240,7 +240,7 @@ fn cylinder_uniform_freestream_no_bc_time_advance_when_present() {
     );
 }
 
-/// 圆柱 + LU-SGS：合理 CFL 下更新后残差应随步变化（回归：勿用更新前 k1 作监控）。
+/// 圆柱 + LU-SGS：合理 CFL 下步初 RHS 监控应随步变化（回归：勿误用步末 post RHS）。
 #[cfg(all(feature = "io-cgns", feature = "slow-tests"))]
 #[test]
 fn cylinder_lusgs_post_residual_changes_with_cfl1_when_present() {
@@ -340,7 +340,7 @@ fn cylinder_lusgs_post_residual_changes_with_cfl1_when_present() {
     );
     assert!(
         (info1.residual_rms - info2.residual_rms).abs() > 1.0e-12,
-        "两步更新后残差应不同: r1={} r2={}",
+        "两步步初 RHS 监控应不同: r1={} r2={}",
         info1.residual_rms,
         info2.residual_rms
     );

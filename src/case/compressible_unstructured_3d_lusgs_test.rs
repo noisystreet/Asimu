@@ -3,9 +3,9 @@ use crate::boundary::{BoundaryKind, BoundaryPatch, BoundarySet};
 use crate::io::{CaseMesh, parse_case_str};
 use crate::mesh::{CellKind, UnstructuredCell, UnstructuredMesh3d};
 
-/// 回归：对角 LU-SGS 须报告更新后残差；勿复用更新前 k1（dt 极小时相邻步 log10 几乎相同）。
+/// 回归：非结构对角 LU-SGS 以推进时 `k1 = RHS(u0)` 的 RMS 为监控量；场演化时相邻步应可区分。
 #[test]
-fn diagonal_lusgs_post_update_residual_differs_across_steps() {
+fn diagonal_lusgs_pre_rhs_monitor_residual_differs_across_steps() {
     let mut case = parse_case_str(
         r#"
 name = "unstructured_lusgs_monitor"
@@ -74,7 +74,7 @@ max_steps = 2
     let step2 = advance_unstructured_step(&mut env, &mut fields, &mut work).expect("step2");
     assert!(
         (step1.residual_rms - step2.residual_rms).abs() > 1.0e-12,
-        "两步更新后残差应不同: r1={} r2={}",
+        "两步 ‖RHS(u0)‖ 监控残差应不同: r1={} r2={}",
         step1.residual_rms,
         step2.residual_rms,
     );

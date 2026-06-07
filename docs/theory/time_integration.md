@@ -31,7 +31,28 @@ for each time step:
   dt_i ← Blazek local Δt (§4)
   U^{n+1} ← rk4 / lu_sgs / gmres (evaluate_rhs)
   t ← t + dt_min
+  log10_residual ← ‖R(U^n)‖  (步初 k1，见 §2.1)
 ```
+
+---
+
+## 2.1 残差监控（`log10_residual`）
+
+收敛判据与步进日志中的 `log10_residual` 统一为**步初**残差 RMS：
+
+$$
+\|R(U^0)\|_{\mathrm{rms}}
+= \sqrt{\frac{1}{N}\sum_i \bigl(R_{\rho,i}(U^0)\bigr)^2}.
+\tag{1a}
+$$
+
+| 时间格式 | \(U^0\) 与 `k1` 来源 |
+|----------|----------------------|
+| 显式 Euler / RK4 | stage1 / `euler_rhs` 装配的 \(R(U^n)\) |
+| LU-SGS | `lu_sgs_rhs` 装配的 \(R(U^n)\)（扫掠不覆盖 `k1`） |
+| GMRES | 隐式线性化阶段的 `base_residual`（\(R(U^n)\)） |
+
+各路径**不再**在步末对更新后 \(U^{n+1}\) 重算 RHS 作监控，以避免重复装配（尤其非结构 IDWLS）。下一步的 \(U^0\) 已是上一步更新后的场，监控曲线仍反映伪时间收敛。
 
 ---
 
@@ -133,7 +154,7 @@ $$
 
 其中 \(J_R v\) 不显式装配，而用有限差分 \(J_R v \approx [R(U+\epsilon v)-R(U)]/\epsilon\)。GMRES 左预条件器默认使用式 (6) 的 LU-SGS 标量对角近似，也可用 `[time] gmres_preconditioner = "cell_block_diagonal"` 切换为每单元 5×5 局部无粘 Jacobian 块近似；该块只重算本单元相邻面通量，不再执行 \(5N\) 次全场 RHS。有限差分扰动会按守恒量量级选取并先按单元缩放到正密度、正压力可行范围；求得 \(\Delta U\) 后，`CompressibleEulerSolver` 对更新系数 \(\alpha\) 做 \(1,1/2,\ldots\) 回退线搜索，并在写回时逐单元限制增量，确保更新场可恢复正密度与正压力后再接受。
 
-GMRES 路径的 `GMRES 隐式步诊断` 日志记录阶段耗时：局部时间步/谱半径、基础残差、预条件器构造、GMRES 线性求解、线搜索、更新后残差评估与整步总耗时。该 profiling 只用于观测，不参与数值状态更新。
+GMRES 路径的 `GMRES 隐式步诊断` 日志记录阶段耗时：局部时间步/谱半径、基础残差、预条件器构造、GMRES 线性求解、线搜索与整步总耗时。`log10_residual` 取步初 \(\|R(U^0)\|\)（与基础残差装配同源，不再步末重算）。该 profiling 只用于观测，不参与数值状态更新。
 
 当前 GMRES 路径仅用于 3D 可压缩稳态伪时间，须设置 `local_time_step = true`。
 
