@@ -287,6 +287,12 @@ fn accumulate_interior_faces_fused(
 
     #[cfg(all(feature = "simd-fvm", not(feature = "parallel-fvm")))]
     {
+        let _span = info_span!(
+            "unstructured_viscous_interior_flux_fused",
+            path = "simd_batch4",
+            faces = params.face_topology.interior.len(),
+        )
+        .entered();
         for layout in &params.face_topology.interior_coloring.bucket_batch_layouts {
             accumulate_viscous_bucket_batch4(
                 layout,
@@ -302,6 +308,12 @@ fn accumulate_interior_faces_fused(
 
     #[cfg(not(feature = "parallel-fvm"))]
     {
+        let _span = info_span!(
+            "unstructured_viscous_interior_flux_fused",
+            path = "colored_serial",
+            faces = params.face_topology.interior.len(),
+        )
+        .entered();
         params
             .face_topology
             .interior_coloring
@@ -320,31 +332,69 @@ fn accumulate_interior_faces_fused(
     #[cfg(all(feature = "parallel-fvm", feature = "simd-fvm"))]
     {
         use rayon::prelude::*;
-        let bucket_results = params
-            .face_topology
-            .interior_coloring
-            .bucket_batch_layouts
-            .par_iter()
-            .map(|layout| {
-                accumulate_viscous_bucket_batch4_to_vec(layout, &inputs, params, scratch, constant)
-            })
-            .collect::<Vec<_>>();
-        for bucket in bucket_results {
-            for (geom, flux) in bucket {
-                scatter_fused_interior_viscous_face(&mut residual_mut, &geom, &flux);
+        let bucket_results = {
+            let _span = info_span!(
+                "unstructured_viscous_interior_flux_compute",
+                path = "simd_batch4",
+                faces = params.face_topology.interior.len(),
+                colors = params.face_topology.interior_coloring.num_colors,
+            )
+            .entered();
+            params
+                .face_topology
+                .interior_coloring
+                .bucket_batch_layouts
+                .par_iter()
+                .map(|layout| {
+                    accumulate_viscous_bucket_batch4_to_vec(
+                        layout, &inputs, params, scratch, constant,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        {
+            let _span = info_span!(
+                "unstructured_viscous_interior_flux_scatter",
+                path = "simd_batch4",
+                buckets = params
+                    .face_topology
+                    .interior_coloring
+                    .bucket_batch_layouts
+                    .len(),
+            )
+            .entered();
+            for bucket in bucket_results {
+                for (geom, flux) in bucket {
+                    scatter_fused_interior_viscous_face(&mut residual_mut, &geom, &flux);
+                }
             }
         }
     }
 
     #[cfg(all(feature = "parallel-fvm", not(feature = "simd-fvm")))]
     {
-        let bucket_results = params.face_topology.interior_coloring.par_map_buckets(|i| {
-            interior_face_flux_contribution(i, &inputs, params, scratch, constant)
-        });
-        for bucket in bucket_results {
-            for item in bucket.into_iter().flatten() {
-                let (geom, flux) = item;
-                scatter_fused_interior_viscous_face(&mut residual_mut, &geom, &flux);
+        let bucket_results = {
+            let _span = info_span!(
+                "unstructured_viscous_interior_flux_compute",
+                faces = params.face_topology.interior.len(),
+                colors = params.face_topology.interior_coloring.num_colors,
+            )
+            .entered();
+            params.face_topology.interior_coloring.par_map_buckets(|i| {
+                interior_face_flux_contribution(i, &inputs, params, scratch, constant)
+            })
+        };
+        {
+            let _span = info_span!(
+                "unstructured_viscous_interior_flux_scatter",
+                buckets = params.face_topology.interior_coloring.buckets.len(),
+            )
+            .entered();
+            for bucket in bucket_results {
+                for item in bucket.into_iter().flatten() {
+                    let (geom, flux) = item;
+                    scatter_fused_interior_viscous_face(&mut residual_mut, &geom, &flux);
+                }
             }
         }
     }

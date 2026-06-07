@@ -25,6 +25,7 @@ use crate::error::{AsimuError, Result};
 use crate::field::{ConservedFields, ConservedResidual, PrimitiveFields};
 use crate::mesh::UnstructuredMesh3d;
 use crate::physics::IdealGasEoS;
+use tracing::info_span;
 
 use super::{accumulate_boundary_face, accumulate_interior_face, is_degenerate_volume};
 
@@ -61,12 +62,45 @@ pub fn assemble_inviscid_residual_unstructured(
         validate_unstructured_linear_reconstruction_params(params)?;
     }
     residual.clear();
-    if let Some(topology) = params.face_topology {
-        assemble_interior_faces_cached(residual, fields, params, topology)?;
-    } else {
-        assemble_interior_faces(mesh, residual, params)?;
+    {
+        let _span = if let Some(topology) = params.face_topology {
+            info_span!(
+                "unstructured_inviscid_interior_faces",
+                faces = topology.interior.len(),
+                colors = topology.interior_coloring.num_colors,
+            )
+            .entered()
+        } else {
+            info_span!("unstructured_inviscid_interior_faces", path = "mesh_loop").entered()
+        };
+        if let Some(topology) = params.face_topology {
+            assemble_interior_faces_cached(residual, fields, params, topology)?;
+        } else {
+            assemble_interior_faces(mesh, residual, params)?;
+        }
     }
-    assemble_boundary_faces(residual, params)
+    {
+        let _span = info_span!(
+            "unstructured_inviscid_boundary_faces",
+            faces = inviscid_boundary_face_count(params),
+        )
+        .entered();
+        assemble_boundary_faces(residual, params)?;
+    }
+    Ok(())
+}
+
+fn inviscid_boundary_face_count(params: &InviscidAssemblyUnstructuredParams<'_>) -> usize {
+    if let Some(topology) = params.face_topology {
+        return topology.boundary.len();
+    }
+    params
+        .boundaries
+        .patches()
+        .iter()
+        .filter(|patch| !matches!(patch.kind, BoundaryKind::Periodic { .. }))
+        .map(|patch| patch.face_ids.len())
+        .sum()
 }
 
 fn validate_unstructured_linear_reconstruction_params(
@@ -187,6 +221,11 @@ fn assemble_interior_faces_cached(
 
     #[cfg(not(feature = "parallel-fvm"))]
     {
+        let _span = info_span!(
+            "unstructured_inviscid_interior_flux_fused",
+            path = "colored_serial"
+        )
+        .entered();
         let mut residual_mut = interior_inviscid_residual_mut(residual);
         for bucket in &topology.interior_coloring.buckets {
             for &face_idx in bucket {
@@ -203,14 +242,29 @@ fn assemble_interior_faces_cached(
 
     #[cfg(feature = "parallel-fvm")]
     {
-        let bucket_results = topology.interior_coloring.par_map_buckets(|face_idx| {
-            compute_interior_inviscid_face_contribution(face_idx, params, topology)
-        });
-        let mut residual_mut = interior_inviscid_residual_mut(residual);
-        for bucket in bucket_results {
-            for item in bucket {
-                if let Some((geom, flux)) = item? {
-                    scatter_fused_interior_inviscid_face(&mut residual_mut, &geom, &flux);
+        let bucket_results = {
+            let _span = info_span!(
+                "unstructured_inviscid_interior_flux_compute",
+                faces = topology.interior.len(),
+                colors = topology.interior_coloring.num_colors,
+            )
+            .entered();
+            topology.interior_coloring.par_map_buckets(|face_idx| {
+                compute_interior_inviscid_face_contribution(face_idx, params, topology)
+            })
+        };
+        {
+            let _span = info_span!(
+                "unstructured_inviscid_interior_flux_scatter",
+                buckets = topology.interior_coloring.buckets.len(),
+            )
+            .entered();
+            let mut residual_mut = interior_inviscid_residual_mut(residual);
+            for bucket in bucket_results {
+                for item in bucket {
+                    if let Some((geom, flux)) = item? {
+                        scatter_fused_interior_inviscid_face(&mut residual_mut, &geom, &flux);
+                    }
                 }
             }
         }

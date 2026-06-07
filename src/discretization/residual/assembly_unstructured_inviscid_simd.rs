@@ -7,6 +7,7 @@ use crate::discretization::{
 };
 use crate::error::Result;
 use crate::field::{ConservedFields, ConservedResidual};
+use tracing::info_span;
 
 use crate::discretization::inviscid::{
     interior_inviscid_residual_mut, scatter_fused_interior_inviscid_face,
@@ -39,6 +40,12 @@ pub(super) fn try_assemble_interior_faces_cached(
 
     #[cfg(not(feature = "parallel-fvm"))]
     {
+        let _span = info_span!(
+            "unstructured_inviscid_interior_flux_fused",
+            path = "simd_batch4",
+            faces = topology.interior.len(),
+        )
+        .entered();
         let mut residual_mut = interior_inviscid_residual_mut(residual);
         for layout in &topology.interior_coloring.bucket_batch_layouts {
             accumulate_inviscid_bucket_batch4(
@@ -56,18 +63,35 @@ pub(super) fn try_assemble_interior_faces_cached(
     #[cfg(feature = "parallel-fvm")]
     {
         use rayon::prelude::*;
-        let bucket_results = topology
-            .interior_coloring
-            .bucket_batch_layouts
-            .par_iter()
-            .map(|layout| {
-                compute_inviscid_bucket_batch4_to_vec(layout, fields, params, topology, scheme)
-            })
-            .collect::<Vec<_>>();
-        let mut residual_mut = interior_inviscid_residual_mut(residual);
-        for bucket in bucket_results {
-            for (geom, flux) in bucket?.into_iter().flatten() {
-                scatter_fused_interior_inviscid_face(&mut residual_mut, &geom, &flux);
+        let bucket_results = {
+            let _span = info_span!(
+                "unstructured_inviscid_interior_flux_compute",
+                path = "simd_batch4",
+                faces = topology.interior.len(),
+                colors = topology.interior_coloring.num_colors,
+            )
+            .entered();
+            topology
+                .interior_coloring
+                .bucket_batch_layouts
+                .par_iter()
+                .map(|layout| {
+                    compute_inviscid_bucket_batch4_to_vec(layout, fields, params, topology, scheme)
+                })
+                .collect::<Vec<_>>()
+        };
+        {
+            let _span = info_span!(
+                "unstructured_inviscid_interior_flux_scatter",
+                path = "simd_batch4",
+                buckets = topology.interior_coloring.bucket_batch_layouts.len(),
+            )
+            .entered();
+            let mut residual_mut = interior_inviscid_residual_mut(residual);
+            for bucket in bucket_results {
+                for (geom, flux) in bucket?.into_iter().flatten() {
+                    scatter_fused_interior_inviscid_face(&mut residual_mut, &geom, &flux);
+                }
             }
         }
         Ok(true)
