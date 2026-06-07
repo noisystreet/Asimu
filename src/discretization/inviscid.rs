@@ -3,6 +3,7 @@
 //! 理论：[`docs/theory/inviscid_flux.md`](../../docs/theory/inviscid_flux.md) §2
 
 use crate::core::{Real, Vector3};
+use crate::field::ConservedResidual;
 use crate::physics::{ConservedState, PrimitiveState};
 
 /// 面法向无粘通量（质量、动量、能量）。
@@ -11,6 +12,75 @@ pub struct InviscidFlux {
     pub mass: Real,
     pub momentum: [Real; 3],
     pub energy: Real,
+}
+
+/// 内面无粘 scatter 的可变残差切片。
+pub(crate) struct InteriorInviscidResidualMut<'a> {
+    pub density: &'a mut [Real],
+    pub mx: &'a mut [Real],
+    pub my: &'a mut [Real],
+    pub mz: &'a mut [Real],
+    pub energy: &'a mut [Real],
+}
+
+/// scatter 阶段内面几何（预存 RHS 缩放，避免热路径除法）。
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct InteriorInviscidScatterGeom {
+    pub owner: usize,
+    pub neighbor: usize,
+    pub owner_scale: Real,
+    pub neighbor_scale: Real,
+}
+
+#[must_use]
+pub(crate) fn interior_inviscid_residual_mut(
+    residual: &mut ConservedResidual,
+) -> InteriorInviscidResidualMut<'_> {
+    InteriorInviscidResidualMut {
+        density: residual.density.values_mut(),
+        mx: residual.momentum_x.values_mut(),
+        my: residual.momentum_y.values_mut(),
+        mz: residual.momentum_z.values_mut(),
+        energy: residual.total_energy.values_mut(),
+    }
+}
+
+/// 将内面无粘通量 scatter 到 owner/neighbor 残差（预存 scale，无 `Result` 分支）。
+#[inline(always)]
+pub(crate) fn scatter_fused_interior_inviscid_face(
+    residual: &mut InteriorInviscidResidualMut<'_>,
+    geom: &InteriorInviscidScatterGeom,
+    flux: &InviscidFlux,
+) {
+    let owner = geom.owner;
+    let neighbor = geom.neighbor;
+    let owner_scale = geom.owner_scale;
+    let neighbor_scale = geom.neighbor_scale;
+    residual.density[owner] += owner_scale * flux.mass;
+    residual.mx[owner] += owner_scale * flux.momentum[0];
+    residual.my[owner] += owner_scale * flux.momentum[1];
+    residual.mz[owner] += owner_scale * flux.momentum[2];
+    residual.energy[owner] += owner_scale * flux.energy;
+    residual.density[neighbor] += neighbor_scale * flux.mass;
+    residual.mx[neighbor] += neighbor_scale * flux.momentum[0];
+    residual.my[neighbor] += neighbor_scale * flux.momentum[1];
+    residual.mz[neighbor] += neighbor_scale * flux.momentum[2];
+    residual.energy[neighbor] += neighbor_scale * flux.energy;
+}
+
+/// 边界面无粘 scatter（预存 owner scale）。
+#[inline(always)]
+pub(crate) fn scatter_fused_boundary_inviscid_face(
+    residual: &mut InteriorInviscidResidualMut<'_>,
+    owner: usize,
+    owner_scale: Real,
+    flux: &InviscidFlux,
+) {
+    residual.density[owner] += owner_scale * flux.mass;
+    residual.mx[owner] += owner_scale * flux.momentum[0];
+    residual.my[owner] += owner_scale * flux.momentum[1];
+    residual.mz[owner] += owner_scale * flux.momentum[2];
+    residual.energy[owner] += owner_scale * flux.energy;
 }
 
 /// 由守恒态与原始变量计算 \( \mathbf{F} \cdot \mathbf{n} \)。
@@ -43,7 +113,48 @@ pub fn velocity_dot_normal(velocity: [Real; 3], normal: Vector3) -> Real {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::approx_eq;
+    use crate::discretization::residual::accumulate_interior_face;
+    use crate::field::ConservedResidual;
     use crate::physics::{ConservedState, IdealGasEoS};
+
+    #[test]
+    fn fused_scatter_matches_accumulate_interior_face() {
+        let flux = InviscidFlux {
+            mass: 1.0,
+            momentum: [2.0, 3.0, 4.0],
+            energy: 5.0,
+        };
+        let mut fused = ConservedResidual::zeros(3).expect("fused");
+        let mut legacy = ConservedResidual::zeros(3).expect("legacy");
+        let geom = InteriorInviscidScatterGeom {
+            owner: 0,
+            neighbor: 1,
+            owner_scale: -2.0,
+            neighbor_scale: 0.5,
+        };
+        scatter_fused_interior_inviscid_face(
+            &mut interior_inviscid_residual_mut(&mut fused),
+            &geom,
+            &flux,
+        );
+        accumulate_interior_face(&mut legacy, 0, 1, &flux, 2.0, 1.0, 4.0).expect("legacy");
+        assert!(approx_eq(
+            fused.density.values()[0],
+            legacy.density.values()[0],
+            1.0e-15
+        ));
+        assert!(approx_eq(
+            fused.momentum_x.values()[1],
+            legacy.momentum_x.values()[1],
+            1.0e-15
+        ));
+        assert!(approx_eq(
+            fused.total_energy.values()[0],
+            legacy.total_energy.values()[0],
+            1.0e-15
+        ));
+    }
 
     #[test]
     fn uniform_rest_state_has_zero_mass_flux() {

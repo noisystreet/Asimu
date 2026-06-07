@@ -1,10 +1,12 @@
 //! CPU 热算子：标量实现 + 可选 `wide` SIMD（`simd-fvm`）。
 
+mod hvl;
 mod lsq;
 mod lusgs;
 mod roe;
 mod viscous;
 
+pub use hvl::face_inviscid_flux_first_order_hanel_batch4;
 pub use lsq::{
     Symmetric3x3, accumulate_lsq_rhs_component, solve_symmetric_3x3, solve_symmetric_3x3_batch4,
 };

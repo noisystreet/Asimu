@@ -1,4 +1,4 @@
-//! 非结构无粘内面 Roe 一阶 SIMD 批处理（`simd-fvm`）。
+//! 非结构无粘内面一阶 SIMD 批处理（Roe / Hanel–Van Leer，`simd-fvm`）。
 
 use crate::discretization::flux_config::FluxScheme;
 use crate::discretization::{
@@ -8,34 +8,46 @@ use crate::discretization::{
 use crate::error::Result;
 use crate::field::{ConservedFields, ConservedResidual};
 
-#[cfg(not(feature = "parallel-fvm"))]
-use super::accumulate_one_interior_inviscid_face;
-use super::{
-    InteriorInviscidScatterGeom, InviscidAssemblyUnstructuredParams,
-    compute_interior_inviscid_face_contribution, scatter_interior_inviscid_face,
+use crate::discretization::inviscid::{
+    interior_inviscid_residual_mut, scatter_fused_interior_inviscid_face,
 };
 
-/// 若配置为 Roe 一阶且 SIMD 路径已完整处理内面，返回 `Ok(true)`。
+#[cfg(not(feature = "parallel-fvm"))]
+use super::accumulate_one_interior_inviscid_face_fused;
+use super::{
+    InteriorInviscidScatterGeom, InviscidAssemblyUnstructuredParams,
+    compute_interior_inviscid_face_contribution,
+};
+
+/// 一阶 SIMD 批处理支持的通量格式。
+#[derive(Clone, Copy)]
+enum FirstOrderSimdScheme {
+    Roe { entropy_fix: bool },
+    HanelVanLeer,
+}
+
+/// 若配置为一阶 Roe / HVL 且 SIMD 路径已完整处理内面，返回 `Ok(true)`。
 pub(super) fn try_assemble_interior_faces_cached(
     residual: &mut ConservedResidual,
     fields: &ConservedFields,
     params: &InviscidAssemblyUnstructuredParams<'_>,
     topology: &UnstructuredFaceTopology,
 ) -> Result<bool> {
-    let Some(entropy_fix) = roe_first_order_simd_entropy_fix(params.config) else {
+    let Some(scheme) = first_order_simd_scheme(params.config) else {
         return Ok(false);
     };
 
     #[cfg(not(feature = "parallel-fvm"))]
     {
+        let mut residual_mut = interior_inviscid_residual_mut(residual);
         for layout in &topology.interior_coloring.bucket_batch_layouts {
-            accumulate_inviscid_bucket_roe_batch4(
+            accumulate_inviscid_bucket_batch4(
                 layout,
                 fields,
-                residual,
+                &mut residual_mut,
                 params,
                 topology,
-                entropy_fix,
+                scheme,
             )?;
         }
         return Ok(true);
@@ -49,32 +61,28 @@ pub(super) fn try_assemble_interior_faces_cached(
             .bucket_batch_layouts
             .par_iter()
             .map(|layout| {
-                compute_inviscid_bucket_roe_batch4_to_vec(
-                    layout,
-                    fields,
-                    params,
-                    topology,
-                    entropy_fix,
-                )
+                compute_inviscid_bucket_batch4_to_vec(layout, fields, params, topology, scheme)
             })
             .collect::<Vec<_>>();
+        let mut residual_mut = interior_inviscid_residual_mut(residual);
         for bucket in bucket_results {
-            for item in bucket? {
-                if let Some((geom, flux)) = item {
-                    scatter_interior_inviscid_face(residual, &geom, &flux)?;
-                }
+            for (geom, flux) in bucket?.into_iter().flatten() {
+                scatter_fused_interior_inviscid_face(&mut residual_mut, &geom, &flux);
             }
         }
         Ok(true)
     }
 }
 
-fn roe_first_order_simd_entropy_fix(config: &InviscidFluxConfig) -> Option<bool> {
+fn first_order_simd_scheme(config: &InviscidFluxConfig) -> Option<FirstOrderSimdScheme> {
     if config.reconstruction != ReconstructionKind::FirstOrder {
         return None;
     }
     match config.scheme {
-        FluxScheme::Roe(roe_cfg) => Some(roe_cfg.entropy_fix),
+        FluxScheme::Roe(roe_cfg) => Some(FirstOrderSimdScheme::Roe {
+            entropy_fix: roe_cfg.entropy_fix,
+        }),
+        FluxScheme::HanelVanLeer => Some(FirstOrderSimdScheme::HanelVanLeer),
         _ => None,
     }
 }
@@ -87,30 +95,16 @@ fn flux5_as_inviscid(f: crate::exec::cpu::InviscidFlux5) -> InviscidFlux {
     }
 }
 
-fn interior_inviscid_roe_batch4(
+fn interior_inviscid_batch4(
     batch: &InteriorFaceBatchStatic4,
     fields: &ConservedFields,
     params: &InviscidAssemblyUnstructuredParams<'_>,
-    entropy_fix: bool,
+    scheme: FirstOrderSimdScheme,
 ) -> Result<Option<Vec<(InteriorInviscidScatterGeom, InviscidFlux)>>> {
-    use crate::exec::cpu::face_inviscid_flux_first_order_roe_batch4;
-
     if !batch.simd_eligible() {
         return Ok(None);
     }
 
-    let left_prim = [
-        params.primitives.cell_primitive(batch.owners[0]),
-        params.primitives.cell_primitive(batch.owners[1]),
-        params.primitives.cell_primitive(batch.owners[2]),
-        params.primitives.cell_primitive(batch.owners[3]),
-    ];
-    let right_prim = [
-        params.primitives.cell_primitive(batch.neighbors[0]),
-        params.primitives.cell_primitive(batch.neighbors[1]),
-        params.primitives.cell_primitive(batch.neighbors[2]),
-        params.primitives.cell_primitive(batch.neighbors[3]),
-    ];
     let left_cons = [
         fields.cell_state(batch.owners[0])?,
         fields.cell_state(batch.owners[1])?,
@@ -125,38 +119,70 @@ fn interior_inviscid_roe_batch4(
     ];
     let normals = batch.normals();
 
-    let flux5 = face_inviscid_flux_first_order_roe_batch4(
-        [&left_prim[0], &left_prim[1], &left_prim[2], &left_prim[3]],
-        [
-            &right_prim[0],
-            &right_prim[1],
-            &right_prim[2],
-            &right_prim[3],
-        ],
-        [&left_cons[0], &left_cons[1], &left_cons[2], &left_cons[3]],
-        [
-            &right_cons[0],
-            &right_cons[1],
-            &right_cons[2],
-            &right_cons[3],
-        ],
-        normals,
-        params.eos,
-        entropy_fix,
-    );
+    let flux5 = match scheme {
+        FirstOrderSimdScheme::Roe { entropy_fix } => {
+            use crate::exec::cpu::face_inviscid_flux_first_order_roe_batch4;
+
+            let left_prim = [
+                params.primitives.cell_primitive(batch.owners[0]),
+                params.primitives.cell_primitive(batch.owners[1]),
+                params.primitives.cell_primitive(batch.owners[2]),
+                params.primitives.cell_primitive(batch.owners[3]),
+            ];
+            let right_prim = [
+                params.primitives.cell_primitive(batch.neighbors[0]),
+                params.primitives.cell_primitive(batch.neighbors[1]),
+                params.primitives.cell_primitive(batch.neighbors[2]),
+                params.primitives.cell_primitive(batch.neighbors[3]),
+            ];
+            face_inviscid_flux_first_order_roe_batch4(
+                [&left_prim[0], &left_prim[1], &left_prim[2], &left_prim[3]],
+                [
+                    &right_prim[0],
+                    &right_prim[1],
+                    &right_prim[2],
+                    &right_prim[3],
+                ],
+                [&left_cons[0], &left_cons[1], &left_cons[2], &left_cons[3]],
+                [
+                    &right_cons[0],
+                    &right_cons[1],
+                    &right_cons[2],
+                    &right_cons[3],
+                ],
+                normals,
+                params.eos,
+                entropy_fix,
+            )
+        }
+        FirstOrderSimdScheme::HanelVanLeer => {
+            use crate::exec::cpu::face_inviscid_flux_first_order_hanel_batch4;
+
+            face_inviscid_flux_first_order_hanel_batch4(
+                [&left_cons[0], &left_cons[1], &left_cons[2], &left_cons[3]],
+                [
+                    &right_cons[0],
+                    &right_cons[1],
+                    &right_cons[2],
+                    &right_cons[3],
+                ],
+                normals,
+                params.eos.gamma,
+            )
+        }
+    };
 
     let mut out = Vec::with_capacity(4);
-    for lane in 0..4 {
-        let Some(f5) = flux5[lane] else {
+    for (lane, f5) in flux5.into_iter().enumerate() {
+        let Some(f5) = f5 else {
             return Ok(None);
         };
         out.push((
             InteriorInviscidScatterGeom {
                 owner: batch.owners[lane],
                 neighbor: batch.neighbors[lane],
-                area: batch.area[lane],
-                owner_volume: batch.owner_volume[lane],
-                neighbor_volume: batch.neighbor_volume[lane],
+                owner_scale: batch.owner_rhs_scale[lane],
+                neighbor_scale: batch.neighbor_rhs_scale[lane],
             },
             flux5_as_inviscid(f5),
         ));
@@ -165,41 +191,41 @@ fn interior_inviscid_roe_batch4(
 }
 
 #[cfg(all(feature = "simd-fvm", not(feature = "parallel-fvm")))]
-fn accumulate_inviscid_bucket_roe_batch4(
+fn accumulate_inviscid_bucket_batch4(
     layout: &InteriorFaceBucketBatchLayout,
     fields: &ConservedFields,
-    residual: &mut ConservedResidual,
+    residual_mut: &mut InteriorInviscidResidualMut<'_>,
     params: &InviscidAssemblyUnstructuredParams<'_>,
     topology: &UnstructuredFaceTopology,
-    entropy_fix: bool,
+    scheme: FirstOrderSimdScheme,
 ) -> Result<()> {
     for batch in &layout.full_batches {
-        if let Some(items) = interior_inviscid_roe_batch4(batch, fields, params, entropy_fix)? {
+        if let Some(items) = interior_inviscid_batch4(batch, fields, params, scheme)? {
             for (geom, flux) in items {
-                scatter_interior_inviscid_face(residual, &geom, &flux)?;
+                scatter_fused_interior_inviscid_face(residual_mut, &geom, &flux);
             }
             continue;
         }
         for &face_idx in &batch.face_indices {
-            accumulate_one_interior_inviscid_face(face_idx, residual, params, topology)?;
+            accumulate_one_interior_inviscid_face_fused(face_idx, residual_mut, params, topology)?;
         }
     }
     for &face_idx in &layout.remainder {
-        accumulate_one_interior_inviscid_face(face_idx, residual, params, topology)?;
+        accumulate_one_interior_inviscid_face_fused(face_idx, residual_mut, params, topology)?;
     }
     Ok(())
 }
 
-fn compute_inviscid_bucket_roe_batch4_to_vec(
+fn compute_inviscid_bucket_batch4_to_vec(
     layout: &InteriorFaceBucketBatchLayout,
     fields: &ConservedFields,
     params: &InviscidAssemblyUnstructuredParams<'_>,
     topology: &UnstructuredFaceTopology,
-    entropy_fix: bool,
+    scheme: FirstOrderSimdScheme,
 ) -> Result<Vec<Option<(InteriorInviscidScatterGeom, InviscidFlux)>>> {
     let mut out = Vec::with_capacity(layout.num_faces());
     for batch in &layout.full_batches {
-        if let Some(items) = interior_inviscid_roe_batch4(batch, fields, params, entropy_fix)? {
+        if let Some(items) = interior_inviscid_batch4(batch, fields, params, scheme)? {
             out.extend(items.into_iter().map(Some));
             continue;
         }

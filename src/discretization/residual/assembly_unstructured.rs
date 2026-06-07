@@ -6,14 +6,20 @@ mod assembly_unstructured_inviscid_simd;
 
 use crate::boundary::{BoundaryKind, BoundarySet};
 use crate::core::{FaceId, Real};
+pub(super) use crate::discretization::inviscid::InteriorInviscidScatterGeom;
+use crate::discretization::inviscid::{
+    interior_inviscid_residual_mut, scatter_fused_boundary_inviscid_face,
+    scatter_fused_interior_inviscid_face,
+};
 use crate::discretization::unstructured_face_cache::{
     UnstructuredFaceTopology, UnstructuredSolverMeshCache,
 };
 use crate::discretization::{
     BoundaryGhostBuffer, FaceFluxInput, GradientFields, InviscidFlux, InviscidFluxConfig,
     ReconstructionKind, UnstructuredGradientLimiter, UnstructuredLinearReconstructionCtx,
-    face_inviscid_flux, face_inviscid_flux_from_interface, reconstruct_unstructured_boundary_face,
-    reconstruct_unstructured_interior_face,
+    face_inviscid_flux, face_inviscid_flux_first_order_boundary_soa,
+    face_inviscid_flux_first_order_interior_soa, face_inviscid_flux_from_interface,
+    reconstruct_unstructured_boundary_face, reconstruct_unstructured_interior_face,
 };
 use crate::error::{AsimuError, Result};
 use crate::field::{ConservedFields, ConservedResidual, PrimitiveFields};
@@ -36,16 +42,6 @@ pub struct InviscidAssemblyUnstructuredParams<'a> {
     /// 二阶重构：IDWLS 原始变量梯度。
     pub gradients: Option<&'a GradientFields>,
     pub min_pressure: Real,
-}
-
-/// scatter 阶段所需的内面几何（与 `UnstructuredInteriorFace` 子集一致）。
-#[derive(Debug, Clone, Copy)]
-pub(super) struct InteriorInviscidScatterGeom {
-    owner: usize,
-    neighbor: usize,
-    area: Real,
-    owner_volume: Real,
-    neighbor_volume: Real,
 }
 
 /// 非结构一阶 Euler 残差：遍历显式 face owner/neighbor 拓扑。
@@ -105,7 +101,7 @@ pub(super) fn compute_interior_inviscid_face_contribution(
     topology: &UnstructuredFaceTopology,
 ) -> Result<Option<(InteriorInviscidScatterGeom, InviscidFlux)>> {
     let face = &topology.interior[face_idx];
-    if is_degenerate_volume(face.owner_volume) || is_degenerate_volume(face.neighbor_volume) {
+    if face.owner_rhs_scale == 0.0 && face.neighbor_rhs_scale == 0.0 {
         return Ok(None);
     }
     let flux = if params.config.reconstruction == ReconstructionKind::Muscl {
@@ -128,10 +124,10 @@ pub(super) fn compute_interior_inviscid_face_contribution(
         )?;
         face_inviscid_flux_from_interface(iface, face.normal, params.eos, params.config)?
     } else {
-        let owner_prim = params.primitives.cell_primitive(face.owner);
-        let neighbor_prim = params.primitives.cell_primitive(face.neighbor);
-        face_inviscid_flux(
-            FaceFluxInput::first_order(&owner_prim, &neighbor_prim),
+        face_inviscid_flux_first_order_interior_soa(
+            face.owner,
+            face.neighbor,
+            params.primitives,
             face.normal,
             params.eos,
             params.config,
@@ -140,27 +136,25 @@ pub(super) fn compute_interior_inviscid_face_contribution(
     let geom = InteriorInviscidScatterGeom {
         owner: face.owner,
         neighbor: face.neighbor,
-        area: face.area,
-        owner_volume: face.owner_volume,
-        neighbor_volume: face.neighbor_volume,
+        owner_scale: face.owner_rhs_scale,
+        neighbor_scale: face.neighbor_rhs_scale,
     };
     Ok(Some((geom, flux)))
 }
 
-pub(super) fn scatter_interior_inviscid_face(
-    residual: &mut ConservedResidual,
-    geom: &InteriorInviscidScatterGeom,
-    flux: &InviscidFlux,
+#[cfg(any(not(feature = "parallel-fvm"), test))]
+pub(super) fn accumulate_one_interior_inviscid_face_fused(
+    face_idx: usize,
+    residual_mut: &mut crate::discretization::inviscid::InteriorInviscidResidualMut<'_>,
+    params: &InviscidAssemblyUnstructuredParams<'_>,
+    topology: &UnstructuredFaceTopology,
 ) -> Result<()> {
-    accumulate_interior_face(
-        residual,
-        geom.owner,
-        geom.neighbor,
-        flux,
-        geom.area,
-        geom.owner_volume,
-        geom.neighbor_volume,
-    )
+    if let Some((geom, flux)) =
+        compute_interior_inviscid_face_contribution(face_idx, params, topology)?
+    {
+        scatter_fused_interior_inviscid_face(residual_mut, &geom, &flux);
+    }
+    Ok(())
 }
 
 #[cfg(any(not(feature = "parallel-fvm"), test))]
@@ -170,12 +164,12 @@ pub(super) fn accumulate_one_interior_inviscid_face(
     params: &InviscidAssemblyUnstructuredParams<'_>,
     topology: &UnstructuredFaceTopology,
 ) -> Result<()> {
-    if let Some((geom, flux)) =
-        compute_interior_inviscid_face_contribution(face_idx, params, topology)?
-    {
-        scatter_interior_inviscid_face(residual, &geom, &flux)?;
-    }
-    Ok(())
+    accumulate_one_interior_inviscid_face_fused(
+        face_idx,
+        &mut interior_inviscid_residual_mut(residual),
+        params,
+        topology,
+    )
 }
 
 fn assemble_interior_faces_cached(
@@ -193,9 +187,15 @@ fn assemble_interior_faces_cached(
 
     #[cfg(not(feature = "parallel-fvm"))]
     {
+        let mut residual_mut = interior_inviscid_residual_mut(residual);
         for bucket in &topology.interior_coloring.buckets {
             for &face_idx in bucket {
-                accumulate_one_interior_inviscid_face(face_idx, residual, params, topology)?;
+                accumulate_one_interior_inviscid_face_fused(
+                    face_idx,
+                    &mut residual_mut,
+                    params,
+                    topology,
+                )?;
             }
         }
         return Ok(());
@@ -206,10 +206,11 @@ fn assemble_interior_faces_cached(
         let bucket_results = topology.interior_coloring.par_map_buckets(|face_idx| {
             compute_interior_inviscid_face_contribution(face_idx, params, topology)
         });
+        let mut residual_mut = interior_inviscid_residual_mut(residual);
         for bucket in bucket_results {
             for item in bucket {
                 if let Some((geom, flux)) = item? {
-                    scatter_interior_inviscid_face(residual, &geom, &flux)?;
+                    scatter_fused_interior_inviscid_face(&mut residual_mut, &geom, &flux);
                 }
             }
         }
@@ -236,10 +237,10 @@ fn assemble_interior_faces(
         if is_degenerate_volume(owner_volume) || is_degenerate_volume(neighbor_volume) {
             continue;
         }
-        let owner_prim = params.primitives.cell_primitive(owner);
-        let neighbor_prim = params.primitives.cell_primitive(neighbor);
-        let flux = face_inviscid_flux(
-            FaceFluxInput::first_order(&owner_prim, &neighbor_prim),
+        let flux = face_inviscid_flux_first_order_interior_soa(
+            owner,
+            neighbor,
+            params.primitives,
             metric.normal,
             params.eos,
             params.config,
@@ -263,8 +264,10 @@ fn assemble_boundary_faces(
 ) -> Result<()> {
     if params.config.reconstruction == ReconstructionKind::Muscl {
         assemble_boundary_faces_linear_reconstruction(residual, params)
+    } else if let Some(topology) = params.face_topology {
+        assemble_boundary_faces_first_order_cached(residual, params, topology)
     } else {
-        assemble_boundary_faces_first_order(residual, params)
+        assemble_boundary_faces_first_order_mesh(residual, params)
     }
 }
 
@@ -298,7 +301,42 @@ fn assemble_boundary_faces_linear_reconstruction(
     Ok(())
 }
 
-fn assemble_boundary_faces_first_order(
+fn assemble_boundary_faces_first_order_cached(
+    residual: &mut ConservedResidual,
+    params: &InviscidAssemblyUnstructuredParams<'_>,
+    topology: &UnstructuredFaceTopology,
+) -> Result<()> {
+    let mut residual_mut = interior_inviscid_residual_mut(residual);
+    for bface in &topology.boundary {
+        if bface.owner_rhs_scale == 0.0 {
+            continue;
+        }
+        let ghost = params.ghosts.get_face(bface.face).ok_or_else(|| {
+            AsimuError::Boundary(format!(
+                "边界面 FaceId({}) 缺少 ghost 状态",
+                bface.face.index()
+            ))
+        })?;
+        let flux = face_inviscid_flux_first_order_boundary_soa(
+            bface.owner,
+            params.primitives,
+            &ghost.conserved,
+            bface.normal,
+            params.eos,
+            params.config,
+            params.min_pressure,
+        )?;
+        scatter_fused_boundary_inviscid_face(
+            &mut residual_mut,
+            bface.owner,
+            bface.owner_rhs_scale,
+            &flux,
+        );
+    }
+    Ok(())
+}
+
+fn assemble_boundary_faces_first_order_mesh(
     residual: &mut ConservedResidual,
     params: &InviscidAssemblyUnstructuredParams<'_>,
 ) -> Result<()> {

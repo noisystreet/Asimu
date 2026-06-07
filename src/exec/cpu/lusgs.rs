@@ -35,7 +35,6 @@ pub fn assign_lusgs_diagonal_update(update: LusgsDiagonalUpdate<'_>) {
     {
         let mut update = update;
         assign_lusgs_diagonal_update_simd(&mut update);
-        return;
     }
     #[cfg(not(feature = "simd-fvm"))]
     {

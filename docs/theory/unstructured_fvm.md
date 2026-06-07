@@ -257,6 +257,7 @@ IDWLS 梯度每步需对每个单元累加最小二乘右端项 \(b_i\)。与 fl
 | 粘性内面 flux | `fused_interior_viscous_face_flux_batch4` | 着色桶内四路 gather + f64x4 τ·n |
 | IDWLS 梯度求解 | `solve_symmetric_3x3_batch4` | 四单元一批 Cramer 求解 |
 | Roe 一阶通量 | `face_inviscid_flux_first_order_roe_batch4` | 着色桶内四路 gather + f64x4 特征值修正；`assemble_inviscid_residual_unstructured` 一阶 Roe 路径 |
+| Hanel–Van Leer 一阶通量 | `face_inviscid_flux_first_order_hanel_batch4` | 着色桶内四路 gather；面坐标系标量变换 + 亚音速 \(F_E^+=F_m^+\cdot h\) 四路 f64x4；`assemble_inviscid_residual_unstructured` 一阶 HVL 路径 |
 
 与 `parallel-fvm` 叠加：桶间 `rayon`、桶内 SIMD。验证：`make test-simd-fvm`。
 
@@ -270,6 +271,12 @@ IDWLS 梯度每步需对每个单元累加最小二乘右端项 \(b_i\)。与 fl
 | `remainder` | 桶尾不足 4 面的面索引（标量回退） |
 
 μ/λ 与原始变量/梯度仍每步从 SoA 场 gather；静态几何在 mesh cache 初始化时写入，热路径不再重复读 `UnstructuredInteriorFace` 做 lane 填充。
+
+无粘内面 scatter（P6-1）：`InteriorInviscidScatterGeom` 携带预存 `owner_scale` / `neighbor_scale`（init-time 写入 `UnstructuredInteriorFace`）；`scatter_fused_interior_inviscid_face` 直接写残差 SoA 切片，与粘性 `scatter_fused_interior_viscous_face` 同模式。
+
+一阶无粘 flux（P6-2）：`face_inviscid_flux_first_order_interior_soa` 从 `PrimitiveFields` SoA 直读；FVS（Van Leer / HVL / SLAU2）仅组装守恒态，跳过 `FaceFluxInput` 与界面 struct 拷贝。
+
+一阶边界面（P6-4）：有 `face_topology` 时走 `face_topology.boundary` 缓存（法向、面积、体积、`owner_rhs_scale`）；`scatter_fused_boundary_inviscid_face` 写 owner 残差；ghost 侧 FVS 直接用守恒态。
 
 ## 实现映射
 

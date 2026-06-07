@@ -41,7 +41,10 @@ pub use bc_compressible::{
     inlet_ghost, outlet_ghost, symmetry_ghost, wall_ghost,
 };
 pub use diffusion_1d::assemble_diffusion_1d;
-pub use face_flux::{FaceFluxInput, face_inviscid_flux, face_inviscid_flux_from_interface};
+pub use face_flux::{
+    FaceFluxInput, face_inviscid_flux, face_inviscid_flux_first_order_boundary_soa,
+    face_inviscid_flux_first_order_interior_soa, face_inviscid_flux_from_interface,
+};
 pub use flux_config::{FluxScheme, InviscidFluxConfig, ReconstructionKind, SlopeLimiter};
 pub use gradient::{
     GradientFields, InviscidPrimitiveGradients, VelocityGradient, compute_structured_gradients_3d,

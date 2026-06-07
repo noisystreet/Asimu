@@ -21,7 +21,10 @@
 - **IDWLS RHS 单元并行累加**（`parallel-fvm`）：`LsqRhsCellIncidence` + 单元 `rayon` 路径；粘性梯度与二阶线性重构 \(\nabla\rho,\nabla p\) 共用；golden `parallel_idw_lsq_accumulate_matches_face_serial`
 - **谱半径单元并行**（P2）：`cell_spectral_radius_unstructured` 复用 `mesh_cache` + `LsqRhsCellIncidence`；`parallel-fvm` 下单元 `rayon` 累加 \(\sigma_i\)
 - **粘性 transport 单元/面并行**（P3）：`fill_cell_transport_coefficients` / `fill_face_transport_coefficients` 在 `parallel-fvm` 下 `rayon` 并行（Sutherland 等非恒定 \(\mu\) 路径）；dual_ellipsoid A/B benchmark 显示 `par_try_for_each_bucket` 相对 `par_map_buckets` 回归约 26%，已回退 P4、保留 `par_map_buckets`（桶内 `with_min_len=1024`）
-- **CPU SIMD 热算子**（P5，`simd-fvm` feature）：新增 `exec::cpu` 模块（`wide` f64x4）；LU-SGS 对角更新、粘性内面四路批处理 flux、IDWLS 3×3 四单元求解、Roe 一阶内面四路批处理；`InteriorFaceBucketBatchLayout` init-time 静态几何 SoA；标量回退始终可用
+- **CPU SIMD 热算子**（P5/P6，`simd-fvm` feature）：新增 `exec::cpu` 模块（`wide` f64x4）；LU-SGS 对角更新、粘性内面四路批处理 flux、IDWLS 3×3 四单元求解、Roe / **Hanel–Van Leer** 一阶内面四路批处理；`InteriorFaceBucketBatchLayout` init-time 静态几何 SoA；标量回退始终可用
+- **非结构无粘内面 fused scatter**（P6-1）：`scatter_fused_interior_inviscid_face` 直接写残差 SoA 切片，消费面 cache 预存 `owner_rhs_scale` / `neighbor_rhs_scale`，避免热路径 `-A/V` 除法与 `Result` 分支；SIMD / 并行 / 串行缓存路径共用
+- **非结构无粘一阶 SoA flux**（P6-2）：`face_inviscid_flux_first_order_interior_soa` / `_boundary_soa` 从 `PrimitiveFields` 直读；FVS 格式跳过 ghost 原始变量解码
+- **非结构无粘一阶边界面 cache**（P6-4）：`UnstructuredBoundaryFace::owner_rhs_scale` + `assemble_boundary_faces_first_order_cached`，与二阶共用 `face_topology.boundary`
 - 结构/非结构可压缩路径共用化：LU-SGS 稳定化（`lu_sgs_common`）、粘性边界面通量（`viscous_assembly`）、BC/原始变量刷新与时间步策略（`compressible_helpers`）；结构化粘性内面改走 `accumulate_fused_interior_viscous_face`；谱半径双曲项共用 `accumulate_hyperbolic_face_sigma`
 - 非结构求解性能：新增 `UnstructuredSolverMeshCache` 预计算面拓扑与 IDWLS 几何矩阵 \(A\)；`compute_unstructured_gradients_idw_lsq` 与粘性通量装配每步仅累加 RHS 并复用缓存面列表，数值与逐步枚举 `mesh` 等价
 - 3D 可压缩读入层统一：`structured_3d` 与单 zone CGNS 解析为 1-block `MultiBlockStructured3d`，求解入口不再 runtime 包装；移除 `CaseMesh::Structured3d` 变体

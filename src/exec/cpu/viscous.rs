@@ -133,7 +133,7 @@ pub fn gather_viscous_face_batch4(
 pub fn fused_interior_viscous_face_flux_batch4(g: &ViscousFaceGather4) -> ViscousFlux4 {
     #[cfg(feature = "simd-fvm")]
     {
-        return fused_interior_viscous_face_flux_batch4_simd(g);
+        fused_interior_viscous_face_flux_batch4_simd(g)
     }
     #[cfg(not(feature = "simd-fvm"))]
     {

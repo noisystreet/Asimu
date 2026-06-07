@@ -53,7 +53,7 @@ pub fn solve_symmetric_3x3_batch4(
 ) -> [Option<Vector3>; 4] {
     #[cfg(feature = "simd-fvm")]
     {
-        return solve_symmetric_3x3_batch4_simd(a, rhs);
+        solve_symmetric_3x3_batch4_simd(a, rhs)
     }
     #[cfg(not(feature = "simd-fvm"))]
     {

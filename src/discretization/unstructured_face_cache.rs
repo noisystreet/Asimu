@@ -45,6 +45,8 @@ pub struct UnstructuredBoundaryFace {
     pub area: Real,
     pub normal: Vector3,
     pub owner_volume: Real,
+    /// \(-A_f / V_{\mathrm{owner}}\)，边界面 owner 残差装配用。
+    pub owner_rhs_scale: Real,
     pub spacing: Real,
     pub viscous: UnstructuredBoundaryViscousKind,
     pub lsq_dr: Vector3,
@@ -281,6 +283,7 @@ fn build_face_topology(
                 area: metric.area,
                 normal: metric.normal,
                 owner_volume,
+                owner_rhs_scale: -metric.area * inv_volume(owner_volume),
                 spacing: boundary_spacing(mesh, owner_id, face),
                 viscous,
                 lsq_dr,

@@ -493,8 +493,7 @@ fn viscous_face_batch4_static(
     );
     let flux4 = fused_interior_viscous_face_flux_batch4(&gathered);
     let mut out = Vec::with_capacity(4);
-    for lane in 0..4 {
-        let geom = geoms[lane];
+    for (lane, geom) in geoms.into_iter().enumerate() {
         out.push((
             geom,
             crate::discretization::viscous::InteriorViscousFaceFlux {

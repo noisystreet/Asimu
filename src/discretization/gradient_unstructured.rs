@@ -396,11 +396,9 @@ fn write_lsq_gradients(
     let mut cell = 0;
     while cell < n {
         #[cfg(feature = "simd-fvm")]
-        if cell + 4 <= n {
-            if write_lsq_gradients_batch4(mesh_cache, scratch, out, cell)? {
-                cell += 4;
-                continue;
-            }
+        if cell + 4 <= n && write_lsq_gradients_batch4(mesh_cache, scratch, out, cell)? {
+            cell += 4;
+            continue;
         }
         write_lsq_gradients_one_cell(mesh_cache, scratch, out, cell)?;
         cell += 1;
