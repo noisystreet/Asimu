@@ -103,18 +103,12 @@ fn two_tet_mesh_and_boundary() -> (UnstructuredMesh3d, BoundarySet) {
 
 fn accumulate_interior_viscous_test_state(
     params: &ViscousAssemblyUnstructuredParams<'_>,
-    scratch: &ViscousAssemblyUnstructuredScratch,
+    scratch: &mut ViscousAssemblyUnstructuredScratch,
     linear_order: bool,
 ) -> ConservedResidual {
+    super::face_avg::fill_face_averaged_viscous_soa(params, scratch);
     let mut residual = ConservedResidual::zeros(params.mesh.num_cells()).expect("rhs");
-    let prim = params.primitives;
-    let grad_slices = params.gradients.velocity_gradient_slices();
-    let inputs = InteriorViscousFaceInputs {
-        grad: &grad_slices,
-        ux: prim.velocity_x.values(),
-        uy: prim.velocity_y.values(),
-        uz: prim.velocity_z.values(),
-    };
+    let face_averaged = &scratch.face_averaged;
     let mut residual_mut = InteriorViscousResidualMut {
         mx: residual.momentum_x.values_mut(),
         my: residual.momentum_y.values_mut(),
@@ -125,11 +119,25 @@ fn accumulate_interior_viscous_test_state(
     let coloring = &params.face_topology.interior_coloring;
     if linear_order {
         coloring.for_each_face_index_linear(params.face_topology.interior.len(), |i| {
-            accumulate_one_interior_face(i, &inputs, &mut residual_mut, params, scratch, constant);
+            accumulate_one_interior_face(
+                i,
+                face_averaged,
+                &mut residual_mut,
+                params,
+                scratch,
+                constant,
+            );
         });
     } else {
         coloring.for_each_face_index(|i| {
-            accumulate_one_interior_face(i, &inputs, &mut residual_mut, params, scratch, constant);
+            accumulate_one_interior_face(
+                i,
+                face_averaged,
+                &mut residual_mut,
+                params,
+                scratch,
+                constant,
+            );
         });
     }
     residual
@@ -185,8 +193,8 @@ fn colored_interior_viscous_accumulation_matches_linear_face_order() {
         gradients: &gradients,
         min_pressure: 1.0e-8,
     };
-    let linear = accumulate_interior_viscous_test_state(&params, &scratch, true);
-    let colored = accumulate_interior_viscous_test_state(&params, &scratch, false);
+    let linear = accumulate_interior_viscous_test_state(&params, &mut scratch, true);
+    let colored = accumulate_interior_viscous_test_state(&params, &mut scratch, false);
     for (a, b) in linear
         .momentum_x
         .values()
@@ -256,9 +264,9 @@ fn parallel_interior_viscous_accumulation_matches_colored_serial() {
         gradients: &gradients,
         min_pressure: 1.0e-8,
     };
-    let serial = accumulate_interior_viscous_test_state(&params, &scratch, false);
+    let serial = accumulate_interior_viscous_test_state(&params, &mut scratch, false);
     let mut parallel = ConservedResidual::zeros(mesh.num_cells()).expect("rhs");
-    accumulate_interior_faces_fused(&mut parallel, &params, &scratch).expect("par");
+    assemble_interior_faces(&mut parallel, &params, &mut scratch).expect("par");
     for (a, b) in serial
         .momentum_x
         .values()

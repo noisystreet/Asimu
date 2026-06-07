@@ -239,6 +239,17 @@ A_i = \sum_m w_m\,\Delta\mathbf x_m\,\Delta\mathbf x_m^{\mathsf T},
 1. `fill_cell_transport_coefficients`：`cell_mu` / `cell_lambda` 上 `par_iter_mut` + 温度切片；
 2. `fill_face_transport_coefficients`：内面 `par_iter_mut` 与 `interior.par_iter()` zip，只读单元系数、写面系数（无写冲突）。
 
+### 面心预平均 SoA（P7）
+
+IDWLS 梯度完成后、粘性 flux 阶段前，对每个内面预计算面心 \(0.5(\mathbf u_O+\mathbf u_N)\) 与 12 个速度/温度梯度分量，写入 `ViscousFaceAveragedSoA`（`assembly_unstructured_viscous_face_avg`）：
+
+| 阶段 | span | 说明 |
+|------|------|------|
+| 填充 | `unstructured_viscous_face_avg` | `parallel-fvm` 下 `lanes.par_iter_mut().zip(interior.par_iter())` |
+| flux | `unstructured_viscous_interior_flux` | 顺序读 `face_averaged.lane(i)`，避免 cell SoA 随机 gather |
+
+`fused_interior_viscous_face_flux_averaged` 与 owner/neighbor cell gather 路径在面心预平均假设下数值一致；`simd-fvm` 下 `gather_viscous_face_batch4_from_face_averaged` 从面 SoA 组 batch4（owner/neighbor 槽位均填同一面心值）。
+
 ### IDWLS RHS 单元并行（P0）
 
 IDWLS 梯度每步需对每个单元累加最小二乘右端项 \(b_i\)。与 flux scatter 不同，**每单元只写自身** `scratch.bu[i]` 等分量，无需面着色即可安全并行：
@@ -297,6 +308,7 @@ IDWLS 梯度每步需对每个单元累加最小二乘右端项 \(b_i\)。与 fl
 | (8) | `cell_spectral_radius_unstructured` + `cell_local_dt_spectral` | 已实现 |
 | 谱半径单元并行 | `LsqRhsCellIncidence` + `parallel-fvm` 单元 `rayon` | **P2** |
 | 粘性 transport 并行 | `fill_cell/face_transport_coefficients` | **P3** |
+| 面心预平均 SoA | `ViscousFaceAveragedSoA` / `fill_face_averaged_viscous_soa` | **P7** |
 | 无粘/粘性桶内并行 | `par_map_buckets`（`with_min_len=1024`） | **P0 POC** |
 | CPU SIMD 热算子 | `exec::cpu` + feature `simd-fvm` | **P5** |
 | (9) | `ConservedFields::assign_lusgs_diagonal_update` | 已实现 |

@@ -97,40 +97,87 @@ pub(crate) struct InteriorViscousFaceFlux {
     pub energy: Real,
 }
 
-/// 计算内面融合粘性通量（只读 inputs/geom，无 scatter）。
-#[inline(always)]
-pub(crate) fn fused_interior_viscous_face_flux(
-    inputs: &InteriorViscousFaceInputs<'_>,
-    geom: &InteriorViscousFaceGeom,
-) -> InteriorViscousFaceFlux {
-    let grad = inputs.grad;
-    let ux = inputs.ux;
-    let uy = inputs.uy;
-    let uz = inputs.uz;
-    let owner = geom.owner;
-    let neighbor = geom.neighbor;
-    let nx = geom.nx;
-    let ny = geom.ny;
-    let nz = geom.nz;
-    let mu = geom.mu;
-    let lambda = geom.lambda;
-    let half = 0.5;
-    let u0 = half * (ux[owner] + ux[neighbor]);
-    let u1 = half * (uy[owner] + uy[neighbor]);
-    let u2 = half * (uz[owner] + uz[neighbor]);
+/// 内面心预平均速度与梯度 SoA（P7：flux 顺序读，避免 cell 随机 gather）。
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ViscousFaceAveragedSoA {
+    pub lanes: Vec<ViscousFaceAveragedLane>,
+}
 
-    let du0 = half * (grad.du_dx[owner] + grad.du_dx[neighbor]);
-    let du1 = half * (grad.du_dy[owner] + grad.du_dy[neighbor]);
-    let du2 = half * (grad.du_dz[owner] + grad.du_dz[neighbor]);
-    let dv0 = half * (grad.dv_dx[owner] + grad.dv_dx[neighbor]);
-    let dv1 = half * (grad.dv_dy[owner] + grad.dv_dy[neighbor]);
-    let dv2 = half * (grad.dv_dz[owner] + grad.dv_dz[neighbor]);
-    let dw0 = half * (grad.dw_dx[owner] + grad.dw_dx[neighbor]);
-    let dw1 = half * (grad.dw_dy[owner] + grad.dw_dy[neighbor]);
-    let dw2 = half * (grad.dw_dz[owner] + grad.dw_dz[neighbor]);
-    let dt0 = half * (grad.dt_dx[owner] + grad.dt_dx[neighbor]);
-    let dt1 = half * (grad.dt_dy[owner] + grad.dt_dy[neighbor]);
-    let dt2 = half * (grad.dt_dz[owner] + grad.dt_dz[neighbor]);
+impl ViscousFaceAveragedSoA {
+    pub(crate) fn ensure(&mut self, num_faces: usize) {
+        self.lanes.resize(
+            num_faces,
+            ViscousFaceAveragedLane {
+                ux: 0.0,
+                uy: 0.0,
+                uz: 0.0,
+                du_dx: 0.0,
+                du_dy: 0.0,
+                du_dz: 0.0,
+                dv_dx: 0.0,
+                dv_dy: 0.0,
+                dv_dz: 0.0,
+                dw_dx: 0.0,
+                dw_dy: 0.0,
+                dw_dz: 0.0,
+                dt_dx: 0.0,
+                dt_dy: 0.0,
+                dt_dz: 0.0,
+            },
+        );
+    }
+
+    #[inline(always)]
+    pub(crate) fn lane(&self, face: usize) -> ViscousFaceAveragedLane {
+        self.lanes[face]
+    }
+}
+
+/// 单内面预平均速度与梯度（面心值）。
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ViscousFaceAveragedLane {
+    pub ux: Real,
+    pub uy: Real,
+    pub uz: Real,
+    pub du_dx: Real,
+    pub du_dy: Real,
+    pub du_dz: Real,
+    pub dv_dx: Real,
+    pub dv_dy: Real,
+    pub dv_dz: Real,
+    pub dw_dx: Real,
+    pub dw_dy: Real,
+    pub dw_dz: Real,
+    pub dt_dx: Real,
+    pub dt_dy: Real,
+    pub dt_dz: Real,
+}
+
+/// 由面心预平均态计算粘性通量（与 cell gather 路径数值一致）。
+#[inline(always)]
+pub(crate) fn fused_interior_viscous_face_flux_averaged(
+    avg: ViscousFaceAveragedLane,
+    nx: Real,
+    ny: Real,
+    nz: Real,
+    mu: Real,
+    lambda: Real,
+) -> InteriorViscousFaceFlux {
+    let u0 = avg.ux;
+    let u1 = avg.uy;
+    let u2 = avg.uz;
+    let du0 = avg.du_dx;
+    let du1 = avg.du_dy;
+    let du2 = avg.du_dz;
+    let dv0 = avg.dv_dx;
+    let dv1 = avg.dv_dy;
+    let dv2 = avg.dv_dz;
+    let dw0 = avg.dw_dx;
+    let dw1 = avg.dw_dy;
+    let dw2 = avg.dw_dz;
+    let dt0 = avg.dt_dx;
+    let dt1 = avg.dt_dy;
+    let dt2 = avg.dt_dz;
 
     let div_u = du0 + dv1 + dw2;
     let two_thirds = 2.0 / 3.0;
@@ -153,6 +200,45 @@ pub(crate) fn fused_interior_viscous_face_flux(
         mz: -tau_dot_n2,
         energy: energy_flux,
     }
+}
+
+/// 计算内面融合粘性通量（只读 inputs/geom，无 scatter）。
+#[inline(always)]
+pub(crate) fn fused_interior_viscous_face_flux(
+    inputs: &InteriorViscousFaceInputs<'_>,
+    geom: &InteriorViscousFaceGeom,
+) -> InteriorViscousFaceFlux {
+    let grad = inputs.grad;
+    let ux = inputs.ux;
+    let uy = inputs.uy;
+    let uz = inputs.uz;
+    let owner = geom.owner;
+    let neighbor = geom.neighbor;
+    let half = 0.5;
+    fused_interior_viscous_face_flux_averaged(
+        ViscousFaceAveragedLane {
+            ux: half * (ux[owner] + ux[neighbor]),
+            uy: half * (uy[owner] + uy[neighbor]),
+            uz: half * (uz[owner] + uz[neighbor]),
+            du_dx: half * (grad.du_dx[owner] + grad.du_dx[neighbor]),
+            du_dy: half * (grad.du_dy[owner] + grad.du_dy[neighbor]),
+            du_dz: half * (grad.du_dz[owner] + grad.du_dz[neighbor]),
+            dv_dx: half * (grad.dv_dx[owner] + grad.dv_dx[neighbor]),
+            dv_dy: half * (grad.dv_dy[owner] + grad.dv_dy[neighbor]),
+            dv_dz: half * (grad.dv_dz[owner] + grad.dv_dz[neighbor]),
+            dw_dx: half * (grad.dw_dx[owner] + grad.dw_dx[neighbor]),
+            dw_dy: half * (grad.dw_dy[owner] + grad.dw_dy[neighbor]),
+            dw_dz: half * (grad.dw_dz[owner] + grad.dw_dz[neighbor]),
+            dt_dx: half * (grad.dt_dx[owner] + grad.dt_dx[neighbor]),
+            dt_dy: half * (grad.dt_dy[owner] + grad.dt_dy[neighbor]),
+            dt_dz: half * (grad.dt_dz[owner] + grad.dt_dz[neighbor]),
+        },
+        geom.nx,
+        geom.ny,
+        geom.nz,
+        geom.mu,
+        geom.lambda,
+    )
 }
 
 /// 将内面粘性通量 scatter 到 owner/neighbor 残差。
