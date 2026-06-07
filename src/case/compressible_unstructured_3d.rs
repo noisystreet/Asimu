@@ -431,7 +431,7 @@ fn advance_unstructured_lusgs(
                 omega: lu_sgs.omega,
                 gamma: env.eos.gamma,
             },
-        )
+        )?;
     } else {
         {
             let _span = info_span!("unstructured_lusgs_diagonal_update").entered();
@@ -446,8 +446,9 @@ fn advance_unstructured_lusgs(
             )?;
         }
         let _span = info_span!("unstructured_lusgs_copy_stage").entered();
-        fields.copy_from(&work.storage.stage)
+        fields.copy_from(&work.storage.stage)?;
     }
+    Ok(())
 }
 
 fn prepare_unstructured_timestep(
@@ -479,6 +480,7 @@ fn prepare_unstructured_timestep(
     }
     let params = SpectralRadiusUnstructuredParams {
         mesh: env.mesh,
+        mesh_cache: &work.mesh_cache,
         boundaries: &env.case.boundary,
         ghosts: &work.ghosts,
         primitives: &work.primitives,
@@ -754,3 +756,7 @@ fn write_unstructured_vtu(
         ))
     }
 }
+
+#[cfg(test)]
+#[path = "compressible_unstructured_3d_lusgs_test.rs"]
+mod lusgs_monitoring_tests;

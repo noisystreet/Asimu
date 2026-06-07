@@ -197,7 +197,7 @@ A_i = \sum_m w_m\,\Delta\mathbf x_m\,\Delta\mathbf x_m^{\mathsf T},
 \tag{8}
 \]
 
-其中 \(C_v=6\)，\(\nu=\mu/\rho\)，\(\alpha=\mu/(\rho Pr)\)。该形式与结构化路径使用同一个单面粘性谱半径贡献函数，差异只在 face 枚举方式。
+其中 \(C_v=6\)，\(\nu=\mu/\rho\)，\(\alpha=\mu/(\rho Pr)\)。该形式与结构化路径使用同一个单面粘性谱半径贡献函数。`parallel-fvm` 下复用 `LsqRhsCellIncidence` 做单元并行累加 \(\sigma_i\)（每单元只写自身分量）；未启用时仍按单元串行遍历缓存面拓扑，不再逐步枚举裸 `mesh` 面索引。
 
 对角 LU-SGS 复用已有伪时间更新：
 
@@ -206,6 +206,8 @@ A_i = \sum_m w_m\,\Delta\mathbf x_m\,\Delta\mathbf x_m^{\mathsf T},
 \frac{\omega\,\Delta t_i}{1+\Delta t_i\sigma_i}\mathbf R_i .
 \tag{9}
 \]
+
+**对角 LU-SGS 残差监控**：稳态监控须用更新后场的 \(R(U^{n+1})\)；若复用更新前 \(R(U^n)\)，在 \(\Delta t_i\) 极小时相邻步 `log10_residual` 几乎不变（与结构化 `advance_lusgs_step_3d` 注释一致）。非结构对角与 sweep 路径均在 `rhs_post` 阶段对更新后守恒量重算 RHS。
 
 当 `lusgs_sweep = true` 时，非结构路径按 `CellId` 顺序定义下/上三角邻接并执行前/后扫：
 
@@ -228,7 +230,14 @@ A_i = \sum_m w_m\,\Delta\mathbf x_m\,\Delta\mathbf x_m^{\mathsf T},
 
 `UnstructuredSolverMeshCache` 在网格初始化时对 `face_topology.interior` 做贪心着色，结果存于 `InteriorFaceColoring::buckets`。当前 v0.x 仍按桶顺序**串行**累加（与面索引顺序在加法结合律意义下等价；浮点非结合性可能导致末位差异）。
 
-启用 Cargo feature `parallel-fvm`（**默认开启**）时，粘性/无粘内面路径对每个颜色桶做 **rayon 并行 flux 计算 + 串行 scatter**（`unsafe_code` 禁止下避免并行写同一 `&mut [f64]`）。决策与 CI 约定见 [ADR 0011](../adr/0011-parallel-fvm-face-coloring.md)。
+启用 Cargo feature `parallel-fvm`（**默认开启**）时，粘性/无粘内面路径对每个颜色桶做 **rayon 并行 flux 计算 + 串行 scatter**（`InteriorFaceColoring::par_map_buckets`，桶内 `with_min_len=1024`；`unsafe_code` 禁止下避免并行写同一 `&mut [f64]`）。一阶边界面仍按面索引串行遍历缓存拓扑。A/B benchmark（dual_ellipsoid，221 万单元）表明 `par_try_for_each_bucket` 相对 `par_map_buckets` 单步慢约 26%，故 v0.x 保留后者。决策与 CI 约定见 [ADR 0011](../adr/0011-parallel-fvm-face-coloring.md)。
+
+### 粘性 transport 系数并行（P3）
+
+非恒定粘度（如 Sutherland）路径在装配内面粘性通量前，需逐单元计算 \(\mu(T)\)、\(\lambda(T)\) 并平均到面心。`parallel-fvm` 下：
+
+1. `fill_cell_transport_coefficients`：`cell_mu` / `cell_lambda` 上 `par_iter_mut` + 温度切片；
+2. `fill_face_transport_coefficients`：内面 `par_iter_mut` 与 `interior.par_iter()` zip，只读单元系数、写面系数（无写冲突）。
 
 ### IDWLS RHS 单元并行（P0）
 
@@ -254,6 +263,9 @@ IDWLS 梯度每步需对每个单元累加最小二乘右端项 \(b_i\)。与 fl
 | 内面着色 | `InteriorFaceColoring` / `color_interior_faces` | 已实现 |
 | (7) | `compute_gradients_and_assemble_viscous_unstructured` | 已实现 |
 | (8) | `cell_spectral_radius_unstructured` + `cell_local_dt_spectral` | 已实现 |
+| 谱半径单元并行 | `LsqRhsCellIncidence` + `parallel-fvm` 单元 `rayon` | **P2** |
+| 粘性 transport 并行 | `fill_cell/face_transport_coefficients` | **P3** |
+| 无粘/粘性桶内并行 | `par_map_buckets`（`with_min_len=1024`） | **P0 POC** |
 | (9) | `ConservedFields::assign_lusgs_diagonal_update` | 已实现 |
 | (10) | `lu_sgs_sweep_unstructured` | 已实现 |
 

@@ -123,7 +123,13 @@ impl InteriorFaceColoring {
         use rayon::prelude::*;
         self.buckets
             .iter()
-            .map(|bucket| bucket.par_iter().map(|&face_idx| f(face_idx)).collect())
+            .map(|bucket| {
+                bucket
+                    .par_iter()
+                    .with_min_len(1024)
+                    .map(|&face_idx| f(face_idx))
+                    .collect()
+            })
             .collect()
     }
 }

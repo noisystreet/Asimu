@@ -230,14 +230,33 @@ fn fill_face_transport_coefficients(
     params: &ViscousAssemblyUnstructuredParams<'_>,
     scratch: &mut ViscousAssemblyUnstructuredScratch,
 ) -> Result<()> {
-    for (i, face) in params.face_topology.interior.iter().enumerate() {
-        if face.owner_rhs_scale == 0.0 && face.neighbor_rhs_scale == 0.0 {
-            continue;
+    let cell_mu = &scratch.cell_mu;
+    let cell_lambda = &scratch.cell_lambda;
+    #[cfg(feature = "parallel-fvm")]
+    {
+        use rayon::prelude::*;
+        scratch
+            .face_mu
+            .par_iter_mut()
+            .zip(scratch.face_lambda.par_iter_mut())
+            .zip(params.face_topology.interior.par_iter())
+            .for_each(|((mu, lambda), face)| {
+                if face.owner_rhs_scale == 0.0 && face.neighbor_rhs_scale == 0.0 {
+                    return;
+                }
+                *mu = 0.5 * (cell_mu[face.owner] + cell_mu[face.neighbor]);
+                *lambda = 0.5 * (cell_lambda[face.owner] + cell_lambda[face.neighbor]);
+            });
+    }
+    #[cfg(not(feature = "parallel-fvm"))]
+    {
+        for (i, face) in params.face_topology.interior.iter().enumerate() {
+            if face.owner_rhs_scale == 0.0 && face.neighbor_rhs_scale == 0.0 {
+                continue;
+            }
+            scratch.face_mu[i] = 0.5 * (cell_mu[face.owner] + cell_mu[face.neighbor]);
+            scratch.face_lambda[i] = 0.5 * (cell_lambda[face.owner] + cell_lambda[face.neighbor]);
         }
-        let owner = face.owner;
-        let neighbor = face.neighbor;
-        scratch.face_mu[i] = 0.5 * (scratch.cell_mu[owner] + scratch.cell_mu[neighbor]);
-        scratch.face_lambda[i] = 0.5 * (scratch.cell_lambda[owner] + scratch.cell_lambda[neighbor]);
     }
     Ok(())
 }
@@ -377,10 +396,28 @@ fn fill_cell_transport_coefficients(
     scratch: &mut ViscousAssemblyUnstructuredScratch,
 ) -> Result<()> {
     let temperatures = &scratch.gradient.temperatures;
-    for (cell, t) in temperatures.iter().enumerate() {
-        let (mu, lambda) = face_transport_coefficients(*t, *t, params.viscous, params.eos)?;
-        scratch.cell_mu[cell] = mu;
-        scratch.cell_lambda[cell] = lambda;
+    #[cfg(feature = "parallel-fvm")]
+    {
+        use rayon::prelude::*;
+        scratch
+            .cell_mu
+            .par_iter_mut()
+            .zip(scratch.cell_lambda.par_iter_mut())
+            .zip(temperatures.par_iter())
+            .try_for_each(|((mu, lambda), &t)| -> Result<()> {
+                let (m, l) = face_transport_coefficients(t, t, params.viscous, params.eos)?;
+                *mu = m;
+                *lambda = l;
+                Ok(())
+            })?;
+    }
+    #[cfg(not(feature = "parallel-fvm"))]
+    {
+        for (cell, &t) in temperatures.iter().enumerate() {
+            let (mu, lambda) = face_transport_coefficients(t, t, params.viscous, params.eos)?;
+            scratch.cell_mu[cell] = mu;
+            scratch.cell_lambda[cell] = lambda;
+        }
     }
     Ok(())
 }
@@ -390,327 +427,103 @@ fn assemble_boundary_faces(
     params: &ViscousAssemblyUnstructuredParams<'_>,
     scratch: &ViscousAssemblyUnstructuredScratch,
 ) -> Result<()> {
-    let temperatures = &scratch.gradient.temperatures;
     let boundary_params = ViscousBoundaryFluxParams {
         eos: params.eos,
         viscous: params.viscous,
         primitives: params.primitives,
         gradients: params.gradients,
     };
+    let contributions = collect_viscous_boundary_contributions(
+        params,
+        &boundary_params,
+        &scratch.gradient.temperatures,
+    )?;
+    apply_viscous_boundary_contributions(residual, &contributions)
+}
+
+fn collect_viscous_boundary_contributions(
+    params: &ViscousAssemblyUnstructuredParams<'_>,
+    boundary_params: &ViscousBoundaryFluxParams<'_>,
+    temperatures: &[Real],
+) -> Result<Vec<ViscousBoundaryContribution>> {
+    collect_viscous_boundary_contributions_linear(params, boundary_params, temperatures)
+}
+
+fn collect_viscous_boundary_contributions_linear(
+    params: &ViscousAssemblyUnstructuredParams<'_>,
+    boundary_params: &ViscousBoundaryFluxParams<'_>,
+    temperatures: &[Real],
+) -> Result<Vec<ViscousBoundaryContribution>> {
+    let mut out = Vec::with_capacity(params.face_topology.boundary.len());
     for face in &params.face_topology.boundary {
-        if is_degenerate_volume(face.owner_volume) {
-            continue;
+        if let Some(contrib) =
+            compute_viscous_boundary_contribution(face, params, boundary_params, temperatures)?
+        {
+            out.push(contrib);
         }
-        let ghost = params.ghosts.get_face(face.face).ok_or_else(|| {
-            AsimuError::Boundary(format!("边界面 FaceId({}) 缺少 ghost", face.face.index()))
-        })?;
-        let ghost_prim =
-            primitive_from_conserved_relaxed(params.eos, &ghost.conserved, params.min_pressure)?;
-        let kind = face.viscous;
-        let flux = viscous_flux_at_boundary(
-            &boundary_params,
-            face.owner,
-            ghost_prim,
-            face.normal,
-            face.spacing,
-            ViscousBoundaryFaceKind {
-                is_wall: kind.is_wall,
-                no_slip: kind.no_slip,
-                wall_heat: kind.wall_heat,
-            },
-            temperatures,
+    }
+    Ok(out)
+}
+
+fn apply_viscous_boundary_contributions(
+    residual: &mut ConservedResidual,
+    contributions: &[ViscousBoundaryContribution],
+) -> Result<()> {
+    for contrib in contributions {
+        accumulate_viscous_boundary(
+            residual,
+            contrib.owner,
+            &contrib.flux,
+            contrib.area,
+            contrib.owner_volume,
         )?;
-        accumulate_viscous_boundary(residual, face.owner, &flux, face.area, face.owner_volume)?;
     }
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::boundary::BoundaryPatch;
-    use crate::discretization::GhostCellState;
-    use crate::field::ConservedFields;
-    use crate::mesh::{CellKind, UnstructuredCell};
-    use crate::physics::{FreestreamParams, ViscousPhysicsConfig};
-
-    #[test]
-    fn uniform_closed_tet_has_near_zero_unstructured_viscous_rhs() {
-        let mesh = UnstructuredMesh3d::new(
-            "tet",
-            vec![
-                [0.0, 0.0, 0.0],
-                [1.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0],
-                [0.0, 0.0, 1.0],
-            ],
-            vec![UnstructuredCell::new(CellKind::Tet, vec![0, 1, 2, 3]).expect("cell")],
-        )
-        .expect("mesh");
-        let eos = IdealGasEoS::AIR_STANDARD;
-        let fs = FreestreamParams {
-            mach: 0.2,
-            ..FreestreamParams::default()
-        };
-        let fields = ConservedFields::from_freestream(mesh.num_cells(), &eos, &fs).expect("fields");
-        let mut primitives = PrimitiveFields::zeros(mesh.num_cells()).expect("prim");
-        primitives
-            .fill_from_conserved(&fields, &eos, 1.0e-8)
-            .expect("fill");
-        let faces = (0..mesh.num_faces())
-            .map(|face| crate::core::FaceId(face as u32))
-            .collect::<Vec<_>>();
-        let mut ghosts = BoundaryGhostBuffer::new();
-        let state = fields.cell_state(0).expect("state");
-        for &face in &faces {
-            ghosts.insert_face(face, GhostCellState { conserved: state });
-        }
-        let boundary = BoundarySet::new(vec![BoundaryPatch::new(
-            "farfield",
-            faces,
-            crate::boundary::BoundaryKind::Farfield {
-                mach: fs.mach,
-                pressure: fs.pressure,
-                temperature: fs.temperature,
-                alpha: fs.alpha,
-                beta: fs.beta,
-            },
-        )]);
-        let mesh_cache = UnstructuredSolverMeshCache::from_mesh(&mesh, &boundary).expect("cache");
-        let viscous = ViscousPhysicsConfig::default();
-        let mut grad = GradientFields::zeros(mesh.num_cells()).expect("grad");
-        let mut rhs = ConservedResidual::zeros(mesh.num_cells()).expect("rhs");
-        let mut input = ViscousAssemblyUnstructuredInput {
-            mesh: &mesh,
-            mesh_cache: &mesh_cache,
-            eos: &eos,
-            viscous: &viscous,
-            boundaries: &boundary,
-            ghosts: &ghosts,
-            primitives: &primitives,
-            min_pressure: 1.0e-8,
-            gradient_scratch: &mut grad,
-        };
-        compute_gradients_and_assemble_viscous_unstructured(&mut rhs, &mut input).expect("visc");
-        assert!(rhs.density.values().iter().all(|v| v.abs() < 1.0e-12));
-        assert!(rhs.momentum_x.values().iter().all(|v| v.abs() < 1.0e-8));
-        assert!(rhs.total_energy.values().iter().all(|v| v.abs() < 1.0e-8));
-    }
-
-    fn two_tet_mesh_and_boundary() -> (UnstructuredMesh3d, BoundarySet) {
-        let mesh = UnstructuredMesh3d::new(
-            "two_tets",
-            vec![
-                [0.0, 0.0, 0.0],
-                [1.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0],
-                [0.0, 0.0, 1.0],
-                [1.0, 1.0, 1.0],
-            ],
-            vec![
-                UnstructuredCell::new(CellKind::Tet, vec![0, 1, 2, 3]).expect("cell"),
-                UnstructuredCell::new(CellKind::Tet, vec![1, 2, 3, 4]).expect("cell"),
-            ],
-        )
-        .expect("mesh");
-        let faces = (0..mesh.num_faces())
-            .map(|face| crate::core::FaceId(face as u32))
-            .collect::<Vec<_>>();
-        let boundary = BoundarySet::new(vec![BoundaryPatch::new(
-            "farfield",
-            faces,
-            crate::boundary::BoundaryKind::Farfield {
-                mach: 0.0,
-                pressure: 101_325.0,
-                temperature: 300.0,
-                alpha: 0.0,
-                beta: 0.0,
-            },
-        )]);
-        (mesh, boundary)
-    }
-
-    fn accumulate_interior_viscous_test_state(
-        params: &ViscousAssemblyUnstructuredParams<'_>,
-        scratch: &ViscousAssemblyUnstructuredScratch,
-        linear_order: bool,
-    ) -> ConservedResidual {
-        let mut residual = ConservedResidual::zeros(params.mesh.num_cells()).expect("rhs");
-        let prim = params.primitives;
-        let grad_slices = params.gradients.velocity_gradient_slices();
-        let inputs = InteriorViscousFaceInputs {
-            grad: &grad_slices,
-            ux: prim.velocity_x.values(),
-            uy: prim.velocity_y.values(),
-            uz: prim.velocity_z.values(),
-        };
-        let mut residual_mut = InteriorViscousResidualMut {
-            mx: residual.momentum_x.values_mut(),
-            my: residual.momentum_y.values_mut(),
-            mz: residual.momentum_z.values_mut(),
-            energy: residual.total_energy.values_mut(),
-        };
-        let constant = scratch.constant_transport;
-        let coloring = &params.face_topology.interior_coloring;
-        if linear_order {
-            coloring.for_each_face_index_linear(params.face_topology.interior.len(), |i| {
-                accumulate_one_interior_face(
-                    i,
-                    &inputs,
-                    &mut residual_mut,
-                    params,
-                    scratch,
-                    constant,
-                );
-            });
-        } else {
-            coloring.for_each_face_index(|i| {
-                accumulate_one_interior_face(
-                    i,
-                    &inputs,
-                    &mut residual_mut,
-                    params,
-                    scratch,
-                    constant,
-                );
-            });
-        }
-        residual
-    }
-
-    #[test]
-    fn colored_interior_viscous_accumulation_matches_linear_face_order() {
-        use crate::core::approx_eq;
-        use crate::physics::{IdealGasEoS, ViscosityModel};
-
-        let (mesh, boundary) = two_tet_mesh_and_boundary();
-        let mesh_cache = UnstructuredSolverMeshCache::from_mesh(&mesh, &boundary).expect("cache");
-        let eos = IdealGasEoS::AIR_STANDARD;
-        let viscous =
-            ViscousPhysicsConfig::new(ViscosityModel::constant(2.0e-5).expect("mu"), 0.72)
-                .expect("visc");
-        let mut primitives = PrimitiveFields::zeros(mesh.num_cells()).expect("prim");
-        let fields = ConservedFields::from_freestream(
-            mesh.num_cells(),
-            &eos,
-            &FreestreamParams {
-                mach: 0.0,
-                ..FreestreamParams::default()
-            },
-        )
-        .expect("fields");
-        primitives
-            .fill_from_conserved(&fields, &eos, 1.0e-8)
-            .expect("fill");
-        for (cell, ux) in primitives.velocity_x.values_mut().iter_mut().enumerate() {
-            *ux = 10.0 + cell as f64 * 5.0;
-        }
-        let mut gradients = GradientFields::zeros(mesh.num_cells()).expect("grad");
-        for cell in 0..mesh.num_cells() {
-            gradients.du_dx.values_mut()[cell] = 100.0;
-        }
-        let mut scratch = ViscousAssemblyUnstructuredScratch::new(mesh.num_cells());
-        crate::discretization::gradient::cell_temperatures_into(
-            &primitives,
-            &eos,
-            Some(&viscous),
-            &mut scratch.gradient.temperatures,
-        )
-        .expect("t");
-        scratch.constant_transport =
-            Some(face_transport_coefficients(300.0, 300.0, &viscous, &eos).expect("tc"));
-        let params = ViscousAssemblyUnstructuredParams {
-            mesh: &mesh,
-            face_topology: &mesh_cache.face_topology,
-            eos: &eos,
-            viscous: &viscous,
-            ghosts: &BoundaryGhostBuffer::new(),
-            primitives: &primitives,
-            gradients: &gradients,
-            min_pressure: 1.0e-8,
-        };
-        let linear = accumulate_interior_viscous_test_state(&params, &scratch, true);
-        let colored = accumulate_interior_viscous_test_state(&params, &scratch, false);
-        for (a, b) in linear
-            .momentum_x
-            .values()
-            .iter()
-            .zip(colored.momentum_x.values())
-        {
-            assert!(approx_eq(*a, *b, 1.0e-12));
-        }
-        for (a, b) in linear
-            .total_energy
-            .values()
-            .iter()
-            .zip(colored.total_energy.values())
-        {
-            assert!(approx_eq(*a, *b, 1.0e-12));
-        }
-    }
-
-    #[cfg(feature = "parallel-fvm")]
-    #[test]
-    fn parallel_interior_viscous_accumulation_matches_colored_serial() {
-        use crate::core::approx_eq;
-        use crate::physics::{IdealGasEoS, ViscosityModel};
-
-        let (mesh, boundary) = two_tet_mesh_and_boundary();
-        let mesh_cache = UnstructuredSolverMeshCache::from_mesh(&mesh, &boundary).expect("cache");
-        let eos = IdealGasEoS::AIR_STANDARD;
-        let viscous =
-            ViscousPhysicsConfig::new(ViscosityModel::constant(2.0e-5).expect("mu"), 0.72)
-                .expect("visc");
-        let mut primitives = PrimitiveFields::zeros(mesh.num_cells()).expect("prim");
-        let fields = ConservedFields::from_freestream(
-            mesh.num_cells(),
-            &eos,
-            &FreestreamParams {
-                mach: 0.0,
-                ..FreestreamParams::default()
-            },
-        )
-        .expect("fields");
-        primitives
-            .fill_from_conserved(&fields, &eos, 1.0e-8)
-            .expect("fill");
-        for (cell, ux) in primitives.velocity_x.values_mut().iter_mut().enumerate() {
-            *ux = 10.0 + cell as f64 * 5.0;
-        }
-        let mut gradients = GradientFields::zeros(mesh.num_cells()).expect("grad");
-        for cell in 0..mesh.num_cells() {
-            gradients.du_dx.values_mut()[cell] = 100.0;
-        }
-        let mut scratch = ViscousAssemblyUnstructuredScratch::new(mesh.num_cells());
-        crate::discretization::gradient::cell_temperatures_into(
-            &primitives,
-            &eos,
-            Some(&viscous),
-            &mut scratch.gradient.temperatures,
-        )
-        .expect("t");
-        scratch.constant_transport =
-            Some(face_transport_coefficients(300.0, 300.0, &viscous, &eos).expect("tc"));
-        let params = ViscousAssemblyUnstructuredParams {
-            mesh: &mesh,
-            face_topology: &mesh_cache.face_topology,
-            eos: &eos,
-            viscous: &viscous,
-            ghosts: &BoundaryGhostBuffer::new(),
-            primitives: &primitives,
-            gradients: &gradients,
-            min_pressure: 1.0e-8,
-        };
-        let serial = accumulate_interior_viscous_test_state(&params, &scratch, false);
-        let mut parallel = ConservedResidual::zeros(mesh.num_cells()).expect("rhs");
-        accumulate_interior_faces_fused(&mut parallel, &params, &scratch).expect("par");
-        for (a, b) in serial
-            .momentum_x
-            .values()
-            .iter()
-            .zip(parallel.momentum_x.values())
-        {
-            assert!(approx_eq(*a, *b, 1.0e-12));
-        }
-    }
+struct ViscousBoundaryContribution {
+    owner: usize,
+    flux: crate::discretization::viscous::ViscousFlux,
+    area: Real,
+    owner_volume: Real,
 }
+
+fn compute_viscous_boundary_contribution(
+    face: &crate::discretization::unstructured_face_cache::UnstructuredBoundaryFace,
+    params: &ViscousAssemblyUnstructuredParams<'_>,
+    boundary_params: &ViscousBoundaryFluxParams<'_>,
+    temperatures: &[Real],
+) -> Result<Option<ViscousBoundaryContribution>> {
+    if is_degenerate_volume(face.owner_volume) {
+        return Ok(None);
+    }
+    let ghost = params.ghosts.get_face(face.face).ok_or_else(|| {
+        AsimuError::Boundary(format!("边界面 FaceId({}) 缺少 ghost", face.face.index()))
+    })?;
+    let ghost_prim =
+        primitive_from_conserved_relaxed(params.eos, &ghost.conserved, params.min_pressure)?;
+    let kind = face.viscous;
+    let flux = viscous_flux_at_boundary(
+        boundary_params,
+        face.owner,
+        ghost_prim,
+        face.normal,
+        face.spacing,
+        ViscousBoundaryFaceKind {
+            is_wall: kind.is_wall,
+            no_slip: kind.no_slip,
+            wall_heat: kind.wall_heat,
+        },
+        temperatures,
+    )?;
+    Ok(Some(ViscousBoundaryContribution {
+        owner: face.owner,
+        flux,
+        area: face.area,
+        owner_volume: face.owner_volume,
+    }))
+}
+
+#[cfg(test)]
+#[path = "assembly_unstructured_viscous_tests.rs"]
+mod tests;
