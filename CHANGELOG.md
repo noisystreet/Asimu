@@ -7,6 +7,7 @@
 
 ### Added
 
+- ADR 0012：非结构二阶线性重构与梯度限制器（Barth–Jespersen / Venkatakrishnan）；与结构化 `SlopeLimiter` 分离，case 校验禁止混用
 - 非结构内面 **graph coloring**（`InteriorFaceColoring`）：粘性/无粘内面共用着色桶；可选 feature `parallel-fvm`（rayon 桶内 flux 并行 + scatter 串行）；golden 测试覆盖着色顺序、缓存 vs mesh 循环、并行 vs 串行（见 ADR 0011）
 - 非结构混合单元网格 M1：`UnstructuredMesh3d` 支持 tet / hex / pyramid / prism（VTK 10/12/13/14）面拓扑、owner/neighbor、体积与面度量；新增 `load_vtu`、`load_cgns_unstructured_zone` 与 `check_unstructured_mesh3d`，`mesh_check` 可检查 `.vtu` 与 CGNS unstructured zone，并支持 CGNS FaceCenter ZoneBC 边界 patch 读入与覆盖检查
 - 非结构 CGNS case 求解首版：`CaseMesh::Unstructured3d` 支持单域混合网格一阶无粘 Euler 面循环、IDWLS 粘性梯度与 Navier-Stokes 粘性通量、含粘性抛物项的 local time step、显式 Euler/RK4、对角 LU-SGS 与非结构 LU-SGS sweep，并将非结构流场写出为 VTU

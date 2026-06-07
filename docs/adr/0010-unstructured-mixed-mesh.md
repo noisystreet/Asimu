@@ -69,7 +69,7 @@ asimu 当前 3D 可压缩路径以 **多块结构化网格**（`MultiBlockStruct
 | **M1** | `UnstructuredMesh3d` 拓扑 + 几何度量；tet/hex/pyramid/prism | 单单元/两单元共面/非流形单测；`make check` |
 | **M2** | `discretization` 非结构面循环；一阶 Euler 无粘通量 + 现有 Riemann 求解器 | **已实现首版**：均匀来流闭合 tet \(\|\mathrm{RHS}\|\) 近零 |
 | **M3** | **Tier 1** 读入：CGNS unstructured zone + VTU；`CaseMesh::Unstructured3d` + case 解析 | **已实现首版**：CGNS/VTU 读入、CGNS FaceCenter ZoneBC、单域非结构 case smoke |
-| **M4** | MUSCL 梯度/重构、粘性通量、边界 patch、网格检查与 V&V 算例 | 与结构化路径共享 BC/通量格式；benchmark README |
+| **M4** | 二阶线性重构（IDWLS + 梯度限制器）、粘性通量、边界 patch、网格检查与 V&V 算例 | 限制器见 [ADR 0012](0012-unstructured-gradient-limiters.md)；与结构化路径共享 Riemann/BC |
 
 **M4 之后**（单独评估，不在本 ADR 承诺）：
 

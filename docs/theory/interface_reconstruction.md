@@ -95,15 +95,37 @@ F̂ ← roe_flux(U_L, U_R, n)
 
 ---
 
-## 7. 参考文献
+## 7. 非结构网格（M4 规划）
+
+非结构路径 **不** 使用 §3 的宽模板 MUSCL；见 [unstructured_fvm.md](unstructured_fvm.md) §二阶线性重构。
+
+| 项 | 结构化 | 非结构 |
+|----|--------|--------|
+| 配置 | `reconstruction = muscl` | 同上（枚举复用） |
+| 算法名 | MUSCL 宽模板 | 梯度外推 + **Barth–Jespersen / Venkatakrishnan** |
+| 梯度 | 模板差分 | IDWLS（式 (4)–(6)） |
+| 限制器类型 | `SlopeLimiter`（minmod / van Leer / van Albada） | `UnstructuredGradientLimiter`（**独立枚举**） |
+| 入口函数 | `muscl_stencil_3d` → `reconstruct_face_primitives` | `reconstruct_unstructured_face_primitives`（规划） |
+| 通量 | `face_inviscid_flux` | 同上 |
+
+边界面：owner 侧外推，ghost 侧由 BC 固定；与结构化「ghost 不参与宽模板外推」语义一致。
+
+**配置**：非结构 `reconstruction = muscl` 时须指定 `unstructured_limiter = barth_jespersen | venkatakrishnan`；结构化 `limiter = minmod|…` **不可**在非结构 case 中静默复用。详见 [ADR 0012](../adr/0012-unstructured-gradient-limiters.md)。
+
+---
+
+## 8. 参考文献
 
 1. LeVeque, R. J. (2002). *Finite Volume Methods for Hyperbolic Problems*. Cambridge. Ch. 4（重构与 Riemann 问题）、Ch. 6（高阶扩展）。
 2. Toro, E. F. (2009). *Riemann Solvers and Numerical Methods for Fluid Dynamics*. Springer. Ch. 5–6（Godunov / 重构与通量）。
 3. asimu ADR [0009](../adr/0009-compressible-navier-stokes.md) — MUSCL / 限制器路线。
+4. Barth, T. J., & Jespersen, D. C. (1989). AIAA 89-0366 — 非结构 Barth–Jespersen 限制器。
+5. Venkatakrishnan, V. (1993). AIAA 93-0880 / JCP 107 — Venkatakrishnan 光滑限制器。
+6. asimu ADR [0012](../adr/0012-unstructured-gradient-limiters.md) — 非结构梯度限制器选型与 case 校验。
 
 ---
 
-## 8. 相关算例
+## 9. 相关算例
 
 - `tests/benchmarks/sod_1d/` — 一阶 Roe + RK4 vs 精确解
 - `discretization::reconstruction::tests::first_order_passes_cell_values_unchanged`

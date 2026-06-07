@@ -31,6 +31,8 @@
 
 ## 空间离散
 
+### 一阶（已实现）
+
 首版非结构求解使用一阶分段常数重构：
 
 \[
@@ -47,7 +49,68 @@
 \]
 
 式 (2) 与式 (3) 之后复用结构化路径已有 Riemann / FVS 通量，包括 Roe、HLLC、Van Leer、Hanel-Van Leer 与 SLAU2。
-MUSCL 面值重构尚未接入非结构路径。
+
+### 二阶线性重构（M4 规划，**未实现**）
+
+> **术语**：文献中通常称 **gradient-based linear reconstruction** 或 **slope-limited linear reconstruction**，而非独立的「Unstructured MUSCL scheme」。asimu case 配置仍用 `reconstruction = "muscl"` 与结构化路径对齐；实现上走 **IDWLS 梯度外推 + 斜率限制**，**不**复用结构化宽模板 `muscl_stencil_3d`（无 \(i\pm1\) 逻辑链）。
+
+#### 与结构化 MUSCL 的区别
+
+| 项 | 结构化 `muscl_stencil_3d` | 非结构 M4 |
+|----|---------------------------|-----------|
+| 模板 | 沿面法向 4 点宽模板 | 单元中心 + IDWLS 梯度 |
+| 梯度 | 模板差分隐含 | 式 (4)–(6) 显式 \(\nabla\phi_i\) |
+| 限制器 | 对法向差分 \(d_\pm\) 做 minmod / van Albada 等（`SlopeLimiter`） | **Barth–Jespersen**（M4.1）/ **Venkatakrishnan**（M4.2）；见 [ADR 0012](../adr/0012-unstructured-gradient-limiters.md) |
+| 共享 | `FaceFluxInput` → `face_inviscid_flux` → Riemann | 同上 |
+
+#### 面心原始变量外推
+
+记面心 \(\mathbf x_f\)、单元中心 \(\mathbf x_i\)、IDWLS 原始变量梯度 \(\nabla\phi_i\)（\(\phi\in\{\rho,u,v,w,p\}\)）。内部面 owner \(i\) / neighbor \(j\)：
+
+\[
+\tilde\phi_i = \nabla\phi_i \cdot (\mathbf x_f - \mathbf x_i), \qquad
+\tilde\phi_j = \nabla\phi_j \cdot (\mathbf x_f - \mathbf x_j)
+\tag{2a}
+\]
+
+Barth–Jespersen 标量限制因子 \(\psi_i\in[0,1]\)（**首版按原始变量分量**独立限制；对单元 \(i\) 所有邻接样本 \(m\) 取最小）。公式与 Venkatakrishnan 光滑限制器见 [ADR 0012](../adr/0012-unstructured-gradient-limiters.md) 式 (BJ)–(V3)：
+
+\[
+\psi_i = \min_m \begin{cases}
+\dfrac{\phi_\mathrm{max}-\phi_i}{\tilde\phi_{i\to m}} & \tilde\phi_{i\to m} > 0 \\
+\dfrac{\phi_\mathrm{min}-\phi_i}{\tilde\phi_{i\to m}} & \tilde\phi_{i\to m} < 0 \\
+1 & \text{otherwise}
+\end{cases}
+\tag{2b}
+\]
+
+其中 \(\phi_\mathrm{max/min}\) 为单元 \(i\) 与邻接单元（及边界面 ghost 样本）上的极值；\(\tilde\phi_{i\to m}=\nabla\phi_i\cdot(\mathbf x_m-\mathbf x_i)\)。限制后面状态：
+
+\[
+\phi_f^- = \phi_i + \psi_i\,\tilde\phi_i, \qquad
+\phi_f^+ = \phi_j + \psi_j\,\tilde\phi_j .
+\tag{2c}
+\]
+
+边界面：owner 侧按式 (2c) 左态外推；ghost 侧取 BC 给出的 \(\phi_\mathrm{ghost}\)（**不**对 ghost 做外推）。再经 `interface_conserved_pair` 转守恒态并调用现有 Riemann。
+
+**退化**：\(|\Omega_i|\to 0\)、LSQ 奇异、或 \(\psi=0\) 时退化为式 (2) 一阶。
+
+#### 梯度场扩展
+
+当前 IDWLS 仅输出 \(\nabla u,\nabla v,\nabla w,\nabla T\)（粘性路径）。M4 需对 **\(\rho,p\)** 同样累加 RHS 并求解，建议扩展为 `PrimitiveGradientFields`（或在 `GradientFields` 上增列，实现时二选一）。温度仍由 EOS 从 \((\rho,p)\) 导出，**不**单独外推 \(T\) 到面心。
+
+#### 几何缓存
+
+`UnstructuredInteriorFace` / `UnstructuredBoundaryFace` 需缓存面心 \(\mathbf x_f\) 与 owner/neighbor 单元中心 \(\mathbf x_i,\mathbf x_j\)（或 \(\Delta\mathbf x_{i\to f}=\mathbf x_f-\mathbf x_i\)），避免面循环重复查询 `mesh.face_metric`。数值与逐步读 mesh 等价。
+
+#### 验收标准
+
+| 测试 | 判据 |
+|------|------|
+| 均匀来流（一阶 / 二阶） | \(\|\mathrm{RHS}\|\) 近零 |
+| 着色 / 并行 / 缓存路径 | 与线性面序 golden 一致（见 ADR 0011） |
+| `tests/benchmarks/unstructured_freestream/` | case 可跑 + manifest `benchmark_id` |
 
 ## 逆距离加权最小二乘梯度
 
@@ -169,22 +232,44 @@ A_i = \sum_m w_m\,\Delta\mathbf x_m\,\Delta\mathbf x_m^{\mathsf T},
 
 ## 实现映射
 
-| 公式 | 实现 |
-|------|------|
-| (1) | `assemble_inviscid_residual_unstructured` |
-| (2) | `FaceFluxInput::first_order` |
-| (3) | `apply_compressible_boundary_conditions` + `UnstructuredMesh3d::face_geometry_3d` |
-| (4)-(6) | `compute_unstructured_gradients_idw_lsq` |
-| (5a) 几何预计算 | `UnstructuredSolverMeshCache::from_mesh` |
-| 面拓扑缓存 | `UnstructuredFaceTopology`（`unstructured_face_cache`） |
-| 内面着色 | `InteriorFaceColoring` / `color_interior_faces` |
-| (7) | `compute_gradients_and_assemble_viscous_unstructured` |
-| (8) | `cell_spectral_radius_unstructured` + `cell_local_dt_spectral` |
-| (9) | `ConservedFields::assign_lusgs_diagonal_update` |
-| (10) | `lu_sgs_sweep_unstructured` |
+| 公式 | 实现 | 状态 |
+|------|------|------|
+| (1) | `assemble_inviscid_residual_unstructured` | 已实现 |
+| (2) | `FaceFluxInput::first_order` | 已实现 |
+| (2a)–(2c) | `reconstruct_unstructured_face_primitives` + `UnstructuredGradientLimiter`（规划） | **M4**；限制器 ADR [0012](../adr/0012-unstructured-gradient-limiters.md) |
+| (3) | `apply_compressible_boundary_conditions` + 边界面 ghost | 已实现 |
+| (4)-(6) | `compute_unstructured_gradients_idw_lsq` | 已实现（\(u,v,w,T\)） |
+| \(\nabla\rho,\nabla p\) | 扩展 IDWLS RHS（`gradient_unstructured`） | **M4** |
+| (5a) 几何预计算 | `UnstructuredSolverMeshCache::from_mesh` | 已实现 |
+| 面心 / 单元中心偏移 | `UnstructuredInteriorFace` 增字段（规划） | **M4** |
+| 面拓扑缓存 | `UnstructuredFaceTopology`（`unstructured_face_cache`） | 已实现 |
+| 内面着色 | `InteriorFaceColoring` / `color_interior_faces` | 已实现 |
+| (7) | `compute_gradients_and_assemble_viscous_unstructured` | 已实现 |
+| (8) | `cell_spectral_radius_unstructured` + `cell_local_dt_spectral` | 已实现 |
+| (9) | `ConservedFields::assign_lusgs_diagonal_update` | 已实现 |
+| (10) | `lu_sgs_sweep_unstructured` | 已实现 |
+
+### M4 实现分步（建议 PR 顺序）
+
+1. **benchmark 骨架**：`tests/benchmarks/unstructured_freestream/`（一阶均匀来流，先验收盘）。
+2. **梯度扩展**：IDWLS 增 \(\rho,p\)；`EvaluateRhsUnstructured` 在 `Muscl` 时先算梯度。
+3. **面重构**：`reconstruct_unstructured_face_primitives` + 内部/边界面调用；移除 case 层 `first_order` 硬拒绝。
+4. **golden**：二阶均匀来流近零；缓存/着色/并行路径与一阶相同约束。
+5. **文档 / API**：`docs/API.md`、`CHANGELOG.md`、本页状态改为「二阶已实现」。
+
+调用链（规划）：
+
+```text
+EvaluateRhsUnstructured
+  → [Muscl] compute_unstructured_primitive_gradients_idw_lsq
+  → assemble_inviscid_residual_unstructured(face_topology, gradients)
+       → reconstruct_unstructured_face_primitives (式 2a–2c)
+       → face_inviscid_flux → Riemann
+```
 
 ## 参考文献
 
-- Blazek, J. (2015). *Computational Fluid Dynamics: Principles and Applications*, 3rd ed. Elsevier. ISBN 978-0-08-099995-1.
+- Blazek, J. (2015). *Computational Fluid Dynamics: Principles and Applications*, 3rd ed. Elsevier. ISBN 978-0-08-099995-1.（非结构梯度重构 §8）
 - Toro, E. F. (2009). *Riemann Solvers and Numerical Methods for Fluid Dynamics*, 3rd ed. Springer. ISBN 978-3-540-25202-3.
 - Mavriplis, D. J. (1997). Unstructured grid techniques. *Annual Review of Fluid Mechanics*, 29, 473-514. DOI: 10.1146/annurev.fluid.29.1.473.
+- Barth, T. J., & Jespersen, D. C. (1989). AIAA 89-0366 — Barth–Jespersen 限制器；Venkatakrishnan, V. (1993). AIAA 93-0880 — 光滑限制器；选型见 [ADR 0012](../adr/0012-unstructured-gradient-limiters.md).
