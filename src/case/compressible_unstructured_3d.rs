@@ -7,17 +7,12 @@ use std::time::Instant;
 use tracing::{info, info_span, warn};
 
 use crate::core::{Real, format_log_fixed4, format_log_sci4, log10_positive, residual_converged};
-use crate::discretization::{
-    BoundaryGhostBuffer, GradientFields, InviscidAssemblyUnstructuredParams, ReconstructionKind,
-    apply_compressible_boundary_conditions, assemble_inviscid_residual_unstructured,
-    compute_gradients_and_assemble_viscous_unstructured_with_scratch,
-};
+use crate::discretization::{BoundaryGhostBuffer, GradientFields, ReconstructionKind};
 use crate::error::{AsimuError, Result};
 use crate::field::{ConservedFields, ConservedResidual, PrimitiveFields};
 use crate::io::{CaseSpec, resolve_case_output_path};
 use crate::mesh::UnstructuredMesh3d;
-use crate::physics::{FreestreamContext, FreestreamParams, IdealGasEoS};
-use crate::solver::spectral_radius::cell_local_dt_spectral;
+use crate::physics::{FreestreamParams, IdealGasEoS};
 use crate::solver::spectral_radius_unstructured::{
     SpectralRadiusUnstructuredParams, cell_spectral_radius_unstructured,
 };
@@ -26,8 +21,10 @@ use crate::solver::time::{
     euler_step, euler_step_local, min_positive_dt, rk4_step, rk4_step_local,
 };
 use crate::solver::{
-    CompressibleStepInfo, LuSgsSweepUnstructuredInput, LuSgsSweepUnstructuredParams,
-    LuSgsUnstructuredCouplings, SolverState, lu_sgs_sweep_unstructured,
+    CompressibleStepInfo, EvaluateRhsUnstructured, LuSgsSweepUnstructuredInput,
+    LuSgsSweepUnstructuredParams, LuSgsUnstructuredCouplings, RefreshCompressibleStateInput,
+    SolverState, finalize_cell_dts_from_sigma, lu_sgs_sweep_unstructured,
+    refresh_compressible_ghosts_and_primitives,
 };
 
 use super::{CaseRunKind, CaseRunResult, Compressible3dRunMetrics};
@@ -343,11 +340,12 @@ fn advance_unstructured_explicit(
     let mut reuse_current_state = true;
     let evaluate = |u: &ConservedFields, r: &mut ConservedResidual| {
         let _span = info_span!("unstructured_explicit_rhs").entered();
+        let mut evaluator = rhs_evaluator(env, &mut rhs_work, p_floor);
         if reuse_current_state {
             reuse_current_state = false;
-            assemble_unstructured_rhs_from_current_state(env, u, r, &mut rhs_work, p_floor)
+            evaluator.assemble_from_current_state(u, r)
         } else {
-            evaluate_unstructured_rhs(env, u, r, &mut rhs_work, p_floor)
+            evaluator.run(u, r)
         }
     };
     match (scheme, local) {
@@ -465,13 +463,19 @@ fn prepare_unstructured_timestep(
     }
     {
         let _span = info_span!("unstructured_dt_refresh_state").entered();
-        refresh_unstructured_ghosts_and_primitives(
-            env,
+        work.ghosts.ensure_face_capacity(env.mesh.num_faces());
+        refresh_compressible_ghosts_and_primitives(RefreshCompressibleStateInput {
+            boundary_mesh: env.mesh,
+            patches: &env.case.boundary,
             fields,
-            &mut work.ghosts,
-            &mut work.primitives,
-            p_floor,
-        )?;
+            ghosts: &mut work.ghosts,
+            eos: env.eos,
+            freestream: env.freestream,
+            reference: env.case.reference.as_ref(),
+            viscous: env.case.physics.viscous.as_ref(),
+            min_pressure: p_floor,
+            primitives: &mut work.primitives,
+        })?;
     }
     let params = SpectralRadiusUnstructuredParams {
         mesh: env.mesh,
@@ -486,21 +490,43 @@ fn prepare_unstructured_timestep(
         let _span = info_span!("unstructured_cell_spectral_radius").entered();
         cell_spectral_radius_unstructured(&params)?
     };
-    let mut cell_dts = {
+    let cell_dts = {
         let _span = info_span!("unstructured_local_dt_spectral").entered();
-        cell_local_dt_spectral(&work.volumes, &sigma, cfl)?
+        finalize_cell_dts_from_sigma(
+            &work.volumes,
+            &sigma,
+            cfl,
+            env.case.time.dt.filter(|dt| *dt > 0.0 && dt.is_finite()),
+            env.case.time.uses_local_time_step(),
+        )?
     };
-    if let Some(dt) = env.case.time.dt.filter(|dt| *dt > 0.0 && dt.is_finite()) {
-        cell_dts.fill(dt);
-    } else if !env.case.time.uses_local_time_step() {
-        let dt = min_positive_dt(&cell_dts);
-        cell_dts.fill(dt);
-    }
     Ok((cell_dts, sigma))
 }
 
+fn rhs_evaluator<'a>(
+    env: &'a UnstructuredRunEnv<'_>,
+    work: &'a mut UnstructuredRhsWork<'_>,
+    p_floor: Real,
+) -> EvaluateRhsUnstructured<'a> {
+    EvaluateRhsUnstructured {
+        mesh: env.mesh,
+        mesh_cache: work.mesh_cache,
+        patches: &env.case.boundary,
+        ghosts: work.ghosts,
+        eos: env.eos,
+        freestream: env.freestream,
+        reference: env.case.reference.as_ref(),
+        inviscid: &env.inviscid,
+        viscous: env.case.physics.viscous.as_ref(),
+        min_pressure: p_floor,
+        primitives: work.primitives,
+        gradients: work.gradients,
+        viscous_scratch: work.viscous_scratch,
+    }
+}
+
 fn evaluate_unstructured_rhs(
-    env: &mut UnstructuredRunEnv<'_>,
+    env: &UnstructuredRunEnv<'_>,
     fields: &ConservedFields,
     residual: &mut ConservedResidual,
     work: &mut UnstructuredRhsWork<'_>,
@@ -508,13 +534,19 @@ fn evaluate_unstructured_rhs(
 ) -> Result<()> {
     {
         let _span = info_span!("unstructured_rhs_refresh_state").entered();
-        refresh_unstructured_ghosts_and_primitives(
-            env,
+        work.ghosts.ensure_face_capacity(env.mesh.num_faces());
+        refresh_compressible_ghosts_and_primitives(RefreshCompressibleStateInput {
+            boundary_mesh: env.mesh,
+            patches: &env.case.boundary,
             fields,
-            work.ghosts,
-            work.primitives,
-            p_floor,
-        )?;
+            ghosts: work.ghosts,
+            eos: env.eos,
+            freestream: env.freestream,
+            reference: env.case.reference.as_ref(),
+            viscous: env.case.physics.viscous.as_ref(),
+            min_pressure: p_floor,
+            primitives: work.primitives,
+        })?;
     }
     assemble_unstructured_rhs_from_current_state(env, fields, residual, work, p_floor)
 }
@@ -526,68 +558,7 @@ fn assemble_unstructured_rhs_from_current_state(
     work: &mut UnstructuredRhsWork<'_>,
     p_floor: Real,
 ) -> Result<()> {
-    let params = InviscidAssemblyUnstructuredParams {
-        mesh: env.mesh,
-        eos: env.eos,
-        config: &env.inviscid,
-        boundaries: &env.case.boundary,
-        ghosts: work.ghosts,
-        primitives: work.primitives,
-    };
-    {
-        let _span = info_span!("assemble_unstructured_inviscid_residual").entered();
-        assemble_inviscid_residual_unstructured(fields, residual, &params)?;
-    }
-    if let Some(viscous) = env.case.physics.viscous.as_ref() {
-        let mut input = crate::discretization::ViscousAssemblyUnstructuredInput {
-            mesh: env.mesh,
-            mesh_cache: work.mesh_cache,
-            eos: env.eos,
-            viscous,
-            boundaries: &env.case.boundary,
-            ghosts: work.ghosts,
-            primitives: work.primitives,
-            min_pressure: p_floor,
-            gradient_scratch: work.gradients,
-        };
-        let _span = info_span!("assemble_unstructured_viscous_residual").entered();
-        compute_gradients_and_assemble_viscous_unstructured_with_scratch(
-            residual,
-            &mut input,
-            work.viscous_scratch,
-        )?;
-    }
-    Ok(())
-}
-
-fn refresh_unstructured_ghosts_and_primitives(
-    env: &UnstructuredRunEnv<'_>,
-    fields: &ConservedFields,
-    ghosts: &mut BoundaryGhostBuffer,
-    primitives: &mut PrimitiveFields,
-    p_floor: Real,
-) -> Result<()> {
-    let viscous = env.case.physics.viscous.as_ref();
-    let fs_ctx = FreestreamContext::new(env.eos, env.case.reference.as_ref(), viscous);
-    ghosts.ensure_face_capacity(env.mesh.num_faces());
-    {
-        let _span = info_span!(
-            "apply_unstructured_boundary_conditions",
-            patches = env.case.boundary.patches().len(),
-        )
-        .entered();
-        apply_compressible_boundary_conditions(
-            env.mesh,
-            &env.case.boundary,
-            fields,
-            ghosts,
-            &fs_ctx,
-            env.freestream,
-            viscous,
-        )?;
-    }
-    let _span = info_span!("fill_unstructured_primitives", cells = fields.num_cells()).entered();
-    primitives.fill_from_conserved(fields, env.eos, p_floor)
+    rhs_evaluator(env, work, p_floor).assemble_from_current_state(fields, residual)
 }
 
 fn validate_unstructured_config(

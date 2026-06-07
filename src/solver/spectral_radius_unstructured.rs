@@ -9,7 +9,8 @@ use crate::mesh::UnstructuredMesh3d;
 use crate::physics::{IdealGasEoS, ViscousPhysicsConfig};
 
 use super::spectral_radius::{
-    add_viscous_parabolic_face_sigma, cell_viscous_diffusivity_max, face_spectral_radius,
+    accumulate_hyperbolic_face_sigma, add_viscous_parabolic_face_sigma,
+    cell_viscous_diffusivity_max, face_spectral_radius,
 };
 
 pub struct SpectralRadiusUnstructuredParams<'a> {
@@ -73,9 +74,9 @@ fn accumulate_face_sigma(
     } else {
         return Ok(());
     };
-    add_sigma(mesh, owner_id, radius, metric.area, sigma);
+    add_sigma(owner_id, radius, metric.area, sigma, params.mesh);
     if let Some(neighbor_id) = mesh.face_neighbor(face)? {
-        add_sigma(mesh, neighbor_id, radius, metric.area, sigma);
+        add_sigma(neighbor_id, radius, metric.area, sigma, params.mesh);
     }
     Ok(())
 }
@@ -111,15 +112,15 @@ fn add_viscous_parabolic_sigma(
 }
 
 fn add_sigma(
-    mesh: &UnstructuredMesh3d,
     cell: crate::core::CellId,
     radius: Real,
     area: Real,
     sigma: &mut [Real],
+    mesh: &UnstructuredMesh3d,
 ) {
     let index = cell.index() as usize;
-    let volume = mesh.cell_metric(cell).volume.max(1.0e-30);
-    sigma[index] += radius * area / volume;
+    let volume = mesh.cell_metric(cell).volume;
+    accumulate_hyperbolic_face_sigma(sigma, index, volume, None, radius, area);
 }
 
 fn boundary_face_is_patched(boundaries: &BoundarySet, face: FaceId) -> bool {

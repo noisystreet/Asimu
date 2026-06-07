@@ -31,13 +31,15 @@ use gmres_implicit_3d::{
 use lu_sgs_sweep_3d::{LuSgsSweep3dParams, lu_sgs_sweep_3d};
 
 use crate::core::{Real, format_log_fixed4, format_log_sci4, log10_positive};
-use crate::discretization::{
-    apply_compressible_boundary_conditions, assemble_inviscid_residual_1d,
-};
+use crate::discretization::assemble_inviscid_residual_1d;
 use crate::error::Result;
 use crate::field::{ConservedFields, ConservedResidual};
 use crate::mesh::{StructuredMesh1d, StructuredMesh3d};
-use crate::physics::{FreestreamContext, FreestreamParams, IdealGasEoS, ViscousPhysicsConfig};
+use crate::physics::{FreestreamParams, IdealGasEoS, ViscousPhysicsConfig};
+use crate::solver::compressible_helpers::{
+    RefreshCompressibleStateInput, finalize_cell_dts_from_sigma,
+    refresh_compressible_ghosts_and_primitives,
+};
 use crate::solver::state::SolverState;
 use crate::solver::time::{
     CflSchedule, LuSgsConfig, ResidualSmoothingConfig, Rk4Storage, RungeKutta4Config,
@@ -713,10 +715,14 @@ impl CompressibleEulerSolver {
         cfl: Real,
         p_floor: Real,
     ) -> Result<(Vec<Real>, Vec<Real>)> {
-        let (mut cell_dts, sigma) = self.prepare_spectral_timestep_3d(ctx, fields, cfl, p_floor)?;
-        if let Some(dt) = positive_fixed_dt(self.config.time.dt) {
-            cell_dts.fill(dt);
-        }
+        let (_, sigma) = self.prepare_spectral_timestep_3d(ctx, fields, cfl, p_floor)?;
+        let cell_dts = finalize_cell_dts_from_sigma(
+            &ctx.structured.cell_volumes(),
+            &sigma,
+            cfl,
+            positive_fixed_dt(self.config.time.dt),
+            true,
+        )?;
         Ok((cell_dts, sigma))
     }
 
@@ -729,18 +735,18 @@ impl CompressibleEulerSolver {
         p_floor: Real,
     ) -> Result<(Vec<Real>, Vec<Real>)> {
         fields.enforce_positivity(ctx.eos, p_floor);
-        let fs_ctx = FreestreamContext::new(ctx.eos, ctx.reference, ctx.viscous);
-        apply_compressible_boundary_conditions(
-            ctx.mesh,
-            ctx.patches,
+        refresh_compressible_ghosts_and_primitives(RefreshCompressibleStateInput {
+            boundary_mesh: ctx.mesh,
+            patches: ctx.patches,
             fields,
-            ctx.ghosts,
-            &fs_ctx,
-            ctx.freestream,
-            ctx.viscous,
-        )?;
-        ctx.primitive_scratch
-            .fill_from_conserved(fields, ctx.eos, p_floor)?;
+            ghosts: ctx.ghosts,
+            eos: ctx.eos,
+            freestream: ctx.freestream,
+            reference: ctx.reference,
+            viscous: ctx.viscous,
+            min_pressure: p_floor,
+            primitives: &mut ctx.primitive_scratch,
+        })?;
         let params = self.spectral_radius_params(ctx, p_floor);
         let sigma = cell_spectral_radius_3d(&params)?;
         let volumes = params.mesh.cell_volumes();

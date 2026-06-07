@@ -6,22 +6,15 @@ use tracing::info_span;
 
 use crate::core::{FaceId, Real, Vector3};
 use crate::error::{AsimuError, Result};
-use crate::field::{
-    ConservedFields, ConservedResidual, PrimitiveFields, is_physical_conserved,
-    max_physical_increment_scale, state_after_increment,
-};
+use crate::field::{ConservedFields, ConservedResidual, PrimitiveFields};
 use crate::mesh::UnstructuredMesh3d;
 use crate::physics::IdealGasEoS;
 
+use crate::solver::lu_sgs_common::{
+    LuSgsSweepScalars, apply_limited_cell_increment, conserved_vector, implicit_scale,
+    refresh_primitive_at_cell, residual_cell_vector, scale_source, stabilize_sweep_update,
+};
 use crate::solver::spectral_radius::face_spectral_radius;
-
-struct LuSgsSweepScalars<'a> {
-    dt: &'a [Real],
-    sigma: &'a [Real],
-    volumes: &'a [Real],
-    omega: Real,
-    gamma: Real,
-}
 
 /// 非结构 LU-SGS 扫掠参数。
 pub struct LuSgsSweepUnstructuredParams<'a> {
@@ -220,14 +213,6 @@ fn backward_sweep(
     Ok(())
 }
 
-fn implicit_scale(dt: Real, sigma: Real, omega: Real) -> Real {
-    let denom = 1.0 + dt * sigma;
-    if !(dt > 0.0 && omega > 0.0 && denom > 0.0) {
-        return 0.0;
-    }
-    omega * dt / denom
-}
-
 fn add_coupling_delta(
     source: &mut [Real; 5],
     cell: usize,
@@ -251,164 +236,18 @@ fn add_coupling_delta(
     }
 }
 
-fn residual_cell_vector(residual: &ConservedResidual, cell: usize) -> [Real; 5] {
-    [
-        residual.density.values()[cell],
-        residual.momentum_x.values()[cell],
-        residual.momentum_y.values()[cell],
-        residual.momentum_z.values()[cell],
-        residual.total_energy.values()[cell],
-    ]
-}
-
-fn conserved_vector(fields: &ConservedFields, cell: usize) -> [Real; 5] {
-    [
-        fields.density.values()[cell],
-        fields.momentum_x.values()[cell],
-        fields.momentum_y.values()[cell],
-        fields.momentum_z.values()[cell],
-        fields.total_energy.values()[cell],
-    ]
-}
-
-fn scale_source(source: [Real; 5], factor: Real) -> [Real; 5] {
-    [
-        source[0] * factor,
-        source[1] * factor,
-        source[2] * factor,
-        source[3] * factor,
-        source[4] * factor,
-    ]
-}
-
-fn apply_limited_cell_increment(
-    fields: &mut ConservedFields,
-    cell: usize,
-    scale: Real,
-    increment: [Real; 5],
-    gamma: Real,
-    min_pressure: Real,
-) -> Result<()> {
-    let base = fields.cell_state(cell)?;
-    let effective = max_physical_increment_scale(&base, increment, scale, gamma, min_pressure);
-    if effective <= 0.0 {
-        return Ok(());
-    }
-    let updated = state_after_increment(&base, increment, effective);
-    write_cell_state(fields, cell, &updated);
-    Ok(())
-}
-
-fn fields_are_physical(fields: &ConservedFields, gamma: Real, min_pressure: Real) -> Result<bool> {
-    for cell in 0..fields.num_cells() {
-        let state = fields.cell_state(cell)?;
-        if !is_physical_conserved(&state, gamma, min_pressure) {
-            return Ok(false);
-        }
-    }
-    Ok(true)
-}
-
-fn stabilize_sweep_update(
-    fields: &mut ConservedFields,
-    u0: &ConservedFields,
-    u_sweep: &ConservedFields,
-    residual: &ConservedResidual,
-    min_pressure: Real,
-    gamma: Real,
-    scalars: &LuSgsSweepScalars<'_>,
-) -> Result<()> {
-    if fields_are_physical(u_sweep, gamma, min_pressure)? {
-        return Ok(());
-    }
-    const MIN_ALPHA: Real = 1.0 / 1024.0;
-    let mut alpha = 1.0;
-    loop {
-        blend_fields(fields, u0, u_sweep, alpha)?;
-        if fields_are_physical(fields, gamma, min_pressure)? {
-            return Ok(());
-        }
-        alpha *= 0.5;
-        if alpha < MIN_ALPHA {
-            apply_diagonal_fallback(fields, u0, residual, gamma, min_pressure, scalars)?;
-            return Ok(());
-        }
-    }
-}
-
-fn apply_diagonal_fallback(
-    fields: &mut ConservedFields,
-    u0: &ConservedFields,
-    residual: &ConservedResidual,
-    gamma: Real,
-    min_pressure: Real,
-    scalars: &LuSgsSweepScalars<'_>,
-) -> Result<()> {
-    for cell in 0..fields.num_cells() {
-        let scale = implicit_scale(scalars.dt[cell], scalars.sigma[cell], scalars.omega);
-        let increment = residual_cell_vector(residual, cell);
-        let base = u0.cell_state(cell)?;
-        let effective = max_physical_increment_scale(&base, increment, scale, gamma, min_pressure);
-        if effective > 0.0 {
-            write_cell_state(
-                fields,
-                cell,
-                &state_after_increment(&base, increment, effective),
-            );
-        } else {
-            write_cell_state(fields, cell, &base);
-        }
-    }
-    Ok(())
-}
-
-fn blend_fields(
-    out: &mut ConservedFields,
-    base: &ConservedFields,
-    target: &ConservedFields,
-    alpha: Real,
-) -> Result<()> {
-    for cell in 0..base.num_cells() {
-        let b = base.cell_state(cell)?;
-        let t = target.cell_state(cell)?;
-        let delta = [
-            t.density - b.density,
-            t.momentum[0] - b.momentum[0],
-            t.momentum[1] - b.momentum[1],
-            t.momentum[2] - b.momentum[2],
-            t.total_energy - b.total_energy,
-        ];
-        write_cell_state(out, cell, &state_after_increment(&b, delta, alpha));
-    }
-    Ok(())
-}
-
-fn write_cell_state(
-    fields: &mut ConservedFields,
-    cell: usize,
-    state: &crate::physics::ConservedState,
-) {
-    fields.density.values_mut()[cell] = state.density;
-    fields.momentum_x.values_mut()[cell] = state.momentum[0];
-    fields.momentum_y.values_mut()[cell] = state.momentum[1];
-    fields.momentum_z.values_mut()[cell] = state.momentum[2];
-    fields.total_energy.values_mut()[cell] = state.total_energy;
-}
-
 fn refresh_primitive(
     params: &mut LuSgsSweepUnstructuredParams<'_>,
     fields: &ConservedFields,
     cell: usize,
 ) -> Result<()> {
-    let cons = fields.cell_state(cell)?;
-    let prim =
-        crate::field::primitive_from_conserved_relaxed(params.eos, &cons, params.min_pressure)?;
-    params.primitives.density.values_mut()[cell] = prim.density;
-    params.primitives.pressure.values_mut()[cell] = prim.pressure;
-    params.primitives.velocity_x.values_mut()[cell] = prim.velocity[0];
-    params.primitives.velocity_y.values_mut()[cell] = prim.velocity[1];
-    params.primitives.velocity_z.values_mut()[cell] = prim.velocity[2];
-    Ok(())
+    refresh_primitive_at_cell(
+        fields,
+        cell,
+        params.eos,
+        params.min_pressure,
+        params.primitives,
+    )
 }
 
 #[cfg(test)]
@@ -417,6 +256,7 @@ mod tests {
     use crate::field::ConservedFields;
     use crate::mesh::{CellKind, UnstructuredCell};
     use crate::physics::FreestreamParams;
+    use crate::solver::lu_sgs_common::fields_are_physical;
 
     #[test]
     fn sweep_keeps_uniform_unstructured_freestream_physical() {

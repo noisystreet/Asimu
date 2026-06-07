@@ -386,11 +386,32 @@ fn add_face_contribution(sigma: &mut [Real], mesh: &StructuredMesh3d, face: Face
     } = face;
     let v_owner = mesh.cell_metric(oi, oj, ok).volume;
     let v_neighbor = mesh.cell_metric(ni, nj, nk).volume;
-    if v_owner > DEGENERATE_VOLUME {
-        sigma[owner] += lambda * area / v_owner;
+    accumulate_hyperbolic_face_sigma(
+        sigma,
+        owner,
+        v_owner,
+        Some((neighbor, v_neighbor)),
+        lambda,
+        area,
+    );
+}
+
+/// 双曲面谱半径贡献：\(\sigma_i \mathrel{+}= \lambda A / V_i\)（结构/非结构共用）。
+pub(crate) fn accumulate_hyperbolic_face_sigma(
+    sigma: &mut [Real],
+    owner: usize,
+    owner_volume: Real,
+    neighbor: Option<(usize, Real)>,
+    lambda: Real,
+    area: Real,
+) {
+    if owner_volume > DEGENERATE_VOLUME {
+        sigma[owner] += lambda * area / owner_volume;
     }
-    if v_neighbor > DEGENERATE_VOLUME {
-        sigma[neighbor] += lambda * area / v_neighbor;
+    if let Some((neighbor, neighbor_volume)) = neighbor {
+        if neighbor_volume > DEGENERATE_VOLUME {
+            sigma[neighbor] += lambda * area / neighbor_volume;
+        }
     }
 }
 

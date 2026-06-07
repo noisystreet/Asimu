@@ -7,15 +7,15 @@ use crate::boundary::BoundarySet;
 use crate::core::Real;
 use crate::discretization::residual::InviscidAssembly3dParams;
 use crate::discretization::{
-    BoundaryGhostBuffer, GradientFields, InviscidFluxConfig,
-    apply_compressible_boundary_conditions, assemble_inviscid_residual_3d,
+    BoundaryGhostBuffer, GradientFields, InviscidFluxConfig, assemble_inviscid_residual_3d,
     compute_gradients_and_assemble_viscous_3d,
 };
 use crate::error::Result;
 use crate::field::{ConservedFields, ConservedResidual, PrimitiveFields};
 use crate::mesh::{BoundaryMesh3d, StructuredMesh3d};
-use crate::physics::{
-    FreestreamContext, FreestreamParams, IdealGasEoS, ReferenceScales, ViscousPhysicsConfig,
+use crate::physics::{FreestreamParams, IdealGasEoS, ReferenceScales, ViscousPhysicsConfig};
+use crate::solver::compressible_helpers::{
+    RefreshCompressibleStateInput, refresh_compressible_ghosts_and_primitives,
 };
 
 /// 单步 RHS 求值上下文（避免过多函数参数）。
@@ -42,18 +42,18 @@ impl EvaluateRhs3d<'_> {
         residual: &mut ConservedResidual,
     ) -> Result<()> {
         let _span = info_span!("evaluate_rhs").entered();
-        let fs_ctx = FreestreamContext::new(self.eos, self.reference, self.viscous);
-        apply_compressible_boundary_conditions(
-            self.mesh,
-            self.patches,
+        refresh_compressible_ghosts_and_primitives(RefreshCompressibleStateInput {
+            boundary_mesh: self.mesh,
+            patches: self.patches,
             fields,
-            self.ghosts,
-            &fs_ctx,
-            self.freestream,
-            self.viscous,
-        )?;
-        self.primitive_scratch
-            .fill_from_conserved(fields, self.eos, self.min_pressure)?;
+            ghosts: self.ghosts,
+            eos: self.eos,
+            freestream: self.freestream,
+            reference: self.reference,
+            viscous: self.viscous,
+            min_pressure: self.min_pressure,
+            primitives: self.primitive_scratch,
+        })?;
         let assembly = InviscidAssembly3dParams {
             mesh: self.structured,
             eos: self.eos,

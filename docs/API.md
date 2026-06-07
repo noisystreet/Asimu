@@ -228,6 +228,7 @@ name=<mesh_name>;cells=<count>
 | `UnstructuredGradientLsqInput` / `compute_unstructured_gradients_idw_lsq` | `UnstructuredMesh3d` 上的逆距离加权最小二乘梯度；**必须**提供 `mesh_cache`；内部面用相邻单元中心，边界面用 ghost 镜像样本 |
 | `UnstructuredGradientScratch` | IDWLS 每步 RHS 缓冲（`bu`/`bv`/`bw`/`bt`）与温度 scratch；`compute_unstructured_gradients_idw_lsq_with_scratch` 复用 |
 | `ViscousAssemblyUnstructuredInput` / `compute_gradients_and_assemble_viscous_unstructured` | `UnstructuredMesh3d` 上计算 IDWLS 梯度并叠加 Newtonian/Fourier 粘性通量残差；面循环走 `mesh_cache.face_topology` |
+| `viscous_assembly` | 结构/非结构共用粘性边界面通量（`viscous_flux_at_boundary`）、scatter（`accumulate_viscous_*`）与壁面梯度外推 |
 | `assemble_diffusion_placeholder` | 尺寸校验 + RHS 清零占位 |
 
 ### `asimu::solver`（扩展）
@@ -241,6 +242,10 @@ name=<mesh_name>;cells=<count>
 | `SteadyStateIntegrator` | v0.2 稳态伪时间 |
 | `GmresImplicitConfig` / `GmresImplicitDelta` | 3D 可压缩 matrix-free 隐式 GMRES 更新入口 |
 | `GmresPreconditionerKind` | `ScalarDiagonal` / `CellBlockDiagonal`，对应 `[time] gmres_preconditioner` |
+| `EvaluateRhsUnstructured` | 非结构 3D RHS 求值（镜像 `EvaluateRhs3d`）；`run` 含 BC 刷新，`assemble_from_current_state` 供 LU-SGS 内层复用 |
+| `RefreshCompressibleStateInput` / `refresh_compressible_ghosts_and_primitives` | 结构/非结构共用的 BC ghost + 原始变量刷新 |
+| `finalize_cell_dts_from_sigma` | 由谱半径计算局部 \(\Delta t_i\) 并应用固定 dt / 全局 dt 策略 |
+| `lu_sgs_common` | LU-SGS 双扫共用稳定化（线搜索、对角回退、正性限制） |
 
 理论参考：[docs/theory/fvm_diffusion.md](theory/fvm_diffusion.md)。
 

@@ -4,26 +4,29 @@ use tracing::info_span;
 
 use crate::boundary::BoundarySet;
 use crate::core::Real;
+use crate::discretization::BoundaryGhostBuffer;
 use crate::discretization::gradient::GradientFields;
 use crate::discretization::gradient_unstructured::{
     UnstructuredGradientLsqInput, UnstructuredGradientScratch,
     compute_unstructured_gradients_idw_lsq_with_scratch,
 };
 use crate::discretization::unstructured_face_cache::{
-    UnstructuredBoundaryViscousKind, UnstructuredFaceTopology, UnstructuredSolverMeshCache,
+    UnstructuredFaceTopology, UnstructuredSolverMeshCache,
 };
 use crate::discretization::viscous::{
-    InteriorViscousFaceGeom, InteriorViscousFaceInputs, InteriorViscousResidualMut, ViscousFlux,
-    accumulate_fused_interior_viscous_face, face_transport_coefficients, viscous_face_flux,
+    InteriorViscousFaceGeom, InteriorViscousFaceInputs, InteriorViscousResidualMut,
+    accumulate_fused_interior_viscous_face, face_transport_coefficients,
 };
-use crate::discretization::wall_thermal::wall_heat_flux_into_fluid;
-use crate::discretization::{BoundaryGhostBuffer, InviscidFlux};
+use crate::discretization::viscous_assembly::{
+    ViscousBoundaryFaceKind, ViscousBoundaryFluxParams, accumulate_viscous_boundary,
+    viscous_flux_at_boundary,
+};
 use crate::error::{AsimuError, Result};
 use crate::field::{ConservedResidual, PrimitiveFields, primitive_from_conserved_relaxed};
 use crate::mesh::UnstructuredMesh3d;
-use crate::physics::{IdealGasEoS, PrimitiveState, ViscosityModel, ViscousPhysicsConfig};
+use crate::physics::{IdealGasEoS, ViscosityModel, ViscousPhysicsConfig};
 
-use super::{accumulate_boundary_face, is_degenerate_volume};
+use super::is_degenerate_volume;
 
 /// 非结构粘性残差装配输入。
 pub struct ViscousAssemblyUnstructuredParams<'a> {
@@ -305,6 +308,12 @@ fn assemble_boundary_faces(
     scratch: &ViscousAssemblyUnstructuredScratch,
 ) -> Result<()> {
     let temperatures = &scratch.gradient.temperatures;
+    let boundary_params = ViscousBoundaryFluxParams {
+        eos: params.eos,
+        viscous: params.viscous,
+        primitives: params.primitives,
+        gradients: params.gradients,
+    };
     for face in &params.face_topology.boundary {
         if is_degenerate_volume(face.owner_volume) {
             continue;
@@ -314,142 +323,23 @@ fn assemble_boundary_faces(
         })?;
         let ghost_prim =
             primitive_from_conserved_relaxed(params.eos, &ghost.conserved, params.min_pressure)?;
+        let kind = face.viscous;
         let flux = viscous_flux_at_boundary(
-            params,
-            ViscousBoundaryFluxInput {
-                owner: face.owner,
-                ghost_prim,
-                normal: face.normal,
-                spacing: face.spacing,
-                kind: face.viscous,
+            &boundary_params,
+            face.owner,
+            ghost_prim,
+            face.normal,
+            face.spacing,
+            ViscousBoundaryFaceKind {
+                is_wall: kind.is_wall,
+                no_slip: kind.no_slip,
+                wall_heat: kind.wall_heat,
             },
             temperatures,
         )?;
         accumulate_viscous_boundary(residual, face.owner, &flux, face.area, face.owner_volume)?;
     }
     Ok(())
-}
-
-struct ViscousBoundaryFluxInput {
-    owner: usize,
-    ghost_prim: PrimitiveState,
-    normal: crate::core::Vector3,
-    spacing: Real,
-    kind: UnstructuredBoundaryViscousKind,
-}
-
-fn viscous_flux_at_boundary(
-    params: &ViscousAssemblyUnstructuredParams<'_>,
-    input: ViscousBoundaryFluxInput,
-    temperatures: &[Real],
-) -> Result<ViscousFlux> {
-    let prim_o = primitive_at(params.primitives, temperatures, input.owner);
-    let t_ghost = params.viscous.static_temperature(
-        input.ghost_prim.pressure,
-        input.ghost_prim.density.max(1.0e-30),
-        params.eos,
-    );
-    let mut ghost = input.ghost_prim;
-    ghost.temperature = t_ghost;
-    let grad_o = params.gradients.velocity_grad_at(input.owner);
-    let grad_g = if input.kind.is_wall {
-        wall_extrapolated_gradient(&grad_o, &prim_o, &ghost, input.normal, input.spacing)
-    } else {
-        grad_o
-    };
-    let (mu, lambda) = face_transport_coefficients(
-        temperatures[input.owner],
-        t_ghost,
-        params.viscous,
-        params.eos,
-    )?;
-    let mut flux = viscous_face_flux(&prim_o, &grad_o, &ghost, &grad_g, input.normal, mu, lambda);
-    if input.kind.no_slip {
-        let grad = crate::discretization::viscous::average_gradient_for_wall(&grad_o, &grad_g);
-        flux.energy = lambda
-            * (grad.dt[0] * input.normal.x
-                + grad.dt[1] * input.normal.y
-                + grad.dt[2] * input.normal.z);
-    }
-    if let Some(heat) = input.kind.wall_heat {
-        flux.energy = wall_heat_flux_into_fluid(
-            prim_o.temperature,
-            ghost.temperature,
-            input.spacing,
-            lambda,
-            heat,
-        );
-    }
-    Ok(flux)
-}
-
-fn primitive_at(
-    primitives: &PrimitiveFields,
-    temperatures: &[Real],
-    cell: usize,
-) -> PrimitiveState {
-    PrimitiveState {
-        density: primitives.density.values()[cell],
-        velocity: [
-            primitives.velocity_x.values()[cell],
-            primitives.velocity_y.values()[cell],
-            primitives.velocity_z.values()[cell],
-        ],
-        pressure: primitives.pressure.values()[cell],
-        temperature: temperatures[cell],
-    }
-}
-
-fn wall_extrapolated_gradient(
-    grad_cell: &crate::discretization::VelocityGradient,
-    prim_owner: &PrimitiveState,
-    prim_ghost: &PrimitiveState,
-    normal: crate::core::Vector3,
-    spacing: Real,
-) -> crate::discretization::VelocityGradient {
-    if spacing <= Real::EPSILON {
-        return *grad_cell;
-    }
-    let inv_two_delta = 1.0 / (2.0 * spacing);
-    let mut grad = *grad_cell;
-    for (grad_comp, u_o, u_g) in [
-        (&mut grad.du, prim_owner.velocity[0], prim_ghost.velocity[0]),
-        (&mut grad.dv, prim_owner.velocity[1], prim_ghost.velocity[1]),
-        (&mut grad.dw, prim_owner.velocity[2], prim_ghost.velocity[2]),
-    ] {
-        let dudn = (u_g - u_o) * inv_two_delta;
-        let grad_n = grad_comp[0] * normal.x + grad_comp[1] * normal.y + grad_comp[2] * normal.z;
-        let corr = dudn - grad_n;
-        grad_comp[0] += corr * normal.x;
-        grad_comp[1] += corr * normal.y;
-        grad_comp[2] += corr * normal.z;
-    }
-    let dtdn = (prim_ghost.temperature - prim_owner.temperature) * inv_two_delta;
-    let grad_t_n = grad.dt[0] * normal.x + grad.dt[1] * normal.y + grad.dt[2] * normal.z;
-    let corr_t = dtdn - grad_t_n;
-    grad.dt[0] += corr_t * normal.x;
-    grad.dt[1] += corr_t * normal.y;
-    grad.dt[2] += corr_t * normal.z;
-    grad
-}
-
-fn viscous_flux_for_accumulation(flux: &ViscousFlux) -> InviscidFlux {
-    InviscidFlux {
-        mass: flux.mass,
-        momentum: [-flux.momentum[0], -flux.momentum[1], -flux.momentum[2]],
-        energy: flux.energy,
-    }
-}
-
-fn accumulate_viscous_boundary(
-    residual: &mut ConservedResidual,
-    owner: usize,
-    flux: &ViscousFlux,
-    area: Real,
-    owner_volume: Real,
-) -> Result<()> {
-    let inv = viscous_flux_for_accumulation(flux);
-    accumulate_boundary_face(residual, owner, &inv, area, owner_volume)
 }
 
 #[cfg(test)]

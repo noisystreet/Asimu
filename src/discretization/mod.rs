@@ -21,6 +21,7 @@ pub mod slau2;
 pub mod unstructured_face_cache;
 pub mod van_leer;
 pub mod viscous;
+pub mod viscous_assembly;
 pub mod wall_thermal;
 
 #[cfg(test)]
