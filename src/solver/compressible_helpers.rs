@@ -114,6 +114,7 @@ impl EvaluateRhsUnstructured<'_> {
             boundaries: self.patches,
             ghosts: self.ghosts,
             primitives: self.primitives,
+            face_topology: Some(&self.mesh_cache.face_topology),
         };
         assemble_inviscid_residual_unstructured(fields, residual, &params)?;
         if let Some(viscous) = self.viscous {
@@ -150,6 +151,7 @@ impl EvaluateRhsUnstructured<'_> {
             boundaries: self.patches,
             ghosts: self.ghosts,
             primitives: self.primitives,
+            face_topology: Some(&self.mesh_cache.face_topology),
         };
         {
             let _span = info_span!("assemble_unstructured_inviscid_residual").entered();

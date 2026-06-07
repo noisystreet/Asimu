@@ -88,13 +88,20 @@ pub(crate) struct InteriorViscousFaceGeom {
     pub neighbor_scale: Real,
 }
 
-/// 内面粘性通量 + 残差 scatter 融合路径（无中间 `ViscousFlux`）。
+/// 单面粘性动量/能量通量（scatter 前）。
+pub(crate) struct InteriorViscousFaceFlux {
+    pub mx: Real,
+    pub my: Real,
+    pub mz: Real,
+    pub energy: Real,
+}
+
+/// 计算内面融合粘性通量（只读 inputs/geom，无 scatter）。
 #[inline(always)]
-pub(crate) fn accumulate_fused_interior_viscous_face(
+pub(crate) fn fused_interior_viscous_face_flux(
     inputs: &InteriorViscousFaceInputs<'_>,
-    residual: &mut InteriorViscousResidualMut<'_>,
-    geom: InteriorViscousFaceGeom,
-) {
+    geom: &InteriorViscousFaceGeom,
+) -> InteriorViscousFaceFlux {
     let grad = inputs.grad;
     let ux = inputs.ux;
     let uy = inputs.uy;
@@ -106,8 +113,6 @@ pub(crate) fn accumulate_fused_interior_viscous_face(
     let nz = geom.nz;
     let mu = geom.mu;
     let lambda = geom.lambda;
-    let owner_scale = geom.owner_scale;
-    let neighbor_scale = geom.neighbor_scale;
     let half = 0.5;
     let u0 = half * (ux[owner] + ux[neighbor]);
     let u1 = half * (uy[owner] + uy[neighbor]);
@@ -141,18 +146,44 @@ pub(crate) fn accumulate_fused_interior_viscous_face(
     let heat_flux = lambda * (dt0 * nx + dt1 * ny + dt2 * nz);
     let energy_flux = -(heat_flux + tau_dot_n0 * u0 + tau_dot_n1 * u1 + tau_dot_n2 * u2);
 
-    let mx_flux = -tau_dot_n0;
-    let my_flux = -tau_dot_n1;
-    let mz_flux = -tau_dot_n2;
+    InteriorViscousFaceFlux {
+        mx: -tau_dot_n0,
+        my: -tau_dot_n1,
+        mz: -tau_dot_n2,
+        energy: energy_flux,
+    }
+}
 
-    residual.mx[owner] += owner_scale * mx_flux;
-    residual.my[owner] += owner_scale * my_flux;
-    residual.mz[owner] += owner_scale * mz_flux;
-    residual.energy[owner] += owner_scale * energy_flux;
-    residual.mx[neighbor] += neighbor_scale * mx_flux;
-    residual.my[neighbor] += neighbor_scale * my_flux;
-    residual.mz[neighbor] += neighbor_scale * mz_flux;
-    residual.energy[neighbor] += neighbor_scale * energy_flux;
+/// 将内面粘性通量 scatter 到 owner/neighbor 残差。
+#[inline(always)]
+pub(crate) fn scatter_fused_interior_viscous_face(
+    residual: &mut InteriorViscousResidualMut<'_>,
+    geom: &InteriorViscousFaceGeom,
+    flux: &InteriorViscousFaceFlux,
+) {
+    let owner = geom.owner;
+    let neighbor = geom.neighbor;
+    let owner_scale = geom.owner_scale;
+    let neighbor_scale = geom.neighbor_scale;
+    residual.mx[owner] += owner_scale * flux.mx;
+    residual.my[owner] += owner_scale * flux.my;
+    residual.mz[owner] += owner_scale * flux.mz;
+    residual.energy[owner] += owner_scale * flux.energy;
+    residual.mx[neighbor] += neighbor_scale * flux.mx;
+    residual.my[neighbor] += neighbor_scale * flux.my;
+    residual.mz[neighbor] += neighbor_scale * flux.mz;
+    residual.energy[neighbor] += neighbor_scale * flux.energy;
+}
+
+/// 内面粘性通量 + 残差 scatter 融合路径（无中间 `ViscousFlux`）。
+#[inline(always)]
+pub(crate) fn accumulate_fused_interior_viscous_face(
+    inputs: &InteriorViscousFaceInputs<'_>,
+    residual: &mut InteriorViscousResidualMut<'_>,
+    geom: InteriorViscousFaceGeom,
+) {
+    let flux = fused_interior_viscous_face_flux(inputs, &geom);
+    scatter_fused_interior_viscous_face(residual, &geom, &flux);
 }
 
 fn viscous_face_flux_from_averaged(

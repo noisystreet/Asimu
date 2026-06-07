@@ -66,7 +66,7 @@ pub use residual::{
 pub use roe::{RoeFluxConfig, roe_flux};
 pub use slau2::slau2_flux;
 pub use unstructured_face_cache::{
-    LsqPrecomputedCell, UnstructuredFaceTopology, UnstructuredInteriorFace,
+    InteriorFaceColoring, LsqPrecomputedCell, UnstructuredFaceTopology, UnstructuredInteriorFace,
     UnstructuredSolverMeshCache,
 };
 pub use van_leer::{hanel_van_leer_flux, van_leer_flux};

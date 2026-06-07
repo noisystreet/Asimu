@@ -224,10 +224,11 @@ name=<mesh_name>;cells=<count>
 | `assemble_diffusion_1d` | 1D 内部面扩散装配 |
 | `apply_boundary_conditions` | 按 patch 顺序施加 BC |
 | `apply_dirichlet_face` / `apply_neumann` | 单面 BC |
-| `UnstructuredSolverMeshCache` / `from_mesh` | 非结构求解器网格缓存：面拓扑（`UnstructuredFaceTopology`）+ 每单元 IDWLS 正规方程矩阵 \(A\)（`LsqPrecomputedCell`）；在 work 区初始化一次，每步只累加 RHS \(\mathbf b\) |
+| `UnstructuredSolverMeshCache` / `from_mesh` | 非结构求解器网格缓存：面拓扑（`UnstructuredFaceTopology`）+ 内面着色（`InteriorFaceColoring`）+ 每单元 IDWLS 正规方程矩阵 \(A\) |
 | `UnstructuredGradientLsqInput` / `compute_unstructured_gradients_idw_lsq` | `UnstructuredMesh3d` 上的逆距离加权最小二乘梯度；**必须**提供 `mesh_cache`；内部面用相邻单元中心，边界面用 ghost 镜像样本 |
 | `UnstructuredGradientScratch` | IDWLS 每步 RHS 缓冲（`bu`/`bv`/`bw`/`bt`）与温度 scratch；`compute_unstructured_gradients_idw_lsq_with_scratch` 复用 |
 | `ViscousAssemblyUnstructuredInput` / `compute_gradients_and_assemble_viscous_unstructured` | `UnstructuredMesh3d` 上计算 IDWLS 梯度并叠加 Newtonian/Fourier 粘性通量残差；面循环走 `mesh_cache.face_topology` |
+| `InteriorFaceColoring` | 非结构内面贪心着色桶；`for_each_face_index` 按桶遍历，`par_map_buckets`（feature `parallel-fvm`）桶内 rayon 并行 compute + 串行 scatter |
 | `viscous_assembly` | 结构/非结构共用粘性边界面通量（`viscous_flux_at_boundary`）、scatter（`accumulate_viscous_*`）与壁面梯度外推 |
 | `assemble_diffusion_placeholder` | 尺寸校验 + RHS 清零占位 |
 

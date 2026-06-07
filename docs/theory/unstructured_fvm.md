@@ -155,6 +155,18 @@ A_i = \sum_m w_m\,\Delta\mathbf x_m\,\Delta\mathbf x_m^{\mathsf T},
 
 后扫对 \(j>i\) 的邻接项做同类修正，并使用 `lusgs_sweep_backward_damping` 阻尼。扫掠候选会经过正性检查；若全场线搜索仍失败，则回退到式 (9) 的对角更新。
 
+## 内面并行 scatter（面着色）
+
+粘性/无粘内面装配对每个面执行 \(\mathbf R_i \mathrel{+}= s_i\,\mathbf f_f\)。若两线程同时更新共享单元，会产生数据竞争。标准做法是 **面着色（graph coloring）**：
+
+- 将内面划分为颜色桶 \(C_0,\ldots,C_{K-1}\)；
+- 同一桶内任意两面不共享 owner/neighbor 单元；
+- 桶内可并行，桶间串行（`rayon` / `exec` 层，v1.x 规划）。
+
+`UnstructuredSolverMeshCache` 在网格初始化时对 `face_topology.interior` 做贪心着色，结果存于 `InteriorFaceColoring::buckets`。当前 v0.x 仍按桶顺序**串行**累加（与面索引顺序在加法结合律意义下等价；浮点非结合性可能导致末位差异）。
+
+启用 Cargo feature `parallel-fvm` 时，粘性内面路径对每个颜色桶做 **rayon 并行 flux 计算 + 串行 scatter**（`unsafe_code` 禁止下避免并行写同一 `&mut [f64]`）。无粘内面装配在提供 `face_topology` 时同样走着色桶顺序。
+
 ## 实现映射
 
 | 公式 | 实现 |
@@ -165,6 +177,7 @@ A_i = \sum_m w_m\,\Delta\mathbf x_m\,\Delta\mathbf x_m^{\mathsf T},
 | (4)-(6) | `compute_unstructured_gradients_idw_lsq` |
 | (5a) 几何预计算 | `UnstructuredSolverMeshCache::from_mesh` |
 | 面拓扑缓存 | `UnstructuredFaceTopology`（`unstructured_face_cache`） |
+| 内面着色 | `InteriorFaceColoring` / `color_interior_faces` |
 | (7) | `compute_gradients_and_assemble_viscous_unstructured` |
 | (8) | `cell_spectral_radius_unstructured` + `cell_local_dt_spectral` |
 | (9) | `ConservedFields::assign_lusgs_diagonal_update` |

@@ -2,6 +2,7 @@
 
 use crate::boundary::{BoundaryKind, BoundarySet};
 use crate::core::FaceId;
+use crate::discretization::unstructured_face_cache::UnstructuredFaceTopology;
 use crate::discretization::{
     BoundaryGhostBuffer, FaceFluxInput, InviscidFluxConfig, ReconstructionKind, face_inviscid_flux,
 };
@@ -19,6 +20,8 @@ pub struct InviscidAssemblyUnstructuredParams<'a> {
     pub boundaries: &'a BoundarySet,
     pub ghosts: &'a BoundaryGhostBuffer,
     pub primitives: &'a PrimitiveFields,
+    /// 若提供，内面走缓存拓扑 + 着色桶顺序（与粘性共用 `InteriorFaceColoring`）。
+    pub face_topology: Option<&'a UnstructuredFaceTopology>,
 }
 
 /// 非结构一阶 Euler 残差：遍历显式 face owner/neighbor 拓扑。
@@ -40,8 +43,46 @@ pub fn assemble_inviscid_residual_unstructured(
         ));
     }
     residual.clear();
-    assemble_interior_faces(mesh, residual, params)?;
+    if let Some(topology) = params.face_topology {
+        assemble_interior_faces_cached(residual, params, topology)?;
+    } else {
+        assemble_interior_faces(mesh, residual, params)?;
+    }
     assemble_boundary_faces(mesh, residual, params)
+}
+
+fn assemble_interior_faces_cached(
+    residual: &mut ConservedResidual,
+    params: &InviscidAssemblyUnstructuredParams<'_>,
+    topology: &UnstructuredFaceTopology,
+) -> Result<()> {
+    for bucket in &topology.interior_coloring.buckets {
+        for &face_idx in bucket {
+            let face = &topology.interior[face_idx];
+            if is_degenerate_volume(face.owner_volume) || is_degenerate_volume(face.neighbor_volume)
+            {
+                continue;
+            }
+            let owner_prim = params.primitives.cell_primitive(face.owner);
+            let neighbor_prim = params.primitives.cell_primitive(face.neighbor);
+            let flux = face_inviscid_flux(
+                FaceFluxInput::first_order(&owner_prim, &neighbor_prim),
+                face.normal,
+                params.eos,
+                params.config,
+            )?;
+            accumulate_interior_face(
+                residual,
+                face.owner,
+                face.neighbor,
+                &flux,
+                face.area,
+                face.owner_volume,
+                face.neighbor_volume,
+            )?;
+        }
+    }
+    Ok(())
 }
 
 fn assemble_interior_faces(
@@ -184,6 +225,7 @@ mod tests {
             boundaries: &boundary,
             ghosts: &ghosts,
             primitives: &primitives,
+            face_topology: None,
         };
         assemble_inviscid_residual_unstructured(&fields, &mut residual, &params).expect("rhs");
         assert!(residual.density_rms_norm() < 1.0e-10);

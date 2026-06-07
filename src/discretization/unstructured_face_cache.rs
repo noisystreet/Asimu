@@ -54,6 +54,58 @@ pub struct UnstructuredBoundaryViscousKind {
 pub struct UnstructuredFaceTopology {
     pub interior: Vec<UnstructuredInteriorFace>,
     pub boundary: Vec<UnstructuredBoundaryFace>,
+    /// 内面并行 scatter 用着色桶：同色面不共享单元，可安全并行 `+=`。
+    pub interior_coloring: InteriorFaceColoring,
+}
+
+/// 内面贪心着色结果：`buckets[c]` 为颜色 `c` 上的面索引列表。
+#[derive(Debug, Clone)]
+pub struct InteriorFaceColoring {
+    pub buckets: Vec<Vec<usize>>,
+    pub num_colors: usize,
+}
+
+impl InteriorFaceColoring {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.buckets.is_empty()
+    }
+
+    /// 按颜色桶顺序串行遍历内面索引。
+    pub fn for_each_face_index<F>(&self, mut f: F)
+    where
+        F: FnMut(usize),
+    {
+        for bucket in &self.buckets {
+            for &face_idx in bucket {
+                f(face_idx);
+            }
+        }
+    }
+
+    /// 按面索引升序串行遍历（golden / 对照用）。
+    pub fn for_each_face_index_linear<F>(&self, num_faces: usize, mut f: F)
+    where
+        F: FnMut(usize),
+    {
+        for face_idx in 0..num_faces {
+            f(face_idx);
+        }
+    }
+
+    /// 桶内并行 map、桶间串行（`parallel-fvm`）：适用于 compute/scatter 分离路径。
+    #[cfg(feature = "parallel-fvm")]
+    pub fn par_map_buckets<T, F>(&self, f: F) -> Vec<Vec<T>>
+    where
+        T: Send,
+        F: Fn(usize) -> T + Sync,
+    {
+        use rayon::prelude::*;
+        self.buckets
+            .iter()
+            .map(|bucket| bucket.par_iter().map(|&face_idx| f(face_idx)).collect())
+            .collect()
+    }
 }
 
 /// 单元 IDWLS 正规方程矩阵 \(A\)（几何固定部分）。
@@ -156,7 +208,76 @@ fn build_face_topology(
         }
     }
 
-    Ok(UnstructuredFaceTopology { interior, boundary })
+    let interior_coloring = color_interior_faces(&interior, mesh.num_cells());
+    Ok(UnstructuredFaceTopology {
+        interior,
+        boundary,
+        interior_coloring,
+    })
+}
+
+/// 贪心面着色：同色内面不共享 owner/neighbor 单元（FVM scatter 并行前提）。
+fn color_interior_faces(
+    interior: &[UnstructuredInteriorFace],
+    num_cells: usize,
+) -> InteriorFaceColoring {
+    if interior.is_empty() {
+        return InteriorFaceColoring {
+            buckets: Vec::new(),
+            num_colors: 0,
+        };
+    }
+    let mut cell_incident_colors = vec![Vec::<u8>::new(); num_cells];
+    let mut face_colors = vec![0u8; interior.len()];
+
+    for (face_idx, face) in interior.iter().enumerate() {
+        let mut used = Vec::new();
+        for &c in &cell_incident_colors[face.owner] {
+            push_unique(&mut used, c);
+        }
+        for &c in &cell_incident_colors[face.neighbor] {
+            push_unique(&mut used, c);
+        }
+        used.sort_unstable();
+        let color = first_available_color(&used);
+        face_colors[face_idx] = color;
+        cell_incident_colors[face.owner].push(color);
+        cell_incident_colors[face.neighbor].push(color);
+    }
+
+    let num_colors = face_colors
+        .iter()
+        .copied()
+        .max()
+        .map(|c| c as usize + 1)
+        .unwrap_or(0);
+    let mut buckets = vec![Vec::new(); num_colors];
+    for (face_idx, &color) in face_colors.iter().enumerate() {
+        buckets[color as usize].push(face_idx);
+    }
+    InteriorFaceColoring {
+        buckets,
+        num_colors,
+    }
+}
+
+fn push_unique(values: &mut Vec<u8>, value: u8) {
+    if !values.contains(&value) {
+        values.push(value);
+    }
+}
+
+fn first_available_color(used_sorted: &[u8]) -> u8 {
+    let mut candidate = 0u8;
+    for &used in used_sorted {
+        if used > candidate {
+            break;
+        }
+        if used == candidate {
+            candidate = candidate.saturating_add(1);
+        }
+    }
+    candidate
 }
 
 fn precompute_lsq_geometry(
@@ -329,6 +450,7 @@ mod tests {
         )]);
         let cache = UnstructuredSolverMeshCache::from_mesh(&mesh, &boundaries).expect("cache");
         assert!(cache.face_topology.interior.is_empty());
+        assert!(cache.face_topology.interior_coloring.is_empty());
         assert_eq!(cache.face_topology.boundary.len(), mesh.num_faces());
         assert_eq!(cache.lsq_geometry.len(), mesh.num_cells());
     }
@@ -355,5 +477,57 @@ mod tests {
         assert!(g.a_xx > 0.0);
         assert!(g.a_yy > 0.0);
         assert!(g.a_zz > 0.0);
+    }
+
+    fn two_tet_mesh() -> UnstructuredMesh3d {
+        UnstructuredMesh3d::new(
+            "two_tets",
+            vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [1.0, 1.0, 1.0],
+            ],
+            vec![
+                UnstructuredCell::new(CellKind::Tet, vec![0, 1, 2, 3]).expect("cell"),
+                UnstructuredCell::new(CellKind::Tet, vec![1, 2, 3, 4]).expect("cell"),
+            ],
+        )
+        .expect("mesh")
+    }
+
+    #[test]
+    fn interior_face_coloring_has_no_same_color_cell_conflicts() {
+        let mesh = two_tet_mesh();
+        let faces = (0..mesh.num_faces())
+            .map(|face| FaceId(face as u32))
+            .collect::<Vec<_>>();
+        let boundaries = BoundarySet::new(vec![BoundaryPatch::new(
+            "farfield",
+            faces,
+            BoundaryKind::Farfield {
+                mach: 0.0,
+                pressure: 101_325.0,
+                temperature: 300.0,
+                alpha: 0.0,
+                beta: 0.0,
+            },
+        )]);
+        let cache = UnstructuredSolverMeshCache::from_mesh(&mesh, &boundaries).expect("cache");
+        let topology = &cache.face_topology;
+        assert!(!topology.interior.is_empty());
+        assert_eq!(
+            topology.interior_coloring.num_colors,
+            topology.interior_coloring.buckets.len()
+        );
+        for bucket in &topology.interior_coloring.buckets {
+            let mut cells = std::collections::HashSet::new();
+            for &face_idx in bucket {
+                let face = &topology.interior[face_idx];
+                assert!(cells.insert(face.owner));
+                assert!(cells.insert(face.neighbor));
+            }
+        }
     }
 }

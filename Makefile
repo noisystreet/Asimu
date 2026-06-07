@@ -4,7 +4,7 @@ CARGO := cargo
 PYTHON := python3
 CARGO_FLAGS := --features io-vtk
 
-.PHONY: help build run test lint fmt complexity check clean setup audit doc
+.PHONY: help build run test test-parallel-fvm lint fmt complexity check check-parallel-fvm clean setup audit doc
 
 help:
 	@echo "Targets: build run test lint complexity fmt check clean setup audit doc"
@@ -22,6 +22,9 @@ run-case:
 test:
 	$(CARGO) test $(CARGO_FLAGS)
 
+test-parallel-fvm:
+	$(CARGO) test $(CARGO_FLAGS),parallel-fvm
+
 lint:
 	$(CARGO) fmt --check
 	$(CARGO) clippy --all-targets $(CARGO_FLAGS) -- -D warnings
@@ -35,6 +38,9 @@ fmt:
 	$(CARGO) fmt
 
 check: lint test
+
+check-parallel-fvm: lint
+	$(CARGO) test $(CARGO_FLAGS),parallel-fvm
 
 clean:
 	$(CARGO) clean
