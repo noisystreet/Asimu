@@ -75,7 +75,8 @@ pub use residual::{
 pub use roe::{RoeFluxConfig, roe_flux};
 pub use slau2::slau2_flux;
 pub use unstructured_face_cache::{
-    InteriorFaceColoring, LsqPrecomputedCell, UnstructuredFaceTopology, UnstructuredInteriorFace,
+    InteriorFaceBatchStatic4, InteriorFaceBucketBatchLayout, InteriorFaceColoring,
+    LsqPrecomputedCell, UnstructuredFaceTopology, UnstructuredInteriorFace,
     UnstructuredSolverMeshCache,
 };
 pub use unstructured_limiter::UnstructuredGradientLimiter;

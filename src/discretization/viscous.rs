@@ -76,6 +76,7 @@ pub(crate) struct InteriorViscousFaceInputs<'a> {
 }
 
 /// 单面几何与物性。
+#[derive(Clone, Copy)]
 pub(crate) struct InteriorViscousFaceGeom {
     pub owner: usize,
     pub neighbor: usize,

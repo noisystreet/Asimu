@@ -12,6 +12,7 @@ pub mod config;
 pub mod core;
 pub mod discretization;
 pub mod error;
+pub mod exec;
 pub mod field;
 pub mod io;
 pub mod linalg;

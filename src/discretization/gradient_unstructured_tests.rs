@@ -256,8 +256,13 @@ fn parallel_inviscid_idw_lsq_accumulate_matches_face_serial() {
     scratch_serial.prepare_inviscid_linear_reconstruction(mesh.num_cells());
     scratch_parallel.prepare_inviscid_linear_reconstruction(mesh.num_cells());
 
-    accumulate_lsq_rhs_inviscid_face_serial(&input, &mut scratch_serial).expect("serial");
-    accumulate_lsq_rhs_inviscid_cell_parallel(&input, &mut scratch_parallel).expect("parallel");
+    super::inviscid_linear::accumulate_lsq_rhs_inviscid_face_serial(&input, &mut scratch_serial)
+        .expect("serial");
+    super::inviscid_linear::accumulate_lsq_rhs_inviscid_cell_parallel(
+        &input,
+        &mut scratch_parallel,
+    )
+    .expect("parallel");
 
     assert_vector3_fields_match(&scratch_serial.br, &scratch_parallel.br, 1.0e-12);
     assert_vector3_fields_match(&scratch_serial.bp, &scratch_parallel.bp, 1.0e-12);

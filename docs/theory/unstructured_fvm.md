@@ -247,6 +247,30 @@ IDWLS 梯度每步需对每个单元累加最小二乘右端项 \(b_i\)。与 fl
 2. `parallel-fvm` 下对 `bu/bv/bw/bt`（粘性）或 `br/bp/bu/bv/bw`（二阶无粘）做 `par_iter_mut().enumerate()`，每单元遍历关联面并累加。
 3. 未启用 `parallel-fvm` 时仍用面循环串行路径；golden 测试 `parallel_idw_lsq_accumulate_matches_face_serial` 对齐两路径。
 
+### CPU SIMD（P5，`simd-fvm`）
+
+启用可选 feature `simd-fvm`（依赖 `wide`，**默认关闭**）时，`exec::cpu` 提供标量等价 SIMD 路径：
+
+| 算子 | 实现 | 说明 |
+|------|------|------|
+| LU-SGS 对角更新 | `assign_lusgs_diagonal_update` | 5 个 SoA 场 f64x4 AXPY |
+| 粘性内面 flux | `fused_interior_viscous_face_flux_batch4` | 着色桶内四路 gather + f64x4 τ·n |
+| IDWLS 梯度求解 | `solve_symmetric_3x3_batch4` | 四单元一批 Cramer 求解 |
+| Roe 一阶通量 | `face_inviscid_flux_first_order_roe_batch4` | 着色桶内四路 gather + f64x4 特征值修正；`assemble_inviscid_residual_unstructured` 一阶 Roe 路径 |
+
+与 `parallel-fvm` 叠加：桶间 `rayon`、桶内 SIMD。验证：`make test-simd-fvm`。
+
+### 着色桶面批 SoA 预处理（init-time）
+
+`UnstructuredFaceTopology` 着色完成后，对每个桶预建 `InteriorFaceBucketBatchLayout`：
+
+| 字段 | 内容 |
+|------|------|
+| `full_batches` | 四路对齐的 `InteriorFaceBatchStatic4`（owner/neighbor、法向、面积、体积、RHS scale） |
+| `remainder` | 桶尾不足 4 面的面索引（标量回退） |
+
+μ/λ 与原始变量/梯度仍每步从 SoA 场 gather；静态几何在 mesh cache 初始化时写入，热路径不再重复读 `UnstructuredInteriorFace` 做 lane 填充。
+
 ## 实现映射
 
 | 公式 | 实现 | 状态 |
@@ -261,11 +285,13 @@ IDWLS 梯度每步需对每个单元累加最小二乘右端项 \(b_i\)。与 fl
 | 面心 / 单元中心偏移 | `UnstructuredInteriorFace` 增字段（规划） | **M4** |
 | 面拓扑缓存 | `UnstructuredFaceTopology`（`unstructured_face_cache`） | 已实现 |
 | 内面着色 | `InteriorFaceColoring` / `color_interior_faces` | 已实现 |
+| 桶内面批静态 SoA | `InteriorFaceBucketBatchLayout` / `InteriorFaceBatchStatic4` | 已实现 |
 | (7) | `compute_gradients_and_assemble_viscous_unstructured` | 已实现 |
 | (8) | `cell_spectral_radius_unstructured` + `cell_local_dt_spectral` | 已实现 |
 | 谱半径单元并行 | `LsqRhsCellIncidence` + `parallel-fvm` 单元 `rayon` | **P2** |
 | 粘性 transport 并行 | `fill_cell/face_transport_coefficients` | **P3** |
 | 无粘/粘性桶内并行 | `par_map_buckets`（`with_min_len=1024`） | **P0 POC** |
+| CPU SIMD 热算子 | `exec::cpu` + feature `simd-fvm` | **P5** |
 | (9) | `ConservedFields::assign_lusgs_diagonal_update` | 已实现 |
 | (10) | `lu_sgs_sweep_unstructured` | 已实现 |
 

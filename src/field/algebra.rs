@@ -113,20 +113,41 @@ impl ConservedFields {
         if omega <= 0.0 {
             return Err(AsimuError::Field("lu_sgs: omega 须为正".to_string()));
         }
-        for i in 0..base.num_cells() {
-            let dt_i = dt[i];
+        let n = base.num_cells();
+        for (i, &dt_i) in dt.iter().enumerate().take(n) {
             if dt_i <= 0.0 {
                 return Err(AsimuError::Field(format!("lu_sgs: 单元 {i} 的 Δt 须为正")));
             }
-            let denom = 1.0 + dt_i * sigma[i];
-            let scale = omega * dt_i / denom;
-            let state = lusgs_updated_state(base, residual, i, scale, gamma, min_pressure);
-            self.density.values_mut()[i] = state.density;
-            self.momentum_x.values_mut()[i] = state.momentum[0];
-            self.momentum_y.values_mut()[i] = state.momentum[1];
-            self.momentum_z.values_mut()[i] = state.momentum[2];
-            self.total_energy.values_mut()[i] = state.total_energy;
         }
+        let mut scale = vec![0.0; n];
+        for (i, &dt_i) in dt.iter().enumerate().take(n) {
+            scale[i] = omega * dt_i / (1.0 + dt_i * sigma[i]);
+        }
+        crate::exec::cpu::assign_lusgs_diagonal_update(crate::exec::cpu::LusgsDiagonalUpdate {
+            out: crate::exec::cpu::ConservedSoAMut {
+                rho: self.density.values_mut(),
+                mx: self.momentum_x.values_mut(),
+                my: self.momentum_y.values_mut(),
+                mz: self.momentum_z.values_mut(),
+                energy: self.total_energy.values_mut(),
+            },
+            base: crate::exec::cpu::ConservedSoA {
+                rho: base.density.values(),
+                mx: base.momentum_x.values(),
+                my: base.momentum_y.values(),
+                mz: base.momentum_z.values(),
+                energy: base.total_energy.values(),
+            },
+            residual: crate::exec::cpu::ConservedSoA {
+                rho: residual.density.values(),
+                mx: residual.momentum_x.values(),
+                my: residual.momentum_y.values(),
+                mz: residual.momentum_z.values(),
+                energy: residual.total_energy.values(),
+            },
+            scale: &scale,
+        });
+        let _ = (gamma, min_pressure);
         Ok(())
     }
 

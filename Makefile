@@ -3,6 +3,7 @@
 CARGO := cargo
 PYTHON := python3
 CARGO_FLAGS := --features io-vtk,parallel-fvm
+CARGO_SIMD_FLAGS := --features io-vtk,parallel-fvm,simd-fvm
 
 .PHONY: help build run test test-parallel-fvm lint fmt complexity check check-parallel-fvm clean setup audit doc
 
@@ -24,6 +25,9 @@ test:
 
 test-parallel-fvm:
 	$(CARGO) test $(CARGO_FLAGS),parallel-fvm
+
+test-simd-fvm:
+	$(CARGO) test $(CARGO_SIMD_FLAGS)
 
 lint:
 	$(CARGO) fmt --check

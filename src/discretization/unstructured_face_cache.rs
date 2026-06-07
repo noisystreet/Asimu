@@ -3,6 +3,12 @@
 //! 面列表与 LSQ 正规方程矩阵 \(A\) 仅依赖网格几何，在求解器 work 区初始化一次；
 //! 每步 RHS 只累加右端项 \(b\) 并求解梯度。
 
+#[path = "interior_face_batch_layout.rs"]
+mod interior_face_batch_layout;
+
+use interior_face_batch_layout::build_bucket_batch_layouts;
+pub use interior_face_batch_layout::{InteriorFaceBatchStatic4, InteriorFaceBucketBatchLayout};
+
 use crate::boundary::{BoundaryKind, BoundarySet, WallHeat};
 use crate::core::{CellId, FaceId, Real, Vector3};
 use crate::error::Result;
@@ -83,6 +89,8 @@ pub struct UnstructuredFaceTopology {
 pub struct InteriorFaceColoring {
     pub buckets: Vec<Vec<usize>>,
     pub num_colors: usize,
+    /// 每桶四路对齐的静态几何 SoA（init-time；μ/λ 与场变量每步 gather）。
+    pub bucket_batch_layouts: Vec<InteriorFaceBucketBatchLayout>,
 }
 
 impl InteriorFaceColoring {
@@ -299,6 +307,7 @@ fn color_interior_faces(
         return InteriorFaceColoring {
             buckets: Vec::new(),
             num_colors: 0,
+            bucket_batch_layouts: Vec::new(),
         };
     }
     let mut cell_incident_colors = vec![Vec::<u8>::new(); num_cells];
@@ -329,9 +338,11 @@ fn color_interior_faces(
     for (face_idx, &color) in face_colors.iter().enumerate() {
         buckets[color as usize].push(face_idx);
     }
+    let bucket_batch_layouts = build_bucket_batch_layouts(&buckets, interior);
     InteriorFaceColoring {
         buckets,
         num_colors,
+        bucket_batch_layouts,
     }
 }
 
@@ -464,41 +475,31 @@ pub(crate) fn mirrored_face_sample_point(owner_center: Vector3, face_center: Vec
 }
 
 pub(crate) fn accumulate_lsq_rhs_component(rhs: &mut Vector3, dr: Vector3, w: Real, delta: Real) {
-    if w <= 0.0 {
-        return;
+    crate::exec::cpu::accumulate_lsq_rhs_component(rhs, dr, w, delta);
+}
+
+fn sym3_from_lsq(a: &LsqPrecomputedCell) -> crate::exec::cpu::Symmetric3x3 {
+    crate::exec::cpu::Symmetric3x3 {
+        a_xx: a.a_xx,
+        a_xy: a.a_xy,
+        a_xz: a.a_xz,
+        a_yy: a.a_yy,
+        a_yz: a.a_yz,
+        a_zz: a.a_zz,
     }
-    *rhs = vec_add_scaled(*rhs, dr, w * delta);
+}
+
+#[cfg(feature = "simd-fvm")]
+pub(crate) fn sym3_from_lsq_for_exec(a: &LsqPrecomputedCell) -> crate::exec::cpu::Symmetric3x3 {
+    sym3_from_lsq(a)
 }
 
 pub(crate) fn solve_lsq_gradient(geometry: &LsqPrecomputedCell, rhs: Vector3) -> Option<Vector3> {
-    solve_symmetric_3x3(geometry, rhs)
-}
-
-fn solve_symmetric_3x3(a: &LsqPrecomputedCell, rhs: Vector3) -> Option<Vector3> {
-    let c_xx = a.a_yy * a.a_zz - a.a_yz * a.a_yz;
-    let c_xy = a.a_xz * a.a_yz - a.a_xy * a.a_zz;
-    let c_xz = a.a_xy * a.a_yz - a.a_xz * a.a_yy;
-    let c_yy = a.a_xx * a.a_zz - a.a_xz * a.a_xz;
-    let c_yz = a.a_xy * a.a_xz - a.a_xx * a.a_yz;
-    let c_zz = a.a_xx * a.a_yy - a.a_xy * a.a_xy;
-    let det = a.a_xx * c_xx + a.a_xy * c_xy + a.a_xz * c_xz;
-    if det.abs() <= Real::EPSILON {
-        return None;
-    }
-    let inv_det = 1.0 / det;
-    Some(Vector3::new(
-        (c_xx * rhs.x + c_xy * rhs.y + c_xz * rhs.z) * inv_det,
-        (c_xy * rhs.x + c_yy * rhs.y + c_yz * rhs.z) * inv_det,
-        (c_xz * rhs.x + c_yz * rhs.y + c_zz * rhs.z) * inv_det,
-    ))
+    crate::exec::cpu::solve_symmetric_3x3(&sym3_from_lsq(geometry), rhs)
 }
 
 fn vec_sub(a: Vector3, b: Vector3) -> Vector3 {
     Vector3::new(a.x - b.x, a.y - b.y, a.z - b.z)
-}
-
-fn vec_add_scaled(a: Vector3, b: Vector3, scale: Real) -> Vector3 {
-    Vector3::new(a.x + scale * b.x, a.y + scale * b.y, a.z + scale * b.z)
 }
 
 fn neg_vector(v: Vector3) -> Vector3 {
@@ -653,6 +654,25 @@ mod tests {
                 assert!(cells.insert(face.owner));
                 assert!(cells.insert(face.neighbor));
             }
+        }
+        assert_eq!(
+            topology.interior_coloring.buckets.len(),
+            topology.interior_coloring.bucket_batch_layouts.len()
+        );
+        for (bucket, layout) in topology
+            .interior_coloring
+            .buckets
+            .iter()
+            .zip(&topology.interior_coloring.bucket_batch_layouts)
+        {
+            assert_eq!(layout.num_faces(), bucket.len());
+            let mut recovered = Vec::with_capacity(bucket.len());
+            for batch in &layout.full_batches {
+                assert_eq!(batch.face_indices.len(), 4);
+                recovered.extend_from_slice(&batch.face_indices);
+            }
+            recovered.extend_from_slice(&layout.remainder);
+            assert_eq!(recovered, *bucket);
         }
     }
 }

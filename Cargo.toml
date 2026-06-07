@@ -24,6 +24,7 @@ quick-xml = { version = "0.37", optional = true }
 base64 = { version = "0.22", optional = true }
 flate2 = { version = "1", optional = true }
 rayon = { version = "1", optional = true }
+wide = { version = "0.7", optional = true, default-features = false }
 
 [features]
 default = ["parallel-fvm"]
@@ -32,6 +33,8 @@ io-cgns = []
 io-cgns-vts = ["io-cgns", "io-vtk"]
 # 非结构 FVM 内面着色桶并行（rayon；桶内 compute 并行 + scatter 串行）。
 parallel-fvm = ["dep:rayon"]
+# 非结构 FVM 热算子 SIMD（`wide` f64x4；标量回退始终可用）。
+simd-fvm = ["dep:wide"]
 # 圆柱 CGNS 多步时间推进、端到端算例、DLR 全 zone 导出等（读 case_cylinder/cylinder.cgns）。
 # 默认关闭；本地/CI 长跑：cargo test --features io-cgns,slow-tests
 slow-tests = []

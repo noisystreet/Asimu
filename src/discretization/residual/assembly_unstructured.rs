@@ -1,5 +1,9 @@
 //! 非结构 3D 网格无粘残差装配（一阶面循环）。
 
+#[cfg(feature = "simd-fvm")]
+#[path = "assembly_unstructured_inviscid_simd.rs"]
+mod assembly_unstructured_inviscid_simd;
+
 use crate::boundary::{BoundaryKind, BoundarySet};
 use crate::core::{FaceId, Real};
 use crate::discretization::unstructured_face_cache::{
@@ -36,7 +40,7 @@ pub struct InviscidAssemblyUnstructuredParams<'a> {
 
 /// scatter 阶段所需的内面几何（与 `UnstructuredInteriorFace` 子集一致）。
 #[derive(Debug, Clone, Copy)]
-struct InteriorInviscidScatterGeom {
+pub(super) struct InteriorInviscidScatterGeom {
     owner: usize,
     neighbor: usize,
     area: Real,
@@ -62,7 +66,7 @@ pub fn assemble_inviscid_residual_unstructured(
     }
     residual.clear();
     if let Some(topology) = params.face_topology {
-        assemble_interior_faces_cached(residual, params, topology)?;
+        assemble_interior_faces_cached(residual, fields, params, topology)?;
     } else {
         assemble_interior_faces(mesh, residual, params)?;
     }
@@ -95,7 +99,7 @@ fn unstructured_limiter(
         .unwrap_or(UnstructuredGradientLimiter::BarthJespersen)
 }
 
-fn compute_interior_inviscid_face_contribution(
+pub(super) fn compute_interior_inviscid_face_contribution(
     face_idx: usize,
     params: &InviscidAssemblyUnstructuredParams<'_>,
     topology: &UnstructuredFaceTopology,
@@ -143,7 +147,7 @@ fn compute_interior_inviscid_face_contribution(
     Ok(Some((geom, flux)))
 }
 
-fn scatter_interior_inviscid_face(
+pub(super) fn scatter_interior_inviscid_face(
     residual: &mut ConservedResidual,
     geom: &InteriorInviscidScatterGeom,
     flux: &InviscidFlux,
@@ -160,7 +164,7 @@ fn scatter_interior_inviscid_face(
 }
 
 #[cfg(any(not(feature = "parallel-fvm"), test))]
-fn accumulate_one_interior_inviscid_face(
+pub(super) fn accumulate_one_interior_inviscid_face(
     face_idx: usize,
     residual: &mut ConservedResidual,
     params: &InviscidAssemblyUnstructuredParams<'_>,
@@ -176,9 +180,17 @@ fn accumulate_one_interior_inviscid_face(
 
 fn assemble_interior_faces_cached(
     residual: &mut ConservedResidual,
+    #[cfg_attr(not(feature = "simd-fvm"), allow(unused_variables))] fields: &ConservedFields,
     params: &InviscidAssemblyUnstructuredParams<'_>,
     topology: &UnstructuredFaceTopology,
 ) -> Result<()> {
+    #[cfg(feature = "simd-fvm")]
+    if assembly_unstructured_inviscid_simd::try_assemble_interior_faces_cached(
+        residual, fields, params, topology,
+    )? {
+        return Ok(());
+    }
+
     #[cfg(not(feature = "parallel-fvm"))]
     {
         for bucket in &topology.interior_coloring.buckets {
@@ -186,6 +198,7 @@ fn assemble_interior_faces_cached(
                 accumulate_one_interior_inviscid_face(face_idx, residual, params, topology)?;
             }
         }
+        return Ok(());
     }
 
     #[cfg(feature = "parallel-fvm")]
@@ -662,6 +675,11 @@ mod tests {
         let (mesh, boundary) = two_tet_mesh_and_boundary();
         let mesh_cache = UnstructuredSolverMeshCache::from_mesh(&mesh, &boundary).expect("cache");
         let eos = IdealGasEoS::AIR_STANDARD;
+        let fs = FreestreamParams {
+            mach: 0.3,
+            ..FreestreamParams::default()
+        };
+        let fields = ConservedFields::from_freestream(mesh.num_cells(), &eos, &fs).expect("fields");
         let primitives = perturbed_two_tet_primitives(&mesh);
         let config = InviscidFluxConfig::roe_first_order();
         let params = InviscidAssemblyUnstructuredParams {
@@ -678,7 +696,7 @@ mod tests {
         };
         let serial = inviscid_interior_only_residual(&params, false);
         let mut parallel = ConservedResidual::zeros(mesh.num_cells()).expect("rhs");
-        assemble_interior_faces_cached(&mut parallel, &params, &mesh_cache.face_topology)
+        assemble_interior_faces_cached(&mut parallel, &fields, &params, &mesh_cache.face_topology)
             .expect("par");
         assert_residuals_match(&serial, &parallel);
     }
