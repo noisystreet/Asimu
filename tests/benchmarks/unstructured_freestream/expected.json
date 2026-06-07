@@ -1,0 +1,14 @@
+{
+  "benchmark_id": "unstructured_freestream",
+  "asimu_min_version": "0.2.0",
+  "quantities": [
+    {
+      "name": "freestream_rhs_rms_rho",
+      "value": 0.0,
+      "tolerance_abs": 1.0e-9,
+      "source": "manufactured_uniform_field",
+      "note": "单四面体 + 远场 BC；一阶与 MUSCL(BJ/V) 均匀来流 RHS 应近零。见 assembly_unstructured 单测。"
+    }
+  ],
+  "profiles": []
+}

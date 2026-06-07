@@ -15,10 +15,12 @@ pub mod gradient_unstructured;
 pub mod hllc;
 pub mod inviscid;
 pub mod reconstruction;
+pub mod reconstruction_unstructured;
 pub mod residual;
 pub mod roe;
 pub mod slau2;
 pub mod unstructured_face_cache;
+pub mod unstructured_limiter;
 pub mod van_leer;
 pub mod viscous;
 pub mod viscous_assembly;
@@ -39,18 +41,25 @@ pub use bc_compressible::{
     inlet_ghost, outlet_ghost, symmetry_ghost, wall_ghost,
 };
 pub use diffusion_1d::assemble_diffusion_1d;
-pub use face_flux::{FaceFluxInput, face_inviscid_flux};
+pub use face_flux::{FaceFluxInput, face_inviscid_flux, face_inviscid_flux_from_interface};
 pub use flux_config::{FluxScheme, InviscidFluxConfig, ReconstructionKind, SlopeLimiter};
-pub use gradient::{GradientFields, VelocityGradient, compute_structured_gradients_3d};
+pub use gradient::{
+    GradientFields, InviscidPrimitiveGradients, VelocityGradient, compute_structured_gradients_3d,
+};
 pub use gradient_unstructured::{
     UnstructuredGradientLsqInput, UnstructuredGradientScratch,
     compute_unstructured_gradients_idw_lsq, compute_unstructured_gradients_idw_lsq_with_scratch,
+    compute_unstructured_inviscid_muscl_gradients_idw_lsq,
 };
 pub use hllc::hllc_flux;
 pub use inviscid::{InviscidFlux, physical_inviscid_flux};
 pub use reconstruction::{
     InterfacePrimitiveStates, PrimitiveMusclStencil1d, interface_conserved_pair,
     reconstruct_face_primitives, reconstruct_first_order,
+};
+pub use reconstruction_unstructured::{
+    UnstructuredMusclReconstructionCtx, reconstruct_unstructured_boundary_face,
+    reconstruct_unstructured_interior_face,
 };
 pub use residual::{
     BoundaryGhosts1d, BoundaryInviscidFluxInput, InviscidAssemblyUnstructuredParams,
@@ -69,6 +78,7 @@ pub use unstructured_face_cache::{
     InteriorFaceColoring, LsqPrecomputedCell, UnstructuredFaceTopology, UnstructuredInteriorFace,
     UnstructuredSolverMeshCache,
 };
+pub use unstructured_limiter::UnstructuredGradientLimiter;
 pub use van_leer::{hanel_van_leer_flux, van_leer_flux};
 pub use viscous::{ViscousFlux, face_transport_coefficients, viscous_face_flux};
 pub use wall_thermal::{wall_face_conduction, wall_ghost_temperature};

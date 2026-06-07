@@ -78,3 +78,30 @@ pub fn face_inviscid_flux(
         FluxScheme::Slau2 => slau2_flux(&left, &right, normal, eos),
     }
 }
+
+/// 由已重构界面原始变量直接计算数值通量（非结构二阶路径）。
+pub fn face_inviscid_flux_from_interface(
+    iface: super::reconstruction::InterfacePrimitiveStates,
+    normal: Vector3,
+    eos: &IdealGasEoS,
+    config: &InviscidFluxConfig,
+) -> Result<InviscidFlux> {
+    let (left, right) = interface_conserved_pair(eos, &iface)?;
+    match config.scheme {
+        FluxScheme::Roe(roe_cfg) => roe_flux_with_primitives(
+            &left,
+            &right,
+            &iface.left,
+            &iface.right,
+            normal,
+            eos,
+            &roe_cfg,
+        ),
+        FluxScheme::Hllc => {
+            hllc_flux_with_primitives(&left, &right, &iface.left, &iface.right, normal, eos)
+        }
+        FluxScheme::VanLeer => van_leer_flux(&left, &right, normal, eos),
+        FluxScheme::HanelVanLeer => hanel_van_leer_flux(&left, &right, normal, eos),
+        FluxScheme::Slau2 => slau2_flux(&left, &right, normal, eos),
+    }
+}

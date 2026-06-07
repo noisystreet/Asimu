@@ -128,7 +128,7 @@ let result = solver.run(&mesh)?;
 | `UnstructuredCell` | 单个非结构单元（`kind` + 全局节点索引） |
 | `UnstructuredMesh3d` | 混合单元非结构 3D 网格；构造期完成面拓扑（owner/neighbor）、体积与面度量 |
 
-**`UnstructuredMesh3d::new(name, points, cells)`**：节点顺序遵循 VTK；面合并按排序后的节点键（三角↔三角、四边↔四边）；非流形（≥3 单元共面）返回 `Mesh` 错误。Tier 1 读入：CGNS unstructured zone、VTU。非结构 case 首版支持单域一阶无粘 Euler 面循环、IDWLS 粘性梯度与 Navier-Stokes 粘性通量、含粘性抛物项的 local time step、显式 Euler/RK4、对角 LU-SGS 与按 CellId 拓扑邻接的 LU-SGS sweep；MUSCL、GMRES 与非结构 CGNS 流场写出暂未实现。规划见 [adr/0010-unstructured-mixed-mesh.md](adr/0010-unstructured-mixed-mesh.md)。
+**`UnstructuredMesh3d::new(name, points, cells)`**：节点顺序遵循 VTK；面合并按排序后的节点键（三角↔三角、四边↔四边）；非流形（≥3 单元共面）返回 `Mesh` 错误。Tier 1 读入：CGNS unstructured zone、VTU。非结构 case 支持单域无粘 Euler（一阶或 `reconstruction = muscl` + `unstructured_limiter = barth_jespersen | venkatakrishnan`）、IDWLS 粘性梯度与 Navier-Stokes 粘性通量、含粘性抛物项的 local time step、显式 Euler/RK4、对角 LU-SGS 与按 CellId 拓扑邻接的 LU-SGS sweep；GMRES 与非结构 CGNS 流场写出暂未实现。二阶路径见 [adr/0012-unstructured-gradient-limiters.md](adr/0012-unstructured-gradient-limiters.md)。
 
 | `write_vts(&StructuredMesh, &Path) -> Result<()>` | 写出 appended 二进制 VTS |
 
@@ -236,6 +236,10 @@ name=<mesh_name>;cells=<count>
 | `apply_dirichlet_face` / `apply_neumann` | 单面 BC |
 | `UnstructuredSolverMeshCache` / `from_mesh` | 非结构求解器网格缓存：面拓扑（`UnstructuredFaceTopology`）+ 内面着色（`InteriorFaceColoring`）+ 每单元 IDWLS 正规方程矩阵 \(A\) |
 | `UnstructuredGradientLsqInput` / `compute_unstructured_gradients_idw_lsq` | `UnstructuredMesh3d` 上的逆距离加权最小二乘梯度；**必须**提供 `mesh_cache`；内部面用相邻单元中心，边界面用 ghost 镜像样本 |
+| `compute_unstructured_inviscid_muscl_gradients_idw_lsq` | 无粘二阶重构用 IDWLS 梯度（\(\nabla\rho,\nabla u,\nabla p\) 等）；MUSCL 装配前由 `EvaluateRhsUnstructured` 调用 |
+| `UnstructuredGradientLimiter` | 非结构梯度限制器（`barth_jespersen` / `venkatakrishnan`）；与结构化 `SlopeLimiter` 独立 |
+| `UnstructuredMusclReconstructionCtx` / `reconstruct_unstructured_interior_face` | IDWLS 梯度外推 + 限制器面重构；下游接 `face_inviscid_flux_from_interface` |
+| `face_inviscid_flux_from_interface` | 由左右原始变量界面态计算无粘数值通量 |
 | `UnstructuredGradientScratch` | IDWLS 每步 RHS 缓冲（`bu`/`bv`/`bw`/`bt`）与温度 scratch；`compute_unstructured_gradients_idw_lsq_with_scratch` 复用 |
 | `ViscousAssemblyUnstructuredInput` / `compute_gradients_and_assemble_viscous_unstructured` | `UnstructuredMesh3d` 上计算 IDWLS 梯度并叠加 Newtonian/Fourier 粘性通量残差；面循环走 `mesh_cache.face_topology` |
 | `InteriorFaceColoring` | 非结构内面贪心着色桶；`for_each_face_index` 按桶遍历，`par_map_buckets`（feature `parallel-fvm`）桶内 rayon 并行 compute + 串行 scatter |

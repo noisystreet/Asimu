@@ -80,6 +80,81 @@ max_steps = 1
     assert!(metrics.residual_rms.is_finite());
 }
 
+#[test]
+fn runs_single_tet_unstructured_muscl_smoke_step() {
+    let mut case = parse_case_str(
+        r#"
+name = "unstructured_muscl_smoke"
+[mesh]
+kind = "structured_3d"
+nx = 1
+ny = 1
+nz = 1
+
+[physics]
+gamma = 1.4
+gas_constant = 287.0
+
+[freestream]
+mach = 0.3
+pressure = 101325.0
+temperature = 288.15
+
+[euler]
+flux = "hllc"
+reconstruction = "muscl"
+unstructured_limiter = "barth_jespersen"
+
+[time]
+scheme = "euler"
+local_time_step = true
+max_steps = 1
+"#,
+    )
+    .expect("parse");
+    attach_single_tet_farfield(&mut case);
+    let result = super::compressible_unstructured_3d::run(&case).expect("run");
+    let metrics = result.compressible_3d.expect("metrics");
+    assert_eq!(metrics.steps, 1);
+    assert_eq!(metrics.limiter, "barth_jespersen");
+    assert!(metrics.residual_rms.is_finite());
+}
+
+#[test]
+fn rejects_muscl_without_unstructured_limiter() {
+    let mut case = parse_case_str(
+        r#"
+name = "unstructured_muscl_bad"
+[mesh]
+kind = "structured_3d"
+nx = 1
+ny = 1
+nz = 1
+
+[physics]
+gamma = 1.4
+gas_constant = 287.0
+
+[freestream]
+mach = 0.3
+pressure = 101325.0
+temperature = 288.15
+
+[euler]
+flux = "hllc"
+reconstruction = "muscl"
+limiter = "van_albada"
+
+[time]
+max_steps = 1
+"#,
+    )
+    .expect("parse");
+    attach_single_tet_farfield(&mut case);
+    let err = super::compressible_unstructured_3d::run(&case).expect_err("config");
+    assert!(err.to_string().contains("unstructured_limiter"));
+}
+
 fn attach_single_tet_farfield(case: &mut crate::io::CaseSpec) {
     let mesh = UnstructuredMesh3d::new(
         "tet",

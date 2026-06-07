@@ -2,10 +2,14 @@
 
 use crate::boundary::{BoundaryKind, BoundarySet};
 use crate::core::{FaceId, Real};
-use crate::discretization::unstructured_face_cache::UnstructuredFaceTopology;
+use crate::discretization::unstructured_face_cache::{
+    UnstructuredFaceTopology, UnstructuredSolverMeshCache,
+};
 use crate::discretization::{
-    BoundaryGhostBuffer, FaceFluxInput, InviscidFlux, InviscidFluxConfig, ReconstructionKind,
-    face_inviscid_flux,
+    BoundaryGhostBuffer, FaceFluxInput, GradientFields, InviscidFlux, InviscidFluxConfig,
+    ReconstructionKind, UnstructuredGradientLimiter, UnstructuredMusclReconstructionCtx,
+    face_inviscid_flux, face_inviscid_flux_from_interface, reconstruct_unstructured_boundary_face,
+    reconstruct_unstructured_interior_face,
 };
 use crate::error::{AsimuError, Result};
 use crate::field::{ConservedFields, ConservedResidual, PrimitiveFields};
@@ -23,6 +27,11 @@ pub struct InviscidAssemblyUnstructuredParams<'a> {
     pub primitives: &'a PrimitiveFields,
     /// 若提供，内面走缓存拓扑 + 着色桶顺序（与粘性共用 `InteriorFaceColoring`）。
     pub face_topology: Option<&'a UnstructuredFaceTopology>,
+    /// 二阶重构：完整 mesh cache（含限制器样本与面心偏移）。
+    pub mesh_cache: Option<&'a UnstructuredSolverMeshCache>,
+    /// 二阶重构：IDWLS 原始变量梯度。
+    pub gradients: Option<&'a GradientFields>,
+    pub min_pressure: Real,
 }
 
 /// scatter 阶段所需的内面几何（与 `UnstructuredInteriorFace` 子集一致）。
@@ -48,10 +57,8 @@ pub fn assemble_inviscid_residual_unstructured(
             "非结构场/残差/primitive 长度须等于网格单元数 {n}"
         )));
     }
-    if params.config.reconstruction != ReconstructionKind::FirstOrder {
-        return Err(AsimuError::Config(
-            "非结构网格当前仅支持 reconstruction = \"first_order\"".to_string(),
-        ));
+    if params.config.reconstruction == ReconstructionKind::Muscl {
+        validate_unstructured_muscl_params(params)?;
     }
     residual.clear();
     if let Some(topology) = params.face_topology {
@@ -59,7 +66,33 @@ pub fn assemble_inviscid_residual_unstructured(
     } else {
         assemble_interior_faces(mesh, residual, params)?;
     }
-    assemble_boundary_faces(mesh, residual, params)
+    assemble_boundary_faces(residual, params)
+}
+
+fn validate_unstructured_muscl_params(
+    params: &InviscidAssemblyUnstructuredParams<'_>,
+) -> Result<()> {
+    if params.mesh_cache.is_none() || params.face_topology.is_none() || params.gradients.is_none() {
+        return Err(AsimuError::Config(
+            "非结构 MUSCL 须同时提供 mesh_cache、face_topology 与 gradients".to_string(),
+        ));
+    }
+    if params.config.unstructured_gradient_limiter.is_none() {
+        return Err(AsimuError::Config(
+            "非结构 MUSCL 须设置 unstructured_limiter（barth_jespersen 或 venkatakrishnan）"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn unstructured_limiter(
+    params: &InviscidAssemblyUnstructuredParams<'_>,
+) -> UnstructuredGradientLimiter {
+    params
+        .config
+        .unstructured_gradient_limiter
+        .unwrap_or(UnstructuredGradientLimiter::BarthJespersen)
 }
 
 fn compute_interior_inviscid_face_contribution(
@@ -71,14 +104,35 @@ fn compute_interior_inviscid_face_contribution(
     if is_degenerate_volume(face.owner_volume) || is_degenerate_volume(face.neighbor_volume) {
         return Ok(None);
     }
-    let owner_prim = params.primitives.cell_primitive(face.owner);
-    let neighbor_prim = params.primitives.cell_primitive(face.neighbor);
-    let flux = face_inviscid_flux(
-        FaceFluxInput::first_order(&owner_prim, &neighbor_prim),
-        face.normal,
-        params.eos,
-        params.config,
-    )?;
+    let flux = if params.config.reconstruction == ReconstructionKind::Muscl {
+        let mesh_cache = params.mesh_cache.expect("muscl cache");
+        let gradients = params.gradients.expect("muscl gradients");
+        let limiter = unstructured_limiter(params);
+        let ctx = UnstructuredMusclReconstructionCtx {
+            mesh_cache,
+            primitives: params.primitives,
+            ghosts: params.ghosts,
+            eos: params.eos,
+            min_pressure: params.min_pressure,
+            limiter,
+        };
+        let iface = reconstruct_unstructured_interior_face(
+            face,
+            ctx,
+            gradients.inviscid_primitive_grad_at(face.owner),
+            gradients.inviscid_primitive_grad_at(face.neighbor),
+        )?;
+        face_inviscid_flux_from_interface(iface, face.normal, params.eos, params.config)?
+    } else {
+        let owner_prim = params.primitives.cell_primitive(face.owner);
+        let neighbor_prim = params.primitives.cell_primitive(face.neighbor);
+        face_inviscid_flux(
+            FaceFluxInput::first_order(&owner_prim, &neighbor_prim),
+            face.normal,
+            params.eos,
+            params.config,
+        )?
+    };
     let geom = InteriorInviscidScatterGeom {
         owner: face.owner,
         neighbor: face.neighbor,
@@ -191,10 +245,51 @@ fn assemble_interior_faces(
 }
 
 fn assemble_boundary_faces(
-    mesh: &UnstructuredMesh3d,
     residual: &mut ConservedResidual,
     params: &InviscidAssemblyUnstructuredParams<'_>,
 ) -> Result<()> {
+    if params.config.reconstruction == ReconstructionKind::Muscl {
+        assemble_boundary_faces_muscl(residual, params)
+    } else {
+        assemble_boundary_faces_first_order(residual, params)
+    }
+}
+
+fn assemble_boundary_faces_muscl(
+    residual: &mut ConservedResidual,
+    params: &InviscidAssemblyUnstructuredParams<'_>,
+) -> Result<()> {
+    let mesh_cache = params.mesh_cache.expect("muscl cache");
+    let gradients = params.gradients.expect("muscl gradients");
+    let ctx = UnstructuredMusclReconstructionCtx {
+        mesh_cache,
+        primitives: params.primitives,
+        ghosts: params.ghosts,
+        eos: params.eos,
+        min_pressure: params.min_pressure,
+        limiter: unstructured_limiter(params),
+    };
+    for bface in &mesh_cache.face_topology.boundary {
+        if is_degenerate_volume(bface.owner_volume) {
+            continue;
+        }
+        let iface = reconstruct_unstructured_boundary_face(
+            bface,
+            ctx,
+            gradients.inviscid_primitive_grad_at(bface.owner),
+        )?;
+        let flux =
+            face_inviscid_flux_from_interface(iface, bface.normal, params.eos, params.config)?;
+        accumulate_boundary_face(residual, bface.owner, &flux, bface.area, bface.owner_volume)?;
+    }
+    Ok(())
+}
+
+fn assemble_boundary_faces_first_order(
+    residual: &mut ConservedResidual,
+    params: &InviscidAssemblyUnstructuredParams<'_>,
+) -> Result<()> {
+    let mesh = params.mesh;
     for patch in params.boundaries.patches() {
         if matches!(patch.kind, BoundaryKind::Periodic { .. }) {
             continue;
@@ -214,7 +309,7 @@ fn assemble_boundary_faces(
             let ghost_prim = crate::field::primitive_from_conserved_relaxed(
                 params.eos,
                 &ghost.conserved,
-                1.0e-12,
+                params.min_pressure,
             )?;
             let flux = face_inviscid_flux(
                 FaceFluxInput::first_order(&owner_prim, &ghost_prim),
@@ -233,7 +328,11 @@ mod tests {
     use super::*;
     use crate::boundary::{BoundaryKind, BoundaryPatch, BoundarySet};
     use crate::core::approx_eq;
-    use crate::discretization::{InviscidFluxConfig, UnstructuredSolverMeshCache};
+    use crate::discretization::{
+        GradientFields, InviscidFluxConfig, UnstructuredGradientLimiter,
+        UnstructuredGradientLsqInput, UnstructuredGradientScratch, UnstructuredSolverMeshCache,
+        compute_unstructured_inviscid_muscl_gradients_idw_lsq,
+    };
     use crate::field::ConservedFields;
     use crate::mesh::{CellKind, UnstructuredCell};
     use crate::physics::{FreestreamParams, IdealGasEoS};
@@ -379,9 +478,105 @@ mod tests {
             ghosts: &ghosts,
             primitives: &primitives,
             face_topology: None,
+            mesh_cache: None,
+            gradients: None,
+            min_pressure: 1.0e-8,
         };
         assemble_inviscid_residual_unstructured(&fields, &mut residual, &params).expect("rhs");
         assert!(residual.density_rms_norm() < 1.0e-10);
+    }
+
+    fn closed_tet_freestream_muscl_rhs(limiter: UnstructuredGradientLimiter) -> Real {
+        let mesh = UnstructuredMesh3d::new(
+            "tet",
+            vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            vec![UnstructuredCell::new(CellKind::Tet, vec![0, 1, 2, 3]).expect("cell")],
+        )
+        .expect("mesh");
+        let eos = IdealGasEoS::AIR_STANDARD;
+        let fs = FreestreamParams {
+            mach: 0.3,
+            ..FreestreamParams::default()
+        };
+        let fields = ConservedFields::from_freestream(mesh.num_cells(), &eos, &fs).expect("fields");
+        let mut primitives = PrimitiveFields::zeros(mesh.num_cells()).expect("primitive");
+        primitives
+            .fill_from_conserved(&fields, &eos, 1.0e-8)
+            .expect("fill");
+        let mut ghosts = BoundaryGhostBuffer::new();
+        let state = fields.cell_state(0).expect("state");
+        let faces = (0..mesh.num_faces())
+            .map(|face| FaceId(face as u32))
+            .collect::<Vec<_>>();
+        for &face in &faces {
+            ghosts.insert_face(
+                face,
+                crate::discretization::GhostCellState { conserved: state },
+            );
+        }
+        let boundary = BoundarySet::new(vec![BoundaryPatch::new(
+            "farfield",
+            faces,
+            BoundaryKind::Farfield {
+                mach: fs.mach,
+                pressure: fs.pressure,
+                temperature: fs.temperature,
+                alpha: fs.alpha,
+                beta: fs.beta,
+            },
+        )]);
+        let mesh_cache = UnstructuredSolverMeshCache::from_mesh(&mesh, &boundary).expect("cache");
+        let mut gradients = GradientFields::zeros(mesh.num_cells()).expect("grad");
+        let mut scratch = UnstructuredGradientScratch::new(mesh.num_cells());
+        compute_unstructured_inviscid_muscl_gradients_idw_lsq(
+            UnstructuredGradientLsqInput {
+                mesh: &mesh,
+                mesh_cache: &mesh_cache,
+                primitives: &primitives,
+                eos: &eos,
+                ghosts: &ghosts,
+                min_pressure: 1.0e-8,
+                viscous: None,
+            },
+            &mut gradients,
+            &mut scratch,
+        )
+        .expect("grad");
+        let config = InviscidFluxConfig::muscl_roe().with_unstructured_gradient_limiter(limiter);
+        let mut residual = ConservedResidual::zeros(mesh.num_cells()).expect("residual");
+        let params = InviscidAssemblyUnstructuredParams {
+            mesh: &mesh,
+            eos: &eos,
+            config: &config,
+            boundaries: &boundary,
+            ghosts: &ghosts,
+            primitives: &primitives,
+            face_topology: Some(&mesh_cache.face_topology),
+            mesh_cache: Some(&mesh_cache),
+            gradients: Some(&gradients),
+            min_pressure: 1.0e-8,
+        };
+        assemble_inviscid_residual_unstructured(&fields, &mut residual, &params).expect("rhs");
+        residual.density_rms_norm()
+    }
+
+    #[test]
+    fn uniform_freestream_muscl_bj_rhs_near_zero() {
+        assert!(
+            closed_tet_freestream_muscl_rhs(UnstructuredGradientLimiter::BarthJespersen) < 1.0e-9
+        );
+    }
+
+    #[test]
+    fn uniform_freestream_muscl_venk_rhs_near_zero() {
+        assert!(
+            closed_tet_freestream_muscl_rhs(UnstructuredGradientLimiter::Venkatakrishnan) < 1.0e-9
+        );
     }
 
     #[test]
@@ -415,9 +610,13 @@ mod tests {
             ghosts: &ghosts,
             primitives: &primitives,
             face_topology: None,
+            mesh_cache: None,
+            gradients: None,
+            min_pressure: 1.0e-8,
         };
         let params_cached = InviscidAssemblyUnstructuredParams {
             face_topology: Some(&mesh_cache.face_topology),
+            mesh_cache: Some(&mesh_cache),
             ..params_mesh
         };
         let mut mesh_loop = ConservedResidual::zeros(mesh.num_cells()).expect("rhs");
@@ -442,6 +641,9 @@ mod tests {
             ghosts: &BoundaryGhostBuffer::new(),
             primitives: &primitives,
             face_topology: Some(&mesh_cache.face_topology),
+            mesh_cache: Some(&mesh_cache),
+            gradients: None,
+            min_pressure: 1.0e-8,
         };
         let linear = inviscid_interior_only_residual(&params, true);
         let colored = inviscid_interior_only_residual(&params, false);
@@ -464,6 +666,9 @@ mod tests {
             ghosts: &BoundaryGhostBuffer::new(),
             primitives: &primitives,
             face_topology: Some(&mesh_cache.face_topology),
+            mesh_cache: Some(&mesh_cache),
+            gradients: None,
+            min_pressure: 1.0e-8,
         };
         let serial = inviscid_interior_only_residual(&params, false);
         let mut parallel = ConservedResidual::zeros(mesh.num_cells()).expect("rhs");

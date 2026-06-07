@@ -27,23 +27,48 @@ pub struct GradientFields {
     pub dt_dx: ScalarField,
     pub dt_dy: ScalarField,
     pub dt_dz: ScalarField,
+    /// \(\rho\) 梯度（非结构二阶无粘重构）。
+    pub drho_dx: ScalarField,
+    pub drho_dy: ScalarField,
+    pub drho_dz: ScalarField,
+    /// \(p\) 梯度（非结构二阶无粘重构）。
+    pub dp_dx: ScalarField,
+    pub dp_dy: ScalarField,
+    pub dp_dz: ScalarField,
+}
+
+/// 非结构无粘重构用原始变量梯度分量。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct InviscidPrimitiveGradients {
+    pub drho: [Real; 3],
+    pub du: [Real; 3],
+    pub dv: [Real; 3],
+    pub dw: [Real; 3],
+    pub dp: [Real; 3],
 }
 
 impl GradientFields {
     pub fn zeros(num_cells: usize) -> Result<Self> {
+        let zero = ScalarField::uniform(num_cells, 0.0)?;
         Ok(Self {
-            du_dx: ScalarField::uniform(num_cells, 0.0)?,
-            du_dy: ScalarField::uniform(num_cells, 0.0)?,
-            du_dz: ScalarField::uniform(num_cells, 0.0)?,
-            dv_dx: ScalarField::uniform(num_cells, 0.0)?,
-            dv_dy: ScalarField::uniform(num_cells, 0.0)?,
-            dv_dz: ScalarField::uniform(num_cells, 0.0)?,
-            dw_dx: ScalarField::uniform(num_cells, 0.0)?,
-            dw_dy: ScalarField::uniform(num_cells, 0.0)?,
-            dw_dz: ScalarField::uniform(num_cells, 0.0)?,
-            dt_dx: ScalarField::uniform(num_cells, 0.0)?,
-            dt_dy: ScalarField::uniform(num_cells, 0.0)?,
-            dt_dz: ScalarField::uniform(num_cells, 0.0)?,
+            du_dx: zero.clone(),
+            du_dy: zero.clone(),
+            du_dz: zero.clone(),
+            dv_dx: zero.clone(),
+            dv_dy: zero.clone(),
+            dv_dz: zero.clone(),
+            dw_dx: zero.clone(),
+            dw_dy: zero.clone(),
+            dw_dz: zero.clone(),
+            dt_dx: zero.clone(),
+            dt_dy: zero.clone(),
+            dt_dz: zero.clone(),
+            drho_dx: zero.clone(),
+            drho_dy: zero.clone(),
+            drho_dz: zero.clone(),
+            dp_dx: zero.clone(),
+            dp_dy: zero.clone(),
+            dp_dz: zero,
         })
     }
 
@@ -78,7 +103,37 @@ impl GradientFields {
         }
     }
 
-    /// 速度/温度梯度 SoA 切片（粘性通量热路径用）。
+    /// \((u,v,w,T)\) 与 \((\rho,p)\) 梯度（非结构二阶无粘）。
+    #[must_use]
+    pub fn inviscid_primitive_grad_at(&self, cell: usize) -> InviscidPrimitiveGradients {
+        InviscidPrimitiveGradients {
+            drho: [
+                self.drho_dx.values()[cell],
+                self.drho_dy.values()[cell],
+                self.drho_dz.values()[cell],
+            ],
+            du: [
+                self.du_dx.values()[cell],
+                self.du_dy.values()[cell],
+                self.du_dz.values()[cell],
+            ],
+            dv: [
+                self.dv_dx.values()[cell],
+                self.dv_dy.values()[cell],
+                self.dv_dz.values()[cell],
+            ],
+            dw: [
+                self.dw_dx.values()[cell],
+                self.dw_dy.values()[cell],
+                self.dw_dz.values()[cell],
+            ],
+            dp: [
+                self.dp_dx.values()[cell],
+                self.dp_dy.values()[cell],
+                self.dp_dz.values()[cell],
+            ],
+        }
+    }
     #[must_use]
     pub fn velocity_gradient_slices(&self) -> VelocityGradientSlices<'_> {
         VelocityGradientSlices {
@@ -458,6 +513,12 @@ impl GradientFields {
             &mut self.dt_dx,
             &mut self.dt_dy,
             &mut self.dt_dz,
+            &mut self.drho_dx,
+            &mut self.drho_dy,
+            &mut self.drho_dz,
+            &mut self.dp_dx,
+            &mut self.dp_dy,
+            &mut self.dp_dz,
         ] {
             for v in f.values_mut() {
                 *v = 0.0;

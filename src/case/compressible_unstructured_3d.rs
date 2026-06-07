@@ -565,10 +565,38 @@ fn validate_unstructured_config(
     case: &CaseSpec,
     inviscid: &crate::discretization::InviscidFluxConfig,
 ) -> Result<()> {
-    if inviscid.reconstruction != ReconstructionKind::FirstOrder {
-        return Err(AsimuError::Config(
-            "非结构网格当前仅支持 reconstruction = \"first_order\"".to_string(),
-        ));
+    let disc = case.compressible_discretization()?;
+    match inviscid.reconstruction {
+        ReconstructionKind::FirstOrder => {}
+        ReconstructionKind::Muscl => {
+            if inviscid.unstructured_gradient_limiter.is_none() {
+                if disc.limiter.is_some() {
+                    return Err(AsimuError::Config(
+                        "非结构 MUSCL 须设置 unstructured_limiter = barth_jespersen | venkatakrishnan；\
+                         结构化 limiter（minmod/van_leer/van_albada）不可在非结构 case 中复用（见 ADR 0012）"
+                            .to_string(),
+                    ));
+                }
+                return Err(AsimuError::Config(
+                    "非结构 MUSCL 须设置 unstructured_limiter = barth_jespersen | venkatakrishnan"
+                        .to_string(),
+                ));
+            }
+            if disc.limiter.is_some() {
+                warn!(
+                    limiter = ?disc.limiter,
+                    unstructured_limiter = ?disc.unstructured_limiter,
+                    "非结构 MUSCL 忽略 [euler].limiter，使用 unstructured_limiter"
+                );
+            }
+            if let Some(name) = disc.unstructured_limiter.as_deref() {
+                if crate::discretization::UnstructuredGradientLimiter::parse(name).is_none() {
+                    return Err(AsimuError::Config(format!(
+                        "未知 unstructured_limiter \"{name}\"；可选 barth_jespersen | venkatakrishnan"
+                    )));
+                }
+            }
+        }
     }
     if case.time.residual_smoothing_config().enabled {
         warn!("非结构网格暂不支持结构化方向分裂残差光顺；本次忽略 residual_smoothing");

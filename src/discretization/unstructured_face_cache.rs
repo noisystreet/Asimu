@@ -25,6 +25,10 @@ pub struct UnstructuredInteriorFace {
     pub neighbor_rhs_scale: Real,
     pub lsq_dr: Vector3,
     pub lsq_w: Real,
+    /// 单元中心 → 面心（owner 侧外推用）。
+    pub dr_owner_to_face: Vector3,
+    /// 单元中心 → 面心（neighbor 侧外推用）。
+    pub dr_neighbor_to_face: Vector3,
 }
 
 /// 非结构边界面拓扑。
@@ -39,6 +43,8 @@ pub struct UnstructuredBoundaryFace {
     pub viscous: UnstructuredBoundaryViscousKind,
     pub lsq_dr: Vector3,
     pub lsq_w: Real,
+    /// 单元中心 → 面心（边界面 owner 外推用）。
+    pub dr_owner_to_face: Vector3,
 }
 
 /// 边界面粘性类别（与粘性装配语义一致）。
@@ -47,6 +53,20 @@ pub struct UnstructuredBoundaryViscousKind {
     pub wall_heat: Option<WallHeat>,
     pub no_slip: bool,
     pub is_wall: bool,
+}
+
+/// LSQ / 梯度限制器邻接样本。
+#[derive(Debug, Clone, Copy)]
+pub enum GradientLimiterSampleKind {
+    NeighborCell(usize),
+    /// `UnstructuredFaceTopology::boundary` 中的索引。
+    Boundary(usize),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct GradientLimiterSample {
+    pub dr: Vector3,
+    pub kind: GradientLimiterSampleKind,
 }
 
 /// 非结构面拓扑缓存。
@@ -135,6 +155,8 @@ impl LsqPrecomputedCell {
 pub struct UnstructuredSolverMeshCache {
     pub face_topology: UnstructuredFaceTopology,
     pub lsq_geometry: Vec<LsqPrecomputedCell>,
+    /// 每单元 IDWLS / 限制器样本（内部邻单元 + 边界 ghost 镜像点）。
+    pub cell_gradient_samples: Vec<Vec<GradientLimiterSample>>,
 }
 
 impl UnstructuredSolverMeshCache {
@@ -142,9 +164,11 @@ impl UnstructuredSolverMeshCache {
     pub fn from_mesh(mesh: &UnstructuredMesh3d, boundaries: &BoundarySet) -> Result<Self> {
         let face_topology = build_face_topology(mesh, boundaries)?;
         let lsq_geometry = precompute_lsq_geometry(mesh.num_cells(), &face_topology);
+        let cell_gradient_samples = build_cell_gradient_samples(mesh.num_cells(), &face_topology);
         Ok(Self {
             face_topology,
             lsq_geometry,
+            cell_gradient_samples,
         })
     }
 }
@@ -166,6 +190,9 @@ fn build_face_topology(
         let owner_volume = mesh.cell_metric(owner_id).volume;
         let neighbor_volume = mesh.cell_metric(neighbor_id).volume;
         let (lsq_dr, lsq_w) = interior_lsq_weight(mesh, owner_id, neighbor_id);
+        let owner_center = mesh.cell_metric(owner_id).center;
+        let neighbor_center = mesh.cell_metric(neighbor_id).center;
+        let face_center = metric.center;
         interior.push(UnstructuredInteriorFace {
             owner,
             neighbor,
@@ -179,6 +206,8 @@ fn build_face_topology(
             neighbor_rhs_scale: metric.area * inv_volume(neighbor_volume),
             lsq_dr,
             lsq_w,
+            dr_owner_to_face: vec_sub(face_center, owner_center),
+            dr_neighbor_to_face: vec_sub(face_center, neighbor_center),
         });
     }
 
@@ -194,6 +223,7 @@ fn build_face_topology(
             let metric = mesh.face_metric(face);
             let owner_volume = mesh.cell_metric(owner_id).volume;
             let (lsq_dr, lsq_w) = boundary_lsq_weight(mesh, owner_id, face);
+            let owner_center = mesh.cell_metric(owner_id).center;
             boundary.push(UnstructuredBoundaryFace {
                 face,
                 owner,
@@ -204,6 +234,7 @@ fn build_face_topology(
                 viscous,
                 lsq_dr,
                 lsq_w,
+                dr_owner_to_face: vec_sub(metric.center, owner_center),
             });
         }
     }
@@ -259,6 +290,30 @@ fn color_interior_faces(
         buckets,
         num_colors,
     }
+}
+
+fn build_cell_gradient_samples(
+    num_cells: usize,
+    topology: &UnstructuredFaceTopology,
+) -> Vec<Vec<GradientLimiterSample>> {
+    let mut samples = vec![Vec::new(); num_cells];
+    for face in &topology.interior {
+        samples[face.owner].push(GradientLimiterSample {
+            dr: face.lsq_dr,
+            kind: GradientLimiterSampleKind::NeighborCell(face.neighbor),
+        });
+        samples[face.neighbor].push(GradientLimiterSample {
+            dr: neg_vector(face.lsq_dr),
+            kind: GradientLimiterSampleKind::NeighborCell(face.owner),
+        });
+    }
+    for (idx, face) in topology.boundary.iter().enumerate() {
+        samples[face.owner].push(GradientLimiterSample {
+            dr: face.lsq_dr,
+            kind: GradientLimiterSampleKind::Boundary(idx),
+        });
+    }
+    samples
 }
 
 fn push_unique(values: &mut Vec<u8>, value: u8) {

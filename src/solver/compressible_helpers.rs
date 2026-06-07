@@ -5,11 +5,12 @@ use tracing::info_span;
 use crate::boundary::BoundarySet;
 use crate::core::Real;
 use crate::discretization::{
-    BoundaryGhostBuffer, GradientFields, InviscidAssemblyUnstructuredParams,
-    UnstructuredSolverMeshCache, ViscousAssemblyUnstructuredInput,
+    BoundaryGhostBuffer, GradientFields, InviscidAssemblyUnstructuredParams, ReconstructionKind,
+    UnstructuredGradientLsqInput, UnstructuredSolverMeshCache, ViscousAssemblyUnstructuredInput,
     ViscousAssemblyUnstructuredScratch, apply_compressible_boundary_conditions,
     assemble_inviscid_residual_unstructured,
     compute_gradients_and_assemble_viscous_unstructured_with_scratch,
+    compute_unstructured_inviscid_muscl_gradients_idw_lsq,
 };
 use crate::error::Result;
 use crate::field::{ConservedFields, ConservedResidual, PrimitiveFields};
@@ -107,15 +108,23 @@ impl EvaluateRhsUnstructured<'_> {
             min_pressure: self.min_pressure,
             primitives: self.primitives,
         })?;
-        let params = InviscidAssemblyUnstructuredParams {
-            mesh: self.mesh,
-            eos: self.eos,
-            config: self.inviscid,
-            boundaries: self.patches,
-            ghosts: self.ghosts,
-            primitives: self.primitives,
-            face_topology: Some(&self.mesh_cache.face_topology),
-        };
+        if self.inviscid.reconstruction == ReconstructionKind::Muscl {
+            let grad_input = UnstructuredGradientLsqInput {
+                mesh: self.mesh,
+                mesh_cache: self.mesh_cache,
+                primitives: self.primitives,
+                eos: self.eos,
+                ghosts: self.ghosts,
+                min_pressure: self.min_pressure,
+                viscous: self.viscous,
+            };
+            compute_unstructured_inviscid_muscl_gradients_idw_lsq(
+                grad_input,
+                self.gradients,
+                &mut self.viscous_scratch.gradient,
+            )?;
+        }
+        let params = inviscid_assembly_params(self);
         assemble_inviscid_residual_unstructured(fields, residual, &params)?;
         if let Some(viscous) = self.viscous {
             let mut input = ViscousAssemblyUnstructuredInput {
@@ -144,15 +153,7 @@ impl EvaluateRhsUnstructured<'_> {
         fields: &ConservedFields,
         residual: &mut ConservedResidual,
     ) -> Result<()> {
-        let params = InviscidAssemblyUnstructuredParams {
-            mesh: self.mesh,
-            eos: self.eos,
-            config: self.inviscid,
-            boundaries: self.patches,
-            ghosts: self.ghosts,
-            primitives: self.primitives,
-            face_topology: Some(&self.mesh_cache.face_topology),
-        };
+        let params = inviscid_assembly_params(self);
         {
             let _span = info_span!("assemble_unstructured_inviscid_residual").entered();
             assemble_inviscid_residual_unstructured(fields, residual, &params)?;
@@ -177,5 +178,22 @@ impl EvaluateRhsUnstructured<'_> {
             )?;
         }
         Ok(())
+    }
+}
+
+fn inviscid_assembly_params<'a>(
+    ctx: &'a EvaluateRhsUnstructured<'a>,
+) -> InviscidAssemblyUnstructuredParams<'a> {
+    InviscidAssemblyUnstructuredParams {
+        mesh: ctx.mesh,
+        eos: ctx.eos,
+        config: ctx.inviscid,
+        boundaries: ctx.patches,
+        ghosts: ctx.ghosts,
+        primitives: ctx.primitives,
+        face_topology: Some(&ctx.mesh_cache.face_topology),
+        mesh_cache: Some(ctx.mesh_cache),
+        gradients: Some(ctx.gradients),
+        min_pressure: ctx.min_pressure,
     }
 }

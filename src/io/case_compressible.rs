@@ -54,6 +54,8 @@ pub struct EulerCaseConfig {
     pub reconstruction: Option<String>,
     pub flux: Option<String>,
     pub limiter: Option<String>,
+    /// 非结构二阶专用（Barth–Jespersen / Venkatakrishnan）。
+    pub unstructured_limiter: Option<String>,
 }
 
 impl EulerCaseConfig {
@@ -62,6 +64,7 @@ impl EulerCaseConfig {
             self.reconstruction.as_deref(),
             self.flux.as_deref(),
             self.limiter.as_deref(),
+            self.unstructured_limiter.as_deref(),
         )
     }
 }
@@ -70,9 +73,11 @@ pub(super) fn inviscid_from_toml(
     reconstruction: Option<&str>,
     flux: Option<&str>,
     limiter: Option<&str>,
+    unstructured_limiter: Option<&str>,
 ) -> crate::discretization::InviscidFluxConfig {
     use crate::discretization::{
         FluxScheme, InviscidFluxConfig, ReconstructionKind, RoeFluxConfig, SlopeLimiter,
+        UnstructuredGradientLimiter,
     };
     let mut config = InviscidFluxConfig::default();
     if let Some(name) = reconstruction {
@@ -90,6 +95,11 @@ pub(super) fn inviscid_from_toml(
                 "van_albada" | "vanalbada" | "van-albada" => SlopeLimiter::VanAlbada,
                 _ => SlopeLimiter::Minmod,
             };
+        }
+    }
+    if let Some(name) = unstructured_limiter {
+        if let Some(parsed) = UnstructuredGradientLimiter::parse(name) {
+            config.unstructured_gradient_limiter = Some(parsed);
         }
     }
     if let Some(name) = flux {
@@ -210,6 +220,7 @@ pub(super) struct EulerToml {
     reconstruction: Option<String>,
     flux: Option<String>,
     limiter: Option<String>,
+    unstructured_limiter: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -239,6 +250,7 @@ pub(super) fn parse_euler_config(raw: &EulerToml) -> Result<EulerCaseConfig> {
         reconstruction: raw.reconstruction.clone(),
         flux: raw.flux.clone(),
         limiter: raw.limiter.clone(),
+        unstructured_limiter: raw.unstructured_limiter.clone(),
     })
 }
 
@@ -317,7 +329,7 @@ mod tests {
 
     #[test]
     fn first_order_ignores_limiter_from_toml() {
-        let cfg = inviscid_from_toml(Some("first_order"), Some("hllc"), Some("van_albada"));
+        let cfg = inviscid_from_toml(Some("first_order"), Some("hllc"), Some("van_albada"), None);
         assert!(!cfg.uses_limiter());
         assert_eq!(cfg.limiter_label(), "none");
         assert_eq!(cfg.short_label(), "first_order_hllc");
@@ -325,9 +337,20 @@ mod tests {
 
     #[test]
     fn muscl_applies_limiter_from_toml() {
-        let cfg = inviscid_from_toml(Some("muscl"), Some("hllc"), Some("van_albada"));
+        let cfg = inviscid_from_toml(Some("muscl"), Some("hllc"), Some("van_albada"), None);
         assert!(cfg.uses_limiter());
         assert_eq!(cfg.limiter_label(), "van_albada");
+    }
+
+    #[test]
+    fn muscl_applies_unstructured_limiter_from_toml() {
+        use crate::discretization::UnstructuredGradientLimiter;
+        let cfg = inviscid_from_toml(Some("muscl"), Some("roe"), None, Some("venkatakrishnan"));
+        assert_eq!(
+            cfg.unstructured_gradient_limiter,
+            Some(UnstructuredGradientLimiter::Venkatakrishnan)
+        );
+        assert_eq!(cfg.limiter_label(), "venkatakrishnan");
     }
 
     #[test]

@@ -1,6 +1,7 @@
 //! 无粘通量与界面重构配置。
 
 use super::roe::RoeFluxConfig;
+use super::unstructured_limiter::UnstructuredGradientLimiter;
 
 /// 界面重构格式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -41,6 +42,8 @@ pub struct InviscidFluxConfig {
     pub reconstruction: ReconstructionKind,
     pub limiter: SlopeLimiter,
     pub scheme: FluxScheme,
+    /// 非结构二阶路径专用；结构化 MUSCL 忽略。
+    pub unstructured_gradient_limiter: Option<UnstructuredGradientLimiter>,
 }
 
 impl InviscidFluxConfig {
@@ -53,6 +56,7 @@ impl InviscidFluxConfig {
                 entropy_fix: true,
                 entropy_delta: None,
             }),
+            unstructured_gradient_limiter: None,
         }
     }
 
@@ -65,6 +69,7 @@ impl InviscidFluxConfig {
                 entropy_fix: true,
                 entropy_delta: None,
             }),
+            unstructured_gradient_limiter: None,
         }
     }
 
@@ -74,6 +79,7 @@ impl InviscidFluxConfig {
             reconstruction: ReconstructionKind::Muscl,
             limiter: SlopeLimiter::Minmod,
             scheme: FluxScheme::Hllc,
+            unstructured_gradient_limiter: None,
         }
     }
 
@@ -83,6 +89,7 @@ impl InviscidFluxConfig {
             reconstruction: ReconstructionKind::FirstOrder,
             limiter: SlopeLimiter::Minmod,
             scheme: FluxScheme::VanLeer,
+            unstructured_gradient_limiter: None,
         }
     }
 
@@ -91,6 +98,7 @@ impl InviscidFluxConfig {
             reconstruction: ReconstructionKind::FirstOrder,
             limiter: SlopeLimiter::Minmod,
             scheme: FluxScheme::HanelVanLeer,
+            unstructured_gradient_limiter: None,
         }
     }
 
@@ -100,6 +108,7 @@ impl InviscidFluxConfig {
             reconstruction: ReconstructionKind::Muscl,
             limiter: SlopeLimiter::Minmod,
             scheme: FluxScheme::HanelVanLeer,
+            unstructured_gradient_limiter: None,
         }
     }
 
@@ -109,6 +118,7 @@ impl InviscidFluxConfig {
             reconstruction: ReconstructionKind::Muscl,
             limiter: SlopeLimiter::Minmod,
             scheme: FluxScheme::VanLeer,
+            unstructured_gradient_limiter: None,
         }
     }
 
@@ -118,6 +128,7 @@ impl InviscidFluxConfig {
             reconstruction: ReconstructionKind::FirstOrder,
             limiter: SlopeLimiter::Minmod,
             scheme: FluxScheme::Slau2,
+            unstructured_gradient_limiter: None,
         }
     }
 
@@ -127,6 +138,7 @@ impl InviscidFluxConfig {
             reconstruction: ReconstructionKind::Muscl,
             limiter: SlopeLimiter::Minmod,
             scheme: FluxScheme::Slau2,
+            unstructured_gradient_limiter: None,
         }
     }
 
@@ -138,7 +150,10 @@ impl InviscidFluxConfig {
 
     /// 限制器简短标识（导出元数据用）；一阶为 `"none"`。
     #[must_use]
-    pub const fn limiter_label(self) -> &'static str {
+    pub fn limiter_label(self) -> &'static str {
+        if let Some(limiter) = self.unstructured_gradient_limiter {
+            return limiter.label();
+        }
         if !self.uses_limiter() {
             return "none";
         }
@@ -146,6 +161,17 @@ impl InviscidFluxConfig {
             SlopeLimiter::Minmod => "minmod",
             SlopeLimiter::VanLeer => "van_leer",
             SlopeLimiter::VanAlbada => "van_albada",
+        }
+    }
+
+    #[must_use]
+    pub const fn with_unstructured_gradient_limiter(
+        self,
+        limiter: UnstructuredGradientLimiter,
+    ) -> Self {
+        Self {
+            unstructured_gradient_limiter: Some(limiter),
+            ..self
         }
     }
 
