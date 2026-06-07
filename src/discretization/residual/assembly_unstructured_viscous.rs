@@ -18,19 +18,19 @@ use crate::discretization::gradient_unstructured::{
 use crate::discretization::unstructured_face_cache::{
     UnstructuredFaceTopology, UnstructuredSolverMeshCache,
 };
+#[cfg(not(feature = "simd-fvm"))]
+use crate::discretization::viscous::ViscousFaceAveragedSoA;
 use crate::discretization::viscous::{
-    InteriorViscousFaceGeom, InteriorViscousResidualMut, ViscousFaceAveragedSoA,
-    face_transport_coefficients, fused_interior_viscous_face_flux_averaged,
-    scatter_fused_interior_viscous_face,
+    InteriorViscousFaceGeom, InteriorViscousResidualMut, face_transport_coefficients,
+    fused_interior_viscous_face_flux_averaged, scatter_fused_interior_viscous_face,
 };
 use crate::error::{AsimuError, Result};
 use crate::field::{ConservedResidual, PrimitiveFields};
 use crate::mesh::UnstructuredMesh3d;
 use crate::physics::{IdealGasEoS, ViscosityModel, ViscousPhysicsConfig};
 
-use face_avg::fill_face_averaged_viscous_soa;
 #[cfg(feature = "simd-fvm")]
-use face_avg::gather_viscous_face_batch4_from_face_averaged;
+use face_avg::face_averaged_lane_at;
 
 /// 非结构粘性残差装配输入。
 pub struct ViscousAssemblyUnstructuredParams<'a> {
@@ -111,7 +111,8 @@ pub struct ViscousAssemblyUnstructuredInput<'a> {
 /// 非结构粘性 RHS 复用缓冲。
 pub struct ViscousAssemblyUnstructuredScratch {
     pub gradient: UnstructuredGradientScratch,
-    /// 内面心预平均速度与梯度（P7，flux 顺序读）。
+    /// 内面心预平均速度与梯度（P7 非 SIMD，flux 顺序读）。
+    #[cfg(not(feature = "simd-fvm"))]
     pub(crate) face_averaged: ViscousFaceAveragedSoA,
     cell_mu: Vec<Real>,
     cell_lambda: Vec<Real>,
@@ -125,6 +126,7 @@ impl ViscousAssemblyUnstructuredScratch {
     pub fn new(num_cells: usize) -> Self {
         Self {
             gradient: UnstructuredGradientScratch::new(num_cells),
+            #[cfg(not(feature = "simd-fvm"))]
             face_averaged: ViscousFaceAveragedSoA::default(),
             cell_mu: Vec::new(),
             cell_lambda: Vec::new(),
@@ -134,6 +136,7 @@ impl ViscousAssemblyUnstructuredScratch {
         }
     }
 
+    #[cfg(not(feature = "simd-fvm"))]
     fn ensure_face_averaged(&mut self, num_faces: usize) {
         self.face_averaged.ensure(num_faces);
     }
@@ -224,9 +227,10 @@ fn assemble_interior_faces(
             fill_face_transport_coefficients(params, scratch)?;
         }
     }
+    #[cfg(not(feature = "simd-fvm"))]
     {
         let _span = info_span!("unstructured_viscous_face_avg", faces = num_faces,).entered();
-        fill_face_averaged_viscous_soa(params, scratch);
+        face_avg::fill_face_averaged_viscous_soa(params, scratch);
     }
     {
         let _span = info_span!(
@@ -280,7 +284,6 @@ fn accumulate_interior_faces_fused(
     params: &ViscousAssemblyUnstructuredParams<'_>,
     scratch: &ViscousAssemblyUnstructuredScratch,
 ) -> Result<()> {
-    let face_averaged = &scratch.face_averaged;
     let mut residual_mut = InteriorViscousResidualMut {
         mx: residual.momentum_x.values_mut(),
         my: residual.momentum_y.values_mut(),
@@ -298,14 +301,7 @@ fn accumulate_interior_faces_fused(
         )
         .entered();
         for layout in &params.face_topology.interior_coloring.bucket_batch_layouts {
-            accumulate_viscous_bucket_batch4(
-                layout,
-                face_averaged,
-                &mut residual_mut,
-                params,
-                scratch,
-                constant,
-            )?;
+            accumulate_viscous_bucket_batch4(layout, &mut residual_mut, params, scratch, constant)?;
         }
         return Ok(());
     }
@@ -322,14 +318,7 @@ fn accumulate_interior_faces_fused(
             .face_topology
             .interior_coloring
             .for_each_face_index(|i| {
-                accumulate_one_interior_face(
-                    i,
-                    face_averaged,
-                    &mut residual_mut,
-                    params,
-                    scratch,
-                    constant,
-                );
+                accumulate_one_interior_face(i, &mut residual_mut, params, scratch, constant);
             });
     }
 
@@ -349,13 +338,7 @@ fn accumulate_interior_faces_fused(
                 .bucket_batch_layouts
                 .iter()
                 .map(|layout| {
-                    accumulate_viscous_bucket_batch4_to_vec(
-                        layout,
-                        face_averaged,
-                        params,
-                        scratch,
-                        constant,
-                    )
+                    accumulate_viscous_bucket_batch4_to_vec(layout, params, scratch, constant)
                 })
                 .collect::<Vec<_>>()
         };
@@ -387,9 +370,10 @@ fn accumulate_interior_faces_fused(
                 colors = params.face_topology.interior_coloring.num_colors,
             )
             .entered();
-            params.face_topology.interior_coloring.par_map_buckets(|i| {
-                interior_face_flux_contribution(i, face_averaged, params, scratch, constant)
-            })
+            params
+                .face_topology
+                .interior_coloring
+                .par_map_buckets(|i| interior_face_flux_contribution(i, params, scratch, constant))
         };
         {
             let _span = info_span!(
@@ -411,39 +395,24 @@ fn accumulate_interior_faces_fused(
 #[cfg(all(feature = "simd-fvm", not(feature = "parallel-fvm")))]
 fn accumulate_viscous_bucket_batch4(
     layout: &crate::discretization::InteriorFaceBucketBatchLayout,
-    face_averaged: &ViscousFaceAveragedSoA,
     residual_mut: &mut InteriorViscousResidualMut<'_>,
     params: &ViscousAssemblyUnstructuredParams<'_>,
     scratch: &ViscousAssemblyUnstructuredScratch,
     constant: Option<(Real, Real)>,
 ) -> Result<()> {
     for batch in &layout.full_batches {
-        if let Some(items) = viscous_face_batch4_static(batch, face_averaged, scratch, constant) {
+        if let Some(items) = viscous_face_batch4_static(batch, params, scratch, constant) {
             for (geom, flux) in items {
                 scatter_fused_interior_viscous_face(residual_mut, &geom, &flux);
             }
             continue;
         }
         for &face_idx in &batch.face_indices {
-            accumulate_one_interior_face(
-                face_idx,
-                face_averaged,
-                residual_mut,
-                params,
-                scratch,
-                constant,
-            );
+            accumulate_one_interior_face(face_idx, residual_mut, params, scratch, constant);
         }
     }
     for &face_idx in &layout.remainder {
-        accumulate_one_interior_face(
-            face_idx,
-            face_averaged,
-            residual_mut,
-            params,
-            scratch,
-            constant,
-        );
+        accumulate_one_interior_face(face_idx, residual_mut, params, scratch, constant);
     }
     Ok(())
 }
@@ -451,7 +420,6 @@ fn accumulate_viscous_bucket_batch4(
 #[cfg(all(feature = "simd-fvm", feature = "parallel-fvm"))]
 fn accumulate_viscous_bucket_batch4_to_vec(
     layout: &crate::discretization::InteriorFaceBucketBatchLayout,
-    face_averaged: &ViscousFaceAveragedSoA,
     params: &ViscousAssemblyUnstructuredParams<'_>,
     scratch: &ViscousAssemblyUnstructuredScratch,
     constant: Option<(Real, Real)>,
@@ -466,7 +434,7 @@ fn accumulate_viscous_bucket_batch4_to_vec(
         .full_batches
         .par_iter()
         .with_min_len(128)
-        .map(|batch| viscous_full_batch_to_vec(batch, face_averaged, params, scratch, constant))
+        .map(|batch| viscous_full_batch_to_vec(batch, params, scratch, constant))
         .collect::<Vec<_>>()
     {
         out.extend(part);
@@ -477,7 +445,7 @@ fn accumulate_viscous_bucket_batch4_to_vec(
             .par_iter()
             .with_min_len(1024)
             .filter_map(|&face_idx| {
-                interior_face_flux_contribution(face_idx, face_averaged, params, scratch, constant)
+                interior_face_flux_contribution(face_idx, params, scratch, constant)
             })
             .collect::<Vec<_>>(),
     );
@@ -487,7 +455,6 @@ fn accumulate_viscous_bucket_batch4_to_vec(
 #[cfg(all(feature = "simd-fvm", feature = "parallel-fvm"))]
 fn viscous_full_batch_to_vec(
     batch: &crate::discretization::InteriorFaceBatchStatic4,
-    face_averaged: &ViscousFaceAveragedSoA,
     params: &ViscousAssemblyUnstructuredParams<'_>,
     scratch: &ViscousAssemblyUnstructuredScratch,
     constant: Option<(Real, Real)>,
@@ -495,14 +462,14 @@ fn viscous_full_batch_to_vec(
     InteriorViscousFaceGeom,
     crate::discretization::viscous::InteriorViscousFaceFlux,
 )> {
-    if let Some(items) = viscous_face_batch4_static(batch, face_averaged, scratch, constant) {
+    if let Some(items) = viscous_face_batch4_static(batch, params, scratch, constant) {
         return items;
     }
     batch
         .face_indices
         .iter()
         .filter_map(|&face_idx| {
-            interior_face_flux_contribution(face_idx, face_averaged, params, scratch, constant)
+            interior_face_flux_contribution(face_idx, params, scratch, constant)
         })
         .collect()
 }
@@ -510,7 +477,7 @@ fn viscous_full_batch_to_vec(
 #[cfg(feature = "simd-fvm")]
 fn viscous_face_batch4_static(
     batch: &crate::discretization::InteriorFaceBatchStatic4,
-    face_averaged: &ViscousFaceAveragedSoA,
+    params: &ViscousAssemblyUnstructuredParams<'_>,
     scratch: &ViscousAssemblyUnstructuredScratch,
     constant: Option<(Real, Real)>,
 ) -> Option<
@@ -519,7 +486,10 @@ fn viscous_face_batch4_static(
         crate::discretization::viscous::InteriorViscousFaceFlux,
     )>,
 > {
-    use crate::exec::cpu::{ViscousFaceBatchGeom, fused_interior_viscous_face_flux_batch4};
+    use crate::exec::cpu::{
+        VelocityGradientSoA, ViscousFaceBatchGeom, fused_interior_viscous_face_flux_batch4,
+        gather_viscous_face_batch4,
+    };
 
     if !batch.simd_eligible() {
         return None;
@@ -554,7 +524,26 @@ fn viscous_face_batch4_static(
             neighbor_scale: batch.neighbor_rhs_scale[lane],
         };
     }
-    let gathered = gather_viscous_face_batch4_from_face_averaged(
+    let prim = params.primitives;
+    let grad = params.gradients.velocity_gradient_slices();
+    let vel = VelocityGradientSoA {
+        ux: prim.velocity_x.values(),
+        uy: prim.velocity_y.values(),
+        uz: prim.velocity_z.values(),
+        du_dx: grad.du_dx,
+        du_dy: grad.du_dy,
+        du_dz: grad.du_dz,
+        dv_dx: grad.dv_dx,
+        dv_dy: grad.dv_dy,
+        dv_dz: grad.dv_dz,
+        dw_dx: grad.dw_dx,
+        dw_dy: grad.dw_dy,
+        dw_dz: grad.dw_dz,
+        dt_dx: grad.dt_dx,
+        dt_dy: grad.dt_dy,
+        dt_dz: grad.dt_dz,
+    };
+    let gathered = gather_viscous_face_batch4(
         ViscousFaceBatchGeom {
             owners: batch.owners,
             neighbors: batch.neighbors,
@@ -564,8 +553,7 @@ fn viscous_face_batch4_static(
             mu,
             lambda,
         },
-        batch.face_indices,
-        &face_averaged.lanes,
+        vel,
     );
     let flux4 = fused_interior_viscous_face_flux_batch4(&gathered);
     let mut out = Vec::with_capacity(4);
@@ -583,10 +571,27 @@ fn viscous_face_batch4_static(
     Some(out)
 }
 
+#[inline(always)]
+fn viscous_averaged_lane(
+    i: usize,
+    scratch: &ViscousAssemblyUnstructuredScratch,
+    params: &ViscousAssemblyUnstructuredParams<'_>,
+) -> crate::discretization::viscous::ViscousFaceAveragedLane {
+    #[cfg(feature = "simd-fvm")]
+    {
+        let _ = scratch;
+        face_averaged_lane_at(i, params)
+    }
+    #[cfg(not(feature = "simd-fvm"))]
+    {
+        let _ = params;
+        scratch.face_averaged.lane(i)
+    }
+}
+
 #[cfg(feature = "parallel-fvm")]
 fn interior_face_flux_contribution(
     i: usize,
-    face_averaged: &ViscousFaceAveragedSoA,
     params: &ViscousAssemblyUnstructuredParams<'_>,
     scratch: &ViscousAssemblyUnstructuredScratch,
     constant: Option<(Real, Real)>,
@@ -611,8 +616,9 @@ fn interior_face_flux_contribution(
         owner_scale: face.owner_rhs_scale,
         neighbor_scale: face.neighbor_rhs_scale,
     };
+    let lane = viscous_averaged_lane(i, scratch, params);
     let flux = fused_interior_viscous_face_flux_averaged(
-        face_averaged.lane(i),
+        lane,
         geom.nx,
         geom.ny,
         geom.nz,
@@ -637,7 +643,6 @@ fn transport_at_face(
 #[cfg(any(not(feature = "parallel-fvm"), test))]
 fn accumulate_one_interior_face(
     i: usize,
-    face_averaged: &ViscousFaceAveragedSoA,
     residual_mut: &mut InteriorViscousResidualMut<'_>,
     params: &ViscousAssemblyUnstructuredParams<'_>,
     scratch: &ViscousAssemblyUnstructuredScratch,
@@ -660,8 +665,9 @@ fn accumulate_one_interior_face(
         owner_scale: face.owner_rhs_scale,
         neighbor_scale: face.neighbor_rhs_scale,
     };
+    let lane = viscous_averaged_lane(i, scratch, params);
     let flux = fused_interior_viscous_face_flux_averaged(
-        face_averaged.lane(i),
+        lane,
         geom.nx,
         geom.ny,
         geom.nz,

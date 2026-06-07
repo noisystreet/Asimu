@@ -20,6 +20,10 @@ use super::{
     compute_interior_inviscid_face_contribution,
 };
 
+type InviscidBatchContribution = Option<(InteriorInviscidScatterGeom, InviscidFlux)>;
+type InviscidBatchPartsVec = Vec<Vec<InviscidBatchContribution>>;
+type InviscidBatchPartsResult = Result<InviscidBatchPartsVec>;
+
 /// 一阶 SIMD 批处理支持的通量格式。
 #[derive(Clone, Copy)]
 enum FirstOrderSimdScheme {
@@ -251,7 +255,7 @@ fn compute_inviscid_bucket_batch4_to_vec(
     use rayon::prelude::*;
 
     let mut out = Vec::with_capacity(layout.num_faces());
-    let batch_parts: Result<Vec<Vec<Option<(InteriorInviscidScatterGeom, InviscidFlux)>>>> = layout
+    let batch_parts: InviscidBatchPartsResult = layout
         .full_batches
         .par_iter()
         .with_min_len(128)

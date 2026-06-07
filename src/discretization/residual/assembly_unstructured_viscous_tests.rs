@@ -106,9 +106,9 @@ fn accumulate_interior_viscous_test_state(
     scratch: &mut ViscousAssemblyUnstructuredScratch,
     linear_order: bool,
 ) -> ConservedResidual {
+    #[cfg(not(feature = "simd-fvm"))]
     super::face_avg::fill_face_averaged_viscous_soa(params, scratch);
     let mut residual = ConservedResidual::zeros(params.mesh.num_cells()).expect("rhs");
-    let face_averaged = &scratch.face_averaged;
     let mut residual_mut = InteriorViscousResidualMut {
         mx: residual.momentum_x.values_mut(),
         my: residual.momentum_y.values_mut(),
@@ -119,25 +119,11 @@ fn accumulate_interior_viscous_test_state(
     let coloring = &params.face_topology.interior_coloring;
     if linear_order {
         coloring.for_each_face_index_linear(params.face_topology.interior.len(), |i| {
-            accumulate_one_interior_face(
-                i,
-                face_averaged,
-                &mut residual_mut,
-                params,
-                scratch,
-                constant,
-            );
+            accumulate_one_interior_face(i, &mut residual_mut, params, scratch, constant);
         });
     } else {
         coloring.for_each_face_index(|i| {
-            accumulate_one_interior_face(
-                i,
-                face_averaged,
-                &mut residual_mut,
-                params,
-                scratch,
-                constant,
-            );
+            accumulate_one_interior_face(i, &mut residual_mut, params, scratch, constant);
         });
     }
     residual
@@ -274,5 +260,85 @@ fn parallel_interior_viscous_accumulation_matches_colored_serial() {
         .zip(parallel.momentum_x.values())
     {
         assert!(approx_eq(*a, *b, 1.0e-12));
+    }
+}
+
+#[cfg(feature = "simd-fvm")]
+#[test]
+fn simd_batch4_cell_gather_matches_face_averaged_fill() {
+    use crate::core::approx_eq;
+    use crate::discretization::viscous::fused_interior_viscous_face_flux_averaged;
+    use crate::physics::{IdealGasEoS, ViscosityModel};
+
+    let (mesh, boundary) = two_tet_mesh_and_boundary();
+    let mesh_cache = UnstructuredSolverMeshCache::from_mesh(&mesh, &boundary).expect("cache");
+    let eos = IdealGasEoS::AIR_STANDARD;
+    let viscous = ViscousPhysicsConfig::new(ViscosityModel::constant(2.0e-5).expect("mu"), 0.72)
+        .expect("visc");
+    let mut primitives = PrimitiveFields::zeros(mesh.num_cells()).expect("prim");
+    let fields = ConservedFields::from_freestream(
+        mesh.num_cells(),
+        &eos,
+        &FreestreamParams {
+            mach: 0.0,
+            ..FreestreamParams::default()
+        },
+    )
+    .expect("fields");
+    primitives
+        .fill_from_conserved(&fields, &eos, 1.0e-8)
+        .expect("fill");
+    for (cell, ux) in primitives.velocity_x.values_mut().iter_mut().enumerate() {
+        *ux = 10.0 + cell as f64 * 5.0;
+    }
+    let mut gradients = GradientFields::zeros(mesh.num_cells()).expect("grad");
+    for cell in 0..mesh.num_cells() {
+        gradients.du_dx.values_mut()[cell] = 100.0;
+    }
+    let mut scratch = ViscousAssemblyUnstructuredScratch::new(mesh.num_cells());
+    scratch.constant_transport =
+        Some(face_transport_coefficients(300.0, 300.0, &viscous, &eos).expect("tc"));
+    let params = ViscousAssemblyUnstructuredParams {
+        mesh: &mesh,
+        face_topology: &mesh_cache.face_topology,
+        eos: &eos,
+        viscous: &viscous,
+        ghosts: &BoundaryGhostBuffer::new(),
+        primitives: &primitives,
+        gradients: &gradients,
+        min_pressure: 1.0e-8,
+    };
+    let face = &params.face_topology.interior[0];
+    let batch = crate::discretization::InteriorFaceBatchStatic4 {
+        face_indices: [0, 0, 0, 0],
+        owners: [face.owner; 4],
+        neighbors: [face.neighbor; 4],
+        nx: [face.normal.x; 4],
+        ny: [face.normal.y; 4],
+        nz: [face.normal.z; 4],
+        owner_rhs_scale: [face.owner_rhs_scale; 4],
+        neighbor_rhs_scale: [face.neighbor_rhs_scale; 4],
+        area: [face.area; 4],
+        owner_volume: [face.owner_volume; 4],
+        neighbor_volume: [face.neighbor_volume; 4],
+    };
+    let from_cells =
+        super::viscous_face_batch4_static(&batch, &params, &scratch, scratch.constant_transport)
+            .expect("simd batch");
+    for (lane, (geom, flux_batch)) in from_cells.into_iter().enumerate() {
+        let face_idx = batch.face_indices[lane];
+        let lane_avg = super::face_avg::face_averaged_lane_at(face_idx, &params);
+        let flux_ref = fused_interior_viscous_face_flux_averaged(
+            lane_avg,
+            geom.nx,
+            geom.ny,
+            geom.nz,
+            geom.mu,
+            geom.lambda,
+        );
+        assert!(approx_eq(flux_batch.mx, flux_ref.mx, 1.0e-12));
+        assert!(approx_eq(flux_batch.my, flux_ref.my, 1.0e-12));
+        assert!(approx_eq(flux_batch.mz, flux_ref.mz, 1.0e-12));
+        assert!(approx_eq(flux_batch.energy, flux_ref.energy, 1.0e-12));
     }
 }

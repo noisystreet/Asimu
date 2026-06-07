@@ -97,12 +97,14 @@ pub(crate) struct InteriorViscousFaceFlux {
     pub energy: Real,
 }
 
-/// 内面心预平均速度与梯度 SoA（P7：flux 顺序读，避免 cell 随机 gather）。
+/// 内面心预平均速度与梯度 SoA（P7 非 SIMD：flux 顺序读）。
+#[cfg(not(feature = "simd-fvm"))]
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ViscousFaceAveragedSoA {
     pub lanes: Vec<ViscousFaceAveragedLane>,
 }
 
+#[cfg(not(feature = "simd-fvm"))]
 impl ViscousFaceAveragedSoA {
     pub(crate) fn ensure(&mut self, num_faces: usize) {
         self.lanes.resize(

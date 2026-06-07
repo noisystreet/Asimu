@@ -23,7 +23,8 @@
 - **粘性 transport 单元/面并行**（P3）：`fill_cell_transport_coefficients` / `fill_face_transport_coefficients` 在 `parallel-fvm` 下 `rayon` 并行（Sutherland 等非恒定 \(\mu\) 路径）；dual_ellipsoid A/B benchmark 显示 `par_try_for_each_bucket` 相对 `par_map_buckets` 回归约 26%，已回退 P4、保留 `par_map_buckets`（桶内 `with_min_len=1024`）
 - **`simd-fvm` + `parallel-fvm` 桶内并行**：无粘/粘性 SIMD batch 路径改为与 `par_map_buckets` 一致（各色 bucket 串行、`full_batches`/`remainder` 桶内 `rayon`）；修复此前仅 9 路 bucket 间并行导致 CPU 利用不足
 - **残差监控语义统一**：所有时间积分路径（结构化/非结构、显式 Euler/RK4、LU-SGS、GMRES）的 `log10_residual` 均取步初 \(\|R(U^0)\|\)（`storage.k1` 或 GMRES `base_residual`），不再步末 `post_rhs` 重算
-- **粘性内面面心预平均 SoA**（P7）：IDWLS 后 `fill_face_averaged_viscous_soa` 预写 `ViscousFaceAveragedSoA`；flux 阶段顺序读面数组，`fused_interior_viscous_face_flux_averaged` 替代 cell 随机 gather；`simd-fvm` 下 batch4 gather 改读面 SoA
+- **粘性内面面心预平均 SoA**（P7）：IDWLS 后 `fill_face_averaged_viscous_soa` 预写 `ViscousFaceAveragedSoA`；flux 阶段顺序读面数组（非 `simd-fvm`）
+- **粘性 SIMD full_batch 直通 flux**（P7b）：`simd-fvm` 下 `full_batches` 用 `gather_viscous_face_batch4` cell 直 gather + batch4 flux，跳过全量 `face_avg` 填充；remainder 仍 cell 直读
 - **CPU SIMD 热算子**（P5/P6，`simd-fvm` feature）：新增 `exec::cpu` 模块（`wide` f64x4）；LU-SGS 对角更新、粘性内面四路批处理 flux、IDWLS 3×3 四单元求解、Roe / **Hanel–Van Leer** 一阶内面四路批处理；`InteriorFaceBucketBatchLayout` init-time 静态几何 SoA；标量回退始终可用
 - **非结构无粘内面 fused scatter**（P6-1）：`scatter_fused_interior_inviscid_face` 直接写残差 SoA 切片，消费面 cache 预存 `owner_rhs_scale` / `neighbor_rhs_scale`，避免热路径 `-A/V` 除法与 `Result` 分支；SIMD / 并行 / 串行缓存路径共用
 - **非结构无粘一阶 SoA flux**（P6-2）：`face_inviscid_flux_first_order_interior_soa` / `_boundary_soa` 从 `PrimitiveFields` 直读；FVS 格式跳过 ghost 原始变量解码
