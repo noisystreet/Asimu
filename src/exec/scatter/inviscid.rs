@@ -4,6 +4,7 @@ use crate::exec::context::{ExecutionContext, ResolvedScatterMode};
 
 use super::atomic::{InviscidResidualPtrs, scatter_inviscid_op_atomic};
 use super::contribution::{InviscidPairScatter, InviscidResidualMut, InviscidScatterOp};
+use super::span::enter_scatter_span;
 
 #[inline]
 fn scatter_inviscid_op_serial(op: InviscidScatterOp, residual: &mut InviscidResidualMut<'_>) {
@@ -24,20 +25,6 @@ fn bucket_uses_atomic_scatter(ctx: &ExecutionContext, bucket_len: usize) -> bool
         ctx.resolved_scatter_mode(),
         ResolvedScatterMode::ParallelUnsafeAtomics
     ) && !ctx.bucket_uses_serial_scatter(bucket_len)
-}
-
-fn enter_scatter_span(_ctx: &ExecutionContext, _bucket_len: usize) {
-    // 暂禁：每着色桶一次 info span；LU-SGS × 色数 × 步数会使 Chrome trace 体积过大。
-    // let bucket_serial = ctx.bucket_uses_serial_scatter(bucket_len);
-    // let mode = ctx.effective_scatter_mode_label(bucket_len);
-    // let _span = info_span!(
-    //     "exec_colored_bucket_scatter",
-    //     mode,
-    //     bucket_faces = bucket_len,
-    //     bucket_serial,
-    //     resolved = ?ctx.resolved_scatter_mode(),
-    // )
-    // .entered();
 }
 
 /// 按 `(geom, flux)` 对 scatter 无粘内面通量。

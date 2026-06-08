@@ -9,6 +9,7 @@
 
 - ADR 0015：三维不可压 NS（collocated FVM + **SIMPLEC** + **PISO**，结构化六面体首版，I0–I6）；补充通量格式、边界条件、时间积分（BDF1/伪瞬态）；理论页 [docs/theory/incompressible_simplec_piso.md](docs/theory/incompressible_simplec_piso.md)
 - ADR 0014：可压 RANS **Menter k-ω SST**（壁距场、分裂 LU-SGS、T0–T5）；理论页 [docs/theory/turbulence_k_omega_sst.md](docs/theory/turbulence_k_omega_sst.md)
+- ADR 0013 **E5**：dual_ellipsoid benchmark 说明（`tests/benchmarks/dual_ellipsoid/`）；scatter 每色桶 1 次契约测试；Chrome trace 桶级 span 改 `trace` 级 + `include_args(false)`
 - ADR 0013 **E3**：IDWLS RHS 缓冲迁入 `ExecScratch::idwls`；`ExecutionContext::idwls_accumulate_*` / `csr_spmv`；`CsrMatrix::apply_with_context`
 - ADR 0013 **E2**：`discretization` / `solver` 移除直接 `rayon` 依赖；P8′ 桶级 flat buffer 迁入 `ExecScratch::colored_viscous`；`ExecFaceBatchStatic4` 为 exec 自有 batch 静态几何；新增 `exec::parallel` 并行调度 API
 - ADR 0012：非结构二阶线性重构与梯度限制器（Barth–Jespersen / Venkatakrishnan）；与结构化 `SlopeLimiter` 分离，case 校验禁止混用

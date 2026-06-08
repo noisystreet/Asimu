@@ -356,9 +356,11 @@ Chrome trace span 迁移：
 |----|------|
 | ADR 0013 文本 | **已接受（规划）** |
 | **`ScatterMode::Auto` + 小网格降级策略（§2.4）** | **2026-06-08 定案** |
-| `ExecutionContext` / `ExecScratch` | 未实现 |
-| `ParallelUnsafeAtomics` scatter | 未实现 |
-| `discretization` 去 `rayon` | 未实现 |
-| GPU scatter | v1.2+ 规划 |
+| **E0** `ExecutionContext` / `ExecScratch` / Serial scatter | **2026-06-08 已实现** |
+| **E1** `ParallelUnsafeAtomics` scatter + golden | **2026-06-08 已实现** |
+| **E2** `discretization` 去 `rayon`；`ExecFaceBatchStatic4` | **2026-06-08 已实现** |
+| **E3** IDWLS / SpMV 经 `ExecutionContext` | **2026-06-08 已实现** |
+| **E5** dual_ellipsoid benchmark + scatter 契约测试 | **2026-06-08 已实现**（`tests/benchmarks/dual_ellipsoid/`；`make check-exec-parallel-scatter`） |
+| **E4** GPU scatter | v1.2+ 规划 |
 
 修订本 ADR 时 **不删除** 已有条目；默认 scatter 模式变更或主 crate unsafe 政策变更须新开修订段落。

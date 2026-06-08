@@ -370,3 +370,59 @@ fn parallel_interior_inviscid_matches_colored_serial() {
         .expect("par");
     assert_residuals_match(&serial, &parallel);
 }
+
+#[test]
+fn exec_context_cpu_scalar_matches_legacy_path() {
+    let (mesh, boundary) = two_tet_mesh_and_boundary();
+    let mesh_cache = UnstructuredSolverMeshCache::from_mesh(&mesh, &boundary).expect("cache");
+    let eos = IdealGasEoS::AIR_STANDARD;
+    let fs = FreestreamParams {
+        mach: 0.3,
+        ..FreestreamParams::default()
+    };
+    let fields = ConservedFields::from_freestream(mesh.num_cells(), &eos, &fs).expect("fields");
+    let primitives = perturbed_two_tet_primitives(&mesh);
+    let mut ghosts = BoundaryGhostBuffer::new();
+    let state = fields.cell_state(0).expect("state");
+    let faces = (0..mesh.num_faces())
+        .map(|face| FaceId(face as u32))
+        .collect::<Vec<_>>();
+    for &face in &faces {
+        ghosts.insert_face(
+            face,
+            crate::discretization::GhostCellState { conserved: state },
+        );
+    }
+    let config = InviscidFluxConfig::roe_first_order();
+    let unit_exec = ExecutionContext::for_unit_test();
+    let scalar_exec = ExecutionContext::new(
+        crate::exec::ExecConfig {
+            backend: crate::exec::ExecBackend::CpuScalar,
+            ..crate::exec::ExecConfig::default()
+        },
+        crate::exec::MeshExecMetrics::new(mesh.num_cells(), mesh.num_faces(), 4),
+    );
+    let params_unit = InviscidAssemblyUnstructuredParams {
+        mesh: &mesh,
+        eos: &eos,
+        config: &config,
+        boundaries: &boundary,
+        ghosts: &ghosts,
+        primitives: &primitives,
+        face_topology: Some(&mesh_cache.face_topology),
+        mesh_cache: Some(&mesh_cache),
+        gradients: None,
+        min_pressure: 1.0e-8,
+        exec: &unit_exec,
+    };
+    let mut unit = ConservedResidual::zeros(mesh.num_cells()).expect("rhs");
+    let mut cpu_scalar = ConservedResidual::zeros(mesh.num_cells()).expect("rhs");
+    assemble_inviscid_residual_unstructured(&fields, &mut unit, &params_unit).expect("unit");
+    let params_scalar = InviscidAssemblyUnstructuredParams {
+        exec: &scalar_exec,
+        ..params_unit
+    };
+    assemble_inviscid_residual_unstructured(&fields, &mut cpu_scalar, &params_scalar)
+        .expect("scalar");
+    assert_residuals_match(&unit, &cpu_scalar);
+}

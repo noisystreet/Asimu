@@ -184,3 +184,35 @@ fn attach_single_tet_farfield(case: &mut crate::io::CaseSpec) {
         },
     )]);
 }
+
+#[cfg(all(feature = "io-cgns", feature = "slow-tests"))]
+fn dual_ellipsoid_benchmark_case() -> Option<std::path::PathBuf> {
+    let output_case = std::path::PathBuf::from("output/case_dualellipsoid/case.toml");
+    let mesh = std::env::var("ASIMU_MIX_CGNS_PATH")
+        .map(std::path::PathBuf::from)
+        .ok()
+        .filter(|p| p.is_file())
+        .or_else(|| {
+            let p = std::path::PathBuf::from("output/case_dualellipsoid/mix.cgns");
+            p.is_file().then_some(p)
+        })?;
+    let _ = mesh;
+    if output_case.is_file() {
+        return Some(output_case);
+    }
+    let bench_case = std::path::PathBuf::from("tests/benchmarks/dual_ellipsoid/case.toml");
+    bench_case.is_file().then_some(bench_case)
+}
+
+#[cfg(all(feature = "io-cgns", feature = "slow-tests"))]
+#[test]
+fn dual_ellipsoid_smoke_when_cgns_present() {
+    let Some(case_path) = dual_ellipsoid_benchmark_case() else {
+        return;
+    };
+    let result = super::run_case_path(&case_path).expect("run");
+    assert_eq!(result.benchmark_id.as_deref(), Some("dual_ellipsoid"));
+    let metrics = result.compressible_3d.expect("metrics");
+    assert!(metrics.steps >= 1);
+    assert!(metrics.residual_rms.is_finite() && metrics.residual_rms > 0.0);
+}

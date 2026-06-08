@@ -1,0 +1,36 @@
+# 符号链接或复制 output/case_dualellipsoid/mix.cgns 到本目录后运行：
+#   asimu --case tests/benchmarks/dual_ellipsoid/case.toml
+name = "dual_ellipsoid"
+benchmark_id = "dual_ellipsoid"
+
+[mesh]
+kind = "cgns"
+path = "mix.cgns"
+scale = 0.001
+
+[physics]
+gamma = 1.4
+gas_constant = 287.052871936417
+prandtl = 0.72
+
+[freestream]
+mach = 10
+pressure = 1000.0
+temperature = 300.0
+velocity_direction = [1.0, 0.0, 0.0]
+
+[time]
+mode = "steady"
+scheme = "lu_sgs"
+local_time_step = true
+cfl = 0.001
+cfl_max = 5
+cfl_ramp_steps = 1000
+max_steps = 3
+
+[navier_stokes]
+flux = "hanel_van_leer"
+reconstruction = "first_order"
+
+[output]
+dir = "output"

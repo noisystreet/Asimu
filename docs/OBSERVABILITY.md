@@ -112,6 +112,8 @@ asimu --case foo.toml --chrome-trace /tmp/profile.json
 
 用 [ui.perfetto.dev](https://ui.perfetto.dev) 查看时间线。
 
+Chrome trace 分层 filter：stderr 使用 `--log-level`；trace 文件额外启用 `asimu::exec::scatter=trace`（桶级 `exec_colored_bucket_scatter`）。Chrome 层 `include_args=false` 以控制体积。
+
 **Flamegraph（规划）**：`--profile` + pprof，与 Chrome trace 互补。
 
 ---

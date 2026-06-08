@@ -226,11 +226,19 @@ A_i = \sum_m w_m\,\Delta\mathbf x_m\,\Delta\mathbf x_m^{\mathsf T},
 
 - 将内面划分为颜色桶 \(C_0,\ldots,C_{K-1}\)；
 - 同一桶内任意两面不共享 owner/neighbor 单元；
-- 桶内可并行，桶间串行（`rayon` / `exec` 层，v1.x 规划）。
+- 桶内可并行 compute；**scatter 调度粒度 = 着色桶**（每桶一次 `exec::scatter`，ADR 0013）。
 
-`UnstructuredSolverMeshCache` 在网格初始化时对 `face_topology.interior` 做贪心着色，结果存于 `InteriorFaceColoring::buckets`。当前 v0.x 仍按桶顺序**串行**累加（与面索引顺序在加法结合律意义下等价；浮点非结合性可能导致末位差异）。
+`UnstructuredSolverMeshCache` 在网格初始化时对 `face_topology.interior` 做贪心着色，结果存于 `InteriorFaceColoring::buckets`。
 
-启用 Cargo feature `parallel-fvm`（**默认开启**）时，粘性/无粘内面路径对每个颜色桶做 **rayon 桶内并行 flux 计算**；scatter 仍桶内串行（`unsafe_code` 禁止，见 ADR 0011）。**P8** 起各色 bucket 内 **compute 后立即 scatter**（span `unstructured_*_interior_flux_fused`），不再先 `extend` 整桶 `Vec<(geom, flux)>` 再二次遍历。一阶边界面仍按面索引串行遍历缓存拓扑。
+启用 Cargo feature `parallel-fvm`（**默认开启**）时：
+
+| 阶段 | 模式 | 说明 |
+|------|------|------|
+| flux compute | 桶内 `rayon` | 各色 bucket **串行**，桶内 `par_iter`（勿 bucket 间并行，见 CHANGELOG P4 回归） |
+| scatter | `ExecutionContext` + `ScatterMode::Auto` | 大网格（内面 ≥ 65536）→ `ParallelUnsafeAtomics` 桶内 atomic；小网格 / 小桶 → 串行 |
+| 契约 | 每色桶 **1 次** scatter | SIMD 粘性路径禁止 per-batch 外层 scatter（E5 回归） |
+
+**P8** 起各色 bucket 内 compute 后立即 scatter（span `unstructured_*_interior_flux_fused`）。桶级 scatter 细节 span 为 **`exec_colored_bucket_scatter`（trace 级）**；Chrome trace 默认 `{log_level},asimu::exec::scatter=trace`（见 [OBSERVABILITY.md](../OBSERVABILITY.md)）。
 
 ### 粘性 transport 系数并行（P3）
 

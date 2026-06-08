@@ -5,6 +5,7 @@ mod contribution;
 mod inviscid;
 mod ptr;
 mod serial;
+mod span;
 mod viscous;
 
 pub use contribution::{
@@ -159,6 +160,15 @@ mod tests {
 
     #[test]
     fn scatter_inviscid_serial_matches_atomic_parallel() {
+        colored_bucket_atomic_matches_full_serial_face_order_inviscid();
+    }
+
+    #[test]
+    fn colored_bucket_atomic_matches_full_serial_face_order() {
+        colored_bucket_atomic_matches_full_serial_face_order_inviscid();
+    }
+
+    fn colored_bucket_atomic_matches_full_serial_face_order_inviscid() {
         if !cfg!(feature = "parallel-fvm") {
             return;
         }
@@ -254,5 +264,69 @@ mod tests {
             assert!(approx_eq(serial_mz[i], atomic_mz[i], 1.0e-12));
             assert!(approx_eq(serial_energy[i], atomic_energy[i], 1.0e-12));
         }
+    }
+
+    #[test]
+    fn bucket_scatter_records_one_invocation_per_call() {
+        if !cfg!(feature = "parallel-fvm") {
+            return;
+        }
+        let ctx = atomic_test_context(2);
+        ctx.reset_scatter_invocation_count();
+        #[derive(Copy, Clone)]
+        struct Geom {
+            owner: usize,
+            neighbor: usize,
+            owner_scale: Real,
+            neighbor_scale: Real,
+        }
+        #[derive(Copy, Clone)]
+        struct Flux {
+            mass: Real,
+            momentum: [Real; 3],
+            energy: Real,
+        }
+        let pair = [(
+            Geom {
+                owner: 0,
+                neighbor: 1,
+                owner_scale: 1.0,
+                neighbor_scale: -1.0,
+            },
+            Flux {
+                mass: 0.1,
+                momentum: [1.0, 0.0, 0.0],
+                energy: 1.0,
+            },
+        )];
+        let mut density = vec![0.0; 2];
+        let mut mx = vec![0.0; 2];
+        let mut my = vec![0.0; 2];
+        let mut mz = vec![0.0; 2];
+        let mut energy = vec![0.0; 2];
+        scatter_inviscid_pairs(
+            InviscidPairScatter {
+                ctx: &ctx,
+                bucket_len: 1,
+                pairs: &pair,
+                residual: InviscidResidualMut {
+                    density: &mut density,
+                    mx: &mut mx,
+                    my: &mut my,
+                    mz: &mut mz,
+                    energy: &mut energy,
+                },
+            },
+            |g, f| InviscidScatterOp {
+                owner: g.owner,
+                neighbor: g.neighbor,
+                owner_scale: g.owner_scale,
+                neighbor_scale: g.neighbor_scale,
+                mass: f.mass,
+                momentum: f.momentum,
+                energy: f.energy,
+            },
+        );
+        assert_eq!(ctx.scatter_invocation_count(), 1);
     }
 }

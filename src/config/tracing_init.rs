@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use tracing::{info, warn};
 use tracing_chrome::ChromeLayerBuilder;
-use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{EnvFilter, Layer, layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::error::{AsimuError, Result};
 
@@ -80,9 +80,12 @@ pub fn init_tracing(level: &str, chrome_trace: Option<&Path>) -> Result<TracingG
                 path.display()
             ))
         })?;
+        // Chrome 层单独 filter：stderr 仍用 `level`；桶级 scatter 为 trace 级（`--log-level trace` 或显式 target）。
+        let chrome_filter = EnvFilter::try_new(format!("{level},asimu::exec::scatter=trace"))
+            .map_err(|err| AsimuError::Config(format!("无效的 Chrome trace filter: {err}")))?;
         let (chrome_layer, guard) = ChromeLayerBuilder::new()
             .writer(file)
-            .include_args(true)
+            .include_args(false)
             .build();
         let init_result = tracing_subscriber::registry()
             .with(filter)
@@ -91,7 +94,7 @@ pub fn init_tracing(level: &str, chrome_trace: Option<&Path>) -> Result<TracingG
                     .with_target(false)
                     .with_writer(std::io::stderr),
             )
-            .with(chrome_layer)
+            .with(chrome_layer.with_filter(chrome_filter))
             .try_init();
         if let Err(err) = init_result {
             if tracing::dispatcher::has_been_set() {

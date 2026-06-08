@@ -2,6 +2,9 @@
 
 use tracing::info;
 
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use crate::error::{AsimuError, Result};
 
 use super::metrics::MeshExecMetrics;
@@ -64,6 +67,9 @@ pub struct ExecutionContext {
     parallel_min_len: usize,
     metrics: MeshExecMetrics,
     scratch: ExecScratch,
+    /// 单元测试：本 context 内着色桶 scatter API 调用次数（避免并行测试污染全局计数）。
+    #[cfg(test)]
+    scatter_invocation_count: AtomicUsize,
 }
 
 impl ExecutionContext {
@@ -87,7 +93,28 @@ impl ExecutionContext {
             parallel_min_len: config.parallel_min_len,
             metrics,
             scratch: ExecScratch::with_metrics(metrics),
+            #[cfg(test)]
+            scatter_invocation_count: AtomicUsize::new(0),
         }
+    }
+
+    /// 单元测试：重置本 context 的 scatter 调用计数。
+    #[cfg(test)]
+    pub fn reset_scatter_invocation_count(&self) {
+        self.scatter_invocation_count.store(0, Ordering::Relaxed);
+    }
+
+    /// 单元测试：本 context 内 `enter_scatter_span` 调用次数。
+    #[cfg(test)]
+    #[must_use]
+    pub fn scatter_invocation_count(&self) -> usize {
+        self.scatter_invocation_count.load(Ordering::Relaxed)
+    }
+
+    #[cfg(test)]
+    pub(super) fn record_scatter_invocation(&self) {
+        self.scatter_invocation_count
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     #[must_use]
@@ -250,11 +277,28 @@ mod tests {
     }
 
     #[test]
-    fn bucket_serial_when_below_parallel_min_len() {
-        let config = ExecConfig::default();
-        let metrics = MeshExecMetrics::new(100_000, 100_000, 2048);
-        let ctx = ExecutionContext::new(config, metrics);
-        assert!(ctx.bucket_uses_serial_scatter(512));
-        assert!(!ctx.bucket_uses_serial_scatter(2048));
+    fn cpu_scalar_disables_parallel_cell_loops() {
+        let ctx = ExecutionContext::new(
+            ExecConfig {
+                backend: ExecBackend::CpuScalar,
+                ..ExecConfig::default()
+            },
+            MeshExecMetrics::new(100_000, 100_000, 2048),
+        );
+        assert!(!ctx.uses_parallel_cell_loops());
+    }
+
+    #[test]
+    fn exec_context_cpu_scalar_matches_legacy_serial_scatter() {
+        let scalar = ExecutionContext::new(
+            ExecConfig {
+                backend: ExecBackend::CpuScalar,
+                scatter_mode: ScatterMode::Serial,
+                ..ExecConfig::default()
+            },
+            MeshExecMetrics::new(100_000, 100_000, 2048),
+        );
+        let unit = ExecutionContext::for_unit_test();
+        assert_eq!(scalar.resolved_scatter_mode(), unit.resolved_scatter_mode());
     }
 }

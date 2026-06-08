@@ -272,6 +272,64 @@ fn parallel_interior_viscous_accumulation_matches_colored_serial() {
     }
 }
 
+#[cfg(feature = "parallel-fvm")]
+#[test]
+fn viscous_interior_one_scatter_invocation_per_color_bucket() {
+    use crate::physics::{IdealGasEoS, ViscosityModel};
+
+    let (mesh, boundary) = two_tet_mesh_and_boundary();
+    let mesh_cache = UnstructuredSolverMeshCache::from_mesh(&mesh, &boundary).expect("cache");
+    let eos = IdealGasEoS::AIR_STANDARD;
+    let viscous = ViscousPhysicsConfig::new(ViscosityModel::constant(2.0e-5).expect("mu"), 0.72)
+        .expect("visc");
+    let mut primitives = PrimitiveFields::zeros(mesh.num_cells()).expect("prim");
+    let fields = ConservedFields::from_freestream(
+        mesh.num_cells(),
+        &eos,
+        &FreestreamParams {
+            mach: 0.0,
+            ..FreestreamParams::default()
+        },
+    )
+    .expect("fields");
+    primitives
+        .fill_from_conserved(&fields, &eos, 1.0e-8)
+        .expect("fill");
+    for (cell, ux) in primitives.velocity_x.values_mut().iter_mut().enumerate() {
+        *ux = 10.0 + cell as f64 * 5.0;
+    }
+    let mut gradients = GradientFields::zeros(mesh.num_cells()).expect("grad");
+    for cell in 0..mesh.num_cells() {
+        gradients.du_dx.values_mut()[cell] = 100.0;
+    }
+    let mut scratch = ViscousAssemblyUnstructuredScratch::new(mesh.num_cells());
+    crate::discretization::gradient::cell_temperatures_into(
+        &primitives,
+        &eos,
+        Some(&viscous),
+        &mut scratch.gradient.temperatures,
+    )
+    .expect("t");
+    scratch.constant_transport =
+        Some(face_transport_coefficients(300.0, 300.0, &viscous, &eos).expect("tc"));
+    let mut exec = test_exec();
+    let params = ViscousAssemblyUnstructuredParams {
+        mesh: &mesh,
+        face_topology: &mesh_cache.face_topology,
+        eos: &eos,
+        viscous: &viscous,
+        ghosts: &BoundaryGhostBuffer::new(),
+        primitives: &primitives,
+        gradients: &gradients,
+        min_pressure: 1.0e-8,
+    };
+    let colors = params.face_topology.interior_coloring.num_colors;
+    let mut parallel = ConservedResidual::zeros(mesh.num_cells()).expect("rhs");
+    exec.reset_scatter_invocation_count();
+    assemble_interior_faces(&mut parallel, &params, &mut scratch, &mut exec).expect("par");
+    assert_eq!(exec.scatter_invocation_count(), colors);
+}
+
 #[cfg(feature = "simd-fvm")]
 #[test]
 fn simd_batch4_cell_gather_matches_face_averaged_fill() {

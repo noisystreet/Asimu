@@ -121,7 +121,7 @@ See [CROSS_CUTTING.md](CROSS_CUTTING.md) for the four cross-cutting capabilities
 | `discretization` | Gradients, fluxes, BC, residual assembly |
 | `physics` | EoS, viscous config (partial) |
 | `linalg` | Sparse systems, CG, GMRES (partial) |
-| `exec` | CPU SIMD hot ops (`simd-fvm`); `ExecutionContext` planned ([ADR 0013](../adr/0013-exec-parallel-scatter-execution-context.md)) |
+| `exec` | CPU SIMD hot ops (`simd-fvm`); **`ExecutionContext` + parallel scatter**（[ADR 0013](../adr/0013-exec-parallel-scatter-execution-context.md) E0–E3） |
 | `solver` | Time marching, LU-SGS, convergence |
 | `io` | Case / VTK / CGNS adapters (feature-gated) |
 | `case` / `app` | End-to-end / CLI orchestration |

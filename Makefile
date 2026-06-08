@@ -42,7 +42,14 @@ fmt:
 	$(CARGO) fmt
 
 check-exec-parallel-scatter:
-	$(CARGO) test --features io-vtk,parallel-fvm exec::scatter::tests
+	$(CARGO) test $(CARGO_FLAGS) exec::scatter::tests
+	$(CARGO) test $(CARGO_FLAGS) \
+		discretization::residual::assembly_unstructured_tests::exec_context_cpu_scalar_matches_legacy_path \
+		discretization::residual::assembly_unstructured_viscous_tests::viscous_interior_one_scatter_invocation_per_color_bucket
+
+check-exec-parallel-scatter-simd:
+	$(CARGO) test $(CARGO_SIMD_FLAGS) exec::scatter::tests \
+		discretization::residual::assembly_unstructured_viscous_tests::viscous_interior_one_scatter_invocation_per_color_bucket
 
 check: lint test
 
