@@ -1,0 +1,6 @@
+{
+  "markdown.math.enabled": true,
+  "markdown.extension.math.enabled": true,
+  "markdown-preview-enhanced.enablePreviewZenMode": false,
+  "markdown-preview-enhanced.mathRenderingOption": "KaTeX"
+}

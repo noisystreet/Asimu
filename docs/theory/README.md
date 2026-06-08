@@ -3,7 +3,29 @@
 > 与代码实现一一对应的理论说明与参考文献。
 > Agent 约束见 [AGENTS.md](../../AGENTS.md)「数值理论与参考文献」；算例级文献见 [BENCHMARKS.md](../BENCHMARKS.md)。
 
-## 用途
+## 公式写法（Markdown 预览）
+
+理论页使用 **LaTeX 标准定界符**（GitHub、Markdown Preview Enhanced 均支持）：
+
+| 类型 | 写法 | 示例 |
+|------|------|------|
+| 行内 | `\(...\)` | `\(\phi = \phi_b\)` |
+| 独立公式 | `\[...\]` | 块级公式；编号用 `\tag{n}` |
+
+部分较早页面（如 `fvm_diffusion.md`）仍用 `$$...$$`，与上表等价；**新稿优先 `\(...\)` / `\[...\]`**，避免 `$` 与正文货币符号混淆。
+
+### Cursor / VS Code 预览
+
+内置预览（`Ctrl+Shift+V`）对 `\(...\)` 支持有限；推荐：
+
+| 方式 | 操作 |
+|------|------|
+| **Markdown Preview Enhanced**（推荐） | 命令面板 → **`Markdown Preview Enhanced: Open Preview to the Side`** |
+| 浏览器 | `./scripts/preview_theory_md.sh docs/theory/fvm_diffusion.md`（pandoc + MathJax） |
+
+工作区见 [`.vscode/settings.json`](../../.vscode/settings.json) 与推荐扩展 [`.vscode/extensions.json`](../../.vscode/extensions.json)。
+
+---
 
 | 读者 | 用途 |
 |------|------|
@@ -48,7 +70,7 @@
 
 ## 1. 控制方程 / 算法
 
-{连续形式或算法步骤，式编号从 (1) 起}
+{连续形式或算法步骤，式编号从 (1) 起；行内 `\(...\)`，块级 `\[...\]` + `\tag{n}`}
 
 ## 2. 离散化
 
