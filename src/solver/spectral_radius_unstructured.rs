@@ -55,11 +55,9 @@ pub fn cell_spectral_radius_unstructured(
     let incidence = &params.mesh_cache.lsq_rhs_incidence;
     #[cfg(feature = "parallel-fvm")]
     {
-        use rayon::prelude::*;
-        sigma
-            .par_iter_mut()
-            .enumerate()
-            .try_for_each(|(cell, sigma_cell)| -> Result<()> {
+        crate::exec::parallel::par_try_for_each_enumerated_result(
+            &mut sigma,
+            |cell, sigma_cell| {
                 accumulate_hyperbolic_sigma_one_cell(
                     params, topology, incidence, cell, sigma_cell,
                 )?;
@@ -69,7 +67,8 @@ pub fn cell_spectral_radius_unstructured(
                     );
                 }
                 Ok(())
-            })?;
+            },
+        )?;
     }
     #[cfg(not(feature = "parallel-fvm"))]
     {

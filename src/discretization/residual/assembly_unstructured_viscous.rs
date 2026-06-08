@@ -21,13 +21,15 @@ use crate::discretization::gradient_unstructured::{
 use crate::discretization::unstructured_face_cache::{
     UnstructuredFaceTopology, UnstructuredSolverMeshCache,
 };
+#[cfg(feature = "simd-fvm")]
+use crate::discretization::viscous::InteriorViscousFaceFlux;
 #[cfg(not(feature = "simd-fvm"))]
 use crate::discretization::viscous::ViscousFaceAveragedSoA;
 #[cfg(any(not(feature = "parallel-fvm"), test))]
 use crate::discretization::viscous::scatter_fused_interior_viscous_face;
 use crate::discretization::viscous::{
-    InteriorViscousFaceFlux, InteriorViscousFaceGeom, InteriorViscousResidualMut,
-    face_transport_coefficients, fused_interior_viscous_face_flux_averaged,
+    InteriorViscousFaceGeom, InteriorViscousResidualMut, face_transport_coefficients,
+    fused_interior_viscous_face_flux_averaged,
 };
 use crate::error::{AsimuError, Result};
 use crate::field::{ConservedResidual, PrimitiveFields};
@@ -53,6 +55,7 @@ pub struct ViscousAssemblyUnstructuredParams<'a> {
 pub fn assemble_viscous_residual_unstructured(
     residual: &mut ConservedResidual,
     params: &ViscousAssemblyUnstructuredParams<'_>,
+    exec: &mut crate::exec::ExecutionContext,
 ) -> Result<()> {
     let mut scratch = ViscousAssemblyUnstructuredScratch::new(params.mesh.num_cells());
     crate::discretization::gradient::cell_temperatures_into(
@@ -61,13 +64,14 @@ pub fn assemble_viscous_residual_unstructured(
         Some(params.viscous),
         &mut scratch.gradient.temperatures,
     )?;
-    assemble_viscous_residual_unstructured_with_scratch(residual, params, &mut scratch)
+    assemble_viscous_residual_unstructured_with_scratch(residual, params, &mut scratch, exec)
 }
 
 fn assemble_viscous_residual_unstructured_with_scratch(
     residual: &mut ConservedResidual,
     params: &ViscousAssemblyUnstructuredParams<'_>,
     scratch: &mut ViscousAssemblyUnstructuredScratch,
+    exec: &mut crate::exec::ExecutionContext,
 ) -> Result<()> {
     let n = params.mesh.num_cells();
     if residual.num_cells() != n || params.primitives.num_cells() != n {
@@ -87,7 +91,7 @@ fn assemble_viscous_residual_unstructured_with_scratch(
             faces = params.face_topology.interior.len(),
         )
         .entered();
-        assemble_interior_faces(residual, params, scratch)?;
+        assemble_interior_faces(residual, params, scratch, exec)?;
     }
     {
         let _span = info_span!(
@@ -111,6 +115,7 @@ pub struct ViscousAssemblyUnstructuredInput<'a> {
     pub primitives: &'a PrimitiveFields,
     pub min_pressure: Real,
     pub gradient_scratch: &'a mut GradientFields,
+    pub exec: &'a mut crate::exec::ExecutionContext,
 }
 
 /// 非结构粘性 RHS 复用缓冲。
@@ -124,15 +129,6 @@ pub struct ViscousAssemblyUnstructuredScratch {
     face_mu: Vec<Real>,
     face_lambda: Vec<Real>,
     constant_transport: Option<(Real, Real)>,
-    /// 并行桶 flat buffer：每 batch 固定 4 槽 + remainder 槽（P8′）。
-    #[cfg(feature = "parallel-fvm")]
-    parallel_bucket_geoms: Vec<InteriorViscousFaceGeom>,
-    #[cfg(feature = "parallel-fvm")]
-    parallel_bucket_fluxes: Vec<InteriorViscousFaceFlux>,
-    #[cfg(feature = "parallel-fvm")]
-    parallel_batch_counts: Vec<u8>,
-    #[cfg(feature = "parallel-fvm")]
-    parallel_slot_valid: Vec<bool>,
 }
 
 impl ViscousAssemblyUnstructuredScratch {
@@ -147,27 +143,7 @@ impl ViscousAssemblyUnstructuredScratch {
             face_mu: Vec::new(),
             face_lambda: Vec::new(),
             constant_transport: None,
-            #[cfg(feature = "parallel-fvm")]
-            parallel_bucket_geoms: Vec::new(),
-            #[cfg(feature = "parallel-fvm")]
-            parallel_bucket_fluxes: Vec::new(),
-            #[cfg(feature = "parallel-fvm")]
-            parallel_batch_counts: Vec::new(),
-            #[cfg(feature = "parallel-fvm")]
-            parallel_slot_valid: Vec::new(),
         }
-    }
-
-    #[cfg(feature = "parallel-fvm")]
-    fn ensure_parallel_bucket_buffer(&mut self, num_batches: usize, num_remainder: usize) {
-        self.parallel_batch_counts.resize(num_batches, 0);
-        let batch_slots = num_batches * 4;
-        let total = batch_slots + num_remainder;
-        self.parallel_bucket_geoms
-            .resize_with(total, empty_viscous_geom);
-        self.parallel_bucket_fluxes
-            .resize_with(total, empty_viscous_flux);
-        self.parallel_slot_valid.resize(num_remainder, false);
     }
 
     #[cfg(not(feature = "simd-fvm"))]
@@ -221,6 +197,7 @@ pub fn compute_gradients_and_assemble_viscous_unstructured_with_scratch(
             },
             input.gradient_scratch,
             &mut scratch.gradient,
+            input.exec,
         )?;
     }
     let params = ViscousAssemblyUnstructuredParams {
@@ -233,13 +210,14 @@ pub fn compute_gradients_and_assemble_viscous_unstructured_with_scratch(
         gradients: input.gradient_scratch,
         min_pressure: input.min_pressure,
     };
-    assemble_viscous_residual_unstructured_with_scratch(residual, &params, scratch)
+    assemble_viscous_residual_unstructured_with_scratch(residual, &params, scratch, input.exec)
 }
 
 fn assemble_interior_faces(
     residual: &mut ConservedResidual,
     params: &ViscousAssemblyUnstructuredParams<'_>,
     scratch: &mut ViscousAssemblyUnstructuredScratch,
+    exec: &mut crate::exec::ExecutionContext,
 ) -> Result<()> {
     let num_faces = params.face_topology.interior.len();
     scratch.ensure_face_transport(num_faces);
@@ -273,7 +251,7 @@ fn assemble_interior_faces(
             colors = params.face_topology.interior_coloring.num_colors,
         )
         .entered();
-        accumulate_interior_faces_fused(residual, params, scratch)?;
+        accumulate_interior_faces_fused(residual, params, scratch, exec)?;
     }
     Ok(())
 }
@@ -286,19 +264,18 @@ fn fill_face_transport_coefficients(
     let cell_lambda = &scratch.cell_lambda;
     #[cfg(feature = "parallel-fvm")]
     {
-        use rayon::prelude::*;
-        scratch
-            .face_mu
-            .par_iter_mut()
-            .zip(scratch.face_lambda.par_iter_mut())
-            .zip(params.face_topology.interior.par_iter())
-            .for_each(|((mu, lambda), face)| {
+        crate::exec::parallel::par_for_each_zip3_mut(
+            &mut scratch.face_mu,
+            &mut scratch.face_lambda,
+            &params.face_topology.interior,
+            |mu, lambda, face| {
                 if face.owner_rhs_scale == 0.0 && face.neighbor_rhs_scale == 0.0 {
                     return;
                 }
                 *mu = 0.5 * (cell_mu[face.owner] + cell_mu[face.neighbor]);
                 *lambda = 0.5 * (cell_lambda[face.owner] + cell_lambda[face.neighbor]);
-            });
+            },
+        );
     }
     #[cfg(not(feature = "parallel-fvm"))]
     {
@@ -317,6 +294,7 @@ fn accumulate_interior_faces_fused(
     residual: &mut ConservedResidual,
     params: &ViscousAssemblyUnstructuredParams<'_>,
     scratch: &mut ViscousAssemblyUnstructuredScratch,
+    exec: &mut crate::exec::ExecutionContext,
 ) -> Result<()> {
     let mut residual_mut = InteriorViscousResidualMut {
         mx: residual.momentum_x.values_mut(),
@@ -372,6 +350,7 @@ fn accumulate_interior_faces_fused(
                 params,
                 scratch,
                 constant,
+                exec,
             );
         }
     }
@@ -392,6 +371,7 @@ fn accumulate_interior_faces_fused(
                 params,
                 scratch,
                 constant,
+                exec,
             );
         }
     }
@@ -406,8 +386,8 @@ fn accumulate_viscous_bucket_batch4(
     scratch: &ViscousAssemblyUnstructuredScratch,
     constant: Option<(Real, Real)>,
 ) -> Result<()> {
-    let mut geoms = [empty_viscous_geom(); 4];
-    let mut fluxes = [empty_viscous_flux(); 4];
+    let mut geoms = [InteriorViscousFaceGeom::default(); 4];
+    let mut fluxes = [InteriorViscousFaceFlux::default(); 4];
     for batch in &layout.full_batches {
         let count =
             compute_viscous_batch4_into(batch, params, scratch, constant, &mut geoms, &mut fluxes);
@@ -456,7 +436,7 @@ fn velocity_gradient_soa<'a>(
 
 #[cfg(feature = "simd-fvm")]
 fn viscous_batch_geom_from_static(
-    batch: &crate::discretization::InteriorFaceBatchStatic4,
+    batch: &crate::exec::ExecFaceBatchStatic4,
     mu: [Real; 4],
     lambda: [Real; 4],
 ) -> crate::exec::cpu::ViscousFaceBatchGeom {
@@ -473,7 +453,7 @@ fn viscous_batch_geom_from_static(
 
 #[cfg(feature = "simd-fvm")]
 pub(super) fn compute_viscous_batch4_into(
-    batch: &crate::discretization::InteriorFaceBatchStatic4,
+    batch: &crate::exec::ExecFaceBatchStatic4,
     params: &ViscousAssemblyUnstructuredParams<'_>,
     scratch: &ViscousAssemblyUnstructuredScratch,
     constant: Option<(Real, Real)>,
@@ -550,29 +530,6 @@ pub(super) fn compute_viscous_batch4_into(
         count += 1;
     }
     count
-}
-
-pub(super) const fn empty_viscous_geom() -> InteriorViscousFaceGeom {
-    InteriorViscousFaceGeom {
-        owner: 0,
-        neighbor: 0,
-        nx: 0.0,
-        ny: 0.0,
-        nz: 0.0,
-        mu: 0.0,
-        lambda: 0.0,
-        owner_scale: 0.0,
-        neighbor_scale: 0.0,
-    }
-}
-
-pub(super) const fn empty_viscous_flux() -> InteriorViscousFaceFlux {
-    InteriorViscousFaceFlux {
-        mx: 0.0,
-        my: 0.0,
-        mz: 0.0,
-        energy: 0.0,
-    }
 }
 
 #[inline(always)]
@@ -688,18 +645,17 @@ fn fill_cell_transport_coefficients(
     let temperatures = &scratch.gradient.temperatures;
     #[cfg(feature = "parallel-fvm")]
     {
-        use rayon::prelude::*;
-        scratch
-            .cell_mu
-            .par_iter_mut()
-            .zip(scratch.cell_lambda.par_iter_mut())
-            .zip(temperatures.par_iter())
-            .try_for_each(|((mu, lambda), &t)| -> Result<()> {
+        crate::exec::parallel::par_try_for_each_zip3(
+            &mut scratch.cell_mu,
+            &mut scratch.cell_lambda,
+            temperatures,
+            |mu, lambda, &t| -> Result<()> {
                 let (m, l) = face_transport_coefficients(t, t, params.viscous, params.eos)?;
                 *mu = m;
                 *lambda = l;
                 Ok(())
-            })?;
+            },
+        )?;
     }
     #[cfg(not(feature = "parallel-fvm"))]
     {

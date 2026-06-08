@@ -44,16 +44,12 @@ pub(super) fn fill_face_averaged_viscous_soa(
 
     #[cfg(feature = "parallel-fvm")]
     {
-        use rayon::prelude::*;
-        lanes
-            .par_iter_mut()
-            .zip(interior.par_iter())
-            .for_each(|(lane, face)| {
-                if face.owner_rhs_scale == 0.0 && face.neighbor_rhs_scale == 0.0 {
-                    return;
-                }
-                *lane = average_face_lane(face.owner, face.neighbor, ux, uy, uz, &grad);
-            });
+        crate::exec::parallel::par_for_each_zip_mut2(lanes, interior, |lane, face| {
+            if face.owner_rhs_scale == 0.0 && face.neighbor_rhs_scale == 0.0 {
+                return;
+            }
+            *lane = average_face_lane(face.owner, face.neighbor, ux, uy, uz, &grad);
+        });
     }
 
     #[cfg(not(feature = "parallel-fvm"))]

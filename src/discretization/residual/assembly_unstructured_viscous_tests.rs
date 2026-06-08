@@ -1,9 +1,14 @@
 use super::*;
 use crate::boundary::BoundaryPatch;
 use crate::discretization::GhostCellState;
+use crate::exec::ExecutionContext;
 use crate::field::ConservedFields;
 use crate::mesh::{CellKind, UnstructuredCell};
 use crate::physics::{FreestreamParams, ViscousPhysicsConfig};
+
+fn test_exec() -> ExecutionContext {
+    ExecutionContext::for_unit_test()
+}
 
 #[test]
 fn uniform_closed_tet_has_near_zero_unstructured_viscous_rhs() {
@@ -51,6 +56,7 @@ fn uniform_closed_tet_has_near_zero_unstructured_viscous_rhs() {
     let viscous = ViscousPhysicsConfig::default();
     let mut grad = GradientFields::zeros(mesh.num_cells()).expect("grad");
     let mut rhs = ConservedResidual::zeros(mesh.num_cells()).expect("rhs");
+    let mut exec = test_exec();
     let mut input = ViscousAssemblyUnstructuredInput {
         mesh: &mesh,
         mesh_cache: &mesh_cache,
@@ -61,6 +67,7 @@ fn uniform_closed_tet_has_near_zero_unstructured_viscous_rhs() {
         primitives: &primitives,
         min_pressure: 1.0e-8,
         gradient_scratch: &mut grad,
+        exec: &mut exec,
     };
     compute_gradients_and_assemble_viscous_unstructured(&mut rhs, &mut input).expect("visc");
     assert!(rhs.density.values().iter().all(|v| v.abs() < 1.0e-12));
@@ -169,6 +176,7 @@ fn colored_interior_viscous_accumulation_matches_linear_face_order() {
     .expect("t");
     scratch.constant_transport =
         Some(face_transport_coefficients(300.0, 300.0, &viscous, &eos).expect("tc"));
+    let _exec = test_exec();
     let params = ViscousAssemblyUnstructuredParams {
         mesh: &mesh,
         face_topology: &mesh_cache.face_topology,
@@ -240,6 +248,7 @@ fn parallel_interior_viscous_accumulation_matches_colored_serial() {
     .expect("t");
     scratch.constant_transport =
         Some(face_transport_coefficients(300.0, 300.0, &viscous, &eos).expect("tc"));
+    let mut exec = test_exec();
     let params = ViscousAssemblyUnstructuredParams {
         mesh: &mesh,
         face_topology: &mesh_cache.face_topology,
@@ -252,7 +261,7 @@ fn parallel_interior_viscous_accumulation_matches_colored_serial() {
     };
     let serial = accumulate_interior_viscous_test_state(&params, &mut scratch, false);
     let mut parallel = ConservedResidual::zeros(mesh.num_cells()).expect("rhs");
-    assemble_interior_faces(&mut parallel, &params, &mut scratch).expect("par");
+    assemble_interior_faces(&mut parallel, &params, &mut scratch, &mut exec).expect("par");
     for (a, b) in serial
         .momentum_x
         .values()
@@ -298,6 +307,7 @@ fn simd_batch4_cell_gather_matches_face_averaged_fill() {
     let mut scratch = ViscousAssemblyUnstructuredScratch::new(mesh.num_cells());
     scratch.constant_transport =
         Some(face_transport_coefficients(300.0, 300.0, &viscous, &eos).expect("tc"));
+    let _exec = test_exec();
     let params = ViscousAssemblyUnstructuredParams {
         mesh: &mesh,
         face_topology: &mesh_cache.face_topology,
@@ -322,8 +332,8 @@ fn simd_batch4_cell_gather_matches_face_averaged_fill() {
         owner_volume: [face.owner_volume; 4],
         neighbor_volume: [face.neighbor_volume; 4],
     };
-    let mut geoms = [super::empty_viscous_geom(); 4];
-    let mut fluxes = [super::empty_viscous_flux(); 4];
+    let mut geoms = [crate::exec::ColoredViscousFaceGeom::default(); 4];
+    let mut fluxes = [crate::exec::ColoredViscousFaceFlux::default(); 4];
     let count = super::compute_viscous_batch4_into(
         &batch,
         &params,

@@ -47,6 +47,7 @@ pub(crate) fn interior_inviscid_residual_mut(
 
 /// 将内面无粘通量 scatter 到 owner/neighbor 残差（预存 scale，无 `Result` 分支）。
 #[inline(always)]
+#[cfg_attr(all(feature = "parallel-fvm", not(test)), allow(dead_code))]
 pub(crate) fn scatter_fused_interior_inviscid_face(
     residual: &mut InteriorInviscidResidualMut<'_>,
     geom: &InteriorInviscidScatterGeom,

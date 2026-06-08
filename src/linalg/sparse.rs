@@ -61,6 +61,40 @@ impl CsrMatrix {
         self.ncols
     }
 
+    pub fn row_ptr(&self) -> &[usize] {
+        &self.row_ptr
+    }
+
+    pub fn col_idx(&self) -> &[usize] {
+        &self.col_idx
+    }
+
+    pub fn values(&self) -> &[Real] {
+        &self.values
+    }
+
+    /// CSR 只读视图（供 [`crate::exec::CsrSpmvView`]）。
+    #[must_use]
+    pub fn spmv_view(&self) -> crate::exec::CsrSpmvView<'_> {
+        crate::exec::CsrSpmvView {
+            nrows: self.nrows,
+            ncols: self.ncols,
+            row_ptr: &self.row_ptr,
+            col_idx: &self.col_idx,
+            values: &self.values,
+        }
+    }
+
+    /// \(y \leftarrow A x\)，经 [`ExecutionContext`](crate::exec::ExecutionContext) 调度（并行/串行）。
+    pub fn apply_with_context(
+        &self,
+        ctx: &crate::exec::ExecutionContext,
+        x: &[Real],
+        y: &mut [Real],
+    ) -> Result<()> {
+        ctx.csr_spmv(&self.spmv_view(), x, y)
+    }
+
     pub(crate) fn row_entries(&self, row: usize) -> impl Iterator<Item = (usize, Real)> + '_ {
         let start = self.row_ptr[row];
         let end = self.row_ptr[row + 1];

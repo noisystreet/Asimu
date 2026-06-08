@@ -2,6 +2,7 @@ use super::*;
 use crate::boundary::{BoundaryKind, BoundaryPatch, BoundarySet};
 use crate::discretization::GhostCellState;
 use crate::discretization::unstructured_face_cache::mirrored_face_sample_point;
+use crate::exec::{ExecBackend, ExecConfig, ExecutionContext, MeshExecMetrics};
 use crate::mesh::{CellKind, UnstructuredCell};
 use crate::physics::{ConservedState, PrimitiveState};
 
@@ -60,6 +61,7 @@ fn linear_field_recovers_constant_unstructured_idw_lsq_gradient() {
     let mesh_cache = UnstructuredSolverMeshCache::from_mesh(&mesh, &boundary).expect("cache");
 
     let mut grad = GradientFields::zeros(mesh.num_cells()).expect("grad");
+    let mut exec = ExecutionContext::for_unit_test();
     compute_unstructured_gradients_idw_lsq(
         UnstructuredGradientLsqInput {
             mesh: &mesh,
@@ -71,6 +73,7 @@ fn linear_field_recovers_constant_unstructured_idw_lsq_gradient() {
             viscous: None,
         },
         &mut grad,
+        &mut exec,
     )
     .expect("grad");
 
@@ -190,22 +193,37 @@ fn parallel_idw_lsq_accumulate_matches_face_serial() {
         min_pressure: 1.0e-8,
         viscous: None,
     };
-    let mut scratch_serial = UnstructuredGradientScratch::new(mesh.num_cells());
-    let mut scratch_parallel = UnstructuredGradientScratch::new(mesh.num_cells());
-    scratch_serial.prepare(mesh.num_cells());
-    scratch_parallel.prepare(mesh.num_cells());
+    let n = mesh.num_cells();
+    let metrics = MeshExecMetrics::new(n, mesh_cache.face_topology.interior.len(), n);
+    let mut exec_serial = ExecutionContext::new(
+        ExecConfig {
+            backend: ExecBackend::CpuScalar,
+            ..ExecConfig::default()
+        },
+        metrics,
+    );
+    let mut exec_parallel = ExecutionContext::new(ExecConfig::default(), metrics);
+    let mut scratch_serial = UnstructuredGradientScratch::new(n);
+    let mut scratch_parallel = UnstructuredGradientScratch::new(n);
+    scratch_serial.prepare_temperatures(n);
+    scratch_parallel.prepare_temperatures(n);
     cell_temperatures_into(&prim, &eos, None, &mut scratch_serial.temperatures).expect("t");
     scratch_parallel
         .temperatures
         .clone_from(&scratch_serial.temperatures);
+    exec_serial.idwls_prepare_viscous(n);
+    exec_parallel.idwls_prepare_viscous(n);
 
-    accumulate_lsq_rhs_face_serial(&input, &mut scratch_serial).expect("serial");
-    accumulate_lsq_rhs_cell_parallel(&input, &mut scratch_parallel).expect("parallel");
+    accumulate_lsq_rhs_face_serial(&input, &scratch_serial, &mut exec_serial).expect("serial");
+    accumulate_lsq_rhs_cell_parallel(&input, &scratch_parallel, &mut exec_parallel)
+        .expect("parallel");
 
-    assert_vector3_fields_match(&scratch_serial.bu, &scratch_parallel.bu, 1.0e-12);
-    assert_vector3_fields_match(&scratch_serial.bv, &scratch_parallel.bv, 1.0e-12);
-    assert_vector3_fields_match(&scratch_serial.bw, &scratch_parallel.bw, 1.0e-12);
-    assert_vector3_fields_match(&scratch_serial.bt, &scratch_parallel.bt, 1.0e-12);
+    let idwls_serial = exec_serial.idwls_rhs();
+    let idwls_parallel = exec_parallel.idwls_rhs();
+    assert_vector3_fields_match(idwls_serial.bu(), idwls_parallel.bu(), 1.0e-12);
+    assert_vector3_fields_match(idwls_serial.bv(), idwls_parallel.bv(), 1.0e-12);
+    assert_vector3_fields_match(idwls_serial.bw(), idwls_parallel.bw(), 1.0e-12);
+    assert_vector3_fields_match(idwls_serial.bt(), idwls_parallel.bt(), 1.0e-12);
 }
 
 #[cfg(feature = "parallel-fvm")]
@@ -251,22 +269,29 @@ fn parallel_inviscid_idw_lsq_accumulate_matches_face_serial() {
         min_pressure: 1.0e-8,
         viscous: None,
     };
-    let mut scratch_serial = UnstructuredGradientScratch::new(mesh.num_cells());
-    let mut scratch_parallel = UnstructuredGradientScratch::new(mesh.num_cells());
-    scratch_serial.prepare_inviscid_linear_reconstruction(mesh.num_cells());
-    scratch_parallel.prepare_inviscid_linear_reconstruction(mesh.num_cells());
+    let n = mesh.num_cells();
+    let metrics = MeshExecMetrics::new(n, mesh_cache.face_topology.interior.len(), n);
+    let mut exec_serial = ExecutionContext::new(
+        ExecConfig {
+            backend: ExecBackend::CpuScalar,
+            ..ExecConfig::default()
+        },
+        metrics,
+    );
+    let mut exec_parallel = ExecutionContext::new(ExecConfig::default(), metrics);
+    exec_serial.idwls_prepare_inviscid(n);
+    exec_parallel.idwls_prepare_inviscid(n);
 
-    super::inviscid_linear::accumulate_lsq_rhs_inviscid_face_serial(&input, &mut scratch_serial)
+    super::inviscid_linear::accumulate_lsq_rhs_inviscid_face_serial(&input, &mut exec_serial)
         .expect("serial");
-    super::inviscid_linear::accumulate_lsq_rhs_inviscid_cell_parallel(
-        &input,
-        &mut scratch_parallel,
-    )
-    .expect("parallel");
+    super::inviscid_linear::accumulate_lsq_rhs_inviscid_cell_parallel(&input, &mut exec_parallel)
+        .expect("parallel");
 
-    assert_vector3_fields_match(&scratch_serial.br, &scratch_parallel.br, 1.0e-12);
-    assert_vector3_fields_match(&scratch_serial.bp, &scratch_parallel.bp, 1.0e-12);
-    assert_vector3_fields_match(&scratch_serial.bu, &scratch_parallel.bu, 1.0e-12);
-    assert_vector3_fields_match(&scratch_serial.bv, &scratch_parallel.bv, 1.0e-12);
-    assert_vector3_fields_match(&scratch_serial.bw, &scratch_parallel.bw, 1.0e-12);
+    let idwls_serial = exec_serial.idwls_rhs();
+    let idwls_parallel = exec_parallel.idwls_rhs();
+    assert_vector3_fields_match(idwls_serial.br(), idwls_parallel.br(), 1.0e-12);
+    assert_vector3_fields_match(idwls_serial.bp(), idwls_parallel.bp(), 1.0e-12);
+    assert_vector3_fields_match(idwls_serial.bu(), idwls_parallel.bu(), 1.0e-12);
+    assert_vector3_fields_match(idwls_serial.bv(), idwls_parallel.bv(), 1.0e-12);
+    assert_vector3_fields_match(idwls_serial.bw(), idwls_parallel.bw(), 1.0e-12);
 }

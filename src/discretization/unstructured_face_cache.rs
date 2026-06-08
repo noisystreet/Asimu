@@ -101,6 +101,12 @@ impl InteriorFaceColoring {
         self.buckets.is_empty()
     }
 
+    /// 最大着色桶内面数（exec scatter `Auto` 解析用）。
+    #[must_use]
+    pub fn max_bucket_faces(&self) -> usize {
+        self.buckets.iter().map(Vec::len).max().unwrap_or(0)
+    }
+
     /// 按颜色桶顺序串行遍历内面索引。
     pub fn for_each_face_index<F>(&self, mut f: F)
     where
@@ -131,17 +137,7 @@ impl InteriorFaceColoring {
         T: Send,
         F: Fn(usize) -> T + Sync,
     {
-        use rayon::prelude::*;
-        self.buckets
-            .iter()
-            .map(|bucket| {
-                bucket
-                    .par_iter()
-                    .with_min_len(1024)
-                    .map(|&face_idx| f(face_idx))
-                    .collect()
-            })
-            .collect()
+        crate::exec::parallel::par_map_colored_buckets(&self.buckets, 1024, f)
     }
 }
 

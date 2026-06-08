@@ -1,6 +1,34 @@
-//! CPU/GPU 执行后端（v1.2+ 规划）。
+//! CPU/GPU 执行后端（ADR 0003 / ADR 0013）。
 //!
-//! v0.x：`cpu` 子模块提供可选 SIMD 热算子（feature `simd-fvm`），
-//! 标量回退路径始终可用；见 [ADR 0003](../docs/adr/0003-multi-precision-and-gpu.md)。
+//! v0.x：`cpu` 子模块提供可选 SIMD 热算子（feature `simd-fvm`）；
+//! `ExecutionContext` 统一 scatter 调度（E0 串行回退；E1 `ParallelUnsafeAtomics` + rayon）。
+//!
+//! ADR 0013：本模块允许 scatter atomic 等 approved `unsafe`（主 crate 仍 forbid）。
 
+#![allow(unsafe_code)]
+
+pub mod batch;
 pub mod cpu;
+
+mod context;
+mod metrics;
+mod scratch;
+
+#[cfg(feature = "parallel-fvm")]
+pub mod parallel;
+
+pub mod scatter;
+
+mod idwls;
+mod spmv;
+
+pub use batch::ExecFaceBatchStatic4;
+pub use context::{
+    EXEC_SCATTER_PARALLEL_MIN_FACES, ExecBackend, ExecConfig, ExecutionContext,
+    ResolvedScatterMode, ScatterMode,
+};
+pub use metrics::MeshExecMetrics;
+#[cfg(feature = "parallel-fvm")]
+pub use scratch::{ColoredViscousFaceBuffer, ColoredViscousFaceFlux, ColoredViscousFaceGeom};
+pub use scratch::{ExecScratch, IdwlsRhsBuffer};
+pub use spmv::CsrSpmvView;

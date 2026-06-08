@@ -182,6 +182,7 @@ name=<mesh_name>;cells=<count>
 | [`asimu::field`](#asimufield) | `ScalarField` SoA | 骨架已实现 |
 | [`asimu::linalg`](#asimulinalg) | `LinearSystem` 三对角 + Thomas | v0.2 已实现 |
 | [`asimu::discretization`](#asimudiscretization) | FVM 扩散装配 + BC 施加 | v0.2 1D 已实现 |
+| [`asimu::exec`](#asimuexec) | `ExecutionContext`、scatter 调度（ADR 0013） | E0 已实现 |
 | [`asimu::solver::time`](#asimusolver) | `TimeIntegrator`、`SteadyStateIntegrator` | 骨架已实现 |
 
 ### `asimu::boundary`
@@ -246,6 +247,29 @@ name=<mesh_name>;cells=<count>
 | `InteriorFaceColoring` | 非结构内面贪心着色桶；`for_each_face_index` 按桶遍历；默认启用 `parallel-fvm` 时 `par_map_buckets` 桶内 rayon 并行 compute + 串行 scatter |
 | `viscous_assembly` | 结构/非结构共用粘性边界面通量（`viscous_flux_at_boundary`）、scatter（`accumulate_viscous_*`）与壁面梯度外推 |
 | `assemble_diffusion_placeholder` | 尺寸校验 + RHS 清零占位 |
+
+### `asimu::exec`
+
+ADR 0013：CPU/GPU 执行后端与 scatter 调度。E0 串行 scatter + `Auto` 解析；E1 并行 atomic scatter；E2 `exec::parallel` 统一 rayon、`ExecScratch` 着色桶缓冲。
+
+| 类型 / 函数 | 说明 |
+|-------------|------|
+| `ExecutionContext` | 算例级 exec 上下文（backend、已解析 scatter 模式、步间 `ExecScratch`） |
+| `ExecConfig` | `backend`、`scatter_mode`、`parallel_min_len`、`scatter_parallel_min_faces` |
+| `MeshExecMetrics` | `num_cells`、`interior_faces`、`max_bucket_faces`（init-time 一次） |
+| `ExecScratch::with_metrics` | 按网格规模预分配 `IdwlsRhsBuffer` 与 `ColoredViscousFaceBuffer`（`parallel-fvm`） |
+| `ExecFaceBatchStatic4` | 四内面静态几何 SoA（init-time；discretization 类型别名 `InteriorFaceBatchStatic4`） |
+| `ColoredViscousFaceGeom` / `ColoredViscousFaceFlux` | exec 着色桶 compute/scatter 面槽（粘性） |
+| `IdwlsRhsBuffer` | IDWLS 正规方程 RHS \(b_u,b_v,b_w,b_T,b_\rho,b_p\)（E3；步间复用） |
+| `ExecutionContext::idwls_prepare_viscous` / `idwls_prepare_inviscid` | 清零 IDWLS RHS 槽 |
+| `ExecutionContext::idwls_accumulate_viscous_cells` / `idwls_accumulate_inviscid_cells` | 单元并行 IDWLS RHS 累加 |
+| `ExecutionContext::csr_spmv` / `CsrSpmvView` | CSR SpMV（`CpuParallel` 行并行） |
+| `CsrMatrix::apply_with_context` | `linalg` → exec SpMV 入口 |
+| `exec::parallel::*` | 桶内/单元并行 map、zip、IDWLS RHS 等（`parallel-fvm`；rayon 仅经此模块） |
+| `exec::scatter::run_bucket_scatter` | 单着色桶串行 scatter 回退 span |
+| `exec::scatter::scatter_viscous_valid_slots` / `scatter_viscous_bucket_range` | 粘性内面 scatter（`Serial` 或 `ParallelUnsafeAtomics` + rayon） |
+| `exec::scatter::scatter_inviscid_pairs` | 无粘内面 scatter（同上） |
+| `ViscousScatterOp` / `InviscidScatterOp` | 单面 scatter 贡献（discretization → exec 映射） |
 
 ### `asimu::solver`（扩展）
 

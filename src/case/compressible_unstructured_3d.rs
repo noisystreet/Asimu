@@ -9,6 +9,7 @@ use tracing::{info, info_span, warn};
 use crate::core::{Real, format_log_fixed4, format_log_sci4, log10_positive, residual_converged};
 use crate::discretization::{BoundaryGhostBuffer, GradientFields, ReconstructionKind};
 use crate::error::{AsimuError, Result};
+use crate::exec::{ExecConfig, ExecutionContext, MeshExecMetrics};
 use crate::field::{ConservedFields, ConservedResidual, PrimitiveFields};
 use crate::io::{CaseSpec, resolve_case_output_path};
 use crate::mesh::UnstructuredMesh3d;
@@ -148,6 +149,7 @@ struct UnstructuredStepWork {
     gradients: GradientFields,
     viscous_scratch: crate::discretization::ViscousAssemblyUnstructuredScratch,
     mesh_cache: crate::discretization::UnstructuredSolverMeshCache,
+    exec: ExecutionContext,
     volumes: Vec<Real>,
     lusgs_couplings: LuSgsUnstructuredCouplings,
 }
@@ -158,6 +160,7 @@ struct UnstructuredRhsWork<'a> {
     gradients: &'a mut GradientFields,
     viscous_scratch: &'a mut crate::discretization::ViscousAssemblyUnstructuredScratch,
     mesh_cache: &'a crate::discretization::UnstructuredSolverMeshCache,
+    exec: &'a mut crate::exec::ExecutionContext,
 }
 
 fn advance_unstructured_history(
@@ -167,6 +170,19 @@ fn advance_unstructured_history(
     let n = env.mesh.num_cells();
     let mut work = {
         let _span = info_span!("allocate_unstructured_work", cells = n).entered();
+        let mesh_cache = crate::discretization::UnstructuredSolverMeshCache::from_mesh(
+            env.mesh,
+            &env.case.boundary,
+        )?;
+        let interior_faces = mesh_cache.face_topology.interior.len();
+        let max_bucket_faces = mesh_cache
+            .face_topology
+            .interior_coloring
+            .max_bucket_faces();
+        let exec = ExecutionContext::new(
+            ExecConfig::default(),
+            MeshExecMetrics::new(n, interior_faces, max_bucket_faces),
+        );
         UnstructuredStepWork {
             storage: Rk4Storage::new(n)?,
             state: SolverState::default(),
@@ -178,10 +194,8 @@ fn advance_unstructured_history(
             primitives: PrimitiveFields::zeros(n)?,
             gradients: GradientFields::zeros(n)?,
             viscous_scratch: crate::discretization::ViscousAssemblyUnstructuredScratch::new(n),
-            mesh_cache: crate::discretization::UnstructuredSolverMeshCache::from_mesh(
-                env.mesh,
-                &env.case.boundary,
-            )?,
+            mesh_cache,
+            exec,
             volumes: env.mesh.cell_volumes(),
             lusgs_couplings: LuSgsUnstructuredCouplings::from_mesh(env.mesh)?,
         }
@@ -329,6 +343,7 @@ fn advance_unstructured_explicit(
         gradients: &mut work.gradients,
         viscous_scratch: &mut work.viscous_scratch,
         mesh_cache: &work.mesh_cache,
+        exec: &mut work.exec,
     };
     let mut reuse_current_state = true;
     let evaluate = |u: &ConservedFields, r: &mut ConservedResidual| {
@@ -394,6 +409,7 @@ fn advance_unstructured_lusgs(
             gradients: &mut work.gradients,
             viscous_scratch: &mut work.viscous_scratch,
             mesh_cache: &work.mesh_cache,
+            exec: &mut work.exec,
         };
         assemble_unstructured_rhs_from_current_state(
             env,
@@ -517,6 +533,7 @@ fn rhs_evaluator<'a>(
         primitives: work.primitives,
         gradients: work.gradients,
         viscous_scratch: work.viscous_scratch,
+        exec: work.exec,
     }
 }
 

@@ -76,27 +76,10 @@ pub(crate) struct InteriorViscousFaceInputs<'a> {
 }
 
 /// 单面几何与物性。
-#[derive(Clone, Copy)]
-pub(crate) struct InteriorViscousFaceGeom {
-    pub owner: usize,
-    pub neighbor: usize,
-    pub nx: Real,
-    pub ny: Real,
-    pub nz: Real,
-    pub mu: Real,
-    pub lambda: Real,
-    pub owner_scale: Real,
-    pub neighbor_scale: Real,
-}
+pub(crate) type InteriorViscousFaceGeom = crate::exec::ColoredViscousFaceGeom;
 
 /// 单面粘性动量/能量通量（scatter 前）。
-#[derive(Clone, Copy)]
-pub(crate) struct InteriorViscousFaceFlux {
-    pub mx: Real,
-    pub my: Real,
-    pub mz: Real,
-    pub energy: Real,
-}
+pub(crate) type InteriorViscousFaceFlux = crate::exec::ColoredViscousFaceFlux;
 
 /// 内面心预平均速度与梯度 SoA（P7 非 SIMD：flux 顺序读）。
 #[cfg(not(feature = "simd-fvm"))]

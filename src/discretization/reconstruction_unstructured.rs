@@ -313,10 +313,12 @@ mod tests {
             viscous: None,
         };
         let mut scratch = crate::discretization::UnstructuredGradientScratch::new(mesh.num_cells());
+        let mut exec = crate::exec::ExecutionContext::for_unit_test();
         crate::discretization::compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq(
             input,
             &mut gradients,
             &mut scratch,
+            &mut exec,
         )
         .expect("grad");
         let face = &cache.face_topology.interior[0];

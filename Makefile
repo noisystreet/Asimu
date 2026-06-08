@@ -41,6 +41,9 @@ complexity:
 fmt:
 	$(CARGO) fmt
 
+check-exec-parallel-scatter:
+	$(CARGO) test --features io-vtk,parallel-fvm exec::scatter::tests
+
 check: lint test
 
 check-parallel-fvm: check

@@ -87,6 +87,7 @@ pub struct EvaluateRhsUnstructured<'a> {
     pub primitives: &'a mut PrimitiveFields,
     pub gradients: &'a mut GradientFields,
     pub viscous_scratch: &'a mut ViscousAssemblyUnstructuredScratch,
+    pub exec: &'a mut crate::exec::ExecutionContext,
 }
 
 impl EvaluateRhsUnstructured<'_> {
@@ -122,6 +123,7 @@ impl EvaluateRhsUnstructured<'_> {
                 grad_input,
                 self.gradients,
                 &mut self.viscous_scratch.gradient,
+                self.exec,
             )?;
         }
         let params = inviscid_assembly_params(self);
@@ -137,6 +139,7 @@ impl EvaluateRhsUnstructured<'_> {
                 primitives: self.primitives,
                 min_pressure: self.min_pressure,
                 gradient_scratch: self.gradients,
+                exec: self.exec,
             };
             compute_gradients_and_assemble_viscous_unstructured_with_scratch(
                 residual,
@@ -169,6 +172,7 @@ impl EvaluateRhsUnstructured<'_> {
                 primitives: self.primitives,
                 min_pressure: self.min_pressure,
                 gradient_scratch: self.gradients,
+                exec: self.exec,
             };
             let _span = info_span!("assemble_unstructured_viscous_residual").entered();
             compute_gradients_and_assemble_viscous_unstructured_with_scratch(
@@ -195,5 +199,6 @@ fn inviscid_assembly_params<'a>(
         mesh_cache: Some(ctx.mesh_cache),
         gradients: Some(ctx.gradients),
         min_pressure: ctx.min_pressure,
+        exec: ctx.exec,
     }
 }

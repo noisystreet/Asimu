@@ -9,9 +9,10 @@ use crate::error::Result;
 use crate::field::{ConservedFields, ConservedResidual};
 use tracing::info_span;
 
+#[cfg(all(feature = "simd-fvm", not(feature = "parallel-fvm")))]
+use crate::discretization::inviscid::scatter_fused_interior_inviscid_face;
 use crate::discretization::inviscid::{
     InteriorInviscidResidualMut, interior_inviscid_residual_mut,
-    scatter_fused_interior_inviscid_face,
 };
 
 #[cfg(not(feature = "parallel-fvm"))]
@@ -20,10 +21,6 @@ use super::{
     InteriorInviscidScatterGeom, InviscidAssemblyUnstructuredParams,
     compute_interior_inviscid_face_contribution,
 };
-
-type InviscidBatchContribution = Option<(InteriorInviscidScatterGeom, InviscidFlux)>;
-type InviscidBatchPartsVec = Vec<Vec<InviscidBatchContribution>>;
-type InviscidBatchPartsResult = Result<InviscidBatchPartsVec>;
 
 /// 一阶 SIMD 批处理支持的通量格式。
 #[derive(Clone, Copy)]
@@ -240,30 +237,46 @@ fn accumulate_inviscid_bucket_batch4_fused(
     topology: &UnstructuredFaceTopology,
     scheme: FirstOrderSimdScheme,
 ) -> Result<()> {
-    use rayon::prelude::*;
+    use crate::exec::scatter::{
+        InviscidPairScatter, InviscidResidualMut, InviscidScatterOp, scatter_inviscid_pairs,
+    };
 
-    let batch_parts: InviscidBatchPartsResult = layout
-        .full_batches
-        .par_iter()
-        .with_min_len(128)
-        .map(|batch| compute_inviscid_full_batch_to_vec(batch, fields, params, topology, scheme))
-        .collect();
-    for part in batch_parts? {
-        for (geom, flux) in part.into_iter().flatten() {
-            scatter_fused_interior_inviscid_face(residual_mut, &geom, &flux);
-        }
+    let batch_parts =
+        crate::exec::parallel::par_try_map_batches(&layout.full_batches, 128, |batch| {
+            compute_inviscid_full_batch_to_vec(batch, fields, params, topology, scheme)
+        })?;
+    let remainder_contributions =
+        crate::exec::parallel::par_try_map_face_indices(&layout.remainder, 1024, |face_idx| {
+            compute_interior_inviscid_face_contribution(face_idx, params, topology)
+        })?;
+    let mut pairs = Vec::new();
+    for part in batch_parts {
+        pairs.extend(part.into_iter().flatten());
     }
-    for (geom, flux) in layout
-        .remainder
-        .par_iter()
-        .with_min_len(1024)
-        .map(|&face_idx| compute_interior_inviscid_face_contribution(face_idx, params, topology))
-        .collect::<Result<Vec<_>>>()?
-        .into_iter()
-        .flatten()
-    {
-        scatter_fused_interior_inviscid_face(residual_mut, &geom, &flux);
-    }
+    pairs.extend(remainder_contributions.into_iter().flatten());
+    scatter_inviscid_pairs(
+        InviscidPairScatter {
+            ctx: params.exec,
+            bucket_len: layout.num_faces(),
+            pairs: &pairs,
+            residual: InviscidResidualMut {
+                density: residual_mut.density,
+                mx: residual_mut.mx,
+                my: residual_mut.my,
+                mz: residual_mut.mz,
+                energy: residual_mut.energy,
+            },
+        },
+        |g, f| InviscidScatterOp {
+            owner: g.owner,
+            neighbor: g.neighbor,
+            owner_scale: g.owner_scale,
+            neighbor_scale: g.neighbor_scale,
+            mass: f.mass,
+            momentum: f.momentum,
+            energy: f.energy,
+        },
+    );
     Ok(())
 }
 

@@ -16,6 +16,7 @@ use crate::discretization::unstructured_face_cache::{
     UnstructuredSolverMeshCache, accumulate_lsq_rhs_component, solve_lsq_gradient,
 };
 use crate::error::{AsimuError, Result};
+use crate::exec::ExecutionContext;
 use crate::field::{PrimitiveFields, primitive_from_conserved_relaxed};
 use crate::mesh::UnstructuredMesh3d;
 use crate::physics::{IdealGasEoS, ViscousPhysicsConfig};
@@ -31,77 +32,32 @@ pub struct UnstructuredGradientLsqInput<'a> {
     pub viscous: Option<&'a ViscousPhysicsConfig>,
 }
 
-/// 非结构 IDWLS 梯度计算复用缓冲。
+/// 非结构 IDWLS 温度等 discretization 侧 scratch（RHS \(b\) 在 [`ExecutionContext`]）。
 pub struct UnstructuredGradientScratch {
     pub temperatures: Vec<Real>,
-    bu: Vec<Vector3>,
-    bv: Vec<Vector3>,
-    bw: Vec<Vector3>,
-    bt: Vec<Vector3>,
-    br: Vec<Vector3>,
-    bp: Vec<Vector3>,
 }
 
 impl UnstructuredGradientScratch {
     #[must_use]
-    pub fn new(num_cells: usize) -> Self {
-        let zero = Vector3::new(0.0, 0.0, 0.0);
+    pub fn new(_num_cells: usize) -> Self {
         Self {
-            temperatures: vec![0.0; num_cells],
-            bu: vec![zero; num_cells],
-            bv: vec![zero; num_cells],
-            bw: vec![zero; num_cells],
-            bt: vec![zero; num_cells],
-            br: vec![zero; num_cells],
-            bp: vec![zero; num_cells],
+            temperatures: Vec::new(),
         }
     }
 
-    fn prepare(&mut self, num_cells: usize) {
-        let zero = Vector3::new(0.0, 0.0, 0.0);
+    pub(super) fn prepare_temperatures(&mut self, num_cells: usize) {
         self.temperatures.resize(num_cells, 0.0);
-        self.bu.resize(num_cells, zero);
-        self.bv.resize(num_cells, zero);
-        self.bw.resize(num_cells, zero);
-        self.bt.resize(num_cells, zero);
-        self.br.resize(num_cells, zero);
-        self.bp.resize(num_cells, zero);
-        for i in 0..num_cells {
-            self.bu[i] = zero;
-            self.bv[i] = zero;
-            self.bw[i] = zero;
-            self.bt[i] = zero;
-            self.br[i] = zero;
-            self.bp[i] = zero;
-        }
-    }
-
-    fn prepare_inviscid_linear_reconstruction(&mut self, num_cells: usize) {
-        let zero = Vector3::new(0.0, 0.0, 0.0);
-        self.bu.resize(num_cells, zero);
-        self.bv.resize(num_cells, zero);
-        self.bw.resize(num_cells, zero);
-        self.br.resize(num_cells, zero);
-        self.bp.resize(num_cells, zero);
-        for i in 0..num_cells {
-            self.bu[i] = zero;
-            self.bv[i] = zero;
-            self.bw[i] = zero;
-            self.br[i] = zero;
-            self.bp[i] = zero;
-        }
     }
 }
 
 /// 非结构网格逆距离加权最小二乘梯度。
-///
-/// 内部面用相邻单元中心样本，边界面用 ghost 状态在面心关于 owner 单元中心的镜像点作为样本。
 pub fn compute_unstructured_gradients_idw_lsq(
     input: UnstructuredGradientLsqInput<'_>,
     out: &mut GradientFields,
+    exec: &mut ExecutionContext,
 ) -> Result<()> {
     let mut scratch = UnstructuredGradientScratch::new(input.mesh.num_cells());
-    compute_unstructured_gradients_idw_lsq_with_scratch(input, out, &mut scratch)
+    compute_unstructured_gradients_idw_lsq_with_scratch(input, out, &mut scratch, exec)
 }
 
 /// 使用调用方提供的 scratch 计算非结构 IDWLS 梯度。
@@ -109,6 +65,7 @@ pub fn compute_unstructured_gradients_idw_lsq_with_scratch(
     input: UnstructuredGradientLsqInput<'_>,
     out: &mut GradientFields,
     scratch: &mut UnstructuredGradientScratch,
+    exec: &mut ExecutionContext,
 ) -> Result<()> {
     let mesh = input.mesh;
     let primitives = input.primitives;
@@ -124,7 +81,8 @@ pub fn compute_unstructured_gradients_idw_lsq_with_scratch(
         ));
     }
     out.clear();
-    scratch.prepare(n);
+    scratch.prepare_temperatures(n);
+    exec.idwls_prepare_viscous(n);
     {
         let _span = info_span!("unstructured_idw_lsq_cell_temperatures", cells = n).entered();
         cell_temperatures_into(
@@ -142,53 +100,53 @@ pub fn compute_unstructured_gradients_idw_lsq_with_scratch(
             boundary_faces = topology.boundary.len(),
         )
         .entered();
-        accumulate_lsq_rhs(&input, scratch)?;
+        accumulate_lsq_rhs(&input, scratch, exec)?;
     }
     {
         let _span = info_span!("unstructured_idw_lsq_solve_gradients", cells = n).entered();
-        write_lsq_gradients(input.mesh_cache, scratch, out)
+        write_lsq_gradients(input.mesh_cache, exec, out)
     }
 }
 
 fn accumulate_lsq_rhs(
     input: &UnstructuredGradientLsqInput<'_>,
-    scratch: &mut UnstructuredGradientScratch,
+    scratch: &UnstructuredGradientScratch,
+    exec: &mut ExecutionContext,
 ) -> Result<()> {
     #[cfg(feature = "parallel-fvm")]
-    {
-        accumulate_lsq_rhs_cell_parallel(input, scratch)
+    if exec.uses_parallel_cell_loops() {
+        return accumulate_lsq_rhs_cell_parallel(input, scratch, exec);
     }
-    #[cfg(not(feature = "parallel-fvm"))]
-    {
-        accumulate_lsq_rhs_face_serial(input, scratch)
-    }
+    accumulate_lsq_rhs_face_serial(input, scratch, exec)
 }
 
-#[cfg(any(not(feature = "parallel-fvm"), test))]
-fn accumulate_lsq_rhs_face_serial(
+pub(super) fn accumulate_lsq_rhs_face_serial(
     input: &UnstructuredGradientLsqInput<'_>,
-    scratch: &mut UnstructuredGradientScratch,
+    scratch: &UnstructuredGradientScratch,
+    exec: &mut ExecutionContext,
 ) -> Result<()> {
     let topology = &input.mesh_cache.face_topology;
     let temperatures = &scratch.temperatures;
+    let idwls = exec.scratch_mut().idwls_mut();
+    let (bu, bv, bw, bt) = idwls.viscous_arrays_mut();
     for face in &topology.interior {
         accumulate_lsq_interior_as_owner(
             input,
             face,
             temperatures,
-            &mut scratch.bu[face.owner],
-            &mut scratch.bv[face.owner],
-            &mut scratch.bw[face.owner],
-            &mut scratch.bt[face.owner],
+            &mut bu[face.owner],
+            &mut bv[face.owner],
+            &mut bw[face.owner],
+            &mut bt[face.owner],
         )?;
         accumulate_lsq_interior_as_neighbor(
             input,
             face,
             temperatures,
-            &mut scratch.bu[face.neighbor],
-            &mut scratch.bv[face.neighbor],
-            &mut scratch.bw[face.neighbor],
-            &mut scratch.bt[face.neighbor],
+            &mut bu[face.neighbor],
+            &mut bv[face.neighbor],
+            &mut bw[face.neighbor],
+            &mut bt[face.neighbor],
         )?;
     }
     for face in &topology.boundary {
@@ -196,37 +154,28 @@ fn accumulate_lsq_rhs_face_serial(
             input,
             face,
             temperatures,
-            &mut scratch.bu[face.owner],
-            &mut scratch.bv[face.owner],
-            &mut scratch.bw[face.owner],
-            &mut scratch.bt[face.owner],
+            &mut bu[face.owner],
+            &mut bv[face.owner],
+            &mut bw[face.owner],
+            &mut bt[face.owner],
         )?;
     }
     Ok(())
 }
 
 #[cfg(feature = "parallel-fvm")]
-fn accumulate_lsq_rhs_cell_parallel(
+pub(super) fn accumulate_lsq_rhs_cell_parallel(
     input: &UnstructuredGradientLsqInput<'_>,
-    scratch: &mut UnstructuredGradientScratch,
+    scratch: &UnstructuredGradientScratch,
+    exec: &mut ExecutionContext,
 ) -> Result<()> {
-    use rayon::prelude::*;
-
     let topology = &input.mesh_cache.face_topology;
     let incidence = &input.mesh_cache.lsq_rhs_incidence;
     let temperatures = &scratch.temperatures;
-    (
-        scratch.bu.par_iter_mut(),
-        scratch.bv.par_iter_mut(),
-        scratch.bw.par_iter_mut(),
-        scratch.bt.par_iter_mut(),
-    )
-        .into_par_iter()
-        .enumerate()
-        .try_for_each(|(cell, (bu, bv, bw, bt))| {
-            let mut rhs = LsqViscousCellRhsMut { bu, bv, bw, bt };
-            accumulate_lsq_rhs_one_cell(input, topology, incidence, temperatures, cell, &mut rhs)
-        })
+    exec.idwls_accumulate_viscous_cells(|cell, bu, bv, bw, bt| {
+        let mut rhs = LsqViscousCellRhsMut { bu, bv, bw, bt };
+        accumulate_lsq_rhs_one_cell(input, topology, incidence, temperatures, cell, &mut rhs)
+    })
 }
 
 struct LsqViscousCellRhsMut<'a> {
@@ -389,18 +338,19 @@ fn ghost_scalar_sample(
 
 fn write_lsq_gradients(
     mesh_cache: &UnstructuredSolverMeshCache,
-    scratch: &UnstructuredGradientScratch,
+    exec: &ExecutionContext,
     out: &mut GradientFields,
 ) -> Result<()> {
+    let idwls = exec.idwls_rhs();
     let n = mesh_cache.lsq_geometry.len();
     let mut cell = 0;
     while cell < n {
         #[cfg(feature = "simd-fvm")]
-        if cell + 4 <= n && write_lsq_gradients_batch4(mesh_cache, scratch, out, cell)? {
+        if cell + 4 <= n && write_lsq_gradients_batch4(mesh_cache, idwls, out, cell)? {
             cell += 4;
             continue;
         }
-        write_lsq_gradients_one_cell(mesh_cache, scratch, out, cell)?;
+        write_lsq_gradients_one_cell(mesh_cache, idwls, out, cell)?;
         cell += 1;
     }
     Ok(())
@@ -409,7 +359,7 @@ fn write_lsq_gradients(
 #[cfg(feature = "simd-fvm")]
 fn write_lsq_gradients_batch4(
     mesh_cache: &UnstructuredSolverMeshCache,
-    scratch: &UnstructuredGradientScratch,
+    idwls: &crate::exec::IdwlsRhsBuffer,
     out: &mut GradientFields,
     start: usize,
 ) -> Result<bool> {
@@ -422,28 +372,28 @@ fn write_lsq_gradients_batch4(
     let g3 = sym3_from_lsq_for_exec(&mesh_cache.lsq_geometry[start + 3]);
     let mats: [&Symmetric3x3; 4] = [&g0, &g1, &g2, &g3];
     let bu = [
-        scratch.bu[start],
-        scratch.bu[start + 1],
-        scratch.bu[start + 2],
-        scratch.bu[start + 3],
+        idwls.bu()[start],
+        idwls.bu()[start + 1],
+        idwls.bu()[start + 2],
+        idwls.bu()[start + 3],
     ];
     let bv = [
-        scratch.bv[start],
-        scratch.bv[start + 1],
-        scratch.bv[start + 2],
-        scratch.bv[start + 3],
+        idwls.bv()[start],
+        idwls.bv()[start + 1],
+        idwls.bv()[start + 2],
+        idwls.bv()[start + 3],
     ];
     let bw = [
-        scratch.bw[start],
-        scratch.bw[start + 1],
-        scratch.bw[start + 2],
-        scratch.bw[start + 3],
+        idwls.bw()[start],
+        idwls.bw()[start + 1],
+        idwls.bw()[start + 2],
+        idwls.bw()[start + 3],
     ];
     let bt = [
-        scratch.bt[start],
-        scratch.bt[start + 1],
-        scratch.bt[start + 2],
-        scratch.bt[start + 3],
+        idwls.bt()[start],
+        idwls.bt()[start + 1],
+        idwls.bt()[start + 2],
+        idwls.bt()[start + 3],
     ];
     let du = solve_symmetric_3x3_batch4(mats, bu);
     let dv = solve_symmetric_3x3_batch4(mats, bv);
@@ -481,18 +431,18 @@ fn write_lsq_gradients_batch4(
 
 fn write_lsq_gradients_one_cell(
     mesh_cache: &UnstructuredSolverMeshCache,
-    scratch: &UnstructuredGradientScratch,
+    idwls: &crate::exec::IdwlsRhsBuffer,
     out: &mut GradientFields,
     cell: usize,
 ) -> Result<()> {
     let geometry = &mesh_cache.lsq_geometry[cell];
-    let du = solve_lsq_gradient(geometry, scratch.bu[cell])
+    let du = solve_lsq_gradient(geometry, idwls.bu()[cell])
         .ok_or_else(|| AsimuError::Mesh(format!("非结构单元 {cell} 的 u 最小二乘梯度样本退化")))?;
-    let dv = solve_lsq_gradient(geometry, scratch.bv[cell])
+    let dv = solve_lsq_gradient(geometry, idwls.bv()[cell])
         .ok_or_else(|| AsimuError::Mesh(format!("非结构单元 {cell} 的 v 最小二乘梯度样本退化")))?;
-    let dw = solve_lsq_gradient(geometry, scratch.bw[cell])
+    let dw = solve_lsq_gradient(geometry, idwls.bw()[cell])
         .ok_or_else(|| AsimuError::Mesh(format!("非结构单元 {cell} 的 w 最小二乘梯度样本退化")))?;
-    let dt = solve_lsq_gradient(geometry, scratch.bt[cell])
+    let dt = solve_lsq_gradient(geometry, idwls.bt()[cell])
         .ok_or_else(|| AsimuError::Mesh(format!("非结构单元 {cell} 的 T 最小二乘梯度样本退化")))?;
     out.du_dx.values_mut()[cell] = du.x;
     out.du_dy.values_mut()[cell] = du.y;

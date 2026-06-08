@@ -1,5 +1,6 @@
 use super::*;
 use crate::boundary::{BoundaryKind, BoundaryPatch, BoundarySet};
+use crate::exec::{ExecConfig, ExecutionContext, MeshExecMetrics};
 use crate::io::{CaseMesh, parse_case_str};
 use crate::mesh::{CellKind, UnstructuredCell, UnstructuredMesh3d};
 
@@ -51,6 +52,18 @@ max_steps = 2
     let mut fields = case.build_conserved_fields().expect("fields");
     fields.density.values_mut()[0] *= 1.1;
     let n = mesh.num_cells();
+    let mesh_cache =
+        crate::discretization::UnstructuredSolverMeshCache::from_mesh(mesh, &case.boundary)
+            .expect("cache");
+    let interior_faces = mesh_cache.face_topology.interior.len();
+    let max_bucket_faces = mesh_cache
+        .face_topology
+        .interior_coloring
+        .max_bucket_faces();
+    let exec = ExecutionContext::new(
+        ExecConfig::default(),
+        MeshExecMetrics::new(n, interior_faces, max_bucket_faces),
+    );
     let mut work = UnstructuredStepWork {
         storage: Rk4Storage::new(n).expect("storage"),
         state: SolverState::default(),
@@ -62,11 +75,8 @@ max_steps = 2
         primitives: PrimitiveFields::zeros(n).expect("prim"),
         gradients: GradientFields::zeros(n).expect("grad"),
         viscous_scratch: crate::discretization::ViscousAssemblyUnstructuredScratch::new(n),
-        mesh_cache: crate::discretization::UnstructuredSolverMeshCache::from_mesh(
-            mesh,
-            &case.boundary,
-        )
-        .expect("cache"),
+        mesh_cache,
+        exec,
         volumes: mesh.cell_volumes(),
         lusgs_couplings: LuSgsUnstructuredCouplings::from_mesh(mesh).expect("couplings"),
     };
