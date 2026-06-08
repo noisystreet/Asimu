@@ -22,7 +22,7 @@ config · io · app · solver (orchestration)
 mesh ← field ← discretization
 physics · linalg
     ↓
-exec (CPU / GPU backend, v1.2+)
+exec (CPU SIMD + 并行 scatter 规划, v1.0+)
     ↓
 core · error
 ```
@@ -36,6 +36,41 @@ core · error
 
 See [AGENTS.md](../../AGENTS.md) for hard constraints.
 
+## Cargo feature matrix & CI
+
+Full matrix: [ARCHITECTURE.md §8.7](../ARCHITECTURE.md#87-cargo-feature-矩阵与-ci-覆盖).
+
+| Feature | Default | Role |
+|---------|:-------:|------|
+| `parallel-fvm` | yes | Rayon bucket-parallel FVM compute; serial scatter ([ADR 0011](../adr/0011-parallel-fvm-face-coloring.md)) |
+| `simd-fvm` | no | `wide` f64x4 kernels in `exec::cpu`; scalar fallback always |
+| `io-vtk` | no* | VTU/VTS I/O ([ADR 0007](../adr/0007-vts-binary-io.md)) |
+| `io-cgns` / `io-cgns-vts` | no | CGNS read (+ VTS export); CI job **cgns** |
+| `slow-tests` | no | Long CGNS integration tests; local only |
+
+\* Makefile / CI always pass `--features io-vtk,parallel-fvm` even though `io-vtk` is not in `Cargo.toml` `default`.
+
+### FVM path combinations (`parallel-fvm` × `simd-fvm`)
+
+| parallel | simd | Interior flux |
+|:--------:|:----:|---------------|
+| yes | yes | `simd_batch4` + bucket rayon — **production** (`make test-simd-fvm`) |
+| yes | no | `parallel_bucket` scalar compute |
+| no | yes | serial coloring + SIMD batch4 |
+| no | no | `colored_serial` baseline |
+
+Disable parallelism: `cargo build --no-default-features --features io-vtk`.
+
+### Makefile / CI
+
+| Target / job | Features |
+|--------------|----------|
+| `make check`, CI **check** | `io-vtk,parallel-fvm` |
+| `make test-simd-fvm` | `+simd-fvm` (recommended before merge; **not in CI yet**) |
+| `make test-cgns`, CI **cgns** | `io-cgns-vts,parallel-fvm` |
+
+Planned: [ADR 0013](../adr/0013-exec-parallel-scatter-execution-context.md) moves parallel scatter into `exec` / `ExecutionContext` (v1.0).
+
 ## Multi-precision (planned)
 
 | Phase | Capability |
@@ -46,12 +81,14 @@ See [AGENTS.md](../../AGENTS.md) for hard constraints.
 
 Geometry coordinates stay `f64`. See ADR [0003](../adr/0003-multi-precision-and-gpu.md).
 
-## GPU / execution backend (planned)
+## GPU / execution backend
 
-- New **`exec`** module (v1.2+): `ExecutionContext`, `ExecBackend` trait
+- **`exec`** (partial today): `src/exec/cpu/` SIMD kernels behind `simd-fvm`
+- **v1.0 (planned)**: `ExecutionContext`, parallel scatter in `exec` ([ADR 0013](../adr/0013-exec-parallel-scatter-execution-context.md))
+- **v1.2+**: `ExecutionContext`, `ExecBackend` trait; GPU for flux / SpMV
 - GPU targets: flux assembly, SpMV — not BC / I/O / convergence control
-- Features: `gpu-wgpu` (preferred), `gpu-cuda` (optional)
-- Main crate stays `unsafe`-free; GPU drivers isolated in `exec/gpu/` or `asimu-exec` crate
+- Features (future): `gpu-wgpu` (preferred), `gpu-cuda` (optional)
+- Main crate stays `unsafe`-free; atomics/GPU drivers isolated in `exec/` ([ADR 0013](../adr/0013-exec-parallel-scatter-execution-context.md))
 
 ## MCP integration (planned v1.1+)
 
@@ -79,16 +116,15 @@ See [CROSS_CUTTING.md](CROSS_CUTTING.md) for the four cross-cutting capabilities
 | Module | Role |
 |--------|------|
 | `core` | Math types, `Real`, constants |
-| `mesh` | Topology and geometry |
-| `field` | SoA storage for DOFs (planned v0.2) |
-| `discretization` | Gradients, fluxes, assembly (planned v0.2) |
-| `physics` | Constitutive laws (planned v0.3) |
-| `linalg` | Sparse matrices, iterative solvers (planned v0.2) |
-| `exec` | CPU/GPU backend (planned v1.2) |
-| `solver` | Time marching, coupling, convergence |
-| `io` | Case / VTK adapters |
-| `case` | End-to-end pipeline orchestration (planned; evolves from `app`) |
-| `app` | CLI orchestration (`app::run`) — application layer, not core lib API |
+| `mesh` | Topology and geometry (structured + unstructured mixed-cell) |
+| `field` | SoA storage for DOFs |
+| `discretization` | Gradients, fluxes, BC, residual assembly |
+| `physics` | EoS, viscous config (partial) |
+| `linalg` | Sparse systems, CG, GMRES (partial) |
+| `exec` | CPU SIMD hot ops (`simd-fvm`); `ExecutionContext` planned ([ADR 0013](../adr/0013-exec-parallel-scatter-execution-context.md)) |
+| `solver` | Time marching, LU-SGS, convergence |
+| `io` | Case / VTK / CGNS adapters (feature-gated) |
+| `case` / `app` | End-to-end / CLI orchestration |
 
 ## v0.2 numerical baseline (ADR 0002)
 
@@ -139,6 +175,9 @@ Planned `[numerics] precision` / `backend` — commented in `config/default.toml
 - [0008](../adr/0008-cgns-io.md) — CGNS read / VTS export
 - [0009](../adr/0009-compressible-navier-stokes.md) — 3D compressible Navier-Stokes solver architecture
 - [0010](../adr/0010-unstructured-mixed-mesh.md) — Unstructured mixed-cell mesh (face-topology roadmap M1–M4)
+- [0011](../adr/0011-parallel-fvm-face-coloring.md) — Unstructured FVM face coloring + `parallel-fvm`
+- [0012](../adr/0012-unstructured-gradient-limiters.md) — Unstructured MUSCL / gradient limiters
+- [0013](../adr/0013-exec-parallel-scatter-execution-context.md) — `ExecutionContext` + parallel scatter in `exec`
 
 ## Open decisions
 

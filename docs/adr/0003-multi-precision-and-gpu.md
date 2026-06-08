@@ -66,6 +66,8 @@ discretization / linalg
 - GPU 底层封装在 **`asimu-exec-gpu`**（规划 crate）或 `src/exec/gpu/` 中，经 ADR 批准可在隔离模块使用 `unsafe`
 - 对外仅暴露 safe 的 `ExecutionContext` API
 
+**2026-06-08 修订**：`ExecutionContext` 接口与 CPU 并行 scatter 语义见 [ADR 0013](0013-exec-parallel-scatter-execution-context.md)；GPU 后端仍 v1.2+。
+
 ### 4. 依赖方向
 
 ```

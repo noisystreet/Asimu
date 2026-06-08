@@ -104,12 +104,14 @@ let result = solver.run(&mesh)?;
 
 #### 非结构 FVM 内面并行（feature `parallel-fvm`，**默认启用**）
 
-`Cargo.toml` `default = ["parallel-fvm"]`；`make check` / CI 使用 `--features io-vtk,parallel-fvm`。关闭并行：`cargo build --no-default-features --features io-vtk`。见 [ADR 0011](adr/0011-parallel-fvm-face-coloring.md)。
+完整 **Feature 矩阵与 CI 覆盖**见 [ARCHITECTURE.md §8.7](ARCHITECTURE.md#87-cargo-feature-矩阵与-ci-覆盖)。摘要：
 
 | 项 | 说明 |
 |----|------|
-| `parallel-fvm` | 依赖 `rayon`；粘性/无粘内面桶内 flux compute 并行、scatter 串行 |
-| `InteriorFaceColoring::par_map_buckets` | 在 `parallel-fvm` 启用时编译（默认开启） |
+| `parallel-fvm` | 依赖 `rayon`；着色桶内 flux compute 并行、scatter 串行（[ADR 0011](adr/0011-parallel-fvm-face-coloring.md)） |
+| `simd-fvm` | 与 `parallel-fvm` 正交；`make test-simd-fvm` = `io-vtk,parallel-fvm,simd-fvm` |
+| 关闭并行 | `cargo build --no-default-features --features io-vtk` |
+| CI 默认 | `io-vtk,parallel-fvm`（**不含** `simd-fvm`，合并前建议本地跑 `make test-simd-fvm`） |
 
 #### VTK VTS / VTU 读入（feature `io-vtk`）
 

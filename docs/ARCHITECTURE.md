@@ -1,6 +1,6 @@
 # asimu 架构设计文档
 
-> 版本：v0.1 设计基线 · 最后更新：2026-05-29
+> 版本：v0.1 设计基线 · 最后更新：2026-06-08
 > 英文摘要：[en/ARCHITECTURE.md](en/ARCHITECTURE.md) · 数据模型：[DATA_MODEL.md](DATA_MODEL.md)
 
 ---
@@ -29,20 +29,19 @@ CFD 程序的核心工作流固定且重复：
 
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| `core` | 占位 | `Vector3` 等基础类型 |
-| `mesh` | 占位 | 网格元数据 |
-| `field` | **规划** | 物理场存储（v0.2 引入） |
-| `discretization` | **规划** | 离散算子（v0.2 引入） |
-| `physics` | **规划** | 本构与源项（v0.3 引入） |
-| `linalg` | **规划** | 稀疏线性代数（v0.2 引入） |
-| `exec` | **规划** | CPU/GPU 执行后端（v1.2+，见 §8.4） |
-| `solver` | 占位 | 时间推进与耦合编排 |
-| `case` | **规划** | 算例编排（v0.3 由 `app` 演进） |
-| `app` | **已实现** | CLI 应用编排（`app::run`） |
-| `mcp` | **规划** | MCP 服务端（v1.1+，`asimu-mcp` binary） |
-| `io` | 占位 | case / restart / manifest 读写 |
+| `core` | 已实现 | `Real`、`Vector3`、容差工具 |
+| `mesh` | 已实现 | 结构化 2D/3D、非结构混合单元、`UnstructuredSolverMeshCache` |
+| `field` | 已实现 | SoA 标量/矢量/守恒/原始变量场 |
+| `discretization` | 已实现（演进中） | 扩散、可压 Euler/NS、非结构 FVM、BC；见 §8.7 feature 矩阵 |
+| `physics` | 部分 | 理想气体、粘性配置 |
+| `linalg` | 部分 | 稀疏系统、CG；可压 GMRES |
+| `exec` | **部分** | `cpu/` SIMD 热算子（`simd-fvm`）；`ExecutionContext` 见 [ADR 0013](adr/0013-exec-parallel-scatter-execution-context.md) |
+| `solver` | 已实现（演进中） | Euler/RK4/LU-SGS、非结构 LU-SGS sweep |
+| `case` / `app` | 已实现 | CLI 算例编排 |
+| `io` | 部分 | case TOML、VTS/VTU、CGNS（feature 门控） |
 | `config` | 已实现 | TOML + CLI + 环境变量 |
 | `error` | 已实现 | 统一错误类型 |
+| `mcp` | 规划 | v1.1+ |
 
 ### 1.4 横向能力（规划索引）
 
@@ -682,6 +681,85 @@ profile = false               # 本地 flamegraph
 | v0.5 | `[observability]` 配置项 |
 | v1.0 | macro-benchmark 结果写入 manifest；发布 performance 摘要 |
 
+### 8.7 Cargo Feature 矩阵与 CI 覆盖
+
+> 权威列表以 [`Cargo.toml`](../Cargo.toml) `[features]` 为准；Makefile / [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) 为本地与 CI 入口。
+
+#### 8.7.1 Feature 一览
+
+| Feature | 默认 | 依赖 | 作用域 | 说明 |
+|---------|:----:|------|--------|------|
+| **`parallel-fvm`** | ✓ | `rayon` | 非结构 FVM 内面 / IDWLS / transport / 谱半径 | 着色桶内 compute 并行；scatter **仍串行**（[ADR 0011](adr/0011-parallel-fvm-face-coloring.md)） |
+| **`simd-fvm`** | — | `wide` | `exec::cpu` + 非结构 batch4 路径 | f64x4 热算子；**标量回退始终可用**（[unstructured_fvm.md](theory/unstructured_fvm.md) § SIMD） |
+| **`io-vtk`** | — | `quick-xml`, `base64`, `flate2` | `io` VTU/VTS | 结构化 VTS、非结构 VTU 读写（[ADR 0007](adr/0007-vts-binary-io.md)） |
+| **`io-cgns`** | — | 系统 `libcgns` | `io` CGNS | CGNS zone 读入（[ADR 0008](adr/0008-cgns-io.md)） |
+| **`io-cgns-vts`** | — | `io-cgns` + `io-vtk` | CGNS→VTS 示例、`mesh_check` | CI job **cgns** 使用此组合 |
+| **`slow-tests`** | — | — | 集成测试 | 圆柱 CGNS 多步等长跑；**不进默认 CI** |
+
+**注意**：`Cargo.toml` `default` **仅**含 `parallel-fvm`；`io-vtk` 由 Makefile / CI **显式**追加（避免默认构建强绑 XML 栈）。
+
+#### 8.7.2 数值路径组合（非结构 FVM）
+
+`parallel-fvm` 与 `simd-fvm` **正交**，由 `#[cfg]` 组合；golden 测试覆盖各组合与串行基线。
+
+| `parallel-fvm` | `simd-fvm` | 内面 flux span `path=` | 典型用途 |
+|:--------------:|:----------:|------------------------|----------|
+| ✓ | ✓ | `simd_batch4` + 桶内 `rayon` | **生产性能**（dual_ellipsoid；`make test-simd-fvm`） |
+| ✓ | — | `parallel_bucket`（标量 compute） | SIMD 不可用平台 / 对照 |
+| — | ✓ | `simd_batch4` 串行着色 | 调试 SIMD 数值 |
+| — | — | `colored_serial` | 并行回归基线、`--no-default-features` |
+
+关闭并行示例：
+
+```bash
+cargo build --no-default-features --features io-vtk
+cargo test  --no-default-features --features io-vtk
+```
+
+启用全性能路径：
+
+```bash
+cargo test --features io-vtk,parallel-fvm,simd-fvm   # 等同 make test-simd-fvm
+```
+
+#### 8.7.3 Makefile / CI 矩阵
+
+| 入口 | Features | Clippy | Test | 说明 |
+|------|----------|:------:|:----:|------|
+| **`make check`** | `io-vtk,parallel-fvm` | ✓ | ✓ | **默认门禁**；pre-commit 同套 |
+| **`make test-simd-fvm`** | `+simd-fvm` | — | ✓ | SIMD 路径；**PR 合并前推荐** |
+| **`make test-cgns`** / **`check-cgns`** | `io-cgns-vts,parallel-fvm` | ✓（check-cgns） | ✓ | 需 `libcgns-dev` |
+| **CI job `check`** | `io-vtk,parallel-fvm` | ✓ | ✓ | 与 `make check` 一致 |
+| **CI job `cgns`** | `io-cgns-vts,parallel-fvm` | ✓ | ✓ | Ubuntu + apt `libcgns-dev` |
+| **`slow-tests`** | 手动 `--features …,slow-tests` | — | 可选 | 本地长跑 |
+
+**CI 缺口（已知，v1.0 前评估）**：
+
+| 组合 | 状态 | 建议 |
+|------|------|------|
+| `io-vtk,parallel-fvm,simd-fvm` | **未进 CI** | 新增 workflow job 或 nightly；与 `make test-simd-fvm` 对齐 |
+| `--no-default-features`（串行 FVM） | **未进 CI** | 可选 job：验证 `colored_serial` golden |
+| `io-cgns-vts,parallel-fvm,simd-fvm` | 未覆盖 | CGNS + SIMD 大算例本地验证 |
+
+#### 8.7.4 Feature 与模块映射
+
+| Feature | 主要模块 / 符号 |
+|---------|-----------------|
+| `parallel-fvm` | `InteriorFaceColoring`、`assembly_unstructured_*_parallel`、`gradient_unstructured` 单元并行、`fill_*_transport` |
+| `simd-fvm` | `exec::cpu::{viscous,roe,hvl,lsq,lusgs}`、`InteriorFaceBucketBatchLayout`、`fused_interior_viscous_face_flux_batch4_from_soa` |
+| `io-vtk` | `io::vtk::*`、`load_vtu` / `write_flow_vtu_unstructured` |
+| `io-cgns` / `io-cgns-vts` | `load_cgns_*`、`examples/cgns_to_vts`、`bin/mesh_check` |
+
+规划中的 **`exec` scatter 并行**（[ADR 0013](adr/0013-exec-parallel-scatter-execution-context.md)）落地后，`parallel-fvm` 的 scatter 语义迁移至 `ExecutionContext`；feature 名可保留，rayon 依赖逐步收敛到 `exec`。
+
+#### 8.7.5 新增 Feature 流程
+
+1. 在 `Cargo.toml` 声明 optional 依赖与 feature 注释
+2. 更新 **本节矩阵** 与 [API.md](API.md)（若影响公开行为）
+3. 在 Makefile / CI 中登记覆盖组合（或明确「仅本地」）
+4. 非平凡数值路径 → golden / benchmark + [CHANGELOG.md](../CHANGELOG.md)
+5. 重大并行 / 后端选型 → 新 ADR 或修订 [ADR 0011](adr/0011-parallel-fvm-face-coloring.md) / [ADR 0003](adr/0003-multi-precision-and-gpu.md)
+
 ---
 
 ## 9. 目录规划
@@ -803,6 +881,9 @@ crates/
 | [0008](adr/0008-cgns-io.md) | CGNS 读入与 VTS 导出 |
 | [0009](adr/0009-compressible-navier-stokes.md) | 三维可压缩 NS 求解器架构（FVM + 守恒变量 + HLLC） |
 | [0010](adr/0010-unstructured-mixed-mesh.md) | 非结构混合单元网格（面拓扑路线；M1–M4 分阶段） |
+| [0011](adr/0011-parallel-fvm-face-coloring.md) | 非结构 FVM 面着色 + `parallel-fvm`（桶内 compute 并行） |
+| [0012](adr/0012-unstructured-gradient-limiters.md) | 非结构二阶线性重构与梯度限制器 |
+| [0013](adr/0013-exec-parallel-scatter-execution-context.md) | `ExecutionContext` + `exec` 并行 scatter（规划基线） |
 
 ### 11.1 空间离散
 
@@ -816,9 +897,10 @@ crates/
 
 ### 11.3 并行与执行后端
 
-- **v0.x–v1.0**：CPU 单线程 → `rayon` 面循环（与 GPU 无关）
-- **v1.2+**：`exec` 层接入 wgpu compute；CUDA 作为可选后端
-- **MPI**：单独 ADR，不与 `discretization` / `exec` API 耦合
+- **v0.x（当前）**：非结构 FVM 默认 **`parallel-fvm`**（rayon 桶内 compute）；scatter 串行（[ADR 0011](adr/0011-parallel-fvm-face-coloring.md)）；可选 **`simd-fvm`**（`exec::cpu` batch4）。见 §8.7。
+- **v1.0（规划）**：`ExecutionContext` + `exec` 并行 scatter（[ADR 0013](adr/0013-exec-parallel-scatter-execution-context.md)）；`discretization` 移除直接 `rayon` 依赖。
+- **v1.2+**：`exec` 层 wgpu compute；CUDA 可选。
+- **MPI**：单独 ADR，不与 `discretization` / `exec` API 耦合。
 
 ### 11.4 数值精度
 
@@ -955,5 +1037,6 @@ crates/
 | [en/CROSS_CUTTING.md](en/CROSS_CUTTING.md) | 四大横向能力英文摘要 |
 | [API.md](API.md) | 公开 library API |
 | [adr/](adr/) | 架构决策记录 |
+| §8.7（本文） | **Cargo Feature 矩阵与 CI 覆盖** |
 | [AGENTS.md](../AGENTS.md) | AI 协作者约束 |
 | [CONTRIBUTING.md](../CONTRIBUTING.md) | 贡献与工作流 |

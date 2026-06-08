@@ -7,6 +7,7 @@
 
 ### Added
 
+- ADR 0013：`ExecutionContext` / `ExecScratch` / `ColoredFaceScatterKernel`；并行 scatter 下沉 `exec`（`ScatterMode::Auto` 默认）；关联修订 ADR 0011、0003
 - ADR 0012：非结构二阶线性重构与梯度限制器（Barth–Jespersen / Venkatakrishnan）；与结构化 `SlopeLimiter` 分离，case 校验禁止混用
 - 非结构 M4 二阶无粘：`reconstruction = muscl`（实现为**二阶线性重构**，非 MUSCL 宽模板）+ `[euler].unstructured_limiter`；IDWLS \(\nabla\rho,\nabla p\) + BJ/V 限制器 + `assemble_inviscid_residual_unstructured` 二阶面循环；benchmark `unstructured_freestream`
 - 非结构内面 **graph coloring**（`InteriorFaceColoring`）：粘性/无粘内面共用着色桶；feature `parallel-fvm`（rayon 桶内 flux 并行 + scatter 串行，**默认启用**）；golden 测试覆盖着色顺序、缓存 vs mesh 循环、并行 vs 串行（见 ADR 0011）
@@ -17,6 +18,7 @@
 
 ### Changed
 
+- **Cargo Feature 矩阵与 CI 覆盖**：ARCHITECTURE §8.7 文档化 `parallel-fvm` / `simd-fvm` / I/O features 组合、Makefile/CI 矩阵与已知缺口；同步 `docs/en/ARCHITECTURE.md` 摘要
 - **`parallel-fvm` 默认启用**：`Cargo.toml` `default = ["parallel-fvm"]`；`make check` / CI / pre-commit 含 `io-vtk,parallel-fvm`（dual_ellipsoid trace：475 万内面 / 9 色桶；见 ADR 0011 修订）
 - **IDWLS RHS 单元并行累加**（`parallel-fvm`）：`LsqRhsCellIncidence` + 单元 `rayon` 路径；粘性梯度与二阶线性重构 \(\nabla\rho,\nabla p\) 共用；golden `parallel_idw_lsq_accumulate_matches_face_serial`
 - **谱半径单元并行**（P2）：`cell_spectral_radius_unstructured` 复用 `mesh_cache` + `LsqRhsCellIncidence`；`parallel-fvm` 下单元 `rayon` 累加 \(\sigma_i\)
