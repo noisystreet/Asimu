@@ -884,6 +884,7 @@ crates/
 | [0011](adr/0011-parallel-fvm-face-coloring.md) | 非结构 FVM 面着色 + `parallel-fvm`（桶内 compute 并行） |
 | [0012](adr/0012-unstructured-gradient-limiters.md) | 非结构二阶线性重构与梯度限制器 |
 | [0013](adr/0013-exec-parallel-scatter-execution-context.md) | `ExecutionContext` + `exec` 并行 scatter（规划基线） |
+| [0014](adr/0014-turbulence-k-omega-sst-rans.md) | 可压 RANS 湍流闭包（Menter k-ω SST，T0–T5） |
 
 ### 11.1 空间离散
 
@@ -1013,7 +1014,7 @@ crates/
 | 线性代数后端 | v0.2 手写 CG；后期评估 faer | 部分决定，见 ADR 0002 |
 | 分布式 MPI | v2.x 单独 ADR | 开放 |
 | 非结构化网格 | [ADR 0010](adr/0010-unstructured-mixed-mesh.md) 面拓扑 + M1–M4 分阶段；M1 拓扑/度量已起步 | 部分决定 |
-| 湍流模型 | v1.x+ RANS 任选一种 | 开放 |
+| 湍流模型 | v1.x **Menter k-ω SST**（[ADR 0014](adr/0014-turbulence-k-omega-sst-rans.md)）；SA  trait T5+ | 部分决定 |
 | GPU 后端选型 | v1.2 首选 wgpu；CUDA 为服务器可选项 | 部分决定，见 ADR 0003 |
 | 混合精度策略 | v0.6 场 f32 + 残差 f64 | 部分决定，见 ADR 0003 |
 | MCP 传输 | v1.1 stdio；v1.3+ 评估 SSE | 部分决定，见 ADR 0004 |

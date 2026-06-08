@@ -178,6 +178,7 @@ Planned `[numerics] precision` / `backend` — commented in `config/default.toml
 - [0011](../adr/0011-parallel-fvm-face-coloring.md) — Unstructured FVM face coloring + `parallel-fvm`
 - [0012](../adr/0012-unstructured-gradient-limiters.md) — Unstructured MUSCL / gradient limiters
 - [0013](../adr/0013-exec-parallel-scatter-execution-context.md) — `ExecutionContext` + parallel scatter in `exec`
+- [0014](../adr/0014-turbulence-k-omega-sst-rans.md) — Compressible RANS turbulence (Menter k-ω SST)
 
 ## Open decisions
 

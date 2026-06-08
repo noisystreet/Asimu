@@ -184,7 +184,7 @@ temperature = 288.15
 | EOS | 理想气体 |
 | 粘性 | Sutherland 空气 |
 | 并行 | 单线程验证 → v1.0 `rayon` 面循环 |
-| 湍流 | 层流首版；SA / k-ω 单独 ADR |
+| 湍流 | 层流首版；**RANS 见 [ADR 0014](0014-turbulence-k-omega-sst-rans.md)（Menter k-ω SST）** |
 
 ### 8. 验证演进路线
 

@@ -7,6 +7,7 @@
 
 ### Added
 
+- ADR 0014：可压 RANS **Menter k-ω SST**（壁距场、分裂 LU-SGS、T0–T5）；理论页 [docs/theory/turbulence_k_omega_sst.md](docs/theory/turbulence_k_omega_sst.md)
 - ADR 0013：`ExecutionContext` / `ExecScratch` / `ColoredFaceScatterKernel`；并行 scatter 下沉 `exec`（`ScatterMode::Auto` 默认）；关联修订 ADR 0011、0003
 - ADR 0012：非结构二阶线性重构与梯度限制器（Barth–Jespersen / Venkatakrishnan）；与结构化 `SlopeLimiter` 分离，case 校验禁止混用
 - 非结构 M4 二阶无粘：`reconstruction = muscl`（实现为**二阶线性重构**，非 MUSCL 宽模板）+ `[euler].unstructured_limiter`；IDWLS \(\nabla\rho,\nabla p\) + BJ/V 限制器 + `assemble_inviscid_residual_unstructured` 二阶面循环；benchmark `unstructured_freestream`
