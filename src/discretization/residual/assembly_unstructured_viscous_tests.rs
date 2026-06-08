@@ -322,10 +322,20 @@ fn simd_batch4_cell_gather_matches_face_averaged_fill() {
         owner_volume: [face.owner_volume; 4],
         neighbor_volume: [face.neighbor_volume; 4],
     };
-    let from_cells =
-        super::viscous_face_batch4_static(&batch, &params, &scratch, scratch.constant_transport)
-            .expect("simd batch");
-    for (lane, (geom, flux_batch)) in from_cells.into_iter().enumerate() {
+    let mut geoms = [super::empty_viscous_geom(); 4];
+    let mut fluxes = [super::empty_viscous_flux(); 4];
+    let count = super::compute_viscous_batch4_into(
+        &batch,
+        &params,
+        &scratch,
+        scratch.constant_transport,
+        &mut geoms,
+        &mut fluxes,
+    );
+    assert_eq!(count, 4);
+    for lane in 0..count as usize {
+        let geom = geoms[lane];
+        let flux_batch = fluxes[lane];
         let face_idx = batch.face_indices[lane];
         let lane_avg = super::face_avg::face_averaged_lane_at(face_idx, &params);
         let flux_ref = fused_interior_viscous_face_flux_averaged(
@@ -341,4 +351,114 @@ fn simd_batch4_cell_gather_matches_face_averaged_fill() {
         assert!(approx_eq(flux_batch.mz, flux_ref.mz, 1.0e-12));
         assert!(approx_eq(flux_batch.energy, flux_ref.energy, 1.0e-12));
     }
+}
+
+#[cfg(feature = "simd-fvm")]
+#[test]
+fn viscous_batch4_scalar_fallback_compacts_skipped_faces() {
+    use crate::core::Vector3;
+    use crate::discretization::{
+        InteriorFaceBatchStatic4, InteriorFaceColoring, UnstructuredFaceTopology,
+        UnstructuredInteriorFace,
+    };
+
+    fn interior_face(owner_scale: f64) -> UnstructuredInteriorFace {
+        UnstructuredInteriorFace {
+            owner: 0,
+            neighbor: 1,
+            area: 1.0,
+            normal: Vector3::new(1.0, 0.0, 0.0),
+            owner_volume: 1.0,
+            neighbor_volume: 1.0,
+            inv_owner_volume: 1.0,
+            inv_neighbor_volume: 1.0,
+            owner_rhs_scale: owner_scale,
+            neighbor_rhs_scale: if owner_scale == 0.0 {
+                0.0
+            } else {
+                -owner_scale
+            },
+            lsq_dr: Vector3::new(1.0, 0.0, 0.0),
+            lsq_w: 1.0,
+            dr_owner_to_face: Vector3::new(0.5, 0.0, 0.0),
+            dr_neighbor_to_face: Vector3::new(-0.5, 0.0, 0.0),
+        }
+    }
+
+    let (mesh, _boundary) = two_tet_mesh_and_boundary();
+    let eos = IdealGasEoS::AIR_STANDARD;
+    let viscous = ViscousPhysicsConfig::default();
+    let fields = ConservedFields::from_freestream(
+        mesh.num_cells(),
+        &eos,
+        &FreestreamParams {
+            mach: 0.0,
+            ..FreestreamParams::default()
+        },
+    )
+    .expect("fields");
+    let mut primitives = PrimitiveFields::zeros(mesh.num_cells()).expect("prim");
+    primitives
+        .fill_from_conserved(&fields, &eos, 1.0e-8)
+        .expect("fill");
+    let gradients = GradientFields::zeros(mesh.num_cells()).expect("grad");
+    let mut scratch = ViscousAssemblyUnstructuredScratch::new(mesh.num_cells());
+    scratch.constant_transport =
+        Some(face_transport_coefficients(300.0, 300.0, &viscous, &eos).expect("tc"));
+
+    let interior = vec![
+        interior_face(0.0),
+        interior_face(0.5),
+        interior_face(0.6),
+        interior_face(0.7),
+    ];
+    let face_topology = UnstructuredFaceTopology {
+        interior,
+        boundary: Vec::new(),
+        interior_coloring: InteriorFaceColoring {
+            buckets: Vec::new(),
+            num_colors: 0,
+            bucket_batch_layouts: Vec::new(),
+        },
+    };
+    let params = ViscousAssemblyUnstructuredParams {
+        mesh: &mesh,
+        face_topology: &face_topology,
+        eos: &eos,
+        viscous: &viscous,
+        ghosts: &BoundaryGhostBuffer::new(),
+        primitives: &primitives,
+        gradients: &gradients,
+        min_pressure: 1.0e-8,
+    };
+
+    let batch = InteriorFaceBatchStatic4 {
+        face_indices: [0, 1, 2, 3],
+        owners: [0; 4],
+        neighbors: [1; 4],
+        nx: [1.0; 4],
+        ny: [0.0; 4],
+        nz: [0.0; 4],
+        owner_rhs_scale: [0.0, 0.5, 0.6, 0.7],
+        neighbor_rhs_scale: [0.0, -0.5, -0.6, -0.7],
+        area: [1.0; 4],
+        owner_volume: [1.0; 4],
+        neighbor_volume: [1.0; 4],
+    };
+    assert!(!batch.simd_eligible());
+
+    let mut geoms = [crate::exec::ColoredViscousFaceGeom::default(); 4];
+    let mut fluxes = [crate::exec::ColoredViscousFaceFlux::default(); 4];
+    let count = super::compute_viscous_batch4_into(
+        &batch,
+        &params,
+        &scratch,
+        scratch.constant_transport,
+        &mut geoms,
+        &mut fluxes,
+    );
+    assert_eq!(count, 3);
+    assert!((geoms[0].owner_scale - 0.5).abs() < 1.0e-12);
+    assert!((geoms[1].owner_scale - 0.6).abs() < 1.0e-12);
+    assert!((geoms[2].owner_scale - 0.7).abs() < 1.0e-12);
 }

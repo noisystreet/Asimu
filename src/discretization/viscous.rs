@@ -90,6 +90,7 @@ pub(crate) struct InteriorViscousFaceGeom {
 }
 
 /// 单面粘性动量/能量通量（scatter 前）。
+#[derive(Clone, Copy)]
 pub(crate) struct InteriorViscousFaceFlux {
     pub mx: Real,
     pub my: Real,

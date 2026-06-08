@@ -14,5 +14,6 @@ pub use lusgs::{ConservedSoA, ConservedSoAMut, LusgsDiagonalUpdate, assign_lusgs
 pub use roe::{InviscidFlux5, face_inviscid_flux_first_order_roe_batch4};
 pub use viscous::{
     VelocityGradientSoA, ViscousFaceBatchGeom, ViscousFaceGather4, ViscousFlux4,
-    fused_interior_viscous_face_flux_batch4, gather_viscous_face_batch4,
+    fused_interior_viscous_face_flux_batch4, fused_interior_viscous_face_flux_batch4_from_soa,
+    gather_viscous_face_batch4,
 };

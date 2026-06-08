@@ -242,30 +242,28 @@ fn assemble_interior_faces_cached(
 
     #[cfg(feature = "parallel-fvm")]
     {
-        let bucket_results = {
-            let _span = info_span!(
-                "unstructured_inviscid_interior_flux_compute",
-                faces = topology.interior.len(),
-                colors = topology.interior_coloring.num_colors,
-            )
-            .entered();
-            topology.interior_coloring.par_map_buckets(|face_idx| {
-                compute_interior_inviscid_face_contribution(face_idx, params, topology)
-            })
-        };
-        {
-            let _span = info_span!(
-                "unstructured_inviscid_interior_flux_scatter",
-                buckets = topology.interior_coloring.buckets.len(),
-            )
-            .entered();
-            let mut residual_mut = interior_inviscid_residual_mut(residual);
-            for bucket in bucket_results {
-                for item in bucket {
-                    if let Some((geom, flux)) = item? {
-                        scatter_fused_interior_inviscid_face(&mut residual_mut, &geom, &flux);
-                    }
-                }
+        use rayon::prelude::*;
+
+        let _span = info_span!(
+            "unstructured_inviscid_interior_flux_fused",
+            path = "parallel_bucket",
+            faces = topology.interior.len(),
+            colors = topology.interior_coloring.num_colors,
+        )
+        .entered();
+        let mut residual_mut = interior_inviscid_residual_mut(residual);
+        for bucket in &topology.interior_coloring.buckets {
+            for (geom, flux) in bucket
+                .par_iter()
+                .with_min_len(1024)
+                .map(|&face_idx| {
+                    compute_interior_inviscid_face_contribution(face_idx, params, topology)
+                })
+                .collect::<Result<Vec<_>>>()?
+                .into_iter()
+                .flatten()
+            {
+                scatter_fused_interior_inviscid_face(&mut residual_mut, &geom, &flux);
             }
         }
     }

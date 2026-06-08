@@ -10,7 +10,8 @@ use crate::field::{ConservedFields, ConservedResidual};
 use tracing::info_span;
 
 use crate::discretization::inviscid::{
-    interior_inviscid_residual_mut, scatter_fused_interior_inviscid_face,
+    InteriorInviscidResidualMut, interior_inviscid_residual_mut,
+    scatter_fused_interior_inviscid_face,
 };
 
 #[cfg(not(feature = "parallel-fvm"))]
@@ -66,37 +67,23 @@ pub(super) fn try_assemble_interior_faces_cached(
 
     #[cfg(feature = "parallel-fvm")]
     {
-        let bucket_results = {
-            let _span = info_span!(
-                "unstructured_inviscid_interior_flux_compute",
-                path = "simd_batch4",
-                faces = topology.interior.len(),
-                colors = topology.interior_coloring.num_colors,
-            )
-            .entered();
-            // 与 `InteriorFaceColoring::par_map_buckets` 一致：各色 bucket 串行、桶内并行。
-            topology
-                .interior_coloring
-                .bucket_batch_layouts
-                .iter()
-                .map(|layout| {
-                    compute_inviscid_bucket_batch4_to_vec(layout, fields, params, topology, scheme)
-                })
-                .collect::<Result<Vec<_>>>()?
-        };
-        {
-            let _span = info_span!(
-                "unstructured_inviscid_interior_flux_scatter",
-                path = "simd_batch4",
-                buckets = topology.interior_coloring.bucket_batch_layouts.len(),
-            )
-            .entered();
-            let mut residual_mut = interior_inviscid_residual_mut(residual);
-            for bucket in bucket_results {
-                for (geom, flux) in bucket.into_iter().flatten() {
-                    scatter_fused_interior_inviscid_face(&mut residual_mut, &geom, &flux);
-                }
-            }
+        let _span = info_span!(
+            "unstructured_inviscid_interior_flux_fused",
+            path = "simd_batch4",
+            faces = topology.interior.len(),
+            colors = topology.interior_coloring.num_colors,
+        )
+        .entered();
+        let mut residual_mut = interior_inviscid_residual_mut(residual);
+        for layout in &topology.interior_coloring.bucket_batch_layouts {
+            accumulate_inviscid_bucket_batch4_fused(
+                layout,
+                fields,
+                &mut residual_mut,
+                params,
+                topology,
+                scheme,
+            )?;
         }
         Ok(true)
     }
@@ -245,16 +232,16 @@ fn accumulate_inviscid_bucket_batch4(
 }
 
 #[cfg(all(feature = "simd-fvm", feature = "parallel-fvm"))]
-fn compute_inviscid_bucket_batch4_to_vec(
+fn accumulate_inviscid_bucket_batch4_fused(
     layout: &InteriorFaceBucketBatchLayout,
     fields: &ConservedFields,
+    residual_mut: &mut InteriorInviscidResidualMut<'_>,
     params: &InviscidAssemblyUnstructuredParams<'_>,
     topology: &UnstructuredFaceTopology,
     scheme: FirstOrderSimdScheme,
-) -> Result<Vec<Option<(InteriorInviscidScatterGeom, InviscidFlux)>>> {
+) -> Result<()> {
     use rayon::prelude::*;
 
-    let mut out = Vec::with_capacity(layout.num_faces());
     let batch_parts: InviscidBatchPartsResult = layout
         .full_batches
         .par_iter()
@@ -262,16 +249,22 @@ fn compute_inviscid_bucket_batch4_to_vec(
         .map(|batch| compute_inviscid_full_batch_to_vec(batch, fields, params, topology, scheme))
         .collect();
     for part in batch_parts? {
-        out.extend(part);
+        for (geom, flux) in part.into_iter().flatten() {
+            scatter_fused_interior_inviscid_face(residual_mut, &geom, &flux);
+        }
     }
-    let remainder: Result<Vec<_>> = layout
+    for (geom, flux) in layout
         .remainder
         .par_iter()
         .with_min_len(1024)
         .map(|&face_idx| compute_interior_inviscid_face_contribution(face_idx, params, topology))
-        .collect();
-    out.extend(remainder?);
-    Ok(out)
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+    {
+        scatter_fused_interior_inviscid_face(residual_mut, &geom, &flux);
+    }
+    Ok(())
 }
 
 #[cfg(all(feature = "simd-fvm", feature = "parallel-fvm"))]

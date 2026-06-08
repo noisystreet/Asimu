@@ -25,6 +25,9 @@
 - **残差监控语义统一**：所有时间积分路径（结构化/非结构、显式 Euler/RK4、LU-SGS、GMRES）的 `log10_residual` 均取步初 \(\|R(U^0)\|\)（`storage.k1` 或 GMRES `base_residual`），不再步末 `post_rhs` 重算
 - **粘性内面面心预平均 SoA**（P7）：IDWLS 后 `fill_face_averaged_viscous_soa` 预写 `ViscousFaceAveragedSoA`；flux 阶段顺序读面数组（非 `simd-fvm`）
 - **粘性 SIMD full_batch 直通 flux**（P7b）：`simd-fvm` 下 `full_batches` 用 `gather_viscous_face_batch4` cell 直 gather + batch4 flux，跳过全量 `face_avg` 填充；remainder 仍 cell 直读
+- **非结构内面 compute+scatter 融合**（P8）：`parallel-fvm` 下各色 bucket 桶内并行 compute 后立即 scatter（`unstructured_*_interior_flux_fused`），取消整桶 `Vec<(geom, flux)>` 缓冲与二次遍历；scatter 仍串行（ADR 0011）
+- **粘性 flux 桶级 flat buffer**（P8′）：`parallel-fvm`+`simd-fvm` 每桶一次预分配固定槽（batch×4 + remainder），`rayon` 按 batch 索引写入、桶末串行 scatter；取消 ~119 万/步 per-batch `Vec` 分配
+- **粘性 batch4 SoA 融合内核**（P9）：`fused_interior_viscous_face_flux_batch4_from_soa` 在 f64x4 寄存器内完成 cell gather + 面平均 + τ·n，跳过 `ViscousFaceGather4` 物化
 - **CPU SIMD 热算子**（P5/P6，`simd-fvm` feature）：新增 `exec::cpu` 模块（`wide` f64x4）；LU-SGS 对角更新、粘性内面四路批处理 flux、IDWLS 3×3 四单元求解、Roe / **Hanel–Van Leer** 一阶内面四路批处理；`InteriorFaceBucketBatchLayout` init-time 静态几何 SoA；标量回退始终可用
 - **非结构无粘内面 fused scatter**（P6-1）：`scatter_fused_interior_inviscid_face` 直接写残差 SoA 切片，消费面 cache 预存 `owner_rhs_scale` / `neighbor_rhs_scale`，避免热路径 `-A/V` 除法与 `Result` 分支；SIMD / 并行 / 串行缓存路径共用
 - **非结构无粘一阶 SoA flux**（P6-2）：`face_inviscid_flux_first_order_interior_soa` / `_boundary_soa` 从 `PrimitiveFields` 直读；FVS 格式跳过 ghost 原始变量解码
