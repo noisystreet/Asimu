@@ -851,7 +851,7 @@ crates/
 |------|----------|----------|---------------------------------------------|
 | **v0.1.x**（当前） | 骨架、config/io/error、占位 solver | 无真实 PDE | L1 tracing（已实现） |
 | **v0.2.x** | `field`, `discretization`, `linalg`, 结构化 `mesh` | 稳态 1D/2D 对流-扩散 FVM | **`TimeIntegrator`**（`SteadyState`）；**首个 1D V&V 算例**（`tests/benchmarks/`） |
-| **v0.3.x** | `physics`, `case`, VTK `io`, BC 框架 | 不可压 NS 原型（SIMPLE） | **`Run Manifest`**（`io/manifest`）；manifest 含 **`wall_time_sec`** |
+| **v0.3.x** | `physics`, `case`, VTK `io`, BC 框架 | 不可压 NS 原型（**3D SIMPLEC + PISO**，[ADR 0015](adr/0015-incompressible-navier-stokes-simplec-piso.md)） | **`Run Manifest`**（`io/manifest`）；manifest 含 **`wall_time_sec`** |
 | **v0.4.x** | Checkpoint/restart | 方腔 Re=100；ExplicitEuler 评估 | **2D V&V 算例**；`metrics.jsonl` 原型；`benches/` + criterion |
 | **v0.5.x** | `Real` + `precision-f32`, Study 模式 | 大网格 f32 探索 | **`[observability]`** 配置；manifest **`observability` 阶段耗时** |
 | **v0.6.x** | 混合精度（场 f32 + 残差 f64） | CPU 参考路径稳定 | macro-benchmark 与 manifest 联动 |
@@ -885,6 +885,7 @@ crates/
 | [0012](adr/0012-unstructured-gradient-limiters.md) | 非结构二阶线性重构与梯度限制器 |
 | [0013](adr/0013-exec-parallel-scatter-execution-context.md) | `ExecutionContext` + `exec` 并行 scatter（规划基线） |
 | [0014](adr/0014-turbulence-k-omega-sst-rans.md) | 可压 RANS 湍流闭包（Menter k-ω SST，T0–T5） |
+| [0015](adr/0015-incompressible-navier-stokes-simplec-piso.md) | 三维不可压 NS（collocated FVM + SIMPLEC + PISO，I0–I6） |
 
 ### 11.1 空间离散
 

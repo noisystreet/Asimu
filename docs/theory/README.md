@@ -46,14 +46,14 @@
 | [inviscid_flux.md](inviscid_flux.md) | `discretization/roe` | v1.x | **已实现（Roe + 熵修正）** | Roe (1981)；Toro (2009) Ch. 10–11 |
 | [unstructured_fvm.md](unstructured_fvm.md) | `mesh/unstructured` / `discretization/residual` | v1.x | **已实现（一阶 Euler）；M4 二阶设计 + ADR 0012** | Blazek (2015)；Barth & Jespersen (1989)；Venkatakrishnan (1993) |
 | *(待建)* `fvm_convection_diffusion.md` | `discretization` | v0.2 | 规划 | Patankar (1980) Ch. 5–6 |
-| [boundary_conditions.md](boundary_conditions.md) | `discretization` / BC | v0.2–v0.3 | **已实现（v0.2 Dirichlet/Neumann）** | [boundary_conditions.md](boundary_conditions.md) |
+| [boundary_conditions.md](boundary_conditions.md) | `discretization` / BC | v0.2–v0.3 | **已实现（v0.2 Dirichlet/Neumann；§9 不可压规划）** | [boundary_conditions.md](boundary_conditions.md) |
 | [time_integration.md](time_integration.md) | `solver/time` | v1.x | **已实现（RK4 + LU-SGS + CFL）** | Blazek (2015) §6.1.4/§9.1；ADR 0005 |
 | [nondimensional.md](nondimensional.md) | `physics` / `io` / BC | v1.x | **已实现** | Toro (2009) Ch. 1；Anderson (1995) |
 | [structured_gradients.md](structured_gradients.md) | `discretization/gradient` | v1.x | **已实现** | Vinokur (1989)；Ferziger et al. Ch. 8 |
 | [curvilinear_metrics.md](curvilinear_metrics.md) | `mesh/metrics` | v1.x | **规划** | Vinokur (1989)；CFL3D TM-2010-216758 |
 | [linear_gmres.md](linear_gmres.md) | `linalg` | v1.x | **已实现（GMRES + ILU(0)/LU-SGS 对角预条件）** | Saad (2003) Ch. 6、Ch. 10 |
 | [turbulence_k_omega_sst.md](turbulence_k_omega_sst.md) | `physics/turbulence` / `discretization/turbulence` | v1.x | **规划（ADR 0014）** | Menter (1994, 2003)；Wilcox (2006) Ch. 4；Blazek (2015) §10 |
-| *(待建)* `incompressible_simple.md` | `solver` | v0.3 | 规划 | Patankar (1980) Ch. 6 |
+| [incompressible_simplec_piso.md](incompressible_simplec_piso.md) | `solver/incompressible` · `discretization/incompressible` | v0.3 | **规划（ADR 0015）** | Patankar (1980) Ch. 6–7；Issa (1986)；Ferziger et al. Ch. 8–9 |
 | *(待建)* `compressible_ns.md` | `discretization` / `physics` | v1.x | 部分（Euler 无粘见上表） | [adr/0009](../adr/0009-compressible-navier-stokes.md)；Toro (2009) |
 
 实现对应功能时：将「规划」改为链接，并从索引表移除 *(待建)* 前缀。

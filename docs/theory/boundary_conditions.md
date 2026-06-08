@@ -137,23 +137,15 @@ u_n = R^+ - \frac{2a}{\gamma-1}
 
 ---
 
-## 6. 验证
+---
+
+## 7. 验证（扩散）
 
 `tests/benchmarks/1d_diffusion_analytical`：\(D=1\)，\(\phi(0)=0\)，\(\phi(L)=1\)，解析解 \(\phi(x)=x/L\)。
 
 集成测试：`tests/boundary_1d_diffusion.rs`。
 
----
-
 可压缩边界单元测试：`discretization::bc_compressible::tests::*`。
-
----
-
-## 7. 参考文献
-
-1. Hirsch, C. (2007). *Numerical Computation of Internal and External Flows*, 2nd ed. Ch. 19（特征边界条件）。
-2. Blazek, J. (2015). *Computational Fluid Dynamics: Principles and Applications*, 3rd ed. §8（Euler / Navier-Stokes 边界条件）。
-3. Thompson, K. W. (1987). Time dependent boundary conditions for hyperbolic systems. *Journal of Computational Physics*, 68(1), 1–24.
 
 ---
 
@@ -162,3 +154,72 @@ u_n = R^+ - \frac{2a}{\gamma-1}
 - 2D 逻辑名 `bottom` / `top`
 - CGNS `ZoneBC` → `BoundaryPatch`
 - `Inlet` / `Outlet` / `Wall` / `Symmetry`（见 DATA_MODEL §5）
+- 不可压 `convective_outlet`（I5+，ADR 0015）
+
+---
+
+## 9. 不可压缩 Navier-Stokes 边界（ADR 0015）
+
+不可压 NS 在 `discretization/incompressible/bc.rs` 施加；**不使用** §3 特征/Riemann 边界。
+
+### 9.1 架构
+
+```text
+BoundaryPatch (IncompressibleInlet / Outlet / Wall / ...)
+    ↓ BoundaryRegistry → BcHandler::Incompressible*
+    ↓ refresh_incompressible_ghosts
+ghost u, v, w, p  →  Rhie-Chow m_dot  →  动量对流/扩散  →  压力 Poisson BC
+```
+
+### 9.2 Ghost 公式
+
+距 owner 中心法向距离 \(d_f\)：
+
+**Dirichlet**（速度入口、动壁）：
+
+\[
+\phi_g = 2\phi_b - \phi_o
+\]
+
+**Neumann**（壁面压力、出口速度、对称）：
+
+\[
+\phi_g = \phi_o + d_f \left(\frac{\partial \phi}{\partial n}\right)_b
+\]
+
+零梯度：\(\phi_g = \phi_o\)。
+
+### 9.3 类型与方程分工
+
+| 类型 | \(\mathbf{u}\) | \(p\) | \(p'\) | \(\dot{m}_f\) |
+|------|----------------|-------|--------|---------------|
+| 无滑移壁 | \(\mathbf{u}_g = -\mathbf{u}_o\) | Neumann | Neumann | 0 |
+| 动壁 \(U_w\) | \(\mathbf{u}_g = 2U_w - \mathbf{u}_o\) | Neumann | Neumann | \(\rho U_w\cdot\mathbf{S}\) |
+| 速度入口 | \(\mathbf{u}_g = 2u_b - u_o\) | Neumann | Neumann | upwind \(u_b\) |
+| 压力出口 | \(\partial u/\partial n=0\) | \(p=p_b\) | \(p'=0\) | upwind owner |
+| 对称 | \(u_n=0\), \(\partial u_t/\partial n=0\) | Neumann | Neumann | \(u_n=0\) |
+| 压力参考 | — | \(p=p_{\mathrm{ref}}\) | \(p'=0\) | — |
+
+### 9.4 Case 与可压分流
+
+`solver.type = "incompressible_ns"` 时：
+
+- `kind = "inlet"` → 必须 `velocity = [u,v,w]`（**非** `total_pressure`）；
+- `kind = "outlet"` → `static_pressure`（gauge）；
+- `kind = "farfield"` → **Validate 失败**。
+
+`solver.type = "compressible_ns"` 时保持 §3 语义不变。
+
+### 9.5 施加顺序
+
+与 §4 相同：ghost 刷新 → Rhie-Chow → 动量装配 → 压力 Poisson；patch 按声明顺序。
+
+---
+
+## 10. 参考文献
+
+1. Hirsch, C. (2007). *Numerical Computation of Internal and External Flows*, 2nd ed. Ch. 19（特征边界条件）。
+2. Blazek, J. (2015). *Computational Fluid Dynamics: Principles and Applications*, 3rd ed. §8（Euler / Navier-Stokes 边界条件）。
+3. Thompson, K. W. (1987). Time dependent boundary conditions for hyperbolic systems. *Journal of Computational Physics*, 68(1), 1–24.
+4. Patankar, S. V. (1980). *Numerical Heat Transfer and Fluid Flow*. Ch. 6–7（不可压 ghost 单元）。
+5. Ferziger, J. H., Perić, M., & Street, R. L. (2020). *Computational Methods for Fluid Dynamics*. Ch. 8–9.

@@ -179,6 +179,7 @@ Planned `[numerics] precision` / `backend` — commented in `config/default.toml
 - [0012](../adr/0012-unstructured-gradient-limiters.md) — Unstructured MUSCL / gradient limiters
 - [0013](../adr/0013-exec-parallel-scatter-execution-context.md) — `ExecutionContext` + parallel scatter in `exec`
 - [0014](../adr/0014-turbulence-k-omega-sst-rans.md) — Compressible RANS turbulence (Menter k-ω SST)
+- [0015](../adr/0015-incompressible-navier-stokes-simplec-piso.md) — 3D incompressible NS (collocated FVM + SIMPLEC + PISO)
 
 ## Open decisions
 

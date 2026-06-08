@@ -201,7 +201,7 @@ temperature = 288.15
 
 ### 9. 与不可压路线关系
 
-- **不替换** v0.3 不可压 SIMPLE 规划；二者共享 `mesh`、`field` 基础设施与 `boundary` 框架。
+- **不替换** v0.3 不可压路线；不可压定案见 [ADR 0015](0015-incompressible-navier-stokes-simplec-piso.md)（3D SIMPLEC + PISO）。二者共享 `mesh`、`field` 基础设施与 `boundary` 框架。
 - `case` 层通过 `solver.type` 选择 `IncompressibleNavierStokes` 或 `CompressibleNavierStokes`。
 - 可压 NS **不阻塞** v0.2–v0.4 交付；首版目标版本 **v1.x**（不可压路径稳定后）。
 
