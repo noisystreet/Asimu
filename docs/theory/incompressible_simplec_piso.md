@@ -296,7 +296,7 @@ Ghost 单元距 owner 中心法向距离 \(d_f\)。
 | (9)(10) SIMPLEC 系数 skeleton | `discretization::assemble_incompressible_momentum_predictor_3d` | **I1 已实现：\(d_P=V_P/(V_P/\Delta\tau)\)** |
 | (11a)(11b) 压力校正 Poisson skeleton | `discretization::assemble_incompressible_pressure_poisson_3d` | **I1 已实现** |
 | (2a)–(2e) 不可压缩无量纲化 | `io::nondimensional::apply_nondimensionalization_for_incompressible` | **I1 已实现** |
-| I1 runner 诊断闭环 | `case/incompressible_3d.rs` | **已实现：初始化、\(max|div(u)|\)、动量预测 CSR 诊断、压力校正 CSR 装配与 GMRES 求解、CGNS 输出；尚未修正 \(p,\mathbf{u}\)** |
+| I1 runner 诊断闭环 | `case/incompressible_3d.rs` | **已实现：初始化、\(max|div(u)|\)、动量预测三分量 GMRES 求解诊断、压力校正 CSR 装配与 GMRES 求解、CGNS 输出；尚未修正 \(p,\mathbf{u}\)** |
 | (3)(4) Rhie-Chow | `discretization/incompressible/rhie_chow.rs` | 规划 |
 | (5)(6) 对流/扩散 | `convection.rs`, `diffusion.rs` | 规划 |
 | (8) 完整动量装配 | `momentum.rs` | 规划 |

@@ -7,7 +7,7 @@
 
 ### Added
 
-- 不可压缩 I1 基础算子：结构化 3D `compute_incompressible_divergence_3d`、`compute_incompressible_velocity_laplacian_3d`、瞬态 Stokes 动量预测 CSR 骨架、压力校正 Poisson CSR 装配骨架与显式 `[incompressible.reference]` 无量纲化；不可压缩 runner 接入 `max|div(u)|`、动量系统与压力校正系统诊断、压力校正 GMRES 求解，并补充理论映射。
+- 不可压缩 I1 基础算子：结构化 3D `compute_incompressible_divergence_3d`、`compute_incompressible_velocity_laplacian_3d`、瞬态 Stokes 动量预测 CSR 骨架、压力校正 Poisson CSR 装配骨架与显式 `[incompressible.reference]` 无量纲化；不可压缩 runner 接入 `max|div(u)|`、动量预测三分量 GMRES 求解诊断、压力校正 GMRES 求解，并补充理论映射。
 - ADR 0015：三维不可压 NS（collocated FVM + **SIMPLEC** + **PISO**，结构化六面体首版，I0–I6）；补充通量格式、边界条件、时间积分（BDF1/伪瞬态）；理论页 [docs/theory/incompressible_simplec_piso.md](docs/theory/incompressible_simplec_piso.md)
 - ADR 0014：可压 RANS **Menter k-ω SST**（壁距场、分裂 LU-SGS、T0–T5）；理论页 [docs/theory/turbulence_k_omega_sst.md](docs/theory/turbulence_k_omega_sst.md)
 - ADR 0013 **E5**：dual_ellipsoid benchmark 说明（`tests/benchmarks/dual_ellipsoid/`）；scatter 每色桶 1 次契约测试；Chrome trace 桶级 span 改 `trace` 级 + `include_args(false)`

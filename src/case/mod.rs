@@ -253,6 +253,13 @@ solution_cgns = "flow.cgns"
             1.0,
             1.0e-12
         ));
+        assert!(metrics.momentum_solve_converged);
+        assert!(metrics.momentum_solve_iterations <= 1);
+        assert!(crate::core::approx_eq(
+            metrics.max_abs_predicted_velocity_delta,
+            0.0,
+            1.0e-12
+        ));
     }
 
     #[test]

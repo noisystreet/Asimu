@@ -40,6 +40,10 @@ pub struct Incompressible3dRunMetrics {
     pub momentum_system_rows: usize,
     pub momentum_system_nnz: usize,
     pub max_momentum_d_coefficient: Real,
+    pub momentum_solve_converged: bool,
+    pub momentum_solve_iterations: usize,
+    pub momentum_solve_residual: Real,
+    pub max_abs_predicted_velocity_delta: Real,
     pub written: Vec<PathBuf>,
 }
 
@@ -82,6 +86,10 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         momentum_rows = diagnostic.momentum_system_rows,
         momentum_nnz = diagnostic.momentum_system_nnz,
         max_momentum_d = %format_log_sci4(diagnostic.max_momentum_d_coefficient),
+        momentum_converged = diagnostic.momentum_solve_converged,
+        momentum_iters = diagnostic.momentum_solve_iterations,
+        momentum_residual = %format_log_sci4(diagnostic.momentum_solve_residual),
+        max_abs_predicted_velocity_delta = %format_log_sci4(diagnostic.max_abs_predicted_velocity_delta),
         "不可压缩 3D I1 skeleton 完成"
     );
     Ok(CaseRunResult {
@@ -89,7 +97,7 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         benchmark_id: case.benchmark_id.clone(),
         kind: CaseRunKind::Incompressible3dSteady,
         summary: format!(
-            "incompressible_3d_i1 steps={steps} max|div(u)|={} pressure_rows={} pressure_nnz={} pressure_converged={} pressure_iters={} pressure_residual={} momentum_rows={} momentum_nnz={}",
+            "incompressible_3d_i1 steps={steps} max|div(u)|={} pressure_rows={} pressure_nnz={} pressure_converged={} pressure_iters={} pressure_residual={} momentum_rows={} momentum_nnz={} momentum_converged={} momentum_iters={} momentum_residual={}",
             format_log_sci4(diagnostic.max_abs_divergence),
             diagnostic.pressure_system_rows,
             diagnostic.pressure_system_nnz,
@@ -97,7 +105,10 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
             diagnostic.pressure_solve_iterations,
             format_log_sci4(diagnostic.pressure_solve_residual),
             diagnostic.momentum_system_rows,
-            diagnostic.momentum_system_nnz
+            diagnostic.momentum_system_nnz,
+            diagnostic.momentum_solve_converged,
+            diagnostic.momentum_solve_iterations,
+            format_log_sci4(diagnostic.momentum_solve_residual)
         ),
         diffusion: None,
         sod: None,
@@ -115,6 +126,10 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
             momentum_system_rows: diagnostic.momentum_system_rows,
             momentum_system_nnz: diagnostic.momentum_system_nnz,
             max_momentum_d_coefficient: diagnostic.max_momentum_d_coefficient,
+            momentum_solve_converged: diagnostic.momentum_solve_converged,
+            momentum_solve_iterations: diagnostic.momentum_solve_iterations,
+            momentum_solve_residual: diagnostic.momentum_solve_residual,
+            max_abs_predicted_velocity_delta: diagnostic.max_abs_predicted_velocity_delta,
             written,
         }),
     })
@@ -131,6 +146,10 @@ struct IncompressibleI1Diagnostic {
     momentum_system_rows: usize,
     momentum_system_nnz: usize,
     max_momentum_d_coefficient: Real,
+    momentum_solve_converged: bool,
+    momentum_solve_iterations: usize,
+    momentum_solve_residual: Real,
+    max_abs_predicted_velocity_delta: Real,
 }
 
 fn assemble_i1_diagnostic(
@@ -161,6 +180,7 @@ fn assemble_i1_diagnostic(
         .values()
         .iter()
         .fold(0.0, |acc: Real, value| acc.max(value.abs()));
+    let momentum_solution = solve_momentum_predictor(&momentum_system, fields)?;
     Ok(IncompressibleI1Diagnostic {
         max_abs_divergence,
         pressure_system_rows: system.matrix.nrows(),
@@ -172,6 +192,10 @@ fn assemble_i1_diagnostic(
         momentum_system_rows: momentum_system.matrix.nrows(),
         momentum_system_nnz: momentum_system.matrix.values().len(),
         max_momentum_d_coefficient,
+        momentum_solve_converged: momentum_solution.converged,
+        momentum_solve_iterations: momentum_solution.iterations,
+        momentum_solve_residual: momentum_solution.residual_norm,
+        max_abs_predicted_velocity_delta: momentum_solution.max_abs_velocity_delta,
     })
 }
 
@@ -180,6 +204,13 @@ struct PressureCorrectionSolveDiagnostic {
     iterations: usize,
     residual_norm: Real,
     max_abs_correction: Real,
+}
+
+struct MomentumPredictorSolveDiagnostic {
+    converged: bool,
+    iterations: usize,
+    residual_norm: Real,
+    max_abs_velocity_delta: Real,
 }
 
 fn solve_pressure_correction(
@@ -205,6 +236,57 @@ fn solve_pressure_correction(
         residual_norm: report.residual_norm,
         max_abs_correction,
     })
+}
+
+fn solve_momentum_predictor(
+    system: &crate::discretization::IncompressibleMomentumPredictorSystem,
+    fields: &IncompressibleFields,
+) -> Result<MomentumPredictorSolveDiagnostic> {
+    let u = solve_momentum_component(system, &system.rhs_x)?;
+    let v = solve_momentum_component(system, &system.rhs_y)?;
+    let w = solve_momentum_component(system, &system.rhs_z)?;
+    let max_abs_velocity_delta = max_velocity_delta(fields, &u.solution, &v.solution, &w.solution);
+    Ok(MomentumPredictorSolveDiagnostic {
+        converged: u.converged && v.converged && w.converged,
+        iterations: u.iterations.max(v.iterations).max(w.iterations),
+        residual_norm: u.residual_norm.max(v.residual_norm).max(w.residual_norm),
+        max_abs_velocity_delta,
+    })
+}
+
+struct MomentumComponentSolve {
+    solution: Vec<Real>,
+    converged: bool,
+    iterations: usize,
+    residual_norm: Real,
+}
+
+fn solve_momentum_component(
+    system: &crate::discretization::IncompressibleMomentumPredictorSystem,
+    rhs: &[Real],
+) -> Result<MomentumComponentSolve> {
+    let n = system.matrix.nrows();
+    let mut matrix = system.matrix.clone();
+    let preconditioner = IdentityPreconditioner::new(n);
+    let solver = GmresSolver::new(GmresConfig::default())?;
+    let mut solution = vec![0.0; n];
+    let report = solver.solve(&mut matrix, &preconditioner, rhs, &mut solution)?;
+    Ok(MomentumComponentSolve {
+        solution,
+        converged: report.converged,
+        iterations: report.iterations,
+        residual_norm: report.residual_norm,
+    })
+}
+
+fn max_velocity_delta(fields: &IncompressibleFields, u: &[Real], v: &[Real], w: &[Real]) -> Real {
+    let mut max_delta: Real = 0.0;
+    for idx in 0..fields.velocity_x.len() {
+        max_delta = max_delta.max((u[idx] - fields.velocity_x.values()[idx]).abs());
+        max_delta = max_delta.max((v[idx] - fields.velocity_y.values()[idx]).abs());
+        max_delta = max_delta.max((w[idx] - fields.velocity_z.values()[idx]).abs());
+    }
+    max_delta
 }
 
 fn write_outputs(
