@@ -6,7 +6,11 @@ use std::path::PathBuf;
 use tracing::warn;
 use tracing::{info, info_span};
 
-use crate::core::format_log_sci4;
+use crate::core::{Real, format_log_sci4};
+use crate::discretization::{
+    IncompressiblePressureCorrectionConfig, assemble_incompressible_pressure_poisson_3d,
+    compute_incompressible_divergence_3d,
+};
 use crate::error::{AsimuError, Result};
 use crate::field::IncompressibleFields;
 #[cfg(feature = "io-cgns")]
@@ -24,6 +28,9 @@ use super::{CaseRunKind, CaseRunResult};
 pub struct Incompressible3dRunMetrics {
     pub steps: u64,
     pub physical_time: f64,
+    pub max_abs_divergence: Real,
+    pub pressure_system_rows: usize,
+    pub pressure_system_nnz: usize,
     pub written: Vec<PathBuf>,
 }
 
@@ -43,26 +50,66 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         .unwrap_or(nondimensional_time);
     let fields = IncompressibleFields::uniform(mesh.num_cells(), config.pressure, config.velocity)?;
     fields.validate_len(mesh.num_cells())?;
+    let diagnostic = assemble_pressure_correction_diagnostic(mesh, &fields, config.density)?;
 
     let written = write_outputs(case, mesh, &fields, nondimensional_time)?;
     info!(
         steps,
         t = %format_log_sci4(physical_time),
-        "不可压缩 3D I0 placeholder 完成"
+        max_abs_divergence = %format_log_sci4(diagnostic.max_abs_divergence),
+        pressure_rows = diagnostic.pressure_system_rows,
+        pressure_nnz = diagnostic.pressure_system_nnz,
+        "不可压缩 3D I1 skeleton 完成"
     );
     Ok(CaseRunResult {
         name: case.name.clone(),
         benchmark_id: case.benchmark_id.clone(),
         kind: CaseRunKind::Incompressible3dSteady,
-        summary: format!("incompressible_3d_i0 steps={steps}"),
+        summary: format!(
+            "incompressible_3d_i1 steps={steps} max|div(u)|={} pressure_rows={} nnz={}",
+            format_log_sci4(diagnostic.max_abs_divergence),
+            diagnostic.pressure_system_rows,
+            diagnostic.pressure_system_nnz
+        ),
         diffusion: None,
         sod: None,
         compressible_3d: None,
         incompressible_3d: Some(Incompressible3dRunMetrics {
             steps,
             physical_time,
+            max_abs_divergence: diagnostic.max_abs_divergence,
+            pressure_system_rows: diagnostic.pressure_system_rows,
+            pressure_system_nnz: diagnostic.pressure_system_nnz,
             written,
         }),
+    })
+}
+
+struct IncompressibleI1Diagnostic {
+    max_abs_divergence: Real,
+    pressure_system_rows: usize,
+    pressure_system_nnz: usize,
+}
+
+fn assemble_pressure_correction_diagnostic(
+    mesh: &StructuredMesh3d,
+    fields: &IncompressibleFields,
+    density: Real,
+) -> Result<IncompressibleI1Diagnostic> {
+    let divergence = compute_incompressible_divergence_3d(mesh, fields)?;
+    let max_abs_divergence = divergence
+        .values()
+        .iter()
+        .fold(0.0, |acc: Real, value| acc.max(value.abs()));
+    let system = assemble_incompressible_pressure_poisson_3d(
+        mesh,
+        &divergence,
+        IncompressiblePressureCorrectionConfig::new(density, 0, 0.0)?,
+    )?;
+    Ok(IncompressibleI1Diagnostic {
+        max_abs_divergence,
+        pressure_system_rows: system.matrix.nrows(),
+        pressure_system_nnz: system.matrix.values().len(),
     })
 }
 

@@ -21,6 +21,7 @@ use crate::io::{CaseMesh, CaseSpec, load_case};
 
 pub use compressible_3d::Compressible3dRunMetrics;
 pub use diffusion::DiffusionRunMetrics;
+pub use incompressible_3d::Incompressible3dRunMetrics;
 pub use sod::SodRunMetrics;
 
 /// 算例运行模式。
@@ -42,7 +43,7 @@ pub struct CaseRunResult {
     pub diffusion: Option<DiffusionRunMetrics>,
     pub sod: Option<SodRunMetrics>,
     pub compressible_3d: Option<Compressible3dRunMetrics>,
-    pub incompressible_3d: Option<incompressible_3d::Incompressible3dRunMetrics>,
+    pub incompressible_3d: Option<Incompressible3dRunMetrics>,
 }
 
 /// 从 `case.toml` 路径加载并运行（默认日志级别 `info`）。
@@ -235,6 +236,9 @@ solution_cgns = "flow.cgns"
         assert_eq!(result.kind, CaseRunKind::Incompressible3dSteady);
         let metrics = result.incompressible_3d.expect("metrics");
         assert_eq!(metrics.steps, 1);
+        assert!(metrics.max_abs_divergence.is_finite());
+        assert_eq!(metrics.pressure_system_rows, 4);
+        assert!(metrics.pressure_system_nnz >= metrics.pressure_system_rows);
     }
 
     #[test]
