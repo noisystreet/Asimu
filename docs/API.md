@@ -253,7 +253,7 @@ name=<mesh_name>;cells=<count>
 | `compute_incompressible_velocity_laplacian_3d` | 结构化 3D 不可压缩 I1 速度三分量 Laplacian skeleton |
 | `assemble_incompressible_pressure_poisson_3d` | 结构化 3D 不可压缩 I1 压力校正 Poisson CSR 骨架 |
 | `IncompressiblePressureCorrectionConfig` / `IncompressiblePressureCorrectionSystem` | 压力校正装配配置与 `CsrMatrix + rhs` 输出 |
-| `assemble_incompressible_momentum_predictor_3d` | 结构化 3D 不可压缩 I1 瞬态 Stokes 动量预测 CSR 骨架，输出三分量 RHS 与 \(d_P\) |
+| `assemble_incompressible_momentum_predictor_3d` | 结构化 3D 不可压缩 I1 伪瞬态动量预测 CSR，含扩散、一阶迎风对流、压力梯度、欠松弛与 \(d_P\) |
 | `IncompressibleMomentumPredictorConfig` / `IncompressibleMomentumPredictorSystem` | 动量预测装配配置与三分量共用 `CsrMatrix`、`rhs_x/y/z`、`d_coefficient` |
 | `assemble_diffusion_placeholder` | 尺寸校验 + RHS 清零占位 |
 

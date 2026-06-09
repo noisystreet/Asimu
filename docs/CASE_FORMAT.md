@@ -341,9 +341,9 @@ path = "restart.toml"
 
 多块 restart 仍须配置 `[freestream]` 以驱动边界 ghost；初场守恒量来自 restart 文件。API：`CaseSpec::build_multiblock_conserved_fields()`、`io::load_multiblock_conserved_fields()`、`io::write_multiblock_conserved_fields()`。
 
-## 6.6 `[incompressible]`（I0 placeholder）
+## 6.6 `[incompressible]`（I1 skeleton）
 
-I0 阶段仅支持单 block `structured_3d`，初始化不可压主变量并写出 CGNS；尚未装配压力-速度耦合方程。
+I1 阶段仅支持单 block `structured_3d`，可初始化不可压主变量、装配/求解伪瞬态动量预测与压力校正 skeleton，并写出 CGNS；边界条件与完整 SIMPLEC/PISO 循环仍在后续阶段。
 
 ```toml
 [incompressible]
@@ -351,6 +351,7 @@ pressure = 0.0                  # Pa，解析后除以 rho * U_ref^2
 velocity = [1.0, 0.0, 0.0]       # m/s，解析后除以 U_ref
 density = 1.0
 kinematic_viscosity = 0.01       # m^2/s，解析后为 1/Re
+velocity_under_relaxation = 0.7   # 可选，(0, 1]，默认 1.0
 
 [incompressible.reference]
 length = 1.0                     # L_ref，m

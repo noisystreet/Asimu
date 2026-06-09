@@ -63,42 +63,6 @@ pub struct IncompressiblePressureCorrectionSystem {
     pub rhs: Vec<Real>,
 }
 
-/// 不可压缩动量预测方程装配配置。
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct IncompressibleMomentumPredictorConfig {
-    pub kinematic_viscosity: Real,
-    pub pseudo_time_step: Real,
-}
-
-impl IncompressibleMomentumPredictorConfig {
-    pub fn new(kinematic_viscosity: Real, pseudo_time_step: Real) -> Result<Self> {
-        if kinematic_viscosity < 0.0 {
-            return Err(AsimuError::Config(
-                "不可压缩动量预测 kinematic_viscosity 不能为负".to_string(),
-            ));
-        }
-        if pseudo_time_step <= 0.0 {
-            return Err(AsimuError::Config(
-                "不可压缩动量预测 pseudo_time_step 必须大于 0".to_string(),
-            ));
-        }
-        Ok(Self {
-            kinematic_viscosity,
-            pseudo_time_step,
-        })
-    }
-}
-
-/// 三个速度分量共用矩阵的动量预测系统。
-#[derive(Debug, Clone, PartialEq)]
-pub struct IncompressibleMomentumPredictorSystem {
-    pub matrix: CsrMatrix,
-    pub rhs_x: Vec<Real>,
-    pub rhs_y: Vec<Real>,
-    pub rhs_z: Vec<Real>,
-    pub d_coefficient: ScalarField,
-}
-
 /// 计算不可压缩连续性残差 \(\nabla\cdot\mathbf{u}\)。
 ///
 /// 前置：`fields` 长度等于 `mesh.num_cells()`。I1 仅支持 Cartesian 均匀结构化网格；
@@ -194,64 +158,6 @@ pub fn assemble_incompressible_pressure_poisson_3d(
     })
 }
 
-/// 装配不可压缩瞬态 Stokes 动量预测骨架。
-///
-/// I1 使用 \((V/\Delta t)u^*-\nu\nabla^2 u^*=(V/\Delta t)u^n-V\nabla p^n\)，
-/// 边界为零梯度 skeleton。后续会替换为含对流、边界与欠松弛的 SIMPLEC 动量方程。
-pub fn assemble_incompressible_momentum_predictor_3d(
-    mesh: &StructuredMesh3d,
-    fields: &IncompressibleFields,
-    config: IncompressibleMomentumPredictorConfig,
-) -> Result<IncompressibleMomentumPredictorSystem> {
-    fields.validate_len(mesh.num_cells())?;
-    if config.kinematic_viscosity < 0.0 {
-        return Err(AsimuError::Config(
-            "不可压缩动量预测 kinematic_viscosity 不能为负".to_string(),
-        ));
-    }
-    if config.pseudo_time_step <= 0.0 {
-        return Err(AsimuError::Config(
-            "不可压缩动量预测 pseudo_time_step 必须大于 0".to_string(),
-        ));
-    }
-    let spacing = CartesianSpacing::from_mesh(mesh)?;
-    let volume = spacing.volume();
-    let time_coeff = volume / config.pseudo_time_step;
-    let n = mesh.num_cells();
-    let mut rows = (0..n).map(|_| Vec::with_capacity(7)).collect::<Vec<_>>();
-    let mut rhs_x = Vec::with_capacity(n);
-    let mut rhs_y = Vec::with_capacity(n);
-    let mut rhs_z = Vec::with_capacity(n);
-    let mut d = Vec::with_capacity(n);
-    for k in 0..mesh.nz {
-        for j in 0..mesh.ny {
-            for i in 0..mesh.nx {
-                let row = mesh.cell_index(i, j, k);
-                add_momentum_predictor_neighbors(
-                    mesh,
-                    &mut rows[row],
-                    (i, j, k),
-                    spacing,
-                    config,
-                    time_coeff,
-                );
-                let grad_p = pressure_gradient(mesh, fields.pressure.values(), i, j, k, spacing);
-                rhs_x.push(time_coeff * fields.velocity_x.values()[row] - volume * grad_p[0]);
-                rhs_y.push(time_coeff * fields.velocity_y.values()[row] - volume * grad_p[1]);
-                rhs_z.push(time_coeff * fields.velocity_z.values()[row] - volume * grad_p[2]);
-                d.push(volume / time_coeff);
-            }
-        }
-    }
-    Ok(IncompressibleMomentumPredictorSystem {
-        matrix: CsrMatrix::from_rows(n, n, rows)?,
-        rhs_x,
-        rhs_y,
-        rhs_z,
-        d_coefficient: ScalarField::from_values(d)?,
-    })
-}
-
 #[derive(Debug, Clone, Copy)]
 struct CartesianSpacing {
     dx: Real,
@@ -274,10 +180,6 @@ impl CartesianSpacing {
             dy: dy.abs(),
             dz: dz.abs(),
         })
-    }
-
-    fn volume(self) -> Real {
-        self.dx * self.dy * self.dz
     }
 }
 
@@ -369,80 +271,6 @@ fn add_pressure_poisson_neighbors(
     row.push((center, diag));
 }
 
-fn add_momentum_predictor_neighbors(
-    mesh: &StructuredMesh3d,
-    row: &mut Vec<(usize, Real)>,
-    cell: (usize, usize, usize),
-    spacing: CartesianSpacing,
-    config: IncompressibleMomentumPredictorConfig,
-    time_coeff: Real,
-) {
-    let (i, j, k) = cell;
-    let center = mesh.cell_index(i, j, k);
-    let cx = config.kinematic_viscosity * spacing.dy * spacing.dz / spacing.dx;
-    let cy = config.kinematic_viscosity * spacing.dx * spacing.dz / spacing.dy;
-    let cz = config.kinematic_viscosity * spacing.dx * spacing.dy / spacing.dz;
-    let mut diag = time_coeff;
-    add_neighbor_if_present(
-        mesh,
-        row,
-        &mut diag,
-        neighbor_if(i > 0, || (i - 1, j, k)),
-        cx,
-    );
-    add_neighbor_if_present(
-        mesh,
-        row,
-        &mut diag,
-        neighbor_if(i + 1 < mesh.nx, || (i + 1, j, k)),
-        cx,
-    );
-    add_neighbor_if_present(
-        mesh,
-        row,
-        &mut diag,
-        neighbor_if(j > 0, || (i, j - 1, k)),
-        cy,
-    );
-    add_neighbor_if_present(
-        mesh,
-        row,
-        &mut diag,
-        neighbor_if(j + 1 < mesh.ny, || (i, j + 1, k)),
-        cy,
-    );
-    add_neighbor_if_present(
-        mesh,
-        row,
-        &mut diag,
-        neighbor_if(k > 0, || (i, j, k - 1)),
-        cz,
-    );
-    add_neighbor_if_present(
-        mesh,
-        row,
-        &mut diag,
-        neighbor_if(k + 1 < mesh.nz, || (i, j, k + 1)),
-        cz,
-    );
-    row.push((center, diag));
-}
-
-fn pressure_gradient(
-    mesh: &StructuredMesh3d,
-    pressure: &[Real],
-    i: usize,
-    j: usize,
-    k: usize,
-    spacing: CartesianSpacing,
-) -> [Real; 3] {
-    [
-        central_diff_x(mesh, pressure, i, j, k, spacing.dx),
-        central_diff_y(mesh, pressure, i, j, k, spacing.dy),
-        central_diff_z(mesh, pressure, i, j, k, spacing.dz),
-    ]
-}
-
 fn neighbor_if(
     present: bool,
     index: impl FnOnce() -> (usize, usize, usize),
@@ -531,6 +359,9 @@ fn top(k: usize, nz: usize) -> usize {
 mod tests {
     use super::*;
     use crate::core::approx_eq;
+    use crate::discretization::{
+        IncompressibleMomentumPredictorConfig, assemble_incompressible_momentum_predictor_3d,
+    };
 
     fn mesh_3x3x3() -> StructuredMesh3d {
         StructuredMesh3d::uniform_box("inc", 3, 3, 3, 3.0, 3.0, 3.0).expect("mesh")
@@ -697,10 +528,10 @@ mod tests {
     }
 
     #[test]
-    fn momentum_predictor_uniform_field_preserves_time_rhs_and_d() {
+    fn momentum_predictor_zero_velocity_preserves_time_rhs_and_d() {
         let mesh = mesh_3x3x3();
         let fields =
-            IncompressibleFields::uniform(mesh.num_cells(), 0.0, [2.0, -1.0, 0.5]).expect("fields");
+            IncompressibleFields::uniform(mesh.num_cells(), 0.0, [0.0, 0.0, 0.0]).expect("fields");
         let config = IncompressibleMomentumPredictorConfig::new(0.25, 0.5).expect("config");
 
         let system =
@@ -712,19 +543,19 @@ mod tests {
             system
                 .rhs_x
                 .iter()
-                .all(|&value| approx_eq(value, 4.0, 1.0e-12))
+                .all(|&value| approx_eq(value, 0.0, 1.0e-12))
         );
         assert!(
             system
                 .rhs_y
                 .iter()
-                .all(|&value| approx_eq(value, -2.0, 1.0e-12))
+                .all(|&value| approx_eq(value, 0.0, 1.0e-12))
         );
         assert!(
             system
                 .rhs_z
                 .iter()
-                .all(|&value| approx_eq(value, 1.0, 1.0e-12))
+                .all(|&value| approx_eq(value, 0.0, 1.0e-12))
         );
         assert!(
             system
@@ -776,6 +607,47 @@ mod tests {
         assert!(approx_eq(system.rhs_x[center], -3.0, 1.0e-12));
         assert!(approx_eq(system.rhs_y[center], 2.0, 1.0e-12));
         assert!(approx_eq(system.rhs_z[center], -1.0, 1.0e-12));
+    }
+
+    #[test]
+    fn momentum_predictor_upwind_convection_enters_matrix() {
+        let mesh = mesh_3x3x3();
+        let fields =
+            IncompressibleFields::uniform(mesh.num_cells(), 0.0, [2.0, 0.0, 0.0]).expect("fields");
+        let config = IncompressibleMomentumPredictorConfig::new(0.0, 1.0).expect("config");
+
+        let system =
+            assemble_incompressible_momentum_predictor_3d(&mesh, &fields, config).expect("system");
+
+        let center = mesh.cell_index(1, 1, 1);
+        let row = system.matrix.row_entries(center).collect::<Vec<_>>();
+        assert!(row_contains(&row, center, 3.0));
+        assert!(row_contains(&row, mesh.cell_index(0, 1, 1), -2.0));
+        assert!(approx_eq(system.rhs_x[center], 2.0, 1.0e-12));
+        assert!(approx_eq(
+            system.d_coefficient.values()[center],
+            1.0,
+            1.0e-12
+        ));
+    }
+
+    #[test]
+    fn momentum_predictor_under_relaxation_increases_diagonal_and_rhs() {
+        let mesh = mesh_3x3x3();
+        let fields =
+            IncompressibleFields::uniform(mesh.num_cells(), 0.0, [2.0, 0.0, 0.0]).expect("fields");
+        let config = IncompressibleMomentumPredictorConfig::new(0.25, 0.5)
+            .expect("config")
+            .with_velocity_under_relaxation(0.5)
+            .expect("relax");
+
+        let system =
+            assemble_incompressible_momentum_predictor_3d(&mesh, &fields, config).expect("system");
+
+        let center = mesh.cell_index(1, 1, 1);
+        let row = system.matrix.row_entries(center).collect::<Vec<_>>();
+        assert!(row_contains(&row, center, 11.0));
+        assert!(approx_eq(system.rhs_x[center], 15.0, 1.0e-12));
     }
 
     fn row_contains(row: &[(usize, Real)], col: usize, value: Real) -> bool {

@@ -214,7 +214,7 @@ lz = 0.5
 
 [incompressible]
 pressure = 0.0
-velocity = [1.0, 0.0, 0.0]
+velocity = [0.0, 0.0, 0.0]
 density = 1.0
 kinematic_viscosity = 0.01
 

@@ -155,7 +155,7 @@ I1 先提供速度分量 Laplacian skeleton：
 a_P \phi_P = \sum a_{nb}\phi_{nb} + H(\phi) - (p_E - p_W)_\phi \tag{8}
 \]
 
-\(H\) 含对流、扩散显式部分（不含 \(a_P\phi_P\) 与压力梯度）。
+I1 结构化实现中，扩散项和一阶迎风对流项先进入左端矩阵；后续会把边界通量、更多格式与完整 \(H(\phi)\) 拆分补齐。
 
 **欠松弛（SIMPLEC）**：\(a_P \leftarrow a_P/\alpha_u\)，\(H \leftarrow H + (1-\alpha_u)a_P\phi_P/\alpha_u\)。
 
@@ -165,10 +165,10 @@ a_P \phi_P = \sum a_{nb}\phi_{nb} + H(\phi) - (p_E - p_W)_\phi \tag{8}
 
 由 (8) 得 \(\mathbf{u}^*\)（压力梯度用 \(p^n\)）。
 
-I1 先提供一个瞬态 Stokes skeleton，用于打通矩阵/RHS/一致系数的数据通路，尚不包含对流、真实边界通量与欠松弛：
+I1 先提供一个伪瞬态动量预测 skeleton，用于打通矩阵/RHS/一致系数的数据通路，包含扩散、一阶迎风对流、压力梯度与速度欠松弛；真实边界通量仍在后续补齐：
 
 \[
-\frac{V_P}{\Delta \tau}\phi_P^* - \nu \nabla^2 \phi_P^*
+\frac{V_P}{\Delta \tau}\phi_P^* + \sum_f F_f\phi_f^{up} - \nu \nabla^2 \phi_P^*
 = \frac{V_P}{\Delta \tau}\phi_P^n - V_P(\nabla p^n)_\phi,
 \qquad \phi\in\{u,v,w\}
 \tag{8a}
@@ -183,13 +183,15 @@ a_T=a_B=\nu\frac{\Delta x\Delta y}{\Delta z},
 \tag{8b}
 \]
 
+面通量使用 cell-centered 速度线性插值得到 \(F_f=(\mathbf{u}_f\cdot\mathbf{n}_f)A_f\)，\(\phi_f^{up}\) 取一阶迎风。
+
 \[
-a_P=\frac{V_P}{\Delta\tau}+\sum a_{nb},\qquad
+a_P=\frac{V_P}{\Delta\tau}+\sum a_{nb}^{diff}+\sum_f \max(F_f,0),\qquad
 rhs_\phi=\frac{V_P}{\Delta\tau}\phi_P^n - V_P(\nabla p^n)_\phi.
 \tag{8c}
 \]
 
-缺失邻居仍采用零梯度 skeleton；后续真实 SIMPLEC 装配会以边界面通量替代该处理。
+欠松弛按 (8) 后的规则修改对角与 RHS。缺失邻居仍不注入真实边界通量；第 2 阶段会以边界面通量替代该 skeleton 处理。
 
 ### 5.2 一致系数
 
@@ -207,7 +209,7 @@ d_P = \frac{V_P}{a_P^c} \tag{10}
 \nabla\cdot(\rho\, d\,\nabla p') = \nabla\cdot(\rho\,\mathbf{u}^*) \tag{11}
 \]
 
-I1 skeleton 尚未引入动量方程一致系数 \(d_P\)，先取 \(d=1\) 并装配 SPD 符号形式：
+I1 已由动量预测矩阵提供 cell-centered \(d_P\)，压力校正矩阵仍先装配 SPD 符号形式，面 \(d_f\) 插值与真实边界条件留到后续：
 
 \[
 -\rho\nabla^2 p' = \rho R_c \tag{11a}

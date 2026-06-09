@@ -70,6 +70,7 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         &fields,
         config.density,
         config.kinematic_viscosity,
+        config.velocity_under_relaxation,
         pseudo_time_step,
     )?;
 
@@ -169,6 +170,7 @@ fn assemble_i1_diagnostic(
     fields: &IncompressibleFields,
     density: Real,
     kinematic_viscosity: Real,
+    velocity_under_relaxation: Real,
     pseudo_time_step: Real,
 ) -> Result<IncompressibleI1Diagnostic> {
     let divergence = compute_incompressible_divergence_3d(mesh, fields)?;
@@ -179,7 +181,8 @@ fn assemble_i1_diagnostic(
     let momentum_system = assemble_incompressible_momentum_predictor_3d(
         mesh,
         fields,
-        IncompressibleMomentumPredictorConfig::new(kinematic_viscosity, pseudo_time_step)?,
+        IncompressibleMomentumPredictorConfig::new(kinematic_viscosity, pseudo_time_step)?
+            .with_velocity_under_relaxation(velocity_under_relaxation)?,
     )?;
     let max_momentum_d_coefficient = momentum_system
         .d_coefficient
