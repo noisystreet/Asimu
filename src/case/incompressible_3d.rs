@@ -8,7 +8,8 @@ use tracing::{info, info_span};
 
 use crate::core::{Real, format_log_sci4};
 use crate::discretization::{
-    IncompressiblePressureCorrectionConfig, assemble_incompressible_pressure_poisson_3d,
+    IncompressibleMomentumPredictorConfig, IncompressiblePressureCorrectionConfig,
+    assemble_incompressible_momentum_predictor_3d, assemble_incompressible_pressure_poisson_3d,
     compute_incompressible_divergence_3d,
 };
 use crate::error::{AsimuError, Result};
@@ -36,6 +37,9 @@ pub struct Incompressible3dRunMetrics {
     pub pressure_solve_iterations: usize,
     pub pressure_solve_residual: Real,
     pub max_abs_pressure_correction: Real,
+    pub momentum_system_rows: usize,
+    pub momentum_system_nnz: usize,
+    pub max_momentum_d_coefficient: Real,
     pub written: Vec<PathBuf>,
 }
 
@@ -55,7 +59,14 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         .unwrap_or(nondimensional_time);
     let fields = IncompressibleFields::uniform(mesh.num_cells(), config.pressure, config.velocity)?;
     fields.validate_len(mesh.num_cells())?;
-    let diagnostic = assemble_pressure_correction_diagnostic(mesh, &fields, config.density)?;
+    let pseudo_time_step = case.time.dt.filter(|value| *value > 0.0).unwrap_or(1.0);
+    let diagnostic = assemble_i1_diagnostic(
+        mesh,
+        &fields,
+        config.density,
+        config.kinematic_viscosity,
+        pseudo_time_step,
+    )?;
 
     let written = write_outputs(case, mesh, &fields, nondimensional_time)?;
     info!(
@@ -68,6 +79,9 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         pressure_iters = diagnostic.pressure_solve_iterations,
         pressure_residual = %format_log_sci4(diagnostic.pressure_solve_residual),
         max_abs_pressure_correction = %format_log_sci4(diagnostic.max_abs_pressure_correction),
+        momentum_rows = diagnostic.momentum_system_rows,
+        momentum_nnz = diagnostic.momentum_system_nnz,
+        max_momentum_d = %format_log_sci4(diagnostic.max_momentum_d_coefficient),
         "不可压缩 3D I1 skeleton 完成"
     );
     Ok(CaseRunResult {
@@ -75,13 +89,15 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         benchmark_id: case.benchmark_id.clone(),
         kind: CaseRunKind::Incompressible3dSteady,
         summary: format!(
-            "incompressible_3d_i1 steps={steps} max|div(u)|={} pressure_rows={} nnz={} pressure_converged={} pressure_iters={} pressure_residual={}",
+            "incompressible_3d_i1 steps={steps} max|div(u)|={} pressure_rows={} pressure_nnz={} pressure_converged={} pressure_iters={} pressure_residual={} momentum_rows={} momentum_nnz={}",
             format_log_sci4(diagnostic.max_abs_divergence),
             diagnostic.pressure_system_rows,
             diagnostic.pressure_system_nnz,
             diagnostic.pressure_solve_converged,
             diagnostic.pressure_solve_iterations,
-            format_log_sci4(diagnostic.pressure_solve_residual)
+            format_log_sci4(diagnostic.pressure_solve_residual),
+            diagnostic.momentum_system_rows,
+            diagnostic.momentum_system_nnz
         ),
         diffusion: None,
         sod: None,
@@ -96,6 +112,9 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
             pressure_solve_iterations: diagnostic.pressure_solve_iterations,
             pressure_solve_residual: diagnostic.pressure_solve_residual,
             max_abs_pressure_correction: diagnostic.max_abs_pressure_correction,
+            momentum_system_rows: diagnostic.momentum_system_rows,
+            momentum_system_nnz: diagnostic.momentum_system_nnz,
+            max_momentum_d_coefficient: diagnostic.max_momentum_d_coefficient,
             written,
         }),
     })
@@ -109,12 +128,17 @@ struct IncompressibleI1Diagnostic {
     pressure_solve_iterations: usize,
     pressure_solve_residual: Real,
     max_abs_pressure_correction: Real,
+    momentum_system_rows: usize,
+    momentum_system_nnz: usize,
+    max_momentum_d_coefficient: Real,
 }
 
-fn assemble_pressure_correction_diagnostic(
+fn assemble_i1_diagnostic(
     mesh: &StructuredMesh3d,
     fields: &IncompressibleFields,
     density: Real,
+    kinematic_viscosity: Real,
+    pseudo_time_step: Real,
 ) -> Result<IncompressibleI1Diagnostic> {
     let divergence = compute_incompressible_divergence_3d(mesh, fields)?;
     let max_abs_divergence = divergence
@@ -127,6 +151,16 @@ fn assemble_pressure_correction_diagnostic(
         IncompressiblePressureCorrectionConfig::new(density, 0, 0.0)?,
     )?;
     let pressure_solution = solve_pressure_correction(&system)?;
+    let momentum_system = assemble_incompressible_momentum_predictor_3d(
+        mesh,
+        fields,
+        IncompressibleMomentumPredictorConfig::new(kinematic_viscosity, pseudo_time_step)?,
+    )?;
+    let max_momentum_d_coefficient = momentum_system
+        .d_coefficient
+        .values()
+        .iter()
+        .fold(0.0, |acc: Real, value| acc.max(value.abs()));
     Ok(IncompressibleI1Diagnostic {
         max_abs_divergence,
         pressure_system_rows: system.matrix.nrows(),
@@ -135,6 +169,9 @@ fn assemble_pressure_correction_diagnostic(
         pressure_solve_iterations: pressure_solution.iterations,
         pressure_solve_residual: pressure_solution.residual_norm,
         max_abs_pressure_correction: pressure_solution.max_abs_correction,
+        momentum_system_rows: momentum_system.matrix.nrows(),
+        momentum_system_nnz: momentum_system.matrix.values().len(),
+        max_momentum_d_coefficient,
     })
 }
 

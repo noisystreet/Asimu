@@ -165,6 +165,32 @@ a_P \phi_P = \sum a_{nb}\phi_{nb} + H(\phi) - (p_E - p_W)_\phi \tag{8}
 
 由 (8) 得 \(\mathbf{u}^*\)（压力梯度用 \(p^n\)）。
 
+I1 先提供一个瞬态 Stokes skeleton，用于打通矩阵/RHS/一致系数的数据通路，尚不包含对流、真实边界通量与欠松弛：
+
+\[
+\frac{V_P}{\Delta \tau}\phi_P^* - \nu \nabla^2 \phi_P^*
+= \frac{V_P}{\Delta \tau}\phi_P^n - V_P(\nabla p^n)_\phi,
+\qquad \phi\in\{u,v,w\}
+\tag{8a}
+\]
+
+Cartesian 结构网格上，内点扩散系数为：
+
+\[
+a_E=a_W=\nu\frac{\Delta y\Delta z}{\Delta x},\quad
+a_N=a_S=\nu\frac{\Delta x\Delta z}{\Delta y},\quad
+a_T=a_B=\nu\frac{\Delta x\Delta y}{\Delta z},
+\tag{8b}
+\]
+
+\[
+a_P=\frac{V_P}{\Delta\tau}+\sum a_{nb},\qquad
+rhs_\phi=\frac{V_P}{\Delta\tau}\phi_P^n - V_P(\nabla p^n)_\phi.
+\tag{8c}
+\]
+
+缺失邻居仍采用零梯度 skeleton；后续真实 SIMPLEC 装配会以边界面通量替代该处理。
+
 ### 5.2 一致系数
 
 \[
@@ -266,13 +292,15 @@ Ghost 单元距 owner 中心法向距离 \(d_f\)。
 |-----------|----------|------|
 | (1a) 连续性残差 | `discretization::compute_incompressible_divergence_3d` | **I1 已实现** |
 | (6a) 速度 Laplacian skeleton | `discretization::compute_incompressible_velocity_laplacian_3d` | **I1 已实现** |
+| (8a)–(8c) 动量预测 skeleton | `discretization::assemble_incompressible_momentum_predictor_3d` | **I1 已实现：瞬态 Stokes CSR + 三分量 RHS** |
+| (9)(10) SIMPLEC 系数 skeleton | `discretization::assemble_incompressible_momentum_predictor_3d` | **I1 已实现：\(d_P=V_P/(V_P/\Delta\tau)\)** |
 | (11a)(11b) 压力校正 Poisson skeleton | `discretization::assemble_incompressible_pressure_poisson_3d` | **I1 已实现** |
 | (2a)–(2e) 不可压缩无量纲化 | `io::nondimensional::apply_nondimensionalization_for_incompressible` | **I1 已实现** |
-| I1 runner 诊断闭环 | `case/incompressible_3d.rs` | **已实现：初始化、\(max|div(u)|\)、压力校正 CSR 装配与 GMRES 求解、CGNS 输出；尚未修正 \(p,\mathbf{u}\)** |
+| I1 runner 诊断闭环 | `case/incompressible_3d.rs` | **已实现：初始化、\(max|div(u)|\)、动量预测 CSR 诊断、压力校正 CSR 装配与 GMRES 求解、CGNS 输出；尚未修正 \(p,\mathbf{u}\)** |
 | (3)(4) Rhie-Chow | `discretization/incompressible/rhie_chow.rs` | 规划 |
 | (5)(6) 对流/扩散 | `convection.rs`, `diffusion.rs` | 规划 |
-| (8) 动量装配 | `momentum.rs` | 规划 |
-| (9)(10) SIMPLEC 系数 | `momentum.rs` | 规划 |
+| (8) 完整动量装配 | `momentum.rs` | 规划 |
+| (9)(10) 完整 SIMPLEC 系数 | `momentum.rs` | 规划 |
 | (11) 压力 Poisson | `pressure_correction.rs` | 规划 |
 | BC ghost | `discretization/incompressible/bc.rs` | 规划 |
 | SIMPLEC 循环 | `solver/incompressible/simplec.rs` | 规划 |

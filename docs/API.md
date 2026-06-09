@@ -98,7 +98,7 @@ let result = solver.run(&mesh)?;
 | `CaseSpec::build_initial_fields()` | 构建 `Fields` |
 | `CaseSpec::initial_scalar(name)` | 单标量；未声明则全零 |
 | `CaseSpec::build_multiblock_conserved_fields(blocks)` | 按 block 顺序构建多块守恒初场 |
-| `Incompressible3dRunMetrics` | I1 runner 指标：`max_abs_divergence`、压力校正 CSR 行数/非零数、GMRES 收敛与最大 \(p'\) |
+| `Incompressible3dRunMetrics` | I1 runner 指标：`max_abs_divergence`、压力校正 CSR 行数/非零数、GMRES 收敛与最大 \(p'\)、动量预测 CSR 与最大 \(d_P\) |
 | `load_conserved_fields(path)` / `write_conserved_fields(path, fields)` | 单 block restart TOML（version=1） |
 | `load_multiblock_conserved_fields(path, block_names)` / `write_multiblock_conserved_fields(path, blocks)` | 多块 restart TOML（version=2） |
 | `load_mesh_from_case(&Path) -> Result<Mesh>` | 从占位 case 文件加载网格 |
@@ -253,6 +253,8 @@ name=<mesh_name>;cells=<count>
 | `compute_incompressible_velocity_laplacian_3d` | 结构化 3D 不可压缩 I1 速度三分量 Laplacian skeleton |
 | `assemble_incompressible_pressure_poisson_3d` | 结构化 3D 不可压缩 I1 压力校正 Poisson CSR 骨架 |
 | `IncompressiblePressureCorrectionConfig` / `IncompressiblePressureCorrectionSystem` | 压力校正装配配置与 `CsrMatrix + rhs` 输出 |
+| `assemble_incompressible_momentum_predictor_3d` | 结构化 3D 不可压缩 I1 瞬态 Stokes 动量预测 CSR 骨架，输出三分量 RHS 与 \(d_P\) |
+| `IncompressibleMomentumPredictorConfig` / `IncompressibleMomentumPredictorSystem` | 动量预测装配配置与三分量共用 `CsrMatrix`、`rhs_x/y/z`、`d_coefficient` |
 | `assemble_diffusion_placeholder` | 尺寸校验 + RHS 清零占位 |
 
 ### `asimu::exec`

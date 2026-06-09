@@ -246,6 +246,13 @@ solution_cgns = "flow.cgns"
             0.0,
             1.0e-12
         ));
+        assert_eq!(metrics.momentum_system_rows, 4);
+        assert!(metrics.momentum_system_nnz >= metrics.momentum_system_rows);
+        assert!(crate::core::approx_eq(
+            metrics.max_momentum_d_coefficient,
+            1.0,
+            1.0e-12
+        ));
     }
 
     #[test]
