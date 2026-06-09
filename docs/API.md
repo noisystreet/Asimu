@@ -248,6 +248,8 @@ name=<mesh_name>;cells=<count>
 | `ViscousAssemblyUnstructuredInput` / `compute_gradients_and_assemble_viscous_unstructured` | `UnstructuredMesh3d` 上计算 IDWLS 梯度并叠加 Newtonian/Fourier 粘性通量残差；面循环走 `mesh_cache.face_topology` |
 | `InteriorFaceColoring` | 非结构内面贪心着色桶；`for_each_face_index` 按桶遍历；默认启用 `parallel-fvm` 时 `par_map_buckets` 桶内 rayon 并行 compute + 串行 scatter |
 | `viscous_assembly` | 结构/非结构共用粘性边界面通量（`viscous_flux_at_boundary`）、scatter（`accumulate_viscous_*`）与壁面梯度外推 |
+| `compute_incompressible_divergence_3d` | 结构化 3D 不可压缩 I1 连续性残差 \(\nabla\cdot\mathbf{u}\) |
+| `compute_incompressible_velocity_laplacian_3d` | 结构化 3D 不可压缩 I1 速度三分量 Laplacian skeleton |
 | `assemble_diffusion_placeholder` | 尺寸校验 + RHS 清零占位 |
 
 ### `asimu::exec`

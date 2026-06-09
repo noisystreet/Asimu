@@ -1,6 +1,6 @@
 # 三维不可压缩 NS：SIMPLEC 与 PISO
 
-> 模块：`src/discretization/incompressible/` · `src/solver/incompressible/` · 版本：v0.3+ · 状态：**规划（ADR 0015）**
+> 模块：`src/discretization/incompressible.rs` · `src/case/incompressible_3d.rs` · 版本：v0.3+ · 状态：I0/I1 部分实现（ADR 0015）
 > ADR：[adr/0015-incompressible-navier-stokes-simplec-piso.md](../adr/0015-incompressible-navier-stokes-simplec-piso.md)
 
 ## 1. 控制方程
@@ -19,6 +19,21 @@
 
 - **FVM**，结构化六面体，**collocated**：\(p,\mathbf{u}\) 存于单元中心。
 - 面质量通量 \(\dot{m}_f = \rho\,\mathbf{u}_f\cdot\mathbf{S}_f\) 经 **Rhie-Chow** 计算，避免压力棋盘格。
+- I1 基础算子限定为 Cartesian 均匀结构化网格；边界缺失邻居暂按零法向梯度 ghost 处理，后续 SIMPLEC/PISO 装配将改由显式边界通量控制。
+
+### 2.1 连续性残差（I1）
+
+I1 用 cell-centered 有限差分近似连续性残差：
+
+\[
+R_c(P)=
+\frac{u_E-u_W}{2\Delta x}
++\frac{v_N-v_S}{2\Delta y}
++\frac{w_T-w_B}{2\Delta z}
+\tag{1a}
+\]
+
+边界单元的缺失邻居取 \(\phi_g=\phi_P\)，等价于当前 skeleton 的零法向梯度 ghost。该残差仅用于建立 pressure-velocity coupling 前的数据流与诊断，不替代后续 Rhie-Chow 面质量通量。
 
 ## 3. 通量格式
 
@@ -64,6 +79,19 @@ Rhie-Chow **仅**用于 \(\dot{m}_f\) 与压力修正源项 \(\nabla\cdot(\rho\m
 \]
 
 内面 \((\nabla\phi)_f\) 为中心差分；壁面用 ghost \(\phi_g\)（§6）。
+
+I1 先提供速度分量 Laplacian skeleton：
+
+\[
+\nabla^2 \phi_P \approx
+\frac{\phi_E-2\phi_P+\phi_W}{\Delta x^2}
++\frac{\phi_N-2\phi_P+\phi_S}{\Delta y^2}
++\frac{\phi_T-2\phi_P+\phi_B}{\Delta z^2},
+\qquad \phi\in\{u,v,w\}
+\tag{6a}
+\]
+
+边界缺失邻居同 §2.1 使用 \(\phi_g=\phi_P\)。实际动量方程扩散通量仍以 (6) 为准，后续会在边界面显式注入 wall/inlet/outlet 条件。
 
 ### 3.4 压力梯度（`momentum.rs`）
 
@@ -171,6 +199,9 @@ Ghost 单元距 owner 中心法向距离 \(d_f\)。
 
 | 式 / 步骤 | 代码位置 | 状态 |
 |-----------|----------|------|
+| (1a) 连续性残差 | `discretization::compute_incompressible_divergence_3d` | **I1 已实现** |
+| (6a) 速度 Laplacian skeleton | `discretization::compute_incompressible_velocity_laplacian_3d` | **I1 已实现** |
+| I0 case 初始化 + CGNS 输出 | `case/incompressible_3d.rs` | **已实现** |
 | (3)(4) Rhie-Chow | `discretization/incompressible/rhie_chow.rs` | 规划 |
 | (5)(6) 对流/扩散 | `convection.rs`, `diffusion.rs` | 规划 |
 | (8) 动量装配 | `momentum.rs` | 规划 |

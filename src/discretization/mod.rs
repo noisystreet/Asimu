@@ -13,6 +13,7 @@ pub mod flux_config;
 pub mod gradient;
 pub mod gradient_unstructured;
 pub mod hllc;
+pub mod incompressible;
 pub mod inviscid;
 pub mod reconstruction;
 pub mod reconstruction_unstructured;
@@ -55,6 +56,10 @@ pub use gradient_unstructured::{
     compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq,
 };
 pub use hllc::hllc_flux;
+pub use incompressible::{
+    IncompressibleVelocityLaplacian, compute_incompressible_divergence_3d,
+    compute_incompressible_velocity_laplacian_3d,
+};
 pub use inviscid::{InviscidFlux, physical_inviscid_flux};
 pub use reconstruction::{
     InterfacePrimitiveStates, PrimitiveMusclStencil1d, interface_conserved_pair,
