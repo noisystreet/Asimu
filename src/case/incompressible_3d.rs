@@ -45,6 +45,10 @@ pub struct Incompressible3dRunMetrics {
     pub momentum_solve_residual: Real,
     pub max_abs_predicted_velocity_delta: Real,
     pub max_abs_corrected_velocity_delta: Real,
+    pub simplec_iterations: usize,
+    pub simplec_converged: bool,
+    pub simplec_final_residual: Real,
+    pub simplec_residual_history: Vec<Real>,
     pub boundary_velocity_cells: usize,
     pub boundary_pressure_cells: usize,
     pub boundary_ignored_faces: usize,
@@ -71,17 +75,26 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
     let boundary_stats =
         apply_incompressible_boundary_conditions_3d(mesh, &mut fields, &case.boundary)?;
     let pseudo_time_step = case.time.dt.filter(|value| *value > 0.0).unwrap_or(1.0);
-    let diagnostic = assemble_i1_diagnostic(
-        mesh,
+    let diagnostic = run_simplec_iterations(
         &fields,
-        config.density,
-        config.kinematic_viscosity,
-        config.velocity_under_relaxation,
-        pseudo_time_step,
-        &case.boundary,
+        SimplecIterationParams {
+            mesh,
+            density: config.density,
+            kinematic_viscosity: config.kinematic_viscosity,
+            velocity_under_relaxation: config.velocity_under_relaxation,
+            pseudo_time_step,
+            boundary: &case.boundary,
+            max_iterations: steps as usize,
+            tolerance: case.time.tolerance,
+        },
     )?;
 
-    let written = write_outputs(case, mesh, &fields, nondimensional_time)?;
+    let written = write_outputs(
+        case,
+        mesh,
+        &diagnostic.corrected_fields,
+        nondimensional_time,
+    )?;
     info!(
         steps,
         t = %format_log_sci4(physical_time),
@@ -102,6 +115,9 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         momentum_residual = %format_log_sci4(diagnostic.momentum_solve_residual),
         max_abs_predicted_velocity_delta = %format_log_sci4(diagnostic.max_abs_predicted_velocity_delta),
         max_abs_corrected_velocity_delta = %format_log_sci4(diagnostic.max_abs_corrected_velocity_delta),
+        simplec_iterations = diagnostic.simplec_iterations,
+        simplec_converged = diagnostic.simplec_converged,
+        simplec_final_residual = %format_log_sci4(diagnostic.simplec_final_residual),
         boundary_velocity_cells = boundary_stats.velocity_cells,
         boundary_pressure_cells = boundary_stats.pressure_cells,
         boundary_ignored_faces = boundary_stats.ignored_faces,
@@ -112,7 +128,10 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         benchmark_id: case.benchmark_id.clone(),
         kind: CaseRunKind::Incompressible3dSteady,
         summary: format!(
-            "incompressible_3d_i1 steps={steps} max|div(u)|={} max|div(u*)|={} max|div(u_corr)|={} pressure_rows={} pressure_nnz={} pressure_converged={} pressure_iters={} pressure_residual={} momentum_rows={} momentum_nnz={} momentum_converged={} momentum_iters={} momentum_residual={} bc_velocity_cells={} bc_pressure_cells={}",
+            "incompressible_3d_i1 steps={steps} simplec_iters={} simplec_converged={} simplec_residual={} max|div(u)|={} max|div(u*)|={} max|div(u_corr)|={} pressure_rows={} pressure_nnz={} pressure_converged={} pressure_iters={} pressure_residual={} momentum_rows={} momentum_nnz={} momentum_converged={} momentum_iters={} momentum_residual={} bc_velocity_cells={} bc_pressure_cells={}",
+            diagnostic.simplec_iterations,
+            diagnostic.simplec_converged,
+            format_log_sci4(diagnostic.simplec_final_residual),
             format_log_sci4(diagnostic.max_abs_divergence),
             format_log_sci4(diagnostic.max_abs_predicted_divergence),
             format_log_sci4(diagnostic.max_abs_corrected_divergence),
@@ -152,6 +171,10 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
             momentum_solve_residual: diagnostic.momentum_solve_residual,
             max_abs_predicted_velocity_delta: diagnostic.max_abs_predicted_velocity_delta,
             max_abs_corrected_velocity_delta: diagnostic.max_abs_corrected_velocity_delta,
+            simplec_iterations: diagnostic.simplec_iterations,
+            simplec_converged: diagnostic.simplec_converged,
+            simplec_final_residual: diagnostic.simplec_final_residual,
+            simplec_residual_history: diagnostic.simplec_residual_history,
             boundary_velocity_cells: boundary_stats.velocity_cells,
             boundary_pressure_cells: boundary_stats.pressure_cells,
             boundary_ignored_faces: boundary_stats.ignored_faces,
@@ -178,6 +201,70 @@ struct IncompressibleI1Diagnostic {
     momentum_solve_residual: Real,
     max_abs_predicted_velocity_delta: Real,
     max_abs_corrected_velocity_delta: Real,
+    simplec_iterations: usize,
+    simplec_converged: bool,
+    simplec_final_residual: Real,
+    simplec_residual_history: Vec<Real>,
+    corrected_fields: IncompressibleFields,
+}
+
+struct SimplecIterationParams<'a> {
+    mesh: &'a StructuredMesh3d,
+    density: Real,
+    kinematic_viscosity: Real,
+    velocity_under_relaxation: Real,
+    pseudo_time_step: Real,
+    boundary: &'a crate::boundary::BoundarySet,
+    max_iterations: usize,
+    tolerance: Option<Real>,
+}
+
+fn run_simplec_iterations(
+    initial_fields: &IncompressibleFields,
+    params: SimplecIterationParams<'_>,
+) -> Result<IncompressibleI1Diagnostic> {
+    let mut current_fields = initial_fields.clone();
+    let max_iterations = params.max_iterations.max(1);
+    let mut history = Vec::with_capacity(max_iterations);
+    let mut last = None;
+    for _ in 0..max_iterations {
+        let mut diagnostic = assemble_i1_diagnostic(
+            params.mesh,
+            &current_fields,
+            params.density,
+            params.kinematic_viscosity,
+            params.velocity_under_relaxation,
+            params.pseudo_time_step,
+            params.boundary,
+        )?;
+        let residual = diagnostic.max_abs_corrected_divergence;
+        if !residual.is_finite() {
+            return Err(AsimuError::Solver(
+                "SIMPLEC 连续性残差出现非有限值".to_string(),
+            ));
+        }
+        history.push(residual);
+        current_fields = diagnostic.corrected_fields.clone();
+        let converged = params
+            .tolerance
+            .map(|tolerance| residual <= tolerance)
+            .unwrap_or(false);
+        diagnostic.simplec_iterations = history.len();
+        diagnostic.simplec_converged = converged || params.tolerance.is_none();
+        diagnostic.simplec_final_residual = residual;
+        diagnostic.simplec_residual_history = history.clone();
+        if converged {
+            return Ok(diagnostic);
+        }
+        last = Some(diagnostic);
+    }
+    let mut diagnostic =
+        last.ok_or_else(|| AsimuError::Solver("SIMPLEC 至少需要一次外层迭代".to_string()))?;
+    diagnostic.simplec_converged = params
+        .tolerance
+        .map(|tolerance| diagnostic.simplec_final_residual <= tolerance)
+        .unwrap_or(true);
+    Ok(diagnostic)
 }
 
 fn assemble_i1_diagnostic(
@@ -256,6 +343,11 @@ fn assemble_i1_diagnostic(
         momentum_solve_residual: momentum_solution.residual_norm,
         max_abs_predicted_velocity_delta: momentum_solution.max_abs_velocity_delta,
         max_abs_corrected_velocity_delta,
+        simplec_iterations: 0,
+        simplec_converged: false,
+        simplec_final_residual: max_abs_corrected_divergence,
+        simplec_residual_history: Vec::new(),
+        corrected_fields,
     })
 }
 

@@ -294,6 +294,10 @@ I2 当前实现为 cell-centered skeleton：`apply_incompressible_boundary_condi
 - 连续性：\(\|\nabla\cdot(\rho\mathbf{u}^*)\|_\infty / (\rho U_{\mathrm{ref}})\)
 - 动量：\(\|\mathbf{R}_u\|_\infty / (\rho U_{\mathrm{ref}}^2)\)
 
+I4 runner 已提供 SIMPLEC 外层循环：`time.max_steps` 作为最大外层迭代数，
+`time.tolerance` 为可选连续性收敛阈值；每轮执行动量预测、压力校正、\(p,\mathbf{u}\)
+修正，并把 `max|div(u_corr)|` 写入残差历史。若残差出现非有限值，runner 立即返回求解器错误；输出字段使用最后一次修正后的场。
+
 ## 8. 实现映射
 
 | 式 / 步骤 | 代码位置 | 状态 |

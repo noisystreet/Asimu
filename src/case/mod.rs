@@ -279,6 +279,14 @@ solution_cgns = "flow.cgns"
             0.0,
             1.0e-12
         ));
+        assert_eq!(metrics.simplec_iterations, 1);
+        assert!(metrics.simplec_converged);
+        assert_eq!(metrics.simplec_residual_history.len(), 1);
+        assert!(crate::core::approx_eq(
+            metrics.simplec_final_residual,
+            0.0,
+            1.0e-12
+        ));
         assert_eq!(metrics.boundary_pressure_cells, 2);
         assert_eq!(metrics.boundary_velocity_cells, 0);
         assert_eq!(metrics.boundary_ignored_faces, 0);
