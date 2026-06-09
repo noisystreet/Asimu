@@ -13,9 +13,7 @@ use crate::discretization::{
     compute_incompressible_divergence_3d,
 };
 use crate::error::{AsimuError, Result};
-use crate::field::IncompressibleFields;
-#[cfg(feature = "io-cgns")]
-use crate::field::ScalarField;
+use crate::field::{IncompressibleFields, ScalarField};
 use crate::io::{CaseSpec, resolve_case_output_path};
 #[cfg(feature = "io-cgns")]
 use crate::io::{
@@ -31,6 +29,8 @@ pub struct Incompressible3dRunMetrics {
     pub steps: u64,
     pub physical_time: f64,
     pub max_abs_divergence: Real,
+    pub max_abs_predicted_divergence: Real,
+    pub max_abs_corrected_divergence: Real,
     pub pressure_system_rows: usize,
     pub pressure_system_nnz: usize,
     pub pressure_solve_converged: bool,
@@ -44,6 +44,7 @@ pub struct Incompressible3dRunMetrics {
     pub momentum_solve_iterations: usize,
     pub momentum_solve_residual: Real,
     pub max_abs_predicted_velocity_delta: Real,
+    pub max_abs_corrected_velocity_delta: Real,
     pub written: Vec<PathBuf>,
 }
 
@@ -77,6 +78,8 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         steps,
         t = %format_log_sci4(physical_time),
         max_abs_divergence = %format_log_sci4(diagnostic.max_abs_divergence),
+        max_abs_predicted_divergence = %format_log_sci4(diagnostic.max_abs_predicted_divergence),
+        max_abs_corrected_divergence = %format_log_sci4(diagnostic.max_abs_corrected_divergence),
         pressure_rows = diagnostic.pressure_system_rows,
         pressure_nnz = diagnostic.pressure_system_nnz,
         pressure_converged = diagnostic.pressure_solve_converged,
@@ -90,6 +93,7 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         momentum_iters = diagnostic.momentum_solve_iterations,
         momentum_residual = %format_log_sci4(diagnostic.momentum_solve_residual),
         max_abs_predicted_velocity_delta = %format_log_sci4(diagnostic.max_abs_predicted_velocity_delta),
+        max_abs_corrected_velocity_delta = %format_log_sci4(diagnostic.max_abs_corrected_velocity_delta),
         "不可压缩 3D I1 skeleton 完成"
     );
     Ok(CaseRunResult {
@@ -97,8 +101,10 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         benchmark_id: case.benchmark_id.clone(),
         kind: CaseRunKind::Incompressible3dSteady,
         summary: format!(
-            "incompressible_3d_i1 steps={steps} max|div(u)|={} pressure_rows={} pressure_nnz={} pressure_converged={} pressure_iters={} pressure_residual={} momentum_rows={} momentum_nnz={} momentum_converged={} momentum_iters={} momentum_residual={}",
+            "incompressible_3d_i1 steps={steps} max|div(u)|={} max|div(u*)|={} max|div(u_corr)|={} pressure_rows={} pressure_nnz={} pressure_converged={} pressure_iters={} pressure_residual={} momentum_rows={} momentum_nnz={} momentum_converged={} momentum_iters={} momentum_residual={}",
             format_log_sci4(diagnostic.max_abs_divergence),
+            format_log_sci4(diagnostic.max_abs_predicted_divergence),
+            format_log_sci4(diagnostic.max_abs_corrected_divergence),
             diagnostic.pressure_system_rows,
             diagnostic.pressure_system_nnz,
             diagnostic.pressure_solve_converged,
@@ -117,6 +123,8 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
             steps,
             physical_time,
             max_abs_divergence: diagnostic.max_abs_divergence,
+            max_abs_predicted_divergence: diagnostic.max_abs_predicted_divergence,
+            max_abs_corrected_divergence: diagnostic.max_abs_corrected_divergence,
             pressure_system_rows: diagnostic.pressure_system_rows,
             pressure_system_nnz: diagnostic.pressure_system_nnz,
             pressure_solve_converged: diagnostic.pressure_solve_converged,
@@ -130,6 +138,7 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
             momentum_solve_iterations: diagnostic.momentum_solve_iterations,
             momentum_solve_residual: diagnostic.momentum_solve_residual,
             max_abs_predicted_velocity_delta: diagnostic.max_abs_predicted_velocity_delta,
+            max_abs_corrected_velocity_delta: diagnostic.max_abs_corrected_velocity_delta,
             written,
         }),
     })
@@ -137,6 +146,8 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
 
 struct IncompressibleI1Diagnostic {
     max_abs_divergence: Real,
+    max_abs_predicted_divergence: Real,
+    max_abs_corrected_divergence: Real,
     pressure_system_rows: usize,
     pressure_system_nnz: usize,
     pressure_solve_converged: bool,
@@ -150,6 +161,7 @@ struct IncompressibleI1Diagnostic {
     momentum_solve_iterations: usize,
     momentum_solve_residual: Real,
     max_abs_predicted_velocity_delta: Real,
+    max_abs_corrected_velocity_delta: Real,
 }
 
 fn assemble_i1_diagnostic(
@@ -164,12 +176,6 @@ fn assemble_i1_diagnostic(
         .values()
         .iter()
         .fold(0.0, |acc: Real, value| acc.max(value.abs()));
-    let system = assemble_incompressible_pressure_poisson_3d(
-        mesh,
-        &divergence,
-        IncompressiblePressureCorrectionConfig::new(density, 0, 0.0)?,
-    )?;
-    let pressure_solution = solve_pressure_correction(&system)?;
     let momentum_system = assemble_incompressible_momentum_predictor_3d(
         mesh,
         fields,
@@ -181,8 +187,40 @@ fn assemble_i1_diagnostic(
         .iter()
         .fold(0.0, |acc: Real, value| acc.max(value.abs()));
     let momentum_solution = solve_momentum_predictor(&momentum_system, fields)?;
+    let predicted_divergence =
+        compute_incompressible_divergence_3d(mesh, &momentum_solution.predicted_fields)?;
+    let max_abs_predicted_divergence = predicted_divergence
+        .values()
+        .iter()
+        .fold(0.0, |acc: Real, value| acc.max(value.abs()));
+    let system = assemble_incompressible_pressure_poisson_3d(
+        mesh,
+        &predicted_divergence,
+        IncompressiblePressureCorrectionConfig::new(density, 0, 0.0)?,
+    )?;
+    let pressure_solution = solve_pressure_correction(&system)?;
+    let corrected_fields = corrected_incompressible_fields(
+        mesh,
+        fields,
+        &momentum_solution.predicted_fields,
+        &pressure_solution.correction,
+        momentum_system.d_coefficient.values(),
+    )?;
+    let corrected_divergence = compute_incompressible_divergence_3d(mesh, &corrected_fields)?;
+    let max_abs_corrected_divergence = corrected_divergence
+        .values()
+        .iter()
+        .fold(0.0, |acc: Real, value| acc.max(value.abs()));
+    let max_abs_corrected_velocity_delta = max_velocity_delta(
+        fields,
+        corrected_fields.velocity_x.values(),
+        corrected_fields.velocity_y.values(),
+        corrected_fields.velocity_z.values(),
+    );
     Ok(IncompressibleI1Diagnostic {
         max_abs_divergence,
+        max_abs_predicted_divergence,
+        max_abs_corrected_divergence,
         pressure_system_rows: system.matrix.nrows(),
         pressure_system_nnz: system.matrix.values().len(),
         pressure_solve_converged: pressure_solution.converged,
@@ -196,6 +234,7 @@ fn assemble_i1_diagnostic(
         momentum_solve_iterations: momentum_solution.iterations,
         momentum_solve_residual: momentum_solution.residual_norm,
         max_abs_predicted_velocity_delta: momentum_solution.max_abs_velocity_delta,
+        max_abs_corrected_velocity_delta,
     })
 }
 
@@ -204,6 +243,7 @@ struct PressureCorrectionSolveDiagnostic {
     iterations: usize,
     residual_norm: Real,
     max_abs_correction: Real,
+    correction: Vec<Real>,
 }
 
 struct MomentumPredictorSolveDiagnostic {
@@ -211,6 +251,7 @@ struct MomentumPredictorSolveDiagnostic {
     iterations: usize,
     residual_norm: Real,
     max_abs_velocity_delta: Real,
+    predicted_fields: IncompressibleFields,
 }
 
 fn solve_pressure_correction(
@@ -235,6 +276,7 @@ fn solve_pressure_correction(
         iterations: report.iterations,
         residual_norm: report.residual_norm,
         max_abs_correction,
+        correction: pressure_correction,
     })
 }
 
@@ -246,11 +288,18 @@ fn solve_momentum_predictor(
     let v = solve_momentum_component(system, &system.rhs_y)?;
     let w = solve_momentum_component(system, &system.rhs_z)?;
     let max_abs_velocity_delta = max_velocity_delta(fields, &u.solution, &v.solution, &w.solution);
+    let predicted_fields = IncompressibleFields {
+        pressure: fields.pressure.clone(),
+        velocity_x: ScalarField::from_values(u.solution)?,
+        velocity_y: ScalarField::from_values(v.solution)?,
+        velocity_z: ScalarField::from_values(w.solution)?,
+    };
     Ok(MomentumPredictorSolveDiagnostic {
         converged: u.converged && v.converged && w.converged,
         iterations: u.iterations.max(v.iterations).max(w.iterations),
         residual_norm: u.residual_norm.max(v.residual_norm).max(w.residual_norm),
         max_abs_velocity_delta,
+        predicted_fields,
     })
 }
 
@@ -287,6 +336,120 @@ fn max_velocity_delta(fields: &IncompressibleFields, u: &[Real], v: &[Real], w: 
         max_delta = max_delta.max((w[idx] - fields.velocity_z.values()[idx]).abs());
     }
     max_delta
+}
+
+fn corrected_incompressible_fields(
+    mesh: &StructuredMesh3d,
+    current: &IncompressibleFields,
+    predicted: &IncompressibleFields,
+    pressure_correction: &[Real],
+    d_coefficient: &[Real],
+) -> Result<IncompressibleFields> {
+    let n = mesh.num_cells();
+    if pressure_correction.len() != n || d_coefficient.len() != n {
+        return Err(AsimuError::Field(
+            "不可压缩修正场长度与网格单元数不一致".to_string(),
+        ));
+    }
+    let spacing = CaseCartesianSpacing::from_mesh(mesh)?;
+    let mut pressure = Vec::with_capacity(n);
+    let mut velocity_x = Vec::with_capacity(n);
+    let mut velocity_y = Vec::with_capacity(n);
+    let mut velocity_z = Vec::with_capacity(n);
+    for k in 0..mesh.nz {
+        for j in 0..mesh.ny {
+            for i in 0..mesh.nx {
+                let cell = mesh.cell_index(i, j, k);
+                let grad =
+                    pressure_correction_gradient(mesh, pressure_correction, i, j, k, spacing);
+                let d = d_coefficient[cell];
+                pressure.push(current.pressure.values()[cell] + pressure_correction[cell]);
+                velocity_x.push(predicted.velocity_x.values()[cell] - d * grad[0]);
+                velocity_y.push(predicted.velocity_y.values()[cell] - d * grad[1]);
+                velocity_z.push(predicted.velocity_z.values()[cell] - d * grad[2]);
+            }
+        }
+    }
+    Ok(IncompressibleFields {
+        pressure: ScalarField::from_values(pressure)?,
+        velocity_x: ScalarField::from_values(velocity_x)?,
+        velocity_y: ScalarField::from_values(velocity_y)?,
+        velocity_z: ScalarField::from_values(velocity_z)?,
+    })
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CaseCartesianSpacing {
+    dx: Real,
+    dy: Real,
+    dz: Real,
+}
+
+impl CaseCartesianSpacing {
+    fn from_mesh(mesh: &StructuredMesh3d) -> Result<Self> {
+        let dx = mesh.node_x(1, 0, 0) - mesh.node_x(0, 0, 0);
+        let dy = mesh.node_y(0, 1, 0) - mesh.node_y(0, 0, 0);
+        let dz = mesh.node_z(0, 0, 1) - mesh.node_z(0, 0, 0);
+        if dx.abs() <= Real::EPSILON || dy.abs() <= Real::EPSILON || dz.abs() <= Real::EPSILON {
+            return Err(AsimuError::Mesh(
+                "不可压缩修正场要求正的 Cartesian 网格间距".to_string(),
+            ));
+        }
+        Ok(Self {
+            dx: dx.abs(),
+            dy: dy.abs(),
+            dz: dz.abs(),
+        })
+    }
+}
+
+fn pressure_correction_gradient(
+    mesh: &StructuredMesh3d,
+    pressure_correction: &[Real],
+    i: usize,
+    j: usize,
+    k: usize,
+    spacing: CaseCartesianSpacing,
+) -> [Real; 3] {
+    [
+        (cell_value(mesh, pressure_correction, east(i, mesh.nx), j, k)
+            - cell_value(mesh, pressure_correction, west(i), j, k))
+            / (2.0 * spacing.dx),
+        (cell_value(mesh, pressure_correction, i, north(j, mesh.ny), k)
+            - cell_value(mesh, pressure_correction, i, south(j), k))
+            / (2.0 * spacing.dy),
+        (cell_value(mesh, pressure_correction, i, j, top(k, mesh.nz))
+            - cell_value(mesh, pressure_correction, i, j, bottom(k)))
+            / (2.0 * spacing.dz),
+    ]
+}
+
+fn cell_value(mesh: &StructuredMesh3d, values: &[Real], i: usize, j: usize, k: usize) -> Real {
+    values[mesh.cell_index(i, j, k)]
+}
+
+fn west(i: usize) -> usize {
+    i.saturating_sub(1)
+}
+
+fn east(i: usize, nx: usize) -> usize {
+    (i + 1).min(nx - 1)
+}
+
+fn south(j: usize) -> usize {
+    j.saturating_sub(1)
+}
+
+fn north(j: usize, ny: usize) -> usize {
+    (j + 1).min(ny - 1)
+}
+
+fn bottom(k: usize) -> usize {
+    k.saturating_sub(1)
+}
+
+fn top(k: usize, nz: usize) -> usize {
+    (k + 1).min(nz - 1)
 }
 
 fn write_outputs(

@@ -237,6 +237,16 @@ solution_cgns = "flow.cgns"
         let metrics = result.incompressible_3d.expect("metrics");
         assert_eq!(metrics.steps, 1);
         assert!(metrics.max_abs_divergence.is_finite());
+        assert!(crate::core::approx_eq(
+            metrics.max_abs_predicted_divergence,
+            0.0,
+            1.0e-12
+        ));
+        assert!(crate::core::approx_eq(
+            metrics.max_abs_corrected_divergence,
+            0.0,
+            1.0e-12
+        ));
         assert_eq!(metrics.pressure_system_rows, 4);
         assert!(metrics.pressure_system_nnz >= metrics.pressure_system_rows);
         assert!(metrics.pressure_solve_converged);
@@ -257,6 +267,11 @@ solution_cgns = "flow.cgns"
         assert!(metrics.momentum_solve_iterations <= 1);
         assert!(crate::core::approx_eq(
             metrics.max_abs_predicted_velocity_delta,
+            0.0,
+            1.0e-12
+        ));
+        assert!(crate::core::approx_eq(
+            metrics.max_abs_corrected_velocity_delta,
             0.0,
             1.0e-12
         ));
