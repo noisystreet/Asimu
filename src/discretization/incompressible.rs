@@ -358,10 +358,13 @@ fn top(k: usize, nz: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::boundary::{BoundaryKind, BoundaryPatch, BoundarySet};
     use crate::core::approx_eq;
     use crate::discretization::{
         IncompressibleMomentumPredictorConfig, assemble_incompressible_momentum_predictor_3d,
+        assemble_incompressible_pressure_correction_3d,
     };
+    use crate::mesh::BoundaryMesh;
 
     fn mesh_3x3x3() -> StructuredMesh3d {
         StructuredMesh3d::uniform_box("inc", 3, 3, 3, 3.0, 3.0, 3.0).expect("mesh")
@@ -525,6 +528,58 @@ mod tests {
         assert!(row_contains(&row, mesh.cell_index(1, 1, 0), -2.0));
         assert!(row_contains(&row, mesh.cell_index(1, 1, 2), -2.0));
         assert!(approx_eq(system.rhs[center], 3.0, 1.0e-12));
+    }
+
+    #[test]
+    fn pressure_correction_scales_stencil_by_d_coefficient() {
+        let mesh = mesh_3x3x3();
+        let divergence = ScalarField::uniform(mesh.num_cells(), 1.5).expect("div");
+        let d = ScalarField::uniform(mesh.num_cells(), 2.0).expect("d");
+        let config = IncompressiblePressureCorrectionConfig::new(1.0, 0, 0.0).expect("config");
+
+        let system = assemble_incompressible_pressure_correction_3d(
+            &mesh,
+            &divergence,
+            &d,
+            &BoundarySet::default(),
+            config,
+        )
+        .expect("sys");
+
+        let center = mesh.cell_index(1, 1, 1);
+        let row = system.matrix.row_entries(center).collect::<Vec<_>>();
+        assert!(row_contains(&row, center, 12.0));
+        assert!(row_contains(&row, mesh.cell_index(0, 1, 1), -2.0));
+        assert!(approx_eq(system.rhs[center], 1.5, 1.0e-12));
+    }
+
+    #[test]
+    fn pressure_correction_pressure_outlet_sets_zero_correction_row() {
+        let mesh = mesh_3x3x3();
+        let divergence = ScalarField::uniform(mesh.num_cells(), 1.5).expect("div");
+        let d = ScalarField::uniform(mesh.num_cells(), 1.0).expect("d");
+        let boundary = BoundarySet::new(vec![BoundaryPatch::new(
+            "i_max",
+            mesh.resolve_logical_boundary("i_max").expect("faces"),
+            BoundaryKind::IncompressiblePressureOutlet { pressure: 0.0 },
+        )]);
+        let config = IncompressiblePressureCorrectionConfig::new(1.0, 0, 7.0).expect("config");
+
+        let system = assemble_incompressible_pressure_correction_3d(
+            &mesh,
+            &divergence,
+            &d,
+            &boundary,
+            config,
+        )
+        .expect("sys");
+
+        let outlet = mesh.cell_index(2, 1, 1);
+        let outlet_row = system.matrix.row_entries(outlet).collect::<Vec<_>>();
+        assert_eq!(outlet_row, vec![(outlet, 1.0)]);
+        assert!(approx_eq(system.rhs[outlet], 0.0, 1.0e-12));
+        let reference_row = system.matrix.row_entries(0).collect::<Vec<_>>();
+        assert_ne!(reference_row, vec![(0, 1.0)]);
     }
 
     #[test]

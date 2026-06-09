@@ -10,7 +10,7 @@ use crate::core::{Real, format_log_sci4};
 use crate::discretization::{
     IncompressibleMomentumPredictorConfig, IncompressiblePressureCorrectionConfig,
     apply_incompressible_boundary_conditions_3d, assemble_incompressible_momentum_predictor_3d,
-    assemble_incompressible_pressure_poisson_3d, compute_incompressible_divergence_3d,
+    assemble_incompressible_pressure_correction_3d, compute_incompressible_divergence_3d,
 };
 use crate::error::{AsimuError, Result};
 use crate::field::{IncompressibleFields, ScalarField};
@@ -78,6 +78,7 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         config.kinematic_viscosity,
         config.velocity_under_relaxation,
         pseudo_time_step,
+        &case.boundary,
     )?;
 
     let written = write_outputs(case, mesh, &fields, nondimensional_time)?;
@@ -186,6 +187,7 @@ fn assemble_i1_diagnostic(
     kinematic_viscosity: Real,
     velocity_under_relaxation: Real,
     pseudo_time_step: Real,
+    boundary: &crate::boundary::BoundarySet,
 ) -> Result<IncompressibleI1Diagnostic> {
     let divergence = compute_incompressible_divergence_3d(mesh, fields)?;
     let max_abs_divergence = divergence
@@ -210,9 +212,11 @@ fn assemble_i1_diagnostic(
         .values()
         .iter()
         .fold(0.0, |acc: Real, value| acc.max(value.abs()));
-    let system = assemble_incompressible_pressure_poisson_3d(
+    let system = assemble_incompressible_pressure_correction_3d(
         mesh,
         &predicted_divergence,
+        &momentum_system.d_coefficient,
+        boundary,
         IncompressiblePressureCorrectionConfig::new(density, 0, 0.0)?,
     )?;
     let pressure_solution = solve_pressure_correction(&system)?;

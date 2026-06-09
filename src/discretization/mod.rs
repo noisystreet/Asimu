@@ -16,6 +16,7 @@ pub mod hllc;
 pub mod incompressible;
 pub mod incompressible_bc;
 pub mod incompressible_momentum;
+pub mod incompressible_pressure;
 pub mod inviscid;
 pub mod reconstruction;
 pub mod reconstruction_unstructured;
@@ -70,6 +71,7 @@ pub use incompressible_momentum::{
     IncompressibleMomentumPredictorConfig, IncompressibleMomentumPredictorSystem,
     assemble_incompressible_momentum_predictor_3d,
 };
+pub use incompressible_pressure::assemble_incompressible_pressure_correction_3d;
 pub use inviscid::{InviscidFlux, physical_inviscid_flux};
 pub use reconstruction::{
     InterfacePrimitiveStates, PrimitiveMusclStencil1d, interface_conserved_pair,

@@ -209,22 +209,24 @@ d_P = \frac{V_P}{a_P^c} \tag{10}
 \nabla\cdot(\rho\, d\,\nabla p') = \nabla\cdot(\rho\,\mathbf{u}^*) \tag{11}
 \]
 
-I1 已由动量预测矩阵提供 cell-centered \(d_P\)，压力校正矩阵仍先装配 SPD 符号形式，面 \(d_f\) 插值与真实边界条件留到后续：
+I3 压力校正矩阵使用动量预测矩阵提供的 cell-centered \(d_P\)，内部面取
+\(d_f=(d_P+d_N)/2\)，压力出口 owner 行施加 \(p'=0\)；若没有压力 Dirichlet
+边界，则用 `pressure_reference_cell` 固定参考压力：
 
 \[
--\rho\nabla^2 p' = \rho R_c \tag{11a}
+-\nabla\cdot(\rho d_f\nabla p') = \rho R_c \tag{11a}
 \]
 
 其中 \(R_c\) 来自 (1a)。Cartesian 7 点 stencil 的内点系数为：
 
 \[
-a_P = 2\rho\left(\frac{1}{\Delta x^2}+\frac{1}{\Delta y^2}+\frac{1}{\Delta z^2}\right),
+a_P = \sum_f \rho\frac{d_f}{\Delta n_f^2},
 \quad
-a_{nb}=-\frac{\rho}{\Delta n^2}
+a_{nb}=-\rho\frac{d_f}{\Delta n_f^2}
 \tag{11b}
 \]
 
-纯 Neumann 压力校正矩阵奇异；I1 通过 `pressure_reference_cell` 将一行替换为 \(p'=p'_{\mathrm{ref}}\)，后续真实边界条件与参考压力策略会随 SIMPLEC/PISO 装配完善。
+纯 Neumann 压力校正矩阵奇异；无压力出口时通过 `pressure_reference_cell` 将一行替换为 \(p'=p'_{\mathrm{ref}}\)。
 
 ### 5.4 修正
 
