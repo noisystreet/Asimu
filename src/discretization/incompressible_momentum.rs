@@ -2,11 +2,12 @@
 //!
 //! 理论映射：`docs/theory/incompressible_simplec_piso.md` 式 (8a)–(10)。
 
+use crate::boundary::{BoundaryKind, BoundarySet};
 use crate::core::Real;
 use crate::error::{AsimuError, Result};
 use crate::field::{IncompressibleFields, ScalarField};
 use crate::linalg::CsrMatrix;
-use crate::mesh::StructuredMesh3d;
+use crate::mesh::{BoundaryMesh, BoundaryMesh3d, FaceGeometry3d, StructuredMesh3d};
 
 /// 不可压缩动量预测方程装配配置。
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -65,6 +66,21 @@ pub fn assemble_incompressible_momentum_predictor_3d(
     fields: &IncompressibleFields,
     config: IncompressibleMomentumPredictorConfig,
 ) -> Result<IncompressibleMomentumPredictorSystem> {
+    assemble_incompressible_momentum_predictor_with_boundary_3d(
+        mesh,
+        fields,
+        &BoundarySet::default(),
+        config,
+    )
+}
+
+/// 装配含边界面通量的不可压缩伪瞬态动量预测方程。
+pub fn assemble_incompressible_momentum_predictor_with_boundary_3d(
+    mesh: &StructuredMesh3d,
+    fields: &IncompressibleFields,
+    boundary: &BoundarySet,
+    config: IncompressibleMomentumPredictorConfig,
+) -> Result<IncompressibleMomentumPredictorSystem> {
     fields.validate_len(mesh.num_cells())?;
     validate_config(config)?;
     let spacing = CartesianSpacing::from_mesh(mesh)?;
@@ -76,6 +92,7 @@ pub fn assemble_incompressible_momentum_predictor_3d(
     let mut rhs_y = Vec::with_capacity(n);
     let mut rhs_z = Vec::with_capacity(n);
     let mut d = Vec::with_capacity(n);
+    let boundary_terms = boundary_momentum_contributions(mesh, fields, boundary, config)?;
     let ctx = MomentumAssemblyCtx {
         mesh,
         spacing,
@@ -87,22 +104,26 @@ pub fn assemble_incompressible_momentum_predictor_3d(
         for j in 0..mesh.ny {
             for i in 0..mesh.nx {
                 let row = mesh.cell_index(i, j, k);
-                let consistent_coeff =
-                    add_momentum_predictor_neighbors(ctx, &mut rows[row], (i, j, k));
+                let consistent_coeff = add_momentum_predictor_neighbors(
+                    ctx,
+                    &mut rows[row],
+                    (i, j, k),
+                    boundary_terms.diagonal[row],
+                );
                 let grad_p = pressure_gradient(mesh, fields.pressure.values(), i, j, k, spacing);
                 let relax_source = momentum_relaxation_source(rows[row].last_mut(), config)?;
-                rhs_x.push(
-                    time_coeff * fields.velocity_x.values()[row] - volume * grad_p[0]
-                        + relax_source * fields.velocity_x.values()[row],
-                );
-                rhs_y.push(
-                    time_coeff * fields.velocity_y.values()[row] - volume * grad_p[1]
-                        + relax_source * fields.velocity_y.values()[row],
-                );
-                rhs_z.push(
-                    time_coeff * fields.velocity_z.values()[row] - volume * grad_p[2]
-                        + relax_source * fields.velocity_z.values()[row],
-                );
+                let rhs_cell_x = time_coeff * fields.velocity_x.values()[row] - volume * grad_p[0]
+                    + relax_source * fields.velocity_x.values()[row]
+                    + boundary_terms.rhs_x[row];
+                let rhs_cell_y = time_coeff * fields.velocity_y.values()[row] - volume * grad_p[1]
+                    + relax_source * fields.velocity_y.values()[row]
+                    + boundary_terms.rhs_y[row];
+                let rhs_cell_z = time_coeff * fields.velocity_z.values()[row] - volume * grad_p[2]
+                    + relax_source * fields.velocity_z.values()[row]
+                    + boundary_terms.rhs_z[row];
+                rhs_x.push(rhs_cell_x);
+                rhs_y.push(rhs_cell_y);
+                rhs_z.push(rhs_cell_z);
                 d.push(volume / consistent_coeff);
             }
         }
@@ -175,10 +196,129 @@ struct MomentumAssemblyCtx<'a> {
     time_coeff: Real,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct BoundaryMomentumContributions {
+    diagonal: Vec<Real>,
+    rhs_x: Vec<Real>,
+    rhs_y: Vec<Real>,
+    rhs_z: Vec<Real>,
+}
+
+impl BoundaryMomentumContributions {
+    fn zeros(n: usize) -> Self {
+        Self {
+            diagonal: vec![0.0; n],
+            rhs_x: vec![0.0; n],
+            rhs_y: vec![0.0; n],
+            rhs_z: vec![0.0; n],
+        }
+    }
+}
+
+fn boundary_momentum_contributions(
+    mesh: &StructuredMesh3d,
+    fields: &IncompressibleFields,
+    boundary: &BoundarySet,
+    config: IncompressibleMomentumPredictorConfig,
+) -> Result<BoundaryMomentumContributions> {
+    let mut out = BoundaryMomentumContributions::zeros(mesh.num_cells());
+    for patch in boundary.patches() {
+        for &face in &patch.face_ids {
+            let owner = mesh.face_owner(face)?.index() as usize;
+            let geom = mesh.face_geometry_3d(face)?;
+            add_boundary_face_momentum(owner, geom, &patch.kind, fields, config, &mut out);
+        }
+    }
+    Ok(out)
+}
+
+fn add_boundary_face_momentum(
+    owner: usize,
+    geom: FaceGeometry3d,
+    kind: &BoundaryKind,
+    fields: &IncompressibleFields,
+    config: IncompressibleMomentumPredictorConfig,
+    out: &mut BoundaryMomentumContributions,
+) {
+    if let Some(velocity) = boundary_velocity_dirichlet(kind) {
+        let diffusion = config.kinematic_viscosity * geom.area / geom.spacing;
+        out.diagonal[owner] += diffusion;
+        out.rhs_x[owner] += diffusion * velocity[0];
+        out.rhs_y[owner] += diffusion * velocity[1];
+        out.rhs_z[owner] += diffusion * velocity[2];
+        add_boundary_convection(owner, geom, velocity, Some(velocity), fields, out);
+        return;
+    }
+    if matches!(
+        kind,
+        BoundaryKind::Symmetry | BoundaryKind::Wall { no_slip: false, .. }
+    ) {
+        return;
+    }
+    if is_pressure_outlet(kind) {
+        let owner_velocity = cell_velocity(fields, owner);
+        add_boundary_convection(owner, geom, owner_velocity, None, fields, out);
+    }
+}
+
+fn add_boundary_convection(
+    owner: usize,
+    geom: FaceGeometry3d,
+    face_velocity: [Real; 3],
+    boundary_value: Option<[Real; 3]>,
+    fields: &IncompressibleFields,
+    out: &mut BoundaryMomentumContributions,
+) {
+    let flux = (face_velocity[0] * geom.normal.x
+        + face_velocity[1] * geom.normal.y
+        + face_velocity[2] * geom.normal.z)
+        * geom.area;
+    if flux >= 0.0 {
+        out.diagonal[owner] += flux;
+        return;
+    }
+    if let Some(value) = boundary_value {
+        out.rhs_x[owner] -= flux * value[0];
+        out.rhs_y[owner] -= flux * value[1];
+        out.rhs_z[owner] -= flux * value[2];
+    } else {
+        let owner_value = cell_velocity(fields, owner);
+        out.diagonal[owner] += flux;
+        out.rhs_x[owner] -= flux * owner_value[0];
+        out.rhs_y[owner] -= flux * owner_value[1];
+        out.rhs_z[owner] -= flux * owner_value[2];
+    }
+}
+
+fn boundary_velocity_dirichlet(kind: &BoundaryKind) -> Option<[Real; 3]> {
+    match kind {
+        BoundaryKind::Wall { no_slip: true, .. } => Some([0.0, 0.0, 0.0]),
+        BoundaryKind::MovingWall { velocity } => Some(*velocity),
+        BoundaryKind::IncompressibleVelocityInlet { velocity } => Some(*velocity),
+        _ => None,
+    }
+}
+
+fn is_pressure_outlet(kind: &BoundaryKind) -> bool {
+    matches!(
+        kind,
+        BoundaryKind::IncompressiblePressureOutlet { .. } | BoundaryKind::Outlet { .. }
+    )
+}
+
+fn cell_velocity(fields: &IncompressibleFields, cell: usize) -> [Real; 3] {
+    [
+        fields.velocity_x.values()[cell],
+        fields.velocity_y.values()[cell],
+        fields.velocity_z.values()[cell],
+    ]
+}
+
 fn add_momentum_predictor_neighbors(
     ctx: MomentumAssemblyCtx<'_>,
     row: &mut Vec<(usize, Real)>,
     cell: (usize, usize, usize),
+    boundary_diagonal: Real,
 ) -> Real {
     let (i, j, k) = cell;
     let mesh = ctx.mesh;
@@ -186,7 +326,7 @@ fn add_momentum_predictor_neighbors(
     let cx = ctx.config.kinematic_viscosity * ctx.spacing.dy * ctx.spacing.dz / ctx.spacing.dx;
     let cy = ctx.config.kinematic_viscosity * ctx.spacing.dx * ctx.spacing.dz / ctx.spacing.dy;
     let cz = ctx.config.kinematic_viscosity * ctx.spacing.dx * ctx.spacing.dy / ctx.spacing.dz;
-    let mut diag = ctx.time_coeff;
+    let mut diag = ctx.time_coeff + boundary_diagonal;
     add_neighbor_if_present(
         mesh,
         row,
@@ -452,4 +592,68 @@ fn bottom(k: usize) -> usize {
 
 fn top(k: usize, nz: usize) -> usize {
     (k + 1).min(nz - 1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::boundary::BoundaryPatch;
+    use crate::core::approx_eq;
+    use crate::mesh::BoundaryMesh;
+
+    #[test]
+    fn moving_wall_adds_boundary_diffusion_source() {
+        let mesh = StructuredMesh3d::uniform_box("box", 1, 1, 1, 1.0, 1.0, 1.0).expect("mesh");
+        let fields =
+            IncompressibleFields::uniform(mesh.num_cells(), 0.0, [0.0, 0.0, 0.0]).expect("fields");
+        let boundary = BoundarySet::new(vec![BoundaryPatch::new(
+            "j_max",
+            mesh.resolve_logical_boundary("j_max").expect("faces"),
+            BoundaryKind::MovingWall {
+                velocity: [2.0, 0.0, 0.0],
+            },
+        )]);
+        let config = IncompressibleMomentumPredictorConfig::new(0.25, 1.0).expect("config");
+
+        let system = assemble_incompressible_momentum_predictor_with_boundary_3d(
+            &mesh, &fields, &boundary, config,
+        )
+        .expect("system");
+
+        let row = system.matrix.row_entries(0).collect::<Vec<_>>();
+        assert_eq!(row, vec![(0, 1.5)]);
+        assert!(approx_eq(system.rhs_x[0], 1.0, 1.0e-12));
+        assert!(approx_eq(system.rhs_y[0], 0.0, 1.0e-12));
+        assert!(approx_eq(
+            system.d_coefficient.values()[0],
+            2.0 / 3.0,
+            1.0e-12
+        ));
+    }
+
+    #[test]
+    fn velocity_inlet_adds_upwind_boundary_convection_source() {
+        let mesh = StructuredMesh3d::uniform_box("box", 1, 1, 1, 1.0, 1.0, 1.0).expect("mesh");
+        let fields =
+            IncompressibleFields::uniform(mesh.num_cells(), 0.0, [0.0, 0.0, 0.0]).expect("fields");
+        let boundary = BoundarySet::new(vec![BoundaryPatch::new(
+            "i_min",
+            mesh.resolve_logical_boundary("i_min").expect("faces"),
+            BoundaryKind::IncompressibleVelocityInlet {
+                velocity: [1.0, 0.0, 0.0],
+            },
+        )]);
+        let config = IncompressibleMomentumPredictorConfig::new(0.0, 1.0).expect("config");
+
+        let system = assemble_incompressible_momentum_predictor_with_boundary_3d(
+            &mesh, &fields, &boundary, config,
+        )
+        .expect("system");
+
+        let row = system.matrix.row_entries(0).collect::<Vec<_>>();
+        assert_eq!(row, vec![(0, 1.0)]);
+        assert!(approx_eq(system.rhs_x[0], 1.0, 1.0e-12));
+        assert!(approx_eq(system.rhs_y[0], 0.0, 1.0e-12));
+        assert!(approx_eq(system.rhs_z[0], 0.0, 1.0e-12));
+    }
 }

@@ -70,6 +70,7 @@ pub use incompressible_bc::{
 pub use incompressible_momentum::{
     IncompressibleMomentumPredictorConfig, IncompressibleMomentumPredictorSystem,
     assemble_incompressible_momentum_predictor_3d,
+    assemble_incompressible_momentum_predictor_with_boundary_3d,
 };
 pub use incompressible_pressure::assemble_incompressible_pressure_correction_3d;
 pub use inviscid::{InviscidFlux, physical_inviscid_flux};

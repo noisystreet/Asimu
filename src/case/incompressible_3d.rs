@@ -9,7 +9,8 @@ use tracing::{info, info_span};
 use crate::core::{Real, format_log_sci4};
 use crate::discretization::{
     IncompressibleMomentumPredictorConfig, IncompressiblePressureCorrectionConfig,
-    apply_incompressible_boundary_conditions_3d, assemble_incompressible_momentum_predictor_3d,
+    apply_incompressible_boundary_conditions_3d,
+    assemble_incompressible_momentum_predictor_with_boundary_3d,
     assemble_incompressible_pressure_correction_3d, compute_incompressible_divergence_3d,
 };
 use crate::error::{AsimuError, Result};
@@ -281,9 +282,10 @@ fn assemble_i1_diagnostic(
         .values()
         .iter()
         .fold(0.0, |acc: Real, value| acc.max(value.abs()));
-    let momentum_system = assemble_incompressible_momentum_predictor_3d(
+    let momentum_system = assemble_incompressible_momentum_predictor_with_boundary_3d(
         mesh,
         fields,
+        boundary,
         IncompressibleMomentumPredictorConfig::new(kinematic_viscosity, pseudo_time_step)?
             .with_velocity_under_relaxation(velocity_under_relaxation)?,
     )?;

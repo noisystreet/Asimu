@@ -255,7 +255,7 @@ name=<mesh_name>;cells=<count>
 | `assemble_incompressible_pressure_correction_3d` | 结构化 3D 不可压缩压力校正 CSR，使用面插值 \(d_P\)、压力出口 \(p'=0\) 与参考压力策略 |
 | `assemble_incompressible_pressure_poisson_3d` | 结构化 3D 不可压缩 I1 压力校正 Poisson CSR 兼容骨架 |
 | `IncompressiblePressureCorrectionConfig` / `IncompressiblePressureCorrectionSystem` | 压力校正装配配置与 `CsrMatrix + rhs` 输出 |
-| `assemble_incompressible_momentum_predictor_3d` | 结构化 3D 不可压缩 I1 伪瞬态动量预测 CSR，含扩散、一阶迎风对流、压力梯度、欠松弛与 \(d_P\) |
+| `assemble_incompressible_momentum_predictor_3d` / `assemble_incompressible_momentum_predictor_with_boundary_3d` | 结构化 3D 不可压缩伪瞬态动量预测 CSR，含内部扩散、一阶迎风对流、动量边界面贡献、压力梯度、欠松弛与 \(d_P\) |
 | `IncompressibleMomentumPredictorConfig` / `IncompressibleMomentumPredictorSystem` | 动量预测装配配置与三分量共用 `CsrMatrix`、`rhs_x/y/z`、`d_coefficient` |
 | `assemble_diffusion_placeholder` | 尺寸校验 + RHS 清零占位 |
 
