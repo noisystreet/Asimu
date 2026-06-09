@@ -15,6 +15,54 @@
 \frac{\partial \mathbf{u}}{\partial t} + \nabla\cdot(\mathbf{u}\mathbf{u}) = -\frac{1}{\rho}\nabla p + \nu\nabla^2\mathbf{u} \tag{2}
 \]
 
+### 1.1 不可压缩无量纲化
+
+不可压缩求解内部使用显式参考量，而不是像可压缩流那样由声速和来流热力学状态自动构造：
+
+\[
+L_{\mathrm{ref}} = \text{用户给定特征长度}, \qquad
+U_{\mathrm{ref}} = \text{用户给定特征速度}, \qquad
+\rho_{\mathrm{ref}} = \rho
+\tag{2a}
+\]
+
+\[
+t_{\mathrm{ref}}=\frac{L_{\mathrm{ref}}}{U_{\mathrm{ref}}}, \qquad
+p_{\mathrm{ref}}=\rho_{\mathrm{ref}}U_{\mathrm{ref}}^2, \qquad
+Re=\frac{U_{\mathrm{ref}}L_{\mathrm{ref}}}{\nu}
+\tag{2b}
+\]
+
+变量缩放：
+
+\[
+\mathbf{x}^*=\frac{\mathbf{x}}{L_{\mathrm{ref}}},
+\quad
+\mathbf{u}^*=\frac{\mathbf{u}}{U_{\mathrm{ref}}},
+\quad
+t^*=\frac{t}{t_{\mathrm{ref}}},
+\quad
+p^*=\frac{p}{p_{\mathrm{ref}}},
+\quad
+\nu^*=\frac{1}{Re}
+\tag{2c}
+\]
+
+代入 (1)(2) 得：
+
+\[
+\nabla^*\cdot\mathbf{u}^* = 0 \tag{2d}
+\]
+
+\[
+\frac{\partial \mathbf{u}^*}{\partial t^*}
++\nabla^*\cdot(\mathbf{u}^*\mathbf{u}^*)
+=-\nabla^*p^*+\frac{1}{Re}\nabla^{*2}\mathbf{u}^*
+\tag{2e}
+\]
+
+因此不可压缩核心算子不再携带有量纲密度；密度仅用于 \(p_{\mathrm{ref}}\)、输出还原与有量纲诊断。Case 输入仍用 SI，解析后 `CaseSpec` 内部切换为星号量，CGNS 输出再还原 SI。
+
 ## 2. 离散布局
 
 - **FVM**，结构化六面体，**collocated**：\(p,\mathbf{u}\) 存于单元中心。
@@ -219,6 +267,7 @@ Ghost 单元距 owner 中心法向距离 \(d_f\)。
 | (1a) 连续性残差 | `discretization::compute_incompressible_divergence_3d` | **I1 已实现** |
 | (6a) 速度 Laplacian skeleton | `discretization::compute_incompressible_velocity_laplacian_3d` | **I1 已实现** |
 | (11a)(11b) 压力校正 Poisson skeleton | `discretization::assemble_incompressible_pressure_poisson_3d` | **I1 已实现** |
+| (2a)–(2e) 不可压缩无量纲化 | `io::nondimensional::apply_nondimensionalization_for_incompressible` | **I1 已实现** |
 | I0 case 初始化 + CGNS 输出 | `case/incompressible_3d.rs` | **已实现** |
 | (3)(4) Rhie-Chow | `discretization/incompressible/rhie_chow.rs` | 规划 |
 | (5)(6) 对流/扩散 | `convection.rs`, `diffusion.rs` | 规划 |

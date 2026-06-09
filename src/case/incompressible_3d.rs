@@ -35,11 +35,16 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         .ok_or_else(|| AsimuError::Config("不可压缩算例须包含 [incompressible] 段".to_string()))?;
     let steps = case.time.max_steps.unwrap_or(1);
     let dt = case.time.dt.unwrap_or(0.0);
-    let physical_time = dt * steps as f64;
+    let nondimensional_time = dt * steps as f64;
+    let physical_time = case
+        .incompressible_reference
+        .as_ref()
+        .map(|reference| nondimensional_time * reference.time_scale())
+        .unwrap_or(nondimensional_time);
     let fields = IncompressibleFields::uniform(mesh.num_cells(), config.pressure, config.velocity)?;
     fields.validate_len(mesh.num_cells())?;
 
-    let written = write_outputs(case, mesh, &fields, physical_time)?;
+    let written = write_outputs(case, mesh, &fields, nondimensional_time)?;
     info!(
         steps,
         t = %format_log_sci4(physical_time),
@@ -65,7 +70,7 @@ fn write_outputs(
     case: &CaseSpec,
     mesh: &StructuredMesh3d,
     fields: &IncompressibleFields,
-    physical_time: f64,
+    nondimensional_time: f64,
 ) -> Result<Vec<PathBuf>> {
     let Some(output) = &case.output else {
         return Ok(Vec::new());
@@ -73,11 +78,29 @@ fn write_outputs(
     let mut written = Vec::new();
     if let Some(name) = &output.solution_cgns {
         let path = resolve_case_output_path(case.case_dir.as_deref(), &output.dir, name)?;
-        write_incompressible_cgns(&path, mesh, fields, physical_time)?;
+        let (mesh_out, fields_out, time_out) =
+            prepare_dimensional_incompressible_output(case, mesh, fields, nondimensional_time)?;
+        write_incompressible_cgns(&path, &mesh_out, &fields_out, time_out)?;
         info!(path = %path.display(), "已写出不可压缩流场 CGNS");
         written.push(path);
     }
     Ok(written)
+}
+
+fn prepare_dimensional_incompressible_output(
+    case: &CaseSpec,
+    mesh: &StructuredMesh3d,
+    fields: &IncompressibleFields,
+    nondimensional_time: f64,
+) -> Result<(StructuredMesh3d, IncompressibleFields, f64)> {
+    let Some(reference) = case.incompressible_reference.as_ref() else {
+        return Ok((mesh.clone(), fields.clone(), nondimensional_time));
+    };
+    let mut mesh_out = mesh.clone();
+    mesh_out.scale_coordinates(reference.length);
+    let fields_out = fields.to_dimensional(reference)?;
+    let time_out = nondimensional_time * reference.time_scale();
+    Ok((mesh_out, fields_out, time_out))
 }
 
 #[cfg(feature = "io-cgns")]

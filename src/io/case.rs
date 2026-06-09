@@ -4,12 +4,15 @@
 mod case_boundary;
 #[path = "case_compressible.rs"]
 mod case_compressible;
+#[path = "case_incompressible.rs"]
+mod case_incompressible;
 #[path = "mesh_load.rs"]
 mod mesh_load;
 
 pub use case_compressible::{
     CaseObservabilityConfig, CaseOutputConfig, EulerCaseConfig, resolve_case_output_path,
 };
+pub use case_incompressible::IncompressibleCaseConfig;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -26,13 +29,16 @@ use crate::field::{
 use crate::mesh::{
     MultiBlockStructuredMesh3d, StructuredMesh1d, StructuredMesh3d, UnstructuredMesh3d,
 };
-use crate::physics::{FreestreamParams, IdealGasEoS, PhysicsConfig, ReferenceScales};
+use crate::physics::{
+    FreestreamParams, IdealGasEoS, IncompressibleReferenceScales, PhysicsConfig, ReferenceScales,
+};
 use case_boundary::resolve_case_boundary;
 
 use super::validate_input_path;
 use case_compressible::{
     EulerToml, ObservabilityToml, OutputToml, parse_euler_config, parse_observability, parse_output,
 };
+use case_incompressible::{IncompressibleToml, parse_incompressible_config};
 
 /// 算例网格（1D 扩散 / 3D 多块可压缩）。
 #[allow(clippy::large_enum_variant)]
@@ -134,6 +140,8 @@ pub struct CaseSpec {
     pub case_dir: Option<PathBuf>,
     /// 无量纲参考量；可压缩算例解析后恒为 `Some`。
     pub reference: Option<ReferenceScales>,
+    /// 不可压缩无量纲参考量；不可压缩算例解析后恒为 `Some`。
+    pub incompressible_reference: Option<IncompressibleReferenceScales>,
 }
 
 /// 算例时间推进配置（`[time]`）。
@@ -235,15 +243,6 @@ pub struct SodCaseConfig {
     pub reconstruction: Option<String>,
     pub flux: Option<String>,
     pub limiter: Option<String>,
-}
-
-/// 不可压缩 Navier-Stokes I0 配置（placeholder solver 初场）。
-#[derive(Debug, Clone, PartialEq)]
-pub struct IncompressibleCaseConfig {
-    pub pressure: Real,
-    pub velocity: [Real; 3],
-    pub density: Real,
-    pub kinematic_viscosity: Real,
 }
 
 impl SodCaseConfig {
@@ -492,14 +491,6 @@ struct SodToml {
     limiter: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-struct IncompressibleToml {
-    pressure: Option<Real>,
-    velocity: Option<[Real; 3]>,
-    density: Option<Real>,
-    kinematic_viscosity: Option<Real>,
-}
-
 struct FlowModelConfigs {
     sod: Option<SodCaseConfig>,
     euler: Option<EulerCaseConfig>,
@@ -565,6 +556,7 @@ fn parse_case_toml(content: &str, case_dir: Option<&Path>) -> Result<CaseSpec> {
         observability: raw.observability.as_ref().map(parse_observability),
         case_dir: case_dir.map(Path::to_path_buf),
         reference: None,
+        incompressible_reference: None,
     };
     finalize_parsed_case(deprecated_mesh_zone, &mut case)?;
     Ok(case)
@@ -608,6 +600,7 @@ fn finalize_parsed_case(deprecated_mesh_zone: Option<usize>, case: &mut CaseSpec
         );
     }
     super::nondimensional::apply_nondimensionalization_for_compressible(case)?;
+    super::nondimensional::apply_nondimensionalization_for_incompressible(case)?;
     case.validate_multiblock_compressible()
 }
 
@@ -685,27 +678,6 @@ fn parse_freestream(raw: &FreestreamToml) -> FreestreamParams {
         alpha: raw.alpha.unwrap_or(0.0),
         beta: raw.beta.unwrap_or(0.0),
     }
-}
-
-fn parse_incompressible_config(raw: &IncompressibleToml) -> Result<IncompressibleCaseConfig> {
-    let density = raw.density.unwrap_or(1.0);
-    let kinematic_viscosity = raw.kinematic_viscosity.unwrap_or(1.0e-3);
-    if density <= 0.0 {
-        return Err(AsimuError::Config(
-            "[incompressible].density 必须大于 0".to_string(),
-        ));
-    }
-    if kinematic_viscosity < 0.0 {
-        return Err(AsimuError::Config(
-            "[incompressible].kinematic_viscosity 不能为负".to_string(),
-        ));
-    }
-    Ok(IncompressibleCaseConfig {
-        pressure: raw.pressure.unwrap_or(0.0),
-        velocity: raw.velocity.unwrap_or([0.0, 0.0, 0.0]),
-        density,
-        kinematic_viscosity,
-    })
 }
 
 fn resolve_initial_set(initials: &BTreeMap<String, InitialToml>) -> Result<InitialSet> {

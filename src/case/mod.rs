@@ -217,6 +217,10 @@ velocity = [1.0, 0.0, 0.0]
 density = 1.0
 kinematic_viscosity = 0.01
 
+[incompressible.reference]
+length = 1.0
+velocity = 1.0
+
 [time]
 mode = "steady"
 max_steps = 1

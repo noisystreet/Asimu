@@ -5,7 +5,9 @@
 use crate::boundary::{BoundaryKind, BoundarySet, WallHeat};
 use crate::core::Real;
 use crate::error::{AsimuError, Result};
-use crate::physics::{FreestreamParams, ReferenceScales, ViscousPhysicsConfig};
+use crate::physics::{
+    FreestreamParams, IncompressibleReferenceScales, ReferenceScales, ViscousPhysicsConfig,
+};
 
 use super::{CaseMesh, CaseSpec};
 
@@ -157,6 +159,47 @@ pub(super) fn apply_nondimensionalization_for_compressible(case: &mut CaseSpec) 
     apply_nondimensionalization(case, reference)
 }
 
+/// 不可压缩算例在解析后统一切换为 \(*\) 变量求解。
+pub(super) fn apply_nondimensionalization_for_incompressible(case: &mut CaseSpec) -> Result<()> {
+    let Some(config) = &case.incompressible else {
+        return Ok(());
+    };
+    let reference = IncompressibleReferenceScales::new(
+        config.reference.length,
+        config.reference.velocity,
+        config.density,
+        config.kinematic_viscosity,
+    )?;
+    let inv_length = 1.0 / reference.length;
+    if (inv_length - 1.0).abs() > Real::EPSILON {
+        case.mesh.scale_coordinates(inv_length)?;
+    }
+    if let Some(config) = &mut case.incompressible {
+        config.pressure = reference.nondimensional_pressure(config.pressure);
+        for value in &mut config.velocity {
+            *value = reference.nondimensional_velocity(*value);
+        }
+        config.density = 1.0;
+        config.kinematic_viscosity = reference.inv_reynolds();
+    }
+    scale_incompressible_time(&mut case.time, &reference);
+    case.incompressible_reference = Some(reference);
+    Ok(())
+}
+
+fn scale_incompressible_time(
+    time: &mut super::CaseTimeConfig,
+    reference: &IncompressibleReferenceScales,
+) {
+    let time_scale = reference.time_scale();
+    if let Some(dt) = &mut time.dt {
+        *dt /= time_scale;
+    }
+    if let Some(final_time) = &mut time.final_time {
+        *final_time /= time_scale;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -261,5 +304,71 @@ wall_temperature = 600.0
                 ..
             } if (*temperature - 2.0).abs() < 1.0e-12
         ));
+    }
+
+    #[test]
+    fn incompressible_case_scales_to_nondimensional_variables() {
+        let case = parse_case_str(
+            r#"
+name = "inc_nd"
+[mesh]
+kind = "structured_3d"
+nx = 2
+ny = 1
+nz = 1
+lx = 4.0
+ly = 1.0
+lz = 1.0
+
+[physics]
+
+[incompressible]
+pressure = 18.0
+velocity = [6.0, 0.0, 0.0]
+density = 2.0
+kinematic_viscosity = 0.5
+
+[incompressible.reference]
+length = 2.0
+velocity = 3.0
+
+[time]
+dt = 4.0
+final_time = 8.0
+"#,
+        )
+        .expect("parse");
+        let inc = case.incompressible.expect("inc");
+        assert!((inc.pressure - 1.0).abs() < 1.0e-12);
+        assert!((inc.velocity[0] - 2.0).abs() < 1.0e-12);
+        assert!((inc.density - 1.0).abs() < 1.0e-12);
+        assert!((inc.kinematic_viscosity - (0.5 / 6.0)).abs() < 1.0e-12);
+        assert!((case.time.dt.expect("dt") - 6.0).abs() < 1.0e-12);
+        assert!((case.time.final_time.expect("tf") - 12.0).abs() < 1.0e-12);
+        let reference = case.incompressible_reference.expect("reference");
+        assert!((reference.reynolds - 12.0).abs() < 1.0e-12);
+        assert!((case.mesh.num_cells() as Real - 2.0).abs() < 1.0e-12);
+        assert!((case.mesh.as_3d().expect("mesh").node_x(2, 0, 0) - 2.0).abs() < 1.0e-12);
+    }
+
+    #[test]
+    fn incompressible_case_requires_reference_scales() {
+        let err = parse_case_str(
+            r#"
+name = "inc_missing_ref"
+[mesh]
+kind = "structured_3d"
+nx = 1
+ny = 1
+nz = 1
+
+[physics]
+
+[incompressible]
+velocity = [1.0, 0.0, 0.0]
+"#,
+        )
+        .expect_err("missing reference");
+        assert!(err.to_string().contains("incompressible.reference"));
     }
 }

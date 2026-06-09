@@ -545,6 +545,7 @@ fn rejects_gmres_for_connected_multiblock_at_parse() {
         observability: None,
         case_dir: None,
         reference: None,
+        incompressible_reference: None,
     };
     nondimensional::apply_nondimensionalization_for_compressible(&mut case).expect("nd");
 

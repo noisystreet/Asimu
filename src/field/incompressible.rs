@@ -2,6 +2,7 @@
 
 use crate::core::Real;
 use crate::error::{AsimuError, Result};
+use crate::physics::IncompressibleReferenceScales;
 
 use super::ScalarField;
 
@@ -45,4 +46,18 @@ impl IncompressibleFields {
         }
         Ok(())
     }
+
+    /// 将内部无量纲不可压字段还原为 SI 输出字段。
+    pub fn to_dimensional(&self, reference: &IncompressibleReferenceScales) -> Result<Self> {
+        Ok(Self {
+            pressure: scale_scalar(&self.pressure, reference.pressure)?,
+            velocity_x: scale_scalar(&self.velocity_x, reference.velocity)?,
+            velocity_y: scale_scalar(&self.velocity_y, reference.velocity)?,
+            velocity_z: scale_scalar(&self.velocity_z, reference.velocity)?,
+        })
+    }
+}
+
+fn scale_scalar(field: &ScalarField, scale: Real) -> Result<ScalarField> {
+    ScalarField::from_values(field.values().iter().map(|value| value * scale).collect())
 }
