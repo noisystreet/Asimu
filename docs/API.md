@@ -98,7 +98,7 @@ let result = solver.run(&mesh)?;
 | `CaseSpec::build_initial_fields()` | 构建 `Fields` |
 | `CaseSpec::initial_scalar(name)` | 单标量；未声明则全零 |
 | `CaseSpec::build_multiblock_conserved_fields(blocks)` | 按 block 顺序构建多块守恒初场 |
-| `Incompressible3dRunMetrics` | I1 runner 指标：`max_abs_divergence`、压力校正 CSR 行数与非零数 |
+| `Incompressible3dRunMetrics` | I1 runner 指标：`max_abs_divergence`、压力校正 CSR 行数/非零数、GMRES 收敛与最大 \(p'\) |
 | `load_conserved_fields(path)` / `write_conserved_fields(path, fields)` | 单 block restart TOML（version=1） |
 | `load_multiblock_conserved_fields(path, block_names)` / `write_multiblock_conserved_fields(path, blocks)` | 多块 restart TOML（version=2） |
 | `load_mesh_from_case(&Path) -> Result<Mesh>` | 从占位 case 文件加载网格 |

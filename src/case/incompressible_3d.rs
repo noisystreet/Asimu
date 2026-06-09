@@ -20,6 +20,7 @@ use crate::io::{CaseSpec, resolve_case_output_path};
 use crate::io::{
     StructuredVertexSolution, VertexScalarFieldView, write_structured_vertex_solution_cgns,
 };
+use crate::linalg::{GmresConfig, GmresSolver, IdentityPreconditioner};
 use crate::mesh::StructuredMesh3d;
 
 use super::{CaseRunKind, CaseRunResult};
@@ -31,6 +32,10 @@ pub struct Incompressible3dRunMetrics {
     pub max_abs_divergence: Real,
     pub pressure_system_rows: usize,
     pub pressure_system_nnz: usize,
+    pub pressure_solve_converged: bool,
+    pub pressure_solve_iterations: usize,
+    pub pressure_solve_residual: Real,
+    pub max_abs_pressure_correction: Real,
     pub written: Vec<PathBuf>,
 }
 
@@ -59,6 +64,10 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         max_abs_divergence = %format_log_sci4(diagnostic.max_abs_divergence),
         pressure_rows = diagnostic.pressure_system_rows,
         pressure_nnz = diagnostic.pressure_system_nnz,
+        pressure_converged = diagnostic.pressure_solve_converged,
+        pressure_iters = diagnostic.pressure_solve_iterations,
+        pressure_residual = %format_log_sci4(diagnostic.pressure_solve_residual),
+        max_abs_pressure_correction = %format_log_sci4(diagnostic.max_abs_pressure_correction),
         "不可压缩 3D I1 skeleton 完成"
     );
     Ok(CaseRunResult {
@@ -66,10 +75,13 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         benchmark_id: case.benchmark_id.clone(),
         kind: CaseRunKind::Incompressible3dSteady,
         summary: format!(
-            "incompressible_3d_i1 steps={steps} max|div(u)|={} pressure_rows={} nnz={}",
+            "incompressible_3d_i1 steps={steps} max|div(u)|={} pressure_rows={} nnz={} pressure_converged={} pressure_iters={} pressure_residual={}",
             format_log_sci4(diagnostic.max_abs_divergence),
             diagnostic.pressure_system_rows,
-            diagnostic.pressure_system_nnz
+            diagnostic.pressure_system_nnz,
+            diagnostic.pressure_solve_converged,
+            diagnostic.pressure_solve_iterations,
+            format_log_sci4(diagnostic.pressure_solve_residual)
         ),
         diffusion: None,
         sod: None,
@@ -80,6 +92,10 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
             max_abs_divergence: diagnostic.max_abs_divergence,
             pressure_system_rows: diagnostic.pressure_system_rows,
             pressure_system_nnz: diagnostic.pressure_system_nnz,
+            pressure_solve_converged: diagnostic.pressure_solve_converged,
+            pressure_solve_iterations: diagnostic.pressure_solve_iterations,
+            pressure_solve_residual: diagnostic.pressure_solve_residual,
+            max_abs_pressure_correction: diagnostic.max_abs_pressure_correction,
             written,
         }),
     })
@@ -89,6 +105,10 @@ struct IncompressibleI1Diagnostic {
     max_abs_divergence: Real,
     pressure_system_rows: usize,
     pressure_system_nnz: usize,
+    pressure_solve_converged: bool,
+    pressure_solve_iterations: usize,
+    pressure_solve_residual: Real,
+    max_abs_pressure_correction: Real,
 }
 
 fn assemble_pressure_correction_diagnostic(
@@ -106,10 +126,47 @@ fn assemble_pressure_correction_diagnostic(
         &divergence,
         IncompressiblePressureCorrectionConfig::new(density, 0, 0.0)?,
     )?;
+    let pressure_solution = solve_pressure_correction(&system)?;
     Ok(IncompressibleI1Diagnostic {
         max_abs_divergence,
         pressure_system_rows: system.matrix.nrows(),
         pressure_system_nnz: system.matrix.values().len(),
+        pressure_solve_converged: pressure_solution.converged,
+        pressure_solve_iterations: pressure_solution.iterations,
+        pressure_solve_residual: pressure_solution.residual_norm,
+        max_abs_pressure_correction: pressure_solution.max_abs_correction,
+    })
+}
+
+struct PressureCorrectionSolveDiagnostic {
+    converged: bool,
+    iterations: usize,
+    residual_norm: Real,
+    max_abs_correction: Real,
+}
+
+fn solve_pressure_correction(
+    system: &crate::discretization::IncompressiblePressureCorrectionSystem,
+) -> Result<PressureCorrectionSolveDiagnostic> {
+    let n = system.matrix.nrows();
+    let mut matrix = system.matrix.clone();
+    let preconditioner = IdentityPreconditioner::new(n);
+    let solver = GmresSolver::new(GmresConfig::default())?;
+    let mut pressure_correction = vec![0.0; n];
+    let report = solver.solve(
+        &mut matrix,
+        &preconditioner,
+        &system.rhs,
+        &mut pressure_correction,
+    )?;
+    let max_abs_correction = pressure_correction
+        .iter()
+        .fold(0.0, |acc: Real, value| acc.max(value.abs()));
+    Ok(PressureCorrectionSolveDiagnostic {
+        converged: report.converged,
+        iterations: report.iterations,
+        residual_norm: report.residual_norm,
+        max_abs_correction,
     })
 }
 

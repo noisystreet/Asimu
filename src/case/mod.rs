@@ -239,6 +239,13 @@ solution_cgns = "flow.cgns"
         assert!(metrics.max_abs_divergence.is_finite());
         assert_eq!(metrics.pressure_system_rows, 4);
         assert!(metrics.pressure_system_nnz >= metrics.pressure_system_rows);
+        assert!(metrics.pressure_solve_converged);
+        assert_eq!(metrics.pressure_solve_iterations, 0);
+        assert!(crate::core::approx_eq(
+            metrics.max_abs_pressure_correction,
+            0.0,
+            1.0e-12
+        ));
     }
 
     #[test]
