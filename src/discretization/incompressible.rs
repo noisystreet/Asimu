@@ -7,6 +7,7 @@
 use crate::core::Real;
 use crate::error::{AsimuError, Result};
 use crate::field::{IncompressibleFields, ScalarField};
+use crate::linalg::CsrMatrix;
 use crate::mesh::StructuredMesh3d;
 
 /// 速度三分量的 cell-centered Laplacian。
@@ -15,6 +16,51 @@ pub struct IncompressibleVelocityLaplacian {
     pub velocity_x: ScalarField,
     pub velocity_y: ScalarField,
     pub velocity_z: ScalarField,
+}
+
+/// 不可压缩压力校正 Poisson 装配配置。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct IncompressiblePressureCorrectionConfig {
+    pub density: Real,
+    pub pressure_reference_cell: usize,
+    pub pressure_reference_value: Real,
+}
+
+impl IncompressiblePressureCorrectionConfig {
+    /// 构造压力校正配置；`density` 必须为正。
+    pub fn new(
+        density: Real,
+        pressure_reference_cell: usize,
+        pressure_reference_value: Real,
+    ) -> Result<Self> {
+        if density <= 0.0 {
+            return Err(AsimuError::Config(
+                "不可压缩压力校正 density 必须大于 0".to_string(),
+            ));
+        }
+        Ok(Self {
+            density,
+            pressure_reference_cell,
+            pressure_reference_value,
+        })
+    }
+}
+
+impl Default for IncompressiblePressureCorrectionConfig {
+    fn default() -> Self {
+        Self {
+            density: 1.0,
+            pressure_reference_cell: 0,
+            pressure_reference_value: 0.0,
+        }
+    }
+}
+
+/// 压力校正线性系统 \(A p' = b\)。
+#[derive(Debug, Clone, PartialEq)]
+pub struct IncompressiblePressureCorrectionSystem {
+    pub matrix: CsrMatrix,
+    pub rhs: Vec<Real>,
 }
 
 /// 计算不可压缩连续性残差 \(\nabla\cdot\mathbf{u}\)。
@@ -55,6 +101,60 @@ pub fn compute_incompressible_velocity_laplacian_3d(
         velocity_x: scalar_laplacian(mesh, &fields.velocity_x, spacing)?,
         velocity_y: scalar_laplacian(mesh, &fields.velocity_y, spacing)?,
         velocity_z: scalar_laplacian(mesh, &fields.velocity_z, spacing)?,
+    })
+}
+
+/// 装配不可压缩压力校正 Poisson 骨架。
+///
+/// I1 使用 Cartesian 7 点 stencil 装配 \(-\rho\nabla^2 p'=\rho R_c\)，边界为零
+/// Neumann；`pressure_reference_cell` 行强制为 `p'=pressure_reference_value`。
+pub fn assemble_incompressible_pressure_poisson_3d(
+    mesh: &StructuredMesh3d,
+    divergence: &ScalarField,
+    config: IncompressiblePressureCorrectionConfig,
+) -> Result<IncompressiblePressureCorrectionSystem> {
+    let n = mesh.num_cells();
+    if divergence.len() != n {
+        return Err(AsimuError::Field(format!(
+            "压力校正 RHS 长度 {} 与网格单元数 {n} 不一致",
+            divergence.len()
+        )));
+    }
+    if config.density <= 0.0 {
+        return Err(AsimuError::Config(
+            "不可压缩压力校正 density 必须大于 0".to_string(),
+        ));
+    }
+    if config.pressure_reference_cell >= n {
+        return Err(AsimuError::Config(format!(
+            "压力参考单元 {} 越界，单元数 {n}",
+            config.pressure_reference_cell
+        )));
+    }
+
+    let spacing = CartesianSpacing::from_mesh(mesh)?;
+    let mut rows = (0..n).map(|_| Vec::with_capacity(7)).collect::<Vec<_>>();
+    let mut rhs = divergence
+        .values()
+        .iter()
+        .map(|value| config.density * value)
+        .collect::<Vec<_>>();
+    for k in 0..mesh.nz {
+        for j in 0..mesh.ny {
+            for i in 0..mesh.nx {
+                let row = mesh.cell_index(i, j, k);
+                if row == config.pressure_reference_cell {
+                    rows[row].push((row, 1.0));
+                    rhs[row] = config.pressure_reference_value;
+                    continue;
+                }
+                add_pressure_poisson_neighbors(mesh, &mut rows[row], i, j, k, spacing, config);
+            }
+        }
+    }
+    Ok(IncompressiblePressureCorrectionSystem {
+        matrix: CsrMatrix::from_rows(n, n, rows)?,
+        rhs,
     })
 }
 
@@ -110,6 +210,85 @@ fn scalar_laplacian(
         }
     }
     ScalarField::from_values(values)
+}
+
+fn add_pressure_poisson_neighbors(
+    mesh: &StructuredMesh3d,
+    row: &mut Vec<(usize, Real)>,
+    i: usize,
+    j: usize,
+    k: usize,
+    spacing: CartesianSpacing,
+    config: IncompressiblePressureCorrectionConfig,
+) {
+    let center = mesh.cell_index(i, j, k);
+    let cx = config.density / (spacing.dx * spacing.dx);
+    let cy = config.density / (spacing.dy * spacing.dy);
+    let cz = config.density / (spacing.dz * spacing.dz);
+    let mut diag = 0.0;
+    add_neighbor_if_present(
+        mesh,
+        row,
+        &mut diag,
+        neighbor_if(i > 0, || (i - 1, j, k)),
+        cx,
+    );
+    add_neighbor_if_present(
+        mesh,
+        row,
+        &mut diag,
+        neighbor_if(i + 1 < mesh.nx, || (i + 1, j, k)),
+        cx,
+    );
+    add_neighbor_if_present(
+        mesh,
+        row,
+        &mut diag,
+        neighbor_if(j > 0, || (i, j - 1, k)),
+        cy,
+    );
+    add_neighbor_if_present(
+        mesh,
+        row,
+        &mut diag,
+        neighbor_if(j + 1 < mesh.ny, || (i, j + 1, k)),
+        cy,
+    );
+    add_neighbor_if_present(
+        mesh,
+        row,
+        &mut diag,
+        neighbor_if(k > 0, || (i, j, k - 1)),
+        cz,
+    );
+    add_neighbor_if_present(
+        mesh,
+        row,
+        &mut diag,
+        neighbor_if(k + 1 < mesh.nz, || (i, j, k + 1)),
+        cz,
+    );
+    row.push((center, diag));
+}
+
+fn neighbor_if(
+    present: bool,
+    index: impl FnOnce() -> (usize, usize, usize),
+) -> Option<(usize, usize, usize)> {
+    present.then(index)
+}
+
+fn add_neighbor_if_present(
+    mesh: &StructuredMesh3d,
+    row: &mut Vec<(usize, Real)>,
+    diag: &mut Real,
+    neighbor: Option<(usize, usize, usize)>,
+    coeff: Real,
+) {
+    if let Some((i, j, k)) = neighbor {
+        *diag += coeff;
+        row.push((mesh.cell_index(i, j, k), -coeff));
+    }
 }
 
 fn central_diff_x(
@@ -258,5 +437,65 @@ mod tests {
         assert!(approx_eq(lap.velocity_x.values()[center], 2.0, 1.0e-12));
         assert!(approx_eq(lap.velocity_y.values()[center], 2.0, 1.0e-12));
         assert!(approx_eq(lap.velocity_z.values()[center], 2.0, 1.0e-12));
+    }
+
+    #[test]
+    fn pressure_poisson_uses_reference_cell_row() {
+        let mesh = mesh_3x3x3();
+        let divergence = ScalarField::uniform(mesh.num_cells(), 0.0).expect("div");
+        let config = IncompressiblePressureCorrectionConfig::new(1.0, 5, 3.25).expect("config");
+
+        let system =
+            assemble_incompressible_pressure_poisson_3d(&mesh, &divergence, config).expect("sys");
+
+        assert_eq!(system.matrix.nrows(), mesh.num_cells());
+        assert_eq!(system.matrix.ncols(), mesh.num_cells());
+        assert_eq!(system.rhs[5], 3.25);
+        let row = system.matrix.row_entries(5).collect::<Vec<_>>();
+        assert_eq!(row, vec![(5, 1.0)]);
+    }
+
+    #[test]
+    fn pressure_poisson_zero_divergence_has_zero_rhs_except_reference() {
+        let mesh = mesh_3x3x3();
+        let divergence = ScalarField::uniform(mesh.num_cells(), 0.0).expect("div");
+        let config = IncompressiblePressureCorrectionConfig::default();
+
+        let system =
+            assemble_incompressible_pressure_poisson_3d(&mesh, &divergence, config).expect("sys");
+
+        assert!(
+            system
+                .rhs
+                .iter()
+                .all(|&value| approx_eq(value, 0.0, 1.0e-12))
+        );
+    }
+
+    #[test]
+    fn pressure_poisson_interior_cell_has_seven_point_stencil() {
+        let mesh = mesh_3x3x3();
+        let divergence = ScalarField::uniform(mesh.num_cells(), 1.5).expect("div");
+        let config = IncompressiblePressureCorrectionConfig::new(2.0, 0, 0.0).expect("config");
+
+        let system =
+            assemble_incompressible_pressure_poisson_3d(&mesh, &divergence, config).expect("sys");
+
+        let center = mesh.cell_index(1, 1, 1);
+        let row = system.matrix.row_entries(center).collect::<Vec<_>>();
+        assert_eq!(row.len(), 7);
+        assert!(row_contains(&row, center, 12.0));
+        assert!(row_contains(&row, mesh.cell_index(0, 1, 1), -2.0));
+        assert!(row_contains(&row, mesh.cell_index(2, 1, 1), -2.0));
+        assert!(row_contains(&row, mesh.cell_index(1, 0, 1), -2.0));
+        assert!(row_contains(&row, mesh.cell_index(1, 2, 1), -2.0));
+        assert!(row_contains(&row, mesh.cell_index(1, 1, 0), -2.0));
+        assert!(row_contains(&row, mesh.cell_index(1, 1, 2), -2.0));
+        assert!(approx_eq(system.rhs[center], 3.0, 1.0e-12));
+    }
+
+    fn row_contains(row: &[(usize, Real)], col: usize, value: Real) -> bool {
+        row.iter()
+            .any(|&(c, v)| c == col && approx_eq(v, value, 1.0e-12))
     }
 }

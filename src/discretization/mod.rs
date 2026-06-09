@@ -57,8 +57,9 @@ pub use gradient_unstructured::{
 };
 pub use hllc::hllc_flux;
 pub use incompressible::{
-    IncompressibleVelocityLaplacian, compute_incompressible_divergence_3d,
-    compute_incompressible_velocity_laplacian_3d,
+    IncompressiblePressureCorrectionConfig, IncompressiblePressureCorrectionSystem,
+    IncompressibleVelocityLaplacian, assemble_incompressible_pressure_poisson_3d,
+    compute_incompressible_divergence_3d, compute_incompressible_velocity_laplacian_3d,
 };
 pub use inviscid::{InviscidFlux, physical_inviscid_flux};
 pub use reconstruction::{

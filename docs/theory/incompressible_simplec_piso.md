@@ -133,6 +133,23 @@ d_P = \frac{V_P}{a_P^c} \tag{10}
 \nabla\cdot(\rho\, d\,\nabla p') = \nabla\cdot(\rho\,\mathbf{u}^*) \tag{11}
 \]
 
+I1 skeleton 尚未引入动量方程一致系数 \(d_P\)，先取 \(d=1\) 并装配 SPD 符号形式：
+
+\[
+-\rho\nabla^2 p' = \rho R_c \tag{11a}
+\]
+
+其中 \(R_c\) 来自 (1a)。Cartesian 7 点 stencil 的内点系数为：
+
+\[
+a_P = 2\rho\left(\frac{1}{\Delta x^2}+\frac{1}{\Delta y^2}+\frac{1}{\Delta z^2}\right),
+\quad
+a_{nb}=-\frac{\rho}{\Delta n^2}
+\tag{11b}
+\]
+
+纯 Neumann 压力校正矩阵奇异；I1 通过 `pressure_reference_cell` 将一行替换为 \(p'=p'_{\mathrm{ref}}\)，后续真实边界条件与参考压力策略会随 SIMPLEC/PISO 装配完善。
+
 ### 5.4 修正
 
 \[
@@ -201,6 +218,7 @@ Ghost 单元距 owner 中心法向距离 \(d_f\)。
 |-----------|----------|------|
 | (1a) 连续性残差 | `discretization::compute_incompressible_divergence_3d` | **I1 已实现** |
 | (6a) 速度 Laplacian skeleton | `discretization::compute_incompressible_velocity_laplacian_3d` | **I1 已实现** |
+| (11a)(11b) 压力校正 Poisson skeleton | `discretization::assemble_incompressible_pressure_poisson_3d` | **I1 已实现** |
 | I0 case 初始化 + CGNS 输出 | `case/incompressible_3d.rs` | **已实现** |
 | (3)(4) Rhie-Chow | `discretization/incompressible/rhie_chow.rs` | 规划 |
 | (5)(6) 对流/扩散 | `convection.rs`, `diffusion.rs` | 规划 |
