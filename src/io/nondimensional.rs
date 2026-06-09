@@ -360,6 +360,7 @@ pressure = 18.0
 velocity = [6.0, 0.0, 0.0]
 density = 2.0
 kinematic_viscosity = 0.5
+pressure_under_relaxation = 0.3
 
 [incompressible.reference]
 length = 2.0
@@ -376,6 +377,7 @@ final_time = 8.0
         assert!((inc.velocity[0] - 2.0).abs() < 1.0e-12);
         assert!((inc.density - 1.0).abs() < 1.0e-12);
         assert!((inc.kinematic_viscosity - (0.5 / 6.0)).abs() < 1.0e-12);
+        assert!((inc.pressure_under_relaxation - 0.3).abs() < 1.0e-12);
         assert!((case.time.dt.expect("dt") - 6.0).abs() < 1.0e-12);
         assert!((case.time.final_time.expect("tf") - 12.0).abs() < 1.0e-12);
         let reference = case.incompressible_reference.expect("reference");

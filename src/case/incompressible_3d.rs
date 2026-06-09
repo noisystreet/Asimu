@@ -84,6 +84,7 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
             density: config.density,
             kinematic_viscosity: config.kinematic_viscosity,
             velocity_under_relaxation: config.velocity_under_relaxation,
+            pressure_under_relaxation: config.pressure_under_relaxation,
             pseudo_time_step,
             boundary: &case.boundary,
             max_iterations: steps as usize,
@@ -215,6 +216,7 @@ struct SimplecIterationParams<'a> {
     density: Real,
     kinematic_viscosity: Real,
     velocity_under_relaxation: Real,
+    pressure_under_relaxation: Real,
     pseudo_time_step: Real,
     boundary: &'a crate::boundary::BoundarySet,
     max_iterations: usize,
@@ -230,15 +232,7 @@ fn run_simplec_iterations(
     let mut history = Vec::with_capacity(max_iterations);
     let mut last = None;
     for _ in 0..max_iterations {
-        let mut diagnostic = assemble_i1_diagnostic(
-            params.mesh,
-            &current_fields,
-            params.density,
-            params.kinematic_viscosity,
-            params.velocity_under_relaxation,
-            params.pseudo_time_step,
-            params.boundary,
-        )?;
+        let mut diagnostic = assemble_i1_diagnostic(&current_fields, &params)?;
         let residual = diagnostic.max_abs_corrected_divergence;
         if !residual.is_finite() {
             return Err(AsimuError::Solver(
@@ -270,14 +264,10 @@ fn run_simplec_iterations(
 }
 
 fn assemble_i1_diagnostic(
-    mesh: &StructuredMesh3d,
     fields: &IncompressibleFields,
-    density: Real,
-    kinematic_viscosity: Real,
-    velocity_under_relaxation: Real,
-    pseudo_time_step: Real,
-    boundary: &crate::boundary::BoundarySet,
+    params: &SimplecIterationParams<'_>,
 ) -> Result<IncompressibleI1Diagnostic> {
+    let mesh = params.mesh;
     let divergence = compute_incompressible_divergence_3d(mesh, fields)?;
     let max_abs_divergence = divergence
         .values()
@@ -286,9 +276,12 @@ fn assemble_i1_diagnostic(
     let momentum_system = assemble_incompressible_momentum_predictor_with_boundary_3d(
         mesh,
         fields,
-        boundary,
-        IncompressibleMomentumPredictorConfig::new(kinematic_viscosity, pseudo_time_step)?
-            .with_velocity_under_relaxation(velocity_under_relaxation)?,
+        params.boundary,
+        IncompressibleMomentumPredictorConfig::new(
+            params.kinematic_viscosity,
+            params.pseudo_time_step,
+        )?
+        .with_velocity_under_relaxation(params.velocity_under_relaxation)?,
     )?;
     let max_momentum_d_coefficient = momentum_system
         .d_coefficient
@@ -300,7 +293,7 @@ fn assemble_i1_diagnostic(
         mesh,
         &momentum_solution.predicted_fields,
         &momentum_system.d_coefficient,
-        boundary,
+        params.boundary,
     )?;
     let max_abs_predicted_divergence = predicted_divergence
         .values()
@@ -310,8 +303,8 @@ fn assemble_i1_diagnostic(
         mesh,
         &predicted_divergence,
         &momentum_system.d_coefficient,
-        boundary,
-        IncompressiblePressureCorrectionConfig::new(density, 0, 0.0)?,
+        params.boundary,
+        IncompressiblePressureCorrectionConfig::new(params.density, 0, 0.0)?,
     )?;
     let pressure_solution = solve_pressure_correction(&system)?;
     let corrected_fields = corrected_incompressible_fields(
@@ -320,6 +313,7 @@ fn assemble_i1_diagnostic(
         &momentum_solution.predicted_fields,
         &pressure_solution.correction,
         momentum_system.d_coefficient.values(),
+        params.pressure_under_relaxation,
     )?;
     let corrected_divergence = compute_incompressible_divergence_3d(mesh, &corrected_fields)?;
     let max_abs_corrected_divergence = corrected_divergence
@@ -464,6 +458,7 @@ fn corrected_incompressible_fields(
     predicted: &IncompressibleFields,
     pressure_correction: &[Real],
     d_coefficient: &[Real],
+    pressure_under_relaxation: Real,
 ) -> Result<IncompressibleFields> {
     let n = mesh.num_cells();
     if pressure_correction.len() != n || d_coefficient.len() != n {
@@ -483,7 +478,10 @@ fn corrected_incompressible_fields(
                 let grad =
                     pressure_correction_gradient(mesh, pressure_correction, i, j, k, spacing);
                 let d = d_coefficient[cell];
-                pressure.push(current.pressure.values()[cell] + pressure_correction[cell]);
+                pressure.push(
+                    current.pressure.values()[cell]
+                        + pressure_under_relaxation * pressure_correction[cell],
+                );
                 velocity_x.push(predicted.velocity_x.values()[cell] - d * grad[0]);
                 velocity_y.push(predicted.velocity_y.values()[cell] - d * grad[1]);
                 velocity_z.push(predicted.velocity_z.values()[cell] - d * grad[2]);

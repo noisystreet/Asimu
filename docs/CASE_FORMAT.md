@@ -376,6 +376,7 @@ velocity = [1.0, 0.0, 0.0]       # m/s，解析后除以 U_ref
 density = 1.0
 kinematic_viscosity = 0.01       # m^2/s，解析后为 1/Re
 velocity_under_relaxation = 0.7   # 可选，(0, 1]，默认 1.0
+pressure_under_relaxation = 0.3   # 可选，(0, 1]，默认 1.0
 
 [incompressible.reference]
 length = 1.0                     # L_ref，m

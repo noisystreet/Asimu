@@ -239,6 +239,8 @@ a_{nb}=-\rho\frac{d_f}{\Delta n_f^2}
 p \leftarrow p + \alpha_p p' \tag{12}
 \]
 
+`[incompressible].pressure_under_relaxation` 给出 \(\alpha_p\in(0,1]\)，默认 1。
+
 \[
 \mathbf{u} \leftarrow \mathbf{u}^* - d\,\nabla p' \tag{13}
 \]

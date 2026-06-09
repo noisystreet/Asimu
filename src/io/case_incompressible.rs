@@ -13,6 +13,7 @@ pub struct IncompressibleCaseConfig {
     pub density: Real,
     pub kinematic_viscosity: Real,
     pub velocity_under_relaxation: Real,
+    pub pressure_under_relaxation: Real,
     pub reference: IncompressibleReferenceConfig,
 }
 
@@ -30,6 +31,7 @@ pub(super) struct IncompressibleToml {
     density: Option<Real>,
     kinematic_viscosity: Option<Real>,
     velocity_under_relaxation: Option<Real>,
+    pressure_under_relaxation: Option<Real>,
     reference: Option<IncompressibleReferenceToml>,
 }
 
@@ -45,6 +47,7 @@ pub(super) fn parse_incompressible_config(
     let density = raw.density.unwrap_or(1.0);
     let kinematic_viscosity = raw.kinematic_viscosity.unwrap_or(1.0e-3);
     let velocity_under_relaxation = raw.velocity_under_relaxation.unwrap_or(1.0);
+    let pressure_under_relaxation = raw.pressure_under_relaxation.unwrap_or(1.0);
     if density <= 0.0 {
         return Err(AsimuError::Config(
             "[incompressible].density 必须大于 0".to_string(),
@@ -60,12 +63,18 @@ pub(super) fn parse_incompressible_config(
             "[incompressible].velocity_under_relaxation 必须位于 (0, 1]".to_string(),
         ));
     }
+    if !(0.0..=1.0).contains(&pressure_under_relaxation) || pressure_under_relaxation == 0.0 {
+        return Err(AsimuError::Config(
+            "[incompressible].pressure_under_relaxation 必须位于 (0, 1]".to_string(),
+        ));
+    }
     Ok(IncompressibleCaseConfig {
         pressure: raw.pressure.unwrap_or(0.0),
         velocity: raw.velocity.unwrap_or([0.0, 0.0, 0.0]),
         density,
         kinematic_viscosity,
         velocity_under_relaxation,
+        pressure_under_relaxation,
         reference: parse_incompressible_reference(raw.reference.as_ref())?,
     })
 }
