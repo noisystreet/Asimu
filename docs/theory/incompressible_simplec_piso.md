@@ -254,6 +254,10 @@ Ghost 单元距 owner 中心法向距离 \(d_f\)。
 
 详细分工见 [boundary_conditions.md](boundary_conditions.md) §9。
 
+I2 当前实现为 cell-centered skeleton：`apply_incompressible_boundary_conditions_3d`
+先把 `wall`、`moving_wall`、`velocity_inlet`、`pressure_outlet`、`symmetry`
+施加到结构化边界 owner 单元，并输出应用统计；表中 ghost 与面通量公式将在后续压力校正系数和 SIMPLEC/PISO 面通量阶段落地。
+
 ## 7. PISO 与时间积分
 
 ### 7.1 瞬态 BDF1 + PISO

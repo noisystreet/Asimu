@@ -93,6 +93,7 @@ fn boundary_toml_fields(bc: &BoundaryToml) -> BoundaryTomlFields<'_> {
         total_temperature: bc.total_temperature,
         static_pressure: bc.static_pressure,
         velocity_direction: bc.velocity_direction,
+        velocity: bc.velocity,
         no_slip: bc.no_slip,
         heat: bc.heat.as_deref(),
         wall_temperature: bc.wall_temperature,

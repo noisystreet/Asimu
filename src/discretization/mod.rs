@@ -14,6 +14,7 @@ pub mod gradient;
 pub mod gradient_unstructured;
 pub mod hllc;
 pub mod incompressible;
+pub mod incompressible_bc;
 pub mod incompressible_momentum;
 pub mod inviscid;
 pub mod reconstruction;
@@ -61,6 +62,9 @@ pub use incompressible::{
     IncompressiblePressureCorrectionConfig, IncompressiblePressureCorrectionSystem,
     IncompressibleVelocityLaplacian, assemble_incompressible_pressure_poisson_3d,
     compute_incompressible_divergence_3d, compute_incompressible_velocity_laplacian_3d,
+};
+pub use incompressible_bc::{
+    IncompressibleBoundaryApplyStats, apply_incompressible_boundary_conditions_3d,
 };
 pub use incompressible_momentum::{
     IncompressibleMomentumPredictorConfig, IncompressibleMomentumPredictorSystem,

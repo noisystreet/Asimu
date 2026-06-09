@@ -188,6 +188,30 @@ value = 1.0
 | `supersonic` | `true` 时出口 ghost 全变量零梯度外推 owner；`false` 时施加 `static_pressure` |
 | `mach` | 兼容字段；未写 `supersonic` 时 `mach >= 1` 视为超声速出口 |
 
+不可压缩 `[incompressible]` 可使用以下结构化 3D 边界 kind（逻辑名支持 `i_min/i_max/j_min/j_max/k_min/k_max` 及别名 `left/right/bottom/top/front/back`）。当前 I1 skeleton 先施加到边界 owner 单元；后续 SIMPLEC/PISO 会下沉为 ghost/面通量。
+
+```toml
+[boundary.i_min]
+kind = "velocity_inlet"
+velocity = [1.0, 0.0, 0.0]       # m/s，解析后除以 U_ref
+
+[boundary.i_max]
+kind = "pressure_outlet"
+pressure = 0.0                   # Pa，解析后除以 rho * U_ref^2
+
+[boundary.j_max]
+kind = "moving_wall"
+velocity = [1.0, 0.0, 0.0]       # m/s，解析后除以 U_ref
+```
+
+| 不可压 `kind` | 字段 | 说明 |
+|---------------|------|------|
+| `wall` | `no_slip` | `true` 置 owner 速度为零；`false` 去除法向速度 |
+| `moving_wall` | `velocity` | 指定动壁速度 |
+| `velocity_inlet` | `velocity` | 指定入口速度 |
+| `pressure_outlet` | `pressure` 或 `static_pressure` | 指定出口压力 |
+| `symmetry` | 无 | 去除 owner 法向速度 |
+
 ---
 
 ## 5.5 `[initial]`（可选）

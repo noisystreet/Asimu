@@ -426,6 +426,7 @@ pub(super) struct BoundaryToml {
     total_temperature: Option<Real>,
     static_pressure: Option<Real>,
     velocity_direction: Option<[Real; 3]>,
+    velocity: Option<[Real; 3]>,
     no_slip: Option<bool>,
     heat: Option<String>,
     wall_temperature: Option<Real>,

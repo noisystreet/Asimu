@@ -182,9 +182,42 @@ pub(super) fn apply_nondimensionalization_for_incompressible(case: &mut CaseSpec
         config.density = 1.0;
         config.kinematic_viscosity = reference.inv_reynolds();
     }
+    scale_incompressible_boundary_set(&mut case.boundary, &reference);
     scale_incompressible_time(&mut case.time, &reference);
     case.incompressible_reference = Some(reference);
     Ok(())
+}
+
+fn scale_incompressible_boundary_set(
+    boundary: &mut BoundarySet,
+    reference: &IncompressibleReferenceScales,
+) {
+    for patch in boundary.patches_mut() {
+        patch.kind = match &patch.kind {
+            BoundaryKind::IncompressibleVelocityInlet { velocity } => {
+                BoundaryKind::IncompressibleVelocityInlet {
+                    velocity: [
+                        reference.nondimensional_velocity(velocity[0]),
+                        reference.nondimensional_velocity(velocity[1]),
+                        reference.nondimensional_velocity(velocity[2]),
+                    ],
+                }
+            }
+            BoundaryKind::MovingWall { velocity } => BoundaryKind::MovingWall {
+                velocity: [
+                    reference.nondimensional_velocity(velocity[0]),
+                    reference.nondimensional_velocity(velocity[1]),
+                    reference.nondimensional_velocity(velocity[2]),
+                ],
+            },
+            BoundaryKind::IncompressiblePressureOutlet { pressure } => {
+                BoundaryKind::IncompressiblePressureOutlet {
+                    pressure: reference.nondimensional_pressure(*pressure),
+                }
+            }
+            other => other.clone(),
+        };
+    }
 }
 
 fn scale_incompressible_time(

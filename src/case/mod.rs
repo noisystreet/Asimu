@@ -222,6 +222,10 @@ kinematic_viscosity = 0.01
 length = 1.0
 velocity = 1.0
 
+[boundary.i_max]
+kind = "pressure_outlet"
+pressure = 0.0
+
 [time]
 mode = "steady"
 max_steps = 1
@@ -275,6 +279,9 @@ solution_cgns = "flow.cgns"
             0.0,
             1.0e-12
         ));
+        assert_eq!(metrics.boundary_pressure_cells, 2);
+        assert_eq!(metrics.boundary_velocity_cells, 0);
+        assert_eq!(metrics.boundary_ignored_faces, 0);
     }
 
     #[test]

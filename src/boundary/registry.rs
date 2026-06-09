@@ -37,9 +37,12 @@ impl BoundaryRegistry {
             BoundaryKind::Wall { .. } => BcHandler::Wall,
             BoundaryKind::Farfield { .. } => BcHandler::Farfield,
             BoundaryKind::Inlet { .. } => BcHandler::Inlet,
+            BoundaryKind::IncompressibleVelocityInlet { .. } => BcHandler::Inlet,
             BoundaryKind::Outlet { .. } => BcHandler::Outlet,
+            BoundaryKind::IncompressiblePressureOutlet { .. } => BcHandler::Outlet,
             BoundaryKind::Symmetry => BcHandler::Symmetry,
             BoundaryKind::Periodic { .. } => BcHandler::Periodic,
+            BoundaryKind::MovingWall { .. } => BcHandler::Wall,
             BoundaryKind::TurbulentInlet { .. } => BcHandler::TurbulentInlet,
         }
     }

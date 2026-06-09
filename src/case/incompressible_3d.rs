@@ -9,8 +9,8 @@ use tracing::{info, info_span};
 use crate::core::{Real, format_log_sci4};
 use crate::discretization::{
     IncompressibleMomentumPredictorConfig, IncompressiblePressureCorrectionConfig,
-    assemble_incompressible_momentum_predictor_3d, assemble_incompressible_pressure_poisson_3d,
-    compute_incompressible_divergence_3d,
+    apply_incompressible_boundary_conditions_3d, assemble_incompressible_momentum_predictor_3d,
+    assemble_incompressible_pressure_poisson_3d, compute_incompressible_divergence_3d,
 };
 use crate::error::{AsimuError, Result};
 use crate::field::{IncompressibleFields, ScalarField};
@@ -45,6 +45,9 @@ pub struct Incompressible3dRunMetrics {
     pub momentum_solve_residual: Real,
     pub max_abs_predicted_velocity_delta: Real,
     pub max_abs_corrected_velocity_delta: Real,
+    pub boundary_velocity_cells: usize,
+    pub boundary_pressure_cells: usize,
+    pub boundary_ignored_faces: usize,
     pub written: Vec<PathBuf>,
 }
 
@@ -62,8 +65,11 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         .as_ref()
         .map(|reference| nondimensional_time * reference.time_scale())
         .unwrap_or(nondimensional_time);
-    let fields = IncompressibleFields::uniform(mesh.num_cells(), config.pressure, config.velocity)?;
+    let mut fields =
+        IncompressibleFields::uniform(mesh.num_cells(), config.pressure, config.velocity)?;
     fields.validate_len(mesh.num_cells())?;
+    let boundary_stats =
+        apply_incompressible_boundary_conditions_3d(mesh, &mut fields, &case.boundary)?;
     let pseudo_time_step = case.time.dt.filter(|value| *value > 0.0).unwrap_or(1.0);
     let diagnostic = assemble_i1_diagnostic(
         mesh,
@@ -95,6 +101,9 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         momentum_residual = %format_log_sci4(diagnostic.momentum_solve_residual),
         max_abs_predicted_velocity_delta = %format_log_sci4(diagnostic.max_abs_predicted_velocity_delta),
         max_abs_corrected_velocity_delta = %format_log_sci4(diagnostic.max_abs_corrected_velocity_delta),
+        boundary_velocity_cells = boundary_stats.velocity_cells,
+        boundary_pressure_cells = boundary_stats.pressure_cells,
+        boundary_ignored_faces = boundary_stats.ignored_faces,
         "不可压缩 3D I1 skeleton 完成"
     );
     Ok(CaseRunResult {
@@ -102,7 +111,7 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         benchmark_id: case.benchmark_id.clone(),
         kind: CaseRunKind::Incompressible3dSteady,
         summary: format!(
-            "incompressible_3d_i1 steps={steps} max|div(u)|={} max|div(u*)|={} max|div(u_corr)|={} pressure_rows={} pressure_nnz={} pressure_converged={} pressure_iters={} pressure_residual={} momentum_rows={} momentum_nnz={} momentum_converged={} momentum_iters={} momentum_residual={}",
+            "incompressible_3d_i1 steps={steps} max|div(u)|={} max|div(u*)|={} max|div(u_corr)|={} pressure_rows={} pressure_nnz={} pressure_converged={} pressure_iters={} pressure_residual={} momentum_rows={} momentum_nnz={} momentum_converged={} momentum_iters={} momentum_residual={} bc_velocity_cells={} bc_pressure_cells={}",
             format_log_sci4(diagnostic.max_abs_divergence),
             format_log_sci4(diagnostic.max_abs_predicted_divergence),
             format_log_sci4(diagnostic.max_abs_corrected_divergence),
@@ -115,7 +124,9 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
             diagnostic.momentum_system_nnz,
             diagnostic.momentum_solve_converged,
             diagnostic.momentum_solve_iterations,
-            format_log_sci4(diagnostic.momentum_solve_residual)
+            format_log_sci4(diagnostic.momentum_solve_residual),
+            boundary_stats.velocity_cells,
+            boundary_stats.pressure_cells
         ),
         diffusion: None,
         sod: None,
@@ -140,6 +151,9 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
             momentum_solve_residual: diagnostic.momentum_solve_residual,
             max_abs_predicted_velocity_delta: diagnostic.max_abs_predicted_velocity_delta,
             max_abs_corrected_velocity_delta: diagnostic.max_abs_corrected_velocity_delta,
+            boundary_velocity_cells: boundary_stats.velocity_cells,
+            boundary_pressure_cells: boundary_stats.pressure_cells,
+            boundary_ignored_faces: boundary_stats.ignored_faces,
             written,
         }),
     })

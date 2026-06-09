@@ -98,7 +98,7 @@ let result = solver.run(&mesh)?;
 | `CaseSpec::build_initial_fields()` | 构建 `Fields` |
 | `CaseSpec::initial_scalar(name)` | 单标量；未声明则全零 |
 | `CaseSpec::build_multiblock_conserved_fields(blocks)` | 按 block 顺序构建多块守恒初场 |
-| `Incompressible3dRunMetrics` | I1 runner 指标：初始/预测/修正速度散度、压力校正 CSR 行数/非零数、GMRES 收敛与最大 \(p'\)、动量预测 CSR、三分量 GMRES 收敛、最大 \(d_P\) 与速度变化 |
+| `Incompressible3dRunMetrics` | I1 runner 指标：初始/预测/修正速度散度、压力校正 CSR 行数/非零数、GMRES 收敛与最大 \(p'\)、动量预测 CSR、三分量 GMRES 收敛、最大 \(d_P\)、速度变化与不可压缩边界应用统计 |
 | `load_conserved_fields(path)` / `write_conserved_fields(path, fields)` | 单 block restart TOML（version=1） |
 | `load_multiblock_conserved_fields(path, block_names)` / `write_multiblock_conserved_fields(path, blocks)` | 多块 restart TOML（version=2） |
 | `load_mesh_from_case(&Path) -> Result<Mesh>` | 从占位 case 文件加载网格 |
@@ -251,6 +251,7 @@ name=<mesh_name>;cells=<count>
 | `viscous_assembly` | 结构/非结构共用粘性边界面通量（`viscous_flux_at_boundary`）、scatter（`accumulate_viscous_*`）与壁面梯度外推 |
 | `compute_incompressible_divergence_3d` | 结构化 3D 不可压缩 I1 连续性残差 \(\nabla\cdot\mathbf{u}\) |
 | `compute_incompressible_velocity_laplacian_3d` | 结构化 3D 不可压缩 I1 速度三分量 Laplacian skeleton |
+| `apply_incompressible_boundary_conditions_3d` | 结构化 3D 不可压缩 cell-centered 边界应用，支持 wall / moving_wall / velocity_inlet / pressure_outlet / symmetry |
 | `assemble_incompressible_pressure_poisson_3d` | 结构化 3D 不可压缩 I1 压力校正 Poisson CSR 骨架 |
 | `IncompressiblePressureCorrectionConfig` / `IncompressiblePressureCorrectionSystem` | 压力校正装配配置与 `CsrMatrix + rhs` 输出 |
 | `assemble_incompressible_momentum_predictor_3d` | 结构化 3D 不可压缩 I1 伪瞬态动量预测 CSR，含扩散、一阶迎风对流、压力梯度、欠松弛与 \(d_P\) |

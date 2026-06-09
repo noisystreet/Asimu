@@ -51,6 +51,15 @@ pub enum BoundaryKind {
     Periodic {
         partner: String,
     },
+    IncompressibleVelocityInlet {
+        velocity: [Real; 3],
+    },
+    IncompressiblePressureOutlet {
+        pressure: Real,
+    },
+    MovingWall {
+        velocity: [Real; 3],
+    },
     TurbulentInlet {
         total_pressure: Real,
         total_temperature: Real,
@@ -100,6 +109,7 @@ pub struct BoundaryTomlFields<'a> {
     pub total_temperature: Option<Real>,
     pub static_pressure: Option<Real>,
     pub velocity_direction: Option<[Real; 3]>,
+    pub velocity: Option<[Real; 3]>,
     pub no_slip: Option<bool>,
     pub heat: Option<&'a str>,
     pub wall_temperature: Option<Real>,
@@ -164,6 +174,16 @@ impl BoundaryKind {
             "periodic" => fields.partner.map(|partner| Self::Periodic {
                 partner: partner.to_string(),
             }),
+            "velocity_inlet" => fields
+                .velocity
+                .map(|velocity| Self::IncompressibleVelocityInlet { velocity }),
+            "pressure_outlet" => fields
+                .pressure
+                .or(fields.static_pressure)
+                .map(|pressure| Self::IncompressiblePressureOutlet { pressure }),
+            "moving_wall" => fields
+                .velocity
+                .map(|velocity| Self::MovingWall { velocity }),
             "turbulent_inlet" => {
                 let total_pressure = fields.total_pressure?;
                 let total_temperature = fields.total_temperature?;
@@ -209,6 +229,9 @@ impl BoundaryKind {
             Self::Wall { no_slip: false, .. } => "Wall(slip)",
             Self::Symmetry => "Symmetry",
             Self::Periodic { .. } => "Periodic",
+            Self::IncompressibleVelocityInlet { .. } => "VelocityInlet",
+            Self::IncompressiblePressureOutlet { .. } => "PressureOutlet",
+            Self::MovingWall { .. } => "MovingWall",
             Self::TurbulentInlet { .. } => "TurbInlet",
         }
     }
@@ -268,6 +291,19 @@ impl BoundaryKind {
             }
             Self::Symmetry => "symmetry plane".to_string(),
             Self::Periodic { partner } => format!("partner={partner}"),
+            Self::IncompressibleVelocityInlet { velocity } => {
+                format!(
+                    "u=[{:.4}, {:.4}, {:.4}]",
+                    velocity[0], velocity[1], velocity[2]
+                )
+            }
+            Self::IncompressiblePressureOutlet { pressure } => format!("p={pressure:.6e}"),
+            Self::MovingWall { velocity } => {
+                format!(
+                    "u_wall=[{:.4}, {:.4}, {:.4}]",
+                    velocity[0], velocity[1], velocity[2]
+                )
+            }
             Self::TurbulentInlet {
                 total_pressure,
                 total_temperature,
