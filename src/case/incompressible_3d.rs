@@ -12,6 +12,7 @@ use crate::discretization::{
     apply_incompressible_boundary_conditions_3d,
     assemble_incompressible_momentum_predictor_with_boundary_3d,
     assemble_incompressible_pressure_correction_3d, compute_incompressible_divergence_3d,
+    compute_incompressible_rhie_chow_divergence_3d,
 };
 use crate::error::{AsimuError, Result};
 use crate::field::{IncompressibleFields, ScalarField};
@@ -295,8 +296,12 @@ fn assemble_i1_diagnostic(
         .iter()
         .fold(0.0, |acc: Real, value| acc.max(value.abs()));
     let momentum_solution = solve_momentum_predictor(&momentum_system, fields)?;
-    let predicted_divergence =
-        compute_incompressible_divergence_3d(mesh, &momentum_solution.predicted_fields)?;
+    let predicted_divergence = compute_incompressible_rhie_chow_divergence_3d(
+        mesh,
+        &momentum_solution.predicted_fields,
+        &momentum_system.d_coefficient,
+        boundary,
+    )?;
     let max_abs_predicted_divergence = predicted_divergence
         .values()
         .iter()

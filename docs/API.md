@@ -252,6 +252,7 @@ name=<mesh_name>;cells=<count>
 | `compute_incompressible_divergence_3d` | 结构化 3D 不可压缩 I1 连续性残差 \(\nabla\cdot\mathbf{u}\) |
 | `compute_incompressible_velocity_laplacian_3d` | 结构化 3D 不可压缩 I1 速度三分量 Laplacian skeleton |
 | `apply_incompressible_boundary_conditions_3d` | 结构化 3D 不可压缩 cell-centered 边界应用，支持 wall / moving_wall / velocity_inlet / pressure_outlet / symmetry |
+| `compute_incompressible_rhie_chow_divergence_3d` | 结构化 3D 不可压缩 Rhie-Chow 面质量通量连续性残差 |
 | `assemble_incompressible_pressure_correction_3d` | 结构化 3D 不可压缩压力校正 CSR，使用面插值 \(d_P\)、压力出口 \(p'=0\) 与参考压力策略 |
 | `assemble_incompressible_pressure_poisson_3d` | 结构化 3D 不可压缩 I1 压力校正 Poisson CSR 兼容骨架 |
 | `IncompressiblePressureCorrectionConfig` / `IncompressiblePressureCorrectionSystem` | 压力校正装配配置与 `CsrMatrix + rhs` 输出 |

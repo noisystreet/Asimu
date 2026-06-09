@@ -209,6 +209,11 @@ d_P = \frac{V_P}{a_P^c} \tag{10}
 \nabla\cdot(\rho\, d\,\nabla p') = \nabla\cdot(\rho\,\mathbf{u}^*) \tag{11}
 \]
 
+I5 起，压力校正 RHS 使用 `compute_incompressible_rhie_chow_divergence_3d`
+从面通量计算连续性残差。内部面质量通量为
+\(\dot{m}_f=\rho A_f(\mathbf{u}_f\cdot\mathbf{n}_f-d_f(p_N-p_P)/\Delta n_f)\)，
+其中 \(d_f=(d_P+d_N)/2\)。边界面通量由不可压缩边界条件给定：壁面/对称面法向通量为零，速度入口使用给定速度，压力出口使用 owner 速度零梯度外推。
+
 I3 压力校正矩阵使用动量预测矩阵提供的 cell-centered \(d_P\)，内部面取
 \(d_f=(d_P+d_N)/2\)，压力出口 owner 行施加 \(p'=0\)；若没有压力 Dirichlet
 边界，则用 `pressure_reference_cell` 固定参考压力：
