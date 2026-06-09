@@ -270,6 +270,11 @@ solution_cgns = "flow.cgns"
         assert!(metrics.momentum_solve_converged);
         assert!(metrics.momentum_solve_iterations <= 1);
         assert!(crate::core::approx_eq(
+            metrics.max_abs_momentum_equation_residual,
+            0.0,
+            1.0e-12
+        ));
+        assert!(crate::core::approx_eq(
             metrics.max_abs_predicted_velocity_delta,
             0.0,
             1.0e-12
@@ -282,8 +287,14 @@ solution_cgns = "flow.cgns"
         assert_eq!(metrics.simplec_iterations, 1);
         assert!(metrics.simplec_converged);
         assert_eq!(metrics.simplec_residual_history.len(), 1);
+        assert_eq!(metrics.simplec_momentum_residual_history.len(), 1);
         assert!(crate::core::approx_eq(
             metrics.simplec_final_residual,
+            0.0,
+            1.0e-12
+        ));
+        assert!(crate::core::approx_eq(
+            metrics.simplec_final_momentum_residual,
             0.0,
             1.0e-12
         ));

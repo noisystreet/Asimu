@@ -45,12 +45,15 @@ pub struct Incompressible3dRunMetrics {
     pub momentum_solve_converged: bool,
     pub momentum_solve_iterations: usize,
     pub momentum_solve_residual: Real,
+    pub max_abs_momentum_equation_residual: Real,
     pub max_abs_predicted_velocity_delta: Real,
     pub max_abs_corrected_velocity_delta: Real,
     pub simplec_iterations: usize,
     pub simplec_converged: bool,
     pub simplec_final_residual: Real,
+    pub simplec_final_momentum_residual: Real,
     pub simplec_residual_history: Vec<Real>,
+    pub simplec_momentum_residual_history: Vec<Real>,
     pub boundary_velocity_cells: usize,
     pub boundary_pressure_cells: usize,
     pub boundary_ignored_faces: usize,
@@ -116,11 +119,13 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         momentum_converged = diagnostic.momentum_solve_converged,
         momentum_iters = diagnostic.momentum_solve_iterations,
         momentum_residual = %format_log_sci4(diagnostic.momentum_solve_residual),
+        max_abs_momentum_equation_residual = %format_log_sci4(diagnostic.max_abs_momentum_equation_residual),
         max_abs_predicted_velocity_delta = %format_log_sci4(diagnostic.max_abs_predicted_velocity_delta),
         max_abs_corrected_velocity_delta = %format_log_sci4(diagnostic.max_abs_corrected_velocity_delta),
         simplec_iterations = diagnostic.simplec_iterations,
         simplec_converged = diagnostic.simplec_converged,
         simplec_final_residual = %format_log_sci4(diagnostic.simplec_final_residual),
+        simplec_final_momentum_residual = %format_log_sci4(diagnostic.simplec_final_momentum_residual),
         boundary_velocity_cells = boundary_stats.velocity_cells,
         boundary_pressure_cells = boundary_stats.pressure_cells,
         boundary_ignored_faces = boundary_stats.ignored_faces,
@@ -131,10 +136,11 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         benchmark_id: case.benchmark_id.clone(),
         kind: CaseRunKind::Incompressible3dSteady,
         summary: format!(
-            "incompressible_3d_i1 steps={steps} simplec_iters={} simplec_converged={} simplec_residual={} max|div(u)|={} max|div(u*)|={} max|div(u_corr)|={} pressure_rows={} pressure_nnz={} pressure_converged={} pressure_iters={} pressure_residual={} momentum_rows={} momentum_nnz={} momentum_converged={} momentum_iters={} momentum_residual={} bc_velocity_cells={} bc_pressure_cells={}",
+            "incompressible_3d_i1 steps={steps} simplec_iters={} simplec_converged={} simplec_residual={} simplec_momentum_residual={} max|div(u)|={} max|div(u*)|={} max|div(u_corr)|={} pressure_rows={} pressure_nnz={} pressure_converged={} pressure_iters={} pressure_residual={} momentum_rows={} momentum_nnz={} momentum_converged={} momentum_iters={} momentum_residual={} bc_velocity_cells={} bc_pressure_cells={}",
             diagnostic.simplec_iterations,
             diagnostic.simplec_converged,
             format_log_sci4(diagnostic.simplec_final_residual),
+            format_log_sci4(diagnostic.simplec_final_momentum_residual),
             format_log_sci4(diagnostic.max_abs_divergence),
             format_log_sci4(diagnostic.max_abs_predicted_divergence),
             format_log_sci4(diagnostic.max_abs_corrected_divergence),
@@ -172,12 +178,15 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
             momentum_solve_converged: diagnostic.momentum_solve_converged,
             momentum_solve_iterations: diagnostic.momentum_solve_iterations,
             momentum_solve_residual: diagnostic.momentum_solve_residual,
+            max_abs_momentum_equation_residual: diagnostic.max_abs_momentum_equation_residual,
             max_abs_predicted_velocity_delta: diagnostic.max_abs_predicted_velocity_delta,
             max_abs_corrected_velocity_delta: diagnostic.max_abs_corrected_velocity_delta,
             simplec_iterations: diagnostic.simplec_iterations,
             simplec_converged: diagnostic.simplec_converged,
             simplec_final_residual: diagnostic.simplec_final_residual,
+            simplec_final_momentum_residual: diagnostic.simplec_final_momentum_residual,
             simplec_residual_history: diagnostic.simplec_residual_history,
+            simplec_momentum_residual_history: diagnostic.simplec_momentum_residual_history,
             boundary_velocity_cells: boundary_stats.velocity_cells,
             boundary_pressure_cells: boundary_stats.pressure_cells,
             boundary_ignored_faces: boundary_stats.ignored_faces,
@@ -202,12 +211,15 @@ struct IncompressibleI1Diagnostic {
     momentum_solve_converged: bool,
     momentum_solve_iterations: usize,
     momentum_solve_residual: Real,
+    max_abs_momentum_equation_residual: Real,
     max_abs_predicted_velocity_delta: Real,
     max_abs_corrected_velocity_delta: Real,
     simplec_iterations: usize,
     simplec_converged: bool,
     simplec_final_residual: Real,
+    simplec_final_momentum_residual: Real,
     simplec_residual_history: Vec<Real>,
+    simplec_momentum_residual_history: Vec<Real>,
     corrected_fields: IncompressibleFields,
 }
 
@@ -230,25 +242,28 @@ fn run_simplec_iterations(
     let mut current_fields = initial_fields.clone();
     let max_iterations = params.max_iterations.max(1);
     let mut history = Vec::with_capacity(max_iterations);
+    let mut momentum_history = Vec::with_capacity(max_iterations);
     let mut last = None;
     for _ in 0..max_iterations {
         let mut diagnostic = assemble_i1_diagnostic(&current_fields, &params)?;
         let residual = diagnostic.max_abs_corrected_divergence;
-        if !residual.is_finite() {
-            return Err(AsimuError::Solver(
-                "SIMPLEC 连续性残差出现非有限值".to_string(),
-            ));
+        let momentum_residual = diagnostic.max_abs_momentum_equation_residual;
+        if !residual.is_finite() || !momentum_residual.is_finite() {
+            return Err(AsimuError::Solver("SIMPLEC 残差出现非有限值".to_string()));
         }
         history.push(residual);
+        momentum_history.push(momentum_residual);
         current_fields = diagnostic.corrected_fields.clone();
         let converged = params
             .tolerance
-            .map(|tolerance| residual <= tolerance)
+            .map(|tolerance| residual <= tolerance && momentum_residual <= tolerance)
             .unwrap_or(false);
         diagnostic.simplec_iterations = history.len();
         diagnostic.simplec_converged = converged || params.tolerance.is_none();
         diagnostic.simplec_final_residual = residual;
+        diagnostic.simplec_final_momentum_residual = momentum_residual;
         diagnostic.simplec_residual_history = history.clone();
+        diagnostic.simplec_momentum_residual_history = momentum_history.clone();
         if converged {
             return Ok(diagnostic);
         }
@@ -258,7 +273,10 @@ fn run_simplec_iterations(
         last.ok_or_else(|| AsimuError::Solver("SIMPLEC 至少需要一次外层迭代".to_string()))?;
     diagnostic.simplec_converged = params
         .tolerance
-        .map(|tolerance| diagnostic.simplec_final_residual <= tolerance)
+        .map(|tolerance| {
+            diagnostic.simplec_final_residual <= tolerance
+                && diagnostic.simplec_final_momentum_residual <= tolerance
+        })
         .unwrap_or(true);
     Ok(diagnostic)
 }
@@ -342,12 +360,15 @@ fn assemble_i1_diagnostic(
         momentum_solve_converged: momentum_solution.converged,
         momentum_solve_iterations: momentum_solution.iterations,
         momentum_solve_residual: momentum_solution.residual_norm,
+        max_abs_momentum_equation_residual: momentum_solution.max_abs_equation_residual,
         max_abs_predicted_velocity_delta: momentum_solution.max_abs_velocity_delta,
         max_abs_corrected_velocity_delta,
         simplec_iterations: 0,
         simplec_converged: false,
         simplec_final_residual: max_abs_corrected_divergence,
+        simplec_final_momentum_residual: momentum_solution.max_abs_equation_residual,
         simplec_residual_history: Vec::new(),
+        simplec_momentum_residual_history: Vec::new(),
         corrected_fields,
     })
 }
@@ -364,6 +385,7 @@ struct MomentumPredictorSolveDiagnostic {
     converged: bool,
     iterations: usize,
     residual_norm: Real,
+    max_abs_equation_residual: Real,
     max_abs_velocity_delta: Real,
     predicted_fields: IncompressibleFields,
 }
@@ -401,6 +423,18 @@ fn solve_momentum_predictor(
     let u = solve_momentum_component(system, &system.rhs_x)?;
     let v = solve_momentum_component(system, &system.rhs_y)?;
     let w = solve_momentum_component(system, &system.rhs_z)?;
+    let max_abs_equation_residual =
+        max_linear_system_residual(&system.matrix, &u.solution, &system.rhs_x)?
+            .max(max_linear_system_residual(
+                &system.matrix,
+                &v.solution,
+                &system.rhs_y,
+            )?)
+            .max(max_linear_system_residual(
+                &system.matrix,
+                &w.solution,
+                &system.rhs_z,
+            )?);
     let max_abs_velocity_delta = max_velocity_delta(fields, &u.solution, &v.solution, &w.solution);
     let predicted_fields = IncompressibleFields {
         pressure: fields.pressure.clone(),
@@ -412,6 +446,7 @@ fn solve_momentum_predictor(
         converged: u.converged && v.converged && w.converged,
         iterations: u.iterations.max(v.iterations).max(w.iterations),
         residual_norm: u.residual_norm.max(v.residual_norm).max(w.residual_norm),
+        max_abs_equation_residual,
         max_abs_velocity_delta,
         predicted_fields,
     })
@@ -440,6 +475,27 @@ fn solve_momentum_component(
         iterations: report.iterations,
         residual_norm: report.residual_norm,
     })
+}
+
+fn max_linear_system_residual(
+    matrix: &crate::linalg::CsrMatrix,
+    solution: &[Real],
+    rhs: &[Real],
+) -> Result<Real> {
+    if solution.len() != matrix.ncols() || rhs.len() != matrix.nrows() {
+        return Err(AsimuError::Linalg(
+            "线性系统残差向量长度与矩阵尺寸不一致".to_string(),
+        ));
+    }
+    let mut max_residual: Real = 0.0;
+    for (row, rhs_value) in rhs.iter().enumerate().take(matrix.nrows()) {
+        let ax = matrix
+            .row_entries(row)
+            .map(|(col, value)| value * solution[col])
+            .sum::<Real>();
+        max_residual = max_residual.max((ax - rhs_value).abs());
+    }
+    Ok(max_residual)
 }
 
 fn max_velocity_delta(fields: &IncompressibleFields, u: &[Real], v: &[Real], w: &[Real]) -> Real {
