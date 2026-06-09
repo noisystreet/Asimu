@@ -540,6 +540,7 @@ fn rejects_gmres_for_connected_multiblock_at_parse() {
             unstructured_limiter: None,
         }),
         navier_stokes: None,
+        incompressible: None,
         output: None,
         observability: None,
         case_dir: None,

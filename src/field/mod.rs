@@ -4,6 +4,7 @@
 
 mod algebra;
 mod conserved;
+mod incompressible;
 mod initial;
 mod positivity;
 mod primitive;
@@ -20,6 +21,7 @@ pub use conserved::{
     ConservedFields, clamp_conserved_positivity, positivity_pressure_floor,
     primitive_from_conserved, primitive_from_conserved_relaxed,
 };
+pub use incompressible::IncompressibleFields;
 pub use initial::{
     FluidInitialConfig, InitialKind, InitialSet, ScalarInitial, build_scalar_initial,
 };

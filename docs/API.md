@@ -145,11 +145,12 @@ let result = solver.run(&mesh)?;
 | `load_cgns_zone(&Path, zone_index) -> Result<CgnsLoadResult>` | 读取单 zone |
 | `load_cgns_unstructured_zone(&Path, zone_index) -> Result<CgnsUnstructuredLoadResult>` | 读取 unstructured zone → `UnstructuredMesh3d` + `BoundarySet`（tet/hex/pyramid/prism；固定类型或 MIXED sections；FaceCenter ZoneBC） |
 | `load_cgns_all_zones(&Path) -> Result<CgnsMultiLoadResult>` | 读取全部 structured zone；case 解析会将多 zone CGNS 组装为 `MultiBlockStructured3d` |
-| `write_multiblock_flow_cgns(path, mesh, fields, eos, time, p_floor)` | 将多块结构化流场写为单个多 Zone CGNS 文件 |
+| `write_multiblock_flow_cgns(path, mesh, fields, eos, time, p_floor)` | 将多块结构化可压缩流场写为单个多 Zone CGNS 文件 |
+| `write_structured_vertex_solution_cgns(path, mesh, solution)` | 将单 Zone 结构化网格与任意 Vertex 标量字段写为 CGNS |
 | `export_cgns_zone_to_vts(input, zone, output) -> Result<CgnsLoadResult>` | CGNS zone → VTS |
 | `export_cgns_to_vtm(input, output) -> Result<CgnsMultiLoadResult>` | CGNS 全部 zone → VTM + 多个 VTS |
 
-多 zone CGNS case 可进入 3D 可压缩求解路径；当前按 block 同步推进，1-to-1 接口按 CGNS transform 映射并用共享无粘通量守恒装配（一次计算、两侧等量反号），最终 `solution_cgns` 与 `solution_every` 快照写为单个多 Zone CGNS 文件。严格守恒多块路径目前要求 `time.scheme = "lu_sgs"` 且 `lusgs_sweep = false`。
+多 zone CGNS case 可进入 3D 可压缩求解路径；当前按 block 同步推进，1-to-1 接口按 CGNS transform 映射并用共享无粘通量守恒装配（一次计算、两侧等量反号），最终 `solution_cgns` 与 `solution_every` 快照写为单个多 Zone CGNS 文件。严格守恒多块路径目前要求 `time.scheme = "lu_sgs"` 且 `lusgs_sweep = false`。不可压缩 I0 placeholder 使用通用 Vertex 字段写出单 Zone CGNS，默认字段为 `Pressure`、`VelocityX`、`VelocityY`、`VelocityZ`。
 
 见 [adr/0008-cgns-io.md](adr/0008-cgns-io.md)。Structured zone 与 Unstructured zone（混合单元）均已支持；`mesh.kind = "cgns"` 会按 zone 类型进入多块结构化或单域非结构路径。非结构求解接入按 [adr/0010-unstructured-mixed-mesh.md](adr/0010-unstructured-mixed-mesh.md) 分阶段推进。
 
@@ -179,7 +180,7 @@ name=<mesh_name>;cells=<count>
 |------|------|------|
 | [`asimu::boundary`](#asimuboundary) | `BoundaryKind`、`BoundaryPatch`、`BoundaryRegistry` | v0.2 已实现 |
 | [`asimu::core`](#asimucore) | `Real`、`CellId`、`approx_eq` | 骨架已实现 |
-| [`asimu::field`](#asimufield) | `ScalarField` SoA | 骨架已实现 |
+| [`asimu::field`](#asimufield) | `ScalarField` / `IncompressibleFields` SoA | 骨架已实现 |
 | [`asimu::linalg`](#asimulinalg) | `LinearSystem` 三对角 + Thomas | v0.2 已实现 |
 | [`asimu::discretization`](#asimudiscretization) | FVM 扩散装配 + BC 施加 | v0.2 1D 已实现 |
 | [`asimu::exec`](#asimuexec) | `ExecutionContext`、scatter 调度（ADR 0013） | E0 已实现 |
@@ -210,6 +211,7 @@ name=<mesh_name>;cells=<count>
 | 类型 | 说明 |
 |------|------|
 | `ScalarField` | 标量场；`uniform` / `from_values` 构造 |
+| `IncompressibleFields` | 不可压缩主变量场：`pressure`、`velocity_x/y/z` |
 | `InitialKind` | `uniform` / `linear` / `values` |
 | `InitialSet` | 命名初始条件集合 |
 | `Fields` | 命名标量场 map；`from_initial_set` 构建 |

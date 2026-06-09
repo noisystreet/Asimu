@@ -129,6 +129,7 @@ fn run_compressible_unstructured_3d(
         diffusion: None,
         sod: None,
         compressible_3d: Some(metrics),
+        incompressible_3d: None,
     })
 }
 

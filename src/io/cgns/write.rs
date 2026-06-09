@@ -14,7 +14,8 @@ use crate::mesh::{MultiBlockStructuredMesh3d, StructuredMesh3d};
 use crate::physics::IdealGasEoS;
 
 use super::ffi::{
-    CG_OK, asimu_cg_write_multiblock_structured_flow, asimu_cg_write_structured_flow, cg_get_error,
+    CG_OK, asimu_cg_write_multiblock_structured_flow, asimu_cg_write_structured_flow,
+    asimu_cg_write_structured_solution_fields, cg_get_error,
 };
 use super::read::CGNS_LOCK;
 
@@ -26,6 +27,18 @@ struct VertexFlowArrays {
     p: Vec<f64>,
     mach: Vec<f64>,
     temperature: Vec<f64>,
+}
+
+/// 通用 CGNS Vertex 标量场视图。
+pub struct VertexScalarFieldView<'a> {
+    pub name: &'a str,
+    pub values: &'a [f64],
+}
+
+/// 单 Zone 结构化 CGNS 输出字段集合。
+pub struct StructuredVertexSolution<'a> {
+    pub physical_time: f64,
+    pub fields: &'a [VertexScalarFieldView<'a>],
 }
 
 /// 将 3D 守恒场写出为 CGNS（坐标与 ρ/u/v/w/p 均在 Vertex；单元值经邻点平均）。
@@ -67,6 +80,64 @@ pub fn write_flow_cgns(
             arrays.mach.as_ptr(),
             arrays.temperature.as_ptr(),
             physical_time,
+        )
+    };
+    check_cg(err)
+}
+
+/// 将任意 Vertex 标量字段写出为单 Zone 结构化 CGNS。
+pub fn write_structured_vertex_solution_cgns(
+    path: &Path,
+    mesh: &StructuredMesh3d,
+    solution: StructuredVertexSolution<'_>,
+) -> Result<()> {
+    validate_input_path(path)?;
+    create_output_parent(path)?;
+    validate_vertex_solution_fields(mesh, solution.fields)?;
+
+    let cpath = CString::new(path.as_os_str().as_encoded_bytes())
+        .map_err(|_| io_error(std::io::ErrorKind::InvalidInput, "CGNS 路径含内嵌 NUL 字节"))?;
+    let base = CString::new("Base").expect("base");
+    let zone =
+        CString::new(mesh.name.as_str()).unwrap_or_else(|_| CString::new("Zone").expect("zone"));
+    let names = solution
+        .fields
+        .iter()
+        .map(|field| {
+            CString::new(field.name).map_err(|_| {
+                io_error(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("CGNS 字段名含内嵌 NUL 字节: {}", field.name),
+                )
+            })
+        })
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let name_ptrs = names
+        .iter()
+        .map(|name| name.as_ptr())
+        .collect::<Vec<*const c_char>>();
+    let value_ptrs = solution
+        .fields
+        .iter()
+        .map(|field| field.values.as_ptr())
+        .collect::<Vec<*const f64>>();
+
+    let _guard = CGNS_LOCK.lock().expect("CGNS lock");
+    let err = unsafe {
+        asimu_cg_write_structured_solution_fields(
+            cpath.as_ptr(),
+            base.as_ptr(),
+            zone.as_ptr(),
+            mesh.nx as c_int,
+            mesh.ny as c_int,
+            mesh.nz as c_int,
+            mesh.points_x.as_ptr(),
+            mesh.points_y.as_ptr(),
+            mesh.points_z.as_ptr(),
+            solution.fields.len() as c_int,
+            name_ptrs.as_ptr().cast::<*const c_char>(),
+            value_ptrs.as_ptr(),
+            solution.physical_time,
         )
     };
     check_cg(err)
@@ -229,6 +300,31 @@ fn validate_vertex_flow_len(
         if data != npts {
             return Err(AsimuError::Field(format!(
                 "CGNS Vertex 场 {name} 长度 {data} 与网格顶点数 {npts} 不一致"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_vertex_solution_fields(
+    mesh: &StructuredMesh3d,
+    fields: &[VertexScalarFieldView<'_>],
+) -> Result<()> {
+    if fields.is_empty() {
+        return Err(AsimuError::Field(
+            "CGNS Vertex 输出至少需要一个物理量".to_string(),
+        ));
+    }
+    let npts = mesh.num_nodes();
+    for field in fields {
+        if field.name.trim().is_empty() {
+            return Err(AsimuError::Field("CGNS 字段名不能为空".to_string()));
+        }
+        if field.values.len() != npts {
+            return Err(AsimuError::Field(format!(
+                "CGNS Vertex 场 {} 长度 {} 与网格顶点数 {npts} 不一致",
+                field.name,
+                field.values.len()
             )));
         }
     }

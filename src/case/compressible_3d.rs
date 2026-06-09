@@ -185,6 +185,7 @@ fn build_case_run_result(
         diffusion: None,
         sod: None,
         compressible_3d: Some(metrics.clone()),
+        incompressible_3d: None,
     }
 }
 

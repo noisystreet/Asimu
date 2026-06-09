@@ -128,6 +128,7 @@ pub struct CaseSpec {
     pub euler: Option<EulerCaseConfig>,
     /// 3D 可压缩 Navier-Stokes（`[navier_stokes]`，与 `[euler]` 二选一）。
     pub navier_stokes: Option<EulerCaseConfig>,
+    pub incompressible: Option<IncompressibleCaseConfig>,
     pub output: Option<CaseOutputConfig>,
     pub observability: Option<CaseObservabilityConfig>,
     pub case_dir: Option<PathBuf>,
@@ -234,6 +235,15 @@ pub struct SodCaseConfig {
     pub reconstruction: Option<String>,
     pub flux: Option<String>,
     pub limiter: Option<String>,
+}
+
+/// 不可压缩 Navier-Stokes I0 配置（placeholder solver 初场）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct IncompressibleCaseConfig {
+    pub pressure: Real,
+    pub velocity: [Real; 3],
+    pub density: Real,
+    pub kinematic_viscosity: Real,
 }
 
 impl SodCaseConfig {
@@ -362,6 +372,7 @@ struct CaseToml {
     sod: Option<SodToml>,
     euler: Option<EulerToml>,
     navier_stokes: Option<EulerToml>,
+    incompressible: Option<IncompressibleToml>,
     output: Option<OutputToml>,
     observability: Option<ObservabilityToml>,
 }
@@ -481,6 +492,21 @@ struct SodToml {
     limiter: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct IncompressibleToml {
+    pressure: Option<Real>,
+    velocity: Option<[Real; 3]>,
+    density: Option<Real>,
+    kinematic_viscosity: Option<Real>,
+}
+
+struct FlowModelConfigs {
+    sod: Option<SodCaseConfig>,
+    euler: Option<EulerCaseConfig>,
+    navier_stokes: Option<EulerCaseConfig>,
+    incompressible: Option<IncompressibleCaseConfig>,
+}
+
 /// 从字符串解析算例（测试与集成用）。
 pub fn parse_case_str(content: &str) -> Result<CaseSpec> {
     parse_case_toml(content, None)
@@ -508,6 +534,7 @@ fn parse_case_toml(content: &str, case_dir: Option<&Path>) -> Result<CaseSpec> {
     )?;
     let initial = resolve_initial_set(&raw.initial)?;
     let freestream = raw.freestream.as_ref().map(parse_freestream);
+    let flow = parse_flow_model_configs(&raw)?;
     let fluid_initial = FluidInitialConfig {
         freestream,
         scalars: initial.clone(),
@@ -516,19 +543,7 @@ fn parse_case_toml(content: &str, case_dir: Option<&Path>) -> Result<CaseSpec> {
         .restart
         .map(|r| super::restart::resolve_restart_path(r.path, case_dir));
 
-    if raw.euler.is_some() && raw.navier_stokes.is_some() {
-        return Err(AsimuError::Config(
-            "算例不能同时包含 [euler] 与 [navier_stokes]".to_string(),
-        ));
-    }
-    let euler = raw.euler.as_ref().map(parse_euler_config).transpose()?;
-    let navier_stokes = raw
-        .navier_stokes
-        .as_ref()
-        .map(parse_euler_config)
-        .transpose()?;
     let time = parse_time_config(raw.time.as_ref(), raw.sod.is_some())?;
-    let sod = raw.sod.as_ref().map(parse_sod_config);
 
     let deprecated_mesh_zone = raw.mesh.zone;
     let mut case = CaseSpec {
@@ -542,9 +557,10 @@ fn parse_case_toml(content: &str, case_dir: Option<&Path>) -> Result<CaseSpec> {
         freestream,
         restart,
         time,
-        sod,
-        euler,
-        navier_stokes,
+        sod: flow.sod,
+        euler: flow.euler,
+        navier_stokes: flow.navier_stokes,
+        incompressible: flow.incompressible,
         output: raw.output.as_ref().map(parse_output),
         observability: raw.observability.as_ref().map(parse_observability),
         case_dir: case_dir.map(Path::to_path_buf),
@@ -552,6 +568,35 @@ fn parse_case_toml(content: &str, case_dir: Option<&Path>) -> Result<CaseSpec> {
     };
     finalize_parsed_case(deprecated_mesh_zone, &mut case)?;
     Ok(case)
+}
+
+fn parse_flow_model_configs(raw: &CaseToml) -> Result<FlowModelConfigs> {
+    if raw.euler.is_some() && raw.navier_stokes.is_some() {
+        return Err(AsimuError::Config(
+            "算例不能同时包含 [euler] 与 [navier_stokes]".to_string(),
+        ));
+    }
+    if raw.incompressible.is_some()
+        && (raw.euler.is_some() || raw.navier_stokes.is_some() || raw.sod.is_some())
+    {
+        return Err(AsimuError::Config(
+            "[incompressible] 不能与 [sod] / [euler] / [navier_stokes] 同时使用".to_string(),
+        ));
+    }
+    Ok(FlowModelConfigs {
+        sod: raw.sod.as_ref().map(parse_sod_config),
+        euler: raw.euler.as_ref().map(parse_euler_config).transpose()?,
+        navier_stokes: raw
+            .navier_stokes
+            .as_ref()
+            .map(parse_euler_config)
+            .transpose()?,
+        incompressible: raw
+            .incompressible
+            .as_ref()
+            .map(parse_incompressible_config)
+            .transpose()?,
+    })
 }
 
 fn finalize_parsed_case(deprecated_mesh_zone: Option<usize>, case: &mut CaseSpec) -> Result<()> {
@@ -640,6 +685,27 @@ fn parse_freestream(raw: &FreestreamToml) -> FreestreamParams {
         alpha: raw.alpha.unwrap_or(0.0),
         beta: raw.beta.unwrap_or(0.0),
     }
+}
+
+fn parse_incompressible_config(raw: &IncompressibleToml) -> Result<IncompressibleCaseConfig> {
+    let density = raw.density.unwrap_or(1.0);
+    let kinematic_viscosity = raw.kinematic_viscosity.unwrap_or(1.0e-3);
+    if density <= 0.0 {
+        return Err(AsimuError::Config(
+            "[incompressible].density 必须大于 0".to_string(),
+        ));
+    }
+    if kinematic_viscosity < 0.0 {
+        return Err(AsimuError::Config(
+            "[incompressible].kinematic_viscosity 不能为负".to_string(),
+        ));
+    }
+    Ok(IncompressibleCaseConfig {
+        pressure: raw.pressure.unwrap_or(0.0),
+        velocity: raw.velocity.unwrap_or([0.0, 0.0, 0.0]),
+        density,
+        kinematic_viscosity,
+    })
 }
 
 fn resolve_initial_set(initials: &BTreeMap<String, InitialToml>) -> Result<InitialSet> {

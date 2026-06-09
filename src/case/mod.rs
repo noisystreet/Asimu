@@ -7,6 +7,7 @@ mod compressible_unstructured_3d;
 #[cfg(test)]
 mod compressible_unstructured_3d_tests;
 mod diffusion;
+mod incompressible_3d;
 mod output_3d;
 mod sod;
 
@@ -28,6 +29,7 @@ pub enum CaseRunKind {
     Diffusion1dSteady,
     Sod1dTransient,
     Compressible3dTransient,
+    Incompressible3dSteady,
 }
 
 /// 算例运行结果摘要（写入日志 / 后续 manifest）。
@@ -40,6 +42,7 @@ pub struct CaseRunResult {
     pub diffusion: Option<DiffusionRunMetrics>,
     pub sod: Option<SodRunMetrics>,
     pub compressible_3d: Option<Compressible3dRunMetrics>,
+    pub incompressible_3d: Option<incompressible_3d::Incompressible3dRunMetrics>,
 }
 
 /// 从 `case.toml` 路径加载并运行（默认日志级别 `info`）。
@@ -85,6 +88,7 @@ pub fn run_case(case: &CaseSpec) -> Result<CaseRunResult> {
             CaseMesh::Unstructured3d(_) => compressible_unstructured_3d::run(case),
             _ => compressible_3d::run(case),
         },
+        CaseRunKind::Incompressible3dSteady => incompressible_3d::run(case),
     }
 }
 
@@ -104,6 +108,10 @@ fn detect_run_kind(case: &CaseSpec) -> Result<CaseRunKind> {
         return Err(AsimuError::Config(
             "3D 可压缩算例须包含 [euler] 或 [navier_stokes] 段且 mesh 为 3D".to_string(),
         ));
+    }
+    if case.incompressible.is_some() {
+        case.mesh.as_3d()?;
+        return Ok(CaseRunKind::Incompressible3dSteady);
     }
     case.mesh.as_1d()?;
     if case.time.mode == crate::io::CaseTimeMode::Transient {
@@ -184,6 +192,45 @@ max_steps = 1
         let metrics = result.compressible_3d.expect("metrics");
         assert_eq!(metrics.steps, 1);
         assert!(metrics.residual_rms.is_finite());
+    }
+
+    #[test]
+    fn runs_incompressible_3d_i0_placeholder_case() {
+        let case = crate::io::parse_case_str(
+            r#"
+name = "inc_i0"
+
+[mesh]
+kind = "structured_3d"
+nx = 2
+ny = 2
+nz = 1
+lx = 1.0
+ly = 1.0
+lz = 0.5
+
+[physics]
+
+[incompressible]
+pressure = 0.0
+velocity = [1.0, 0.0, 0.0]
+density = 1.0
+kinematic_viscosity = 0.01
+
+[time]
+mode = "steady"
+max_steps = 1
+
+[output]
+dir = "output"
+solution_cgns = "flow.cgns"
+"#,
+        )
+        .expect("parse");
+        let result = run_case(&case).expect("run");
+        assert_eq!(result.kind, CaseRunKind::Incompressible3dSteady);
+        let metrics = result.incompressible_3d.expect("metrics");
+        assert_eq!(metrics.steps, 1);
     }
 
     #[test]

@@ -55,9 +55,10 @@ pub use cgns::export_cgns_to_vtm;
 #[cfg(feature = "io-cgns")]
 pub use cgns::{
     Cgns1to1Connection, CgnsLoadResult, CgnsMultiLoadResult, CgnsUnstructuredLoadResult,
-    CgnsZoneInfo, export_cgns_to_vts, export_cgns_zone_to_vts, list_cgns_zones,
-    load_cgns_all_zones, load_cgns_unstructured_zone, load_cgns_zone, write_flow_cgns,
-    write_multiblock_flow_cgns,
+    CgnsZoneInfo, StructuredVertexSolution, VertexScalarFieldView, export_cgns_to_vts,
+    export_cgns_zone_to_vts, list_cgns_zones, load_cgns_all_zones, load_cgns_unstructured_zone,
+    load_cgns_zone, write_flow_cgns, write_multiblock_flow_cgns,
+    write_structured_vertex_solution_cgns,
 };
 
 /// 从占位 case 文件加载网格元数据。

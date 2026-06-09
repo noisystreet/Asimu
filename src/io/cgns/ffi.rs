@@ -187,4 +187,19 @@ unsafe extern "C" {
         temperature: *const *const f64,
         physical_time: f64,
     ) -> c_int;
+    pub fn asimu_cg_write_structured_solution_fields(
+        filename: *const c_char,
+        basename: *const c_char,
+        zonename: *const c_char,
+        nx: c_int,
+        ny: c_int,
+        nz: c_int,
+        points_x: *const f64,
+        points_y: *const f64,
+        points_z: *const f64,
+        field_count: c_int,
+        field_names: *const *const c_char,
+        field_values: *const *const f64,
+        physical_time: f64,
+    ) -> c_int;
 }

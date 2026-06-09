@@ -341,6 +341,20 @@ path = "restart.toml"
 
 多块 restart 仍须配置 `[freestream]` 以驱动边界 ghost；初场守恒量来自 restart 文件。API：`CaseSpec::build_multiblock_conserved_fields()`、`io::load_multiblock_conserved_fields()`、`io::write_multiblock_conserved_fields()`。
 
+## 6.6 `[incompressible]`（I0 placeholder）
+
+I0 阶段仅支持单 block `structured_3d`，初始化不可压主变量并写出 CGNS；尚未装配压力-速度耦合方程。
+
+```toml
+[incompressible]
+pressure = 0.0
+velocity = [1.0, 0.0, 0.0]
+density = 1.0
+kinematic_viscosity = 0.01
+```
+
+默认 CGNS Vertex 输出字段为 `Pressure`、`VelocityX`、`VelocityY`、`VelocityZ`。`[incompressible]` 不能与 `[sod]`、`[euler]`、`[navier_stokes]` 同时出现。
+
 ---
 
 ## 7. `[output]` 与 `[observability]`
