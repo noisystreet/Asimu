@@ -378,6 +378,18 @@ kinematic_viscosity = 0.01       # m^2/s，解析后为 1/Re
 velocity_under_relaxation = 0.7   # 可选，(0, 1]，默认 1.0
 pressure_under_relaxation = 0.3   # 可选，(0, 1]，默认 1.0
 
+[incompressible.linear.momentum]
+solver = "gmres"                  # 当前仅 gmres
+restart = 30                      # 可选，默认 30
+max_iters = 100                   # 可选，默认 100
+tolerance = 1.0e-8                # 可选，默认 1.0e-8
+
+[incompressible.linear.pressure]
+solver = "gmres"                  # 当前仅 gmres
+restart = 30
+max_iters = 100
+tolerance = 1.0e-8
+
 [incompressible.reference]
 length = 1.0                     # L_ref，m
 velocity = 1.0                   # U_ref，m/s

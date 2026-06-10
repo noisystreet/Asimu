@@ -4,6 +4,8 @@ use serde::Deserialize;
 
 use crate::core::Real;
 use crate::error::{AsimuError, Result};
+use crate::linalg::GmresConfig;
+use crate::solver::IncompressibleLinearSolverConfig;
 
 /// 不可压缩 Navier-Stokes I0/I1 配置（SI 输入，解析后切换为星号量）。
 #[derive(Debug, Clone, PartialEq)]
@@ -14,6 +16,7 @@ pub struct IncompressibleCaseConfig {
     pub kinematic_viscosity: Real,
     pub velocity_under_relaxation: Real,
     pub pressure_under_relaxation: Real,
+    pub linear_solvers: IncompressibleLinearSolverConfig,
     pub reference: IncompressibleReferenceConfig,
 }
 
@@ -32,7 +35,22 @@ pub(super) struct IncompressibleToml {
     kinematic_viscosity: Option<Real>,
     velocity_under_relaxation: Option<Real>,
     pressure_under_relaxation: Option<Real>,
+    linear: Option<IncompressibleLinearToml>,
     reference: Option<IncompressibleReferenceToml>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IncompressibleLinearToml {
+    momentum: Option<IncompressibleGmresToml>,
+    pressure: Option<IncompressibleGmresToml>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IncompressibleGmresToml {
+    solver: Option<String>,
+    restart: Option<usize>,
+    max_iters: Option<usize>,
+    tolerance: Option<Real>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -75,8 +93,62 @@ pub(super) fn parse_incompressible_config(
         kinematic_viscosity,
         velocity_under_relaxation,
         pressure_under_relaxation,
+        linear_solvers: parse_linear_solvers(raw.linear.as_ref())?,
         reference: parse_incompressible_reference(raw.reference.as_ref())?,
     })
+}
+
+fn parse_linear_solvers(
+    raw: Option<&IncompressibleLinearToml>,
+) -> Result<IncompressibleLinearSolverConfig> {
+    let defaults = IncompressibleLinearSolverConfig::default();
+    let Some(raw) = raw else {
+        return Ok(defaults);
+    };
+    Ok(IncompressibleLinearSolverConfig {
+        momentum: parse_gmres_config(raw.momentum.as_ref(), defaults.momentum, "momentum")?,
+        pressure: parse_gmres_config(raw.pressure.as_ref(), defaults.pressure, "pressure")?,
+    })
+}
+
+fn parse_gmres_config(
+    raw: Option<&IncompressibleGmresToml>,
+    defaults: GmresConfig,
+    name: &str,
+) -> Result<GmresConfig> {
+    let Some(raw) = raw else {
+        return Ok(defaults);
+    };
+    if let Some(solver) = raw.solver.as_deref() {
+        if solver != "gmres" {
+            return Err(AsimuError::Config(format!(
+                "[incompressible.linear.{name}].solver 当前仅支持 \"gmres\""
+            )));
+        }
+    }
+    let config = GmresConfig {
+        restart: raw.restart.unwrap_or(defaults.restart),
+        max_iters: raw.max_iters.unwrap_or(defaults.max_iters),
+        tolerance: raw.tolerance.unwrap_or(defaults.tolerance),
+    };
+    GmresSolverConfigValidator::validate(config, name)
+}
+
+struct GmresSolverConfigValidator;
+
+impl GmresSolverConfigValidator {
+    fn validate(config: GmresConfig, name: &str) -> Result<GmresConfig> {
+        if config.restart == 0
+            || config.max_iters == 0
+            || !config.tolerance.is_finite()
+            || config.tolerance <= 0.0
+        {
+            return Err(AsimuError::Config(format!(
+                "[incompressible.linear.{name}] GMRES restart/max_iters/tolerance 参数无效"
+            )));
+        }
+        Ok(config)
+    }
 }
 
 fn parse_incompressible_reference(

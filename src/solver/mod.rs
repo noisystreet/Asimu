@@ -29,7 +29,8 @@ pub use compressible_helpers::{
     refresh_compressible_ghosts_and_primitives,
 };
 pub use incompressible::{
-    IncompressibleSimplecConfig, IncompressibleSimplecDiagnostic, run_incompressible_simplec,
+    IncompressibleLinearSolverConfig, IncompressibleSimplecConfig, IncompressibleSimplecDiagnostic,
+    run_incompressible_simplec,
 };
 pub use lu_sgs_sweep_unstructured::{
     LuSgsSweepUnstructuredInput, LuSgsSweepUnstructuredParams, LuSgsUnstructuredCouplings,

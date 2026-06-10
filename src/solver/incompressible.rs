@@ -13,6 +13,12 @@ use crate::field::{IncompressibleFields, ScalarField};
 use crate::linalg::{CsrMatrix, GmresConfig, GmresSolver, IdentityPreconditioner};
 use crate::mesh::StructuredMesh3d;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct IncompressibleLinearSolverConfig {
+    pub momentum: GmresConfig,
+    pub pressure: GmresConfig,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct IncompressibleSimplecConfig<'a> {
     pub mesh: &'a StructuredMesh3d,
@@ -24,6 +30,7 @@ pub struct IncompressibleSimplecConfig<'a> {
     pub boundary: &'a BoundarySet,
     pub max_iterations: usize,
     pub tolerance: Option<Real>,
+    pub linear_solvers: IncompressibleLinearSolverConfig,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -126,7 +133,8 @@ fn assemble_simplec_step(
         .values()
         .iter()
         .fold(0.0, |acc: Real, value| acc.max(value.abs()));
-    let momentum_solution = solve_momentum_predictor(&momentum_system, fields)?;
+    let momentum_solution =
+        solve_momentum_predictor(&momentum_system, fields, config.linear_solvers.momentum)?;
     let predicted_divergence = compute_incompressible_rhie_chow_divergence_3d(
         mesh,
         &momentum_solution.predicted_fields,
@@ -144,7 +152,7 @@ fn assemble_simplec_step(
         config.boundary,
         IncompressiblePressureCorrectionConfig::new(config.density, 0, 0.0)?,
     )?;
-    let pressure_solution = solve_pressure_correction(&system)?;
+    let pressure_solution = solve_pressure_correction(&system, config.linear_solvers.pressure)?;
     let corrected_fields = corrected_incompressible_fields(
         mesh,
         fields,
@@ -212,11 +220,12 @@ struct MomentumPredictorSolveDiagnostic {
 
 fn solve_pressure_correction(
     system: &crate::discretization::IncompressiblePressureCorrectionSystem,
+    gmres_config: GmresConfig,
 ) -> Result<PressureCorrectionSolveDiagnostic> {
     let n = system.matrix.nrows();
     let mut matrix = system.matrix.clone();
     let preconditioner = IdentityPreconditioner::new(n);
-    let solver = GmresSolver::new(GmresConfig::default())?;
+    let solver = GmresSolver::new(gmres_config)?;
     let mut pressure_correction = vec![0.0; n];
     let report = solver.solve(
         &mut matrix,
@@ -239,10 +248,11 @@ fn solve_pressure_correction(
 fn solve_momentum_predictor(
     system: &crate::discretization::IncompressibleMomentumPredictorSystem,
     fields: &IncompressibleFields,
+    gmres_config: GmresConfig,
 ) -> Result<MomentumPredictorSolveDiagnostic> {
-    let u = solve_momentum_component(system, &system.rhs_x)?;
-    let v = solve_momentum_component(system, &system.rhs_y)?;
-    let w = solve_momentum_component(system, &system.rhs_z)?;
+    let u = solve_momentum_component(system, &system.rhs_x, gmres_config)?;
+    let v = solve_momentum_component(system, &system.rhs_y, gmres_config)?;
+    let w = solve_momentum_component(system, &system.rhs_z, gmres_config)?;
     let max_abs_equation_residual =
         max_linear_system_residual(&system.matrix, &u.solution, &system.rhs_x)?
             .max(max_linear_system_residual(
@@ -282,11 +292,12 @@ struct MomentumComponentSolve {
 fn solve_momentum_component(
     system: &crate::discretization::IncompressibleMomentumPredictorSystem,
     rhs: &[Real],
+    gmres_config: GmresConfig,
 ) -> Result<MomentumComponentSolve> {
     let n = system.matrix.nrows();
     let mut matrix = system.matrix.clone();
     let preconditioner = IdentityPreconditioner::new(n);
-    let solver = GmresSolver::new(GmresConfig::default())?;
+    let solver = GmresSolver::new(gmres_config)?;
     let mut solution = vec![0.0; n];
     let report = solver.solve(&mut matrix, &preconditioner, rhs, &mut solution)?;
     Ok(MomentumComponentSolve {

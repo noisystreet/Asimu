@@ -218,6 +218,18 @@ velocity = [0.0, 0.0, 0.0]
 density = 1.0
 kinematic_viscosity = 0.01
 
+[incompressible.linear.momentum]
+solver = "gmres"
+restart = 8
+max_iters = 16
+tolerance = 1.0e-10
+
+[incompressible.linear.pressure]
+solver = "gmres"
+restart = 6
+max_iters = 12
+tolerance = 1.0e-11
+
 [incompressible.reference]
 length = 1.0
 velocity = 1.0
@@ -236,6 +248,21 @@ solution_cgns = "flow.cgns"
 "#,
         )
         .expect("parse");
+        let incompressible = case.incompressible.as_ref().expect("incompressible config");
+        assert_eq!(incompressible.linear_solvers.momentum.restart, 8);
+        assert_eq!(incompressible.linear_solvers.momentum.max_iters, 16);
+        assert!(crate::core::approx_eq(
+            incompressible.linear_solvers.momentum.tolerance,
+            1.0e-10,
+            1.0e-16
+        ));
+        assert_eq!(incompressible.linear_solvers.pressure.restart, 6);
+        assert_eq!(incompressible.linear_solvers.pressure.max_iters, 12);
+        assert!(crate::core::approx_eq(
+            incompressible.linear_solvers.pressure.tolerance,
+            1.0e-11,
+            1.0e-17
+        ));
         let result = run_case(&case).expect("run");
         assert_eq!(result.kind, CaseRunKind::Incompressible3dSteady);
         let metrics = result.incompressible_3d.expect("metrics");

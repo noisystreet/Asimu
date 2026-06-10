@@ -303,6 +303,8 @@ Ghost 单元距 owner 中心法向距离 \(d_f\)。
 `time.tolerance` 为可选收敛阈值；每轮执行动量预测、压力校正、\(p,\mathbf{u}\)
 修正，并把 `max|div(u_corr)|` 与 \(\max|A_u u^*-rhs_u|\) 写入残差历史。设置 `time.tolerance` 时，连续性与动量残差须同时满足阈值才标记收敛；若残差出现非有限值，runner 立即返回求解器错误；输出字段使用最后一次修正后的场。
 
+`[incompressible.linear.momentum]` 与 `[incompressible.linear.pressure]` 分别控制动量预测和压力校正线性求解的 GMRES `restart`、`max_iters` 与 `tolerance`。当前首版仍使用 Identity 预条件器；后续会把压力修正切换到更适合 Poisson 系统的 CG/ILU(0) 或 AMG 路径。
+
 ## 8. 实现映射
 
 | 式 / 步骤 | 代码位置 | 状态 |

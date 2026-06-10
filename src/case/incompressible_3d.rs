@@ -88,6 +88,7 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
             boundary: &case.boundary,
             max_iterations: steps as usize,
             tolerance: case.time.tolerance,
+            linear_solvers: config.linear_solvers,
         },
     )?;
 
