@@ -2,6 +2,7 @@
 
 pub mod compressible;
 pub mod compressible_helpers;
+pub mod incompressible;
 pub mod lu_sgs_common;
 pub mod lu_sgs_sweep_unstructured;
 pub mod sod;
@@ -26,6 +27,9 @@ pub use compressible::{
 pub use compressible_helpers::{
     EvaluateRhsUnstructured, RefreshCompressibleStateInput, finalize_cell_dts_from_sigma,
     refresh_compressible_ghosts_and_primitives,
+};
+pub use incompressible::{
+    IncompressibleSimplecConfig, IncompressibleSimplecDiagnostic, run_incompressible_simplec,
 };
 pub use lu_sgs_sweep_unstructured::{
     LuSgsSweepUnstructuredInput, LuSgsSweepUnstructuredParams, LuSgsUnstructuredCouplings,

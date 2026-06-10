@@ -99,6 +99,7 @@ let result = solver.run(&mesh)?;
 | `CaseSpec::initial_scalar(name)` | 单标量；未声明则全零 |
 | `CaseSpec::build_multiblock_conserved_fields(blocks)` | 按 block 顺序构建多块守恒初场 |
 | `Incompressible3dRunMetrics` | I1 runner 指标：SIMPLEC 外层迭代/收敛/连续性与动量残差历史、初始/预测/修正速度散度、压力校正 CSR 行数/非零数、GMRES 收敛与最大 \(p'\)、动量预测 CSR、三分量 GMRES 收敛、最大 \(d_P\)、速度变化与不可压缩边界应用统计 |
+| `run_incompressible_simplec(config)` | 不可压缩 SIMPLEC solver 层编排：动量预测、Rhie-Chow 连续性 RHS、压力校正、\(p,\mathbf{u}\) 修正与收敛历史 |
 | `load_conserved_fields(path)` / `write_conserved_fields(path, fields)` | 单 block restart TOML（version=1） |
 | `load_multiblock_conserved_fields(path, block_names)` / `write_multiblock_conserved_fields(path, blocks)` | 多块 restart TOML（version=2） |
 | `load_mesh_from_case(&Path) -> Result<Mesh>` | 从占位 case 文件加载网格 |
