@@ -116,7 +116,7 @@ Rhie-Chow **仅**用于 \(\dot{m}_f\) 与压力修正源项 \(\nabla\cdot(\rho\m
 | `ConvectionScheme` | 面值 \(\phi_f\) | 默认 |
 |--------------------|-----------------|------|
 | `upwind` | (5) | **是** |
-| `central` | \(\frac{1}{2}(\phi_O+\phi_N)\) | 低 Re 调试 |
+| `central` | \(\frac{1}{2}(\phi_O+\phi_N)\) | 低 Re 调试；可由 `[incompressible].convection_scheme = "central"` 启用 |
 | `minmod` | upwind + \(\frac{1}{2}\psi(\nabla\phi)\cdot\Delta\mathbf{x}\) | I6 |
 | `quick` | 三阶 QUICK stencil | I6 |
 
@@ -303,13 +303,13 @@ Ghost 单元距 owner 中心法向距离 \(d_f\)。
 - 连续性：\(\|\nabla\cdot(\rho\mathbf{u}^*)\|_\infty / (\rho U_{\mathrm{ref}})\)
 - 动量：\(\|\mathbf{R}_u\|_\infty / (\rho U_{\mathrm{ref}}^2)\)
 
-`solver::run_incompressible_simplec` 已提供 SIMPLEC 外层循环：`time.max_steps` 作为最大外层迭代数，
-`time.tolerance` 为可选收敛阈值；每轮执行动量预测、压力校正、\(p,\mathbf{u}\)
+`solver::run_incompressible_simplec` 已提供 SIMPLEC/PISO smoke 外层循环：`time.max_steps` 作为最大外层迭代数，
+`time.min_steps` 作为允许早停前的最小迭代数，`time.tolerance` 为可选收敛阈值；每轮执行动量预测、压力校正、\(p,\mathbf{u}\)
 修正，并把按 \(\alpha_p\) 缩放后的压力校正连续性残差
 \(\max|b_p-\alpha_p A_p p'|\) 与 \(\max|A_u u^*-rhs_u|\) 写入残差历史。
 预测残差仍来自 Rhie-Chow 面通量；`max_abs_corrected_divergence` 保留全量压力
 校正方程线性残差 \(\max|b_p-A_p p'|\)，用于判断线性系统是否解好。设置
-`time.tolerance` 时，欠松弛后的连续性残差、动量残差与
+`time.tolerance` 时，欠松弛后的连续性残差、动量残差与非速度约束 owner 的
 \(\max|\Delta\mathbf{u}|\) 速度更新量须同时满足阈值才标记收敛；未设置时仅执行固定
 `max_steps`，`simplec_converged=false` 表示没有收敛判据。若残差或速度更新量出现非有限值，或任一监控量超过发散保护上限，runner 立即返回求解器错误；输出字段使用最后一次重施加边界后的修正场。
 
@@ -321,7 +321,7 @@ Ghost 单元距 owner 中心法向距离 \(d_f\)。
 全量压力方程残差用于判断线性系统是否解好，欠松弛残差用于 SIMPLEC 收敛，face-flux 散度用于判断边界面通量、边界重施加和速度修正是否仍破坏真实速度场连续性。
 `pressure_correction_rhs_active_sum` 记录跳过 \(p'=0\) identity 约束行后的 RHS 总和，用于检查闭域兼容性。
 `max_abs_corrected_velocity_delta_interior` 与 `max_abs_corrected_velocity_delta_boundary`
-把总速度更新量拆成非速度约束 owner 和速度约束边界 owner 两类，用于判断收敛受内部场演化还是边界 owner 重施加主导；SIMPLEC 收敛判据仍使用总速度更新量。
+把总速度更新量拆成非速度约束 owner 和速度约束边界 owner 两类，用于判断收敛受内部场演化还是边界 owner 重施加主导；SIMPLEC 收敛判据使用非速度约束 owner 速度更新量，总量继续作为边界 owner 诊断输出。
 
 `[incompressible.linear.momentum]` 与 `[incompressible.linear.pressure]` 分别控制动量预测和压力校正线性求解的 GMRES `restart`、`max_iters` 与 `tolerance`。压力校正默认使用 `restart=64`、`max_iters=500`、`tolerance=1.0e-10`，避免小型 Poisson-like 系统被过早截断；当前首版仍使用 Identity 预条件器，后续会切换到更适合 Poisson 系统的 CG/ILU(0) 或 AMG 路径。
 

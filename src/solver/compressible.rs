@@ -651,6 +651,9 @@ impl CompressibleEulerSolver {
             (TimeIntegrationScheme::Gmres, _) => Err(crate::error::AsimuError::Solver(
                 "advance_explicit_step 不支持 gmres".to_string(),
             )),
+            (TimeIntegrationScheme::Piso, _) => Err(crate::error::AsimuError::Solver(
+                "advance_explicit_step 不支持 piso".to_string(),
+            )),
         }
     }
 

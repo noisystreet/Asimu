@@ -159,6 +159,8 @@ pub struct CaseTimeConfig {
     pub cfl_max: Option<Real>,
     pub final_time: Option<Real>,
     pub max_steps: Option<u64>,
+    /// 允许收敛早停前必须完成的最小步数。
+    pub min_steps: Option<u64>,
     /// log₁₀(RMS(ρ̇)) 收敛容差；设有限值时与 `max_steps` 成对用于残差早停。
     pub tolerance: Option<Real>,
     pub local_time_step: bool,
@@ -221,6 +223,7 @@ impl Default for CaseTimeConfig {
             cfl_max: None,
             final_time: None,
             max_steps: None,
+            min_steps: None,
             tolerance: None,
             local_time_step: false,
             cfl_ramp_steps: None,
@@ -469,6 +472,7 @@ struct TimeToml {
     cfl_max: Option<Real>,
     final_time: Option<Real>,
     max_steps: Option<u64>,
+    min_steps: Option<u64>,
     tolerance: Option<Real>,
     local_time_step: Option<bool>,
     cfl_ramp_steps: Option<u64>,
@@ -745,6 +749,7 @@ fn parse_time_config(raw: Option<&TimeToml>, has_sod: bool) -> Result<CaseTimeCo
         cfl_max: raw.cfl_max,
         final_time: raw.final_time,
         max_steps: raw.max_steps,
+        min_steps: raw.min_steps,
         tolerance: raw.tolerance,
         local_time_step: raw.local_time_step.unwrap_or(false),
         cfl_ramp_steps: raw.cfl_ramp_steps,

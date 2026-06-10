@@ -3,6 +3,7 @@
 use serde::Deserialize;
 
 use crate::core::Real;
+use crate::discretization::IncompressibleConvectionScheme;
 use crate::error::{AsimuError, Result};
 use crate::linalg::GmresConfig;
 use crate::solver::IncompressibleLinearSolverConfig;
@@ -17,6 +18,7 @@ pub struct IncompressibleCaseConfig {
     pub kinematic_viscosity: Real,
     pub velocity_under_relaxation: Real,
     pub pressure_under_relaxation: Real,
+    pub convection_scheme: IncompressibleConvectionScheme,
     pub linear_solvers: IncompressibleLinearSolverConfig,
     pub reference: IncompressibleReferenceConfig,
 }
@@ -37,6 +39,7 @@ pub(super) struct IncompressibleToml {
     kinematic_viscosity: Option<Real>,
     velocity_under_relaxation: Option<Real>,
     pressure_under_relaxation: Option<Real>,
+    convection_scheme: Option<String>,
     linear: Option<IncompressibleLinearToml>,
     reference: Option<IncompressibleReferenceToml>,
 }
@@ -96,9 +99,22 @@ pub(super) fn parse_incompressible_config(
         kinematic_viscosity,
         velocity_under_relaxation,
         pressure_under_relaxation,
+        convection_scheme: parse_convection_scheme(raw.convection_scheme.as_deref())?,
         linear_solvers: parse_linear_solvers(raw.linear.as_ref())?,
         reference: parse_incompressible_reference(raw.reference.as_ref())?,
     })
+}
+
+fn parse_convection_scheme(raw: Option<&str>) -> Result<IncompressibleConvectionScheme> {
+    match raw.unwrap_or("upwind").trim().to_ascii_lowercase().as_str() {
+        "upwind" | "first_order" | "first-order" => Ok(IncompressibleConvectionScheme::Upwind),
+        "central" | "central2" | "second_order" | "second-order" => {
+            Ok(IncompressibleConvectionScheme::Central)
+        }
+        other => Err(AsimuError::Config(format!(
+            "[incompressible].convection_scheme 不支持 \"{other}\""
+        ))),
+    }
 }
 
 fn validate_body_force(value: [Real; 3]) -> Result<[Real; 3]> {

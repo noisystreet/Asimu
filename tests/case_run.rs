@@ -85,7 +85,7 @@ fn lid_driven_cavity_re100_incompressible_benchmark_runs() {
     let expected =
         std::fs::read_to_string("tests/benchmarks/lid_driven_cavity_re100/expected.json")
             .expect("expected");
-    assert!(expected.contains("long_iteration_diagnostic"));
+    assert!(expected.contains("coarse_grid_quantitative"));
     assert!(expected.contains("Ghia et al. 1982"));
     let result = run_case_path(Path::new(
         "tests/benchmarks/lid_driven_cavity_re100/case.toml",
@@ -98,7 +98,7 @@ fn lid_driven_cavity_re100_incompressible_benchmark_runs() {
     );
     let metrics = result.incompressible_3d.expect("incompressible metrics");
     assert_eq!(metrics.simplec_iterations, 100);
-    assert!(!metrics.simplec_converged);
+    assert!(metrics.simplec_converged);
     assert!(metrics.simplec_final_residual.is_finite());
     assert!(metrics.max_abs_corrected_divergence < 1.0e-8);
     assert!(
@@ -150,13 +150,39 @@ fn lid_driven_cavity_re100_incompressible_benchmark_runs() {
     assert!(error.horizontal_v.max_abs.is_finite());
     assert!(error.horizontal_v.l2.is_finite());
     assert!(
-        error.vertical_u.max_abs < 2.0,
+        error.vertical_u.max_abs < 1.0,
         "vertical_u max_abs={}",
         error.vertical_u.max_abs
     );
     assert!(
-        error.horizontal_v.max_abs < 2.0,
+        error.horizontal_v.max_abs < 1.0,
         "horizontal_v max_abs={}",
         error.horizontal_v.max_abs
     );
+}
+
+#[test]
+fn lid_driven_cavity_re100_refined_grid_runs() {
+    let result = run_case_path(Path::new(
+        "tests/benchmarks/lid_driven_cavity_re100_refined/case.toml",
+    ))
+    .expect("run");
+    assert_eq!(result.kind, CaseRunKind::Incompressible3dSteady);
+    assert_eq!(
+        result.benchmark_id.as_deref(),
+        Some("lid_driven_cavity_re100_refined")
+    );
+    let metrics = result.incompressible_3d.expect("incompressible metrics");
+    assert_eq!(metrics.simplec_iterations, 100);
+    assert!(metrics.simplec_final_residual.is_finite());
+    assert!(metrics.pressure_solve_converged);
+    assert!(metrics.momentum_solve_converged);
+    let profiles = metrics.centerline_profiles.expect("centerline profiles");
+    assert_eq!(profiles.vertical_u.len(), 12);
+    assert_eq!(profiles.horizontal_v.len(), 12);
+    let error = metrics
+        .lid_cavity_profile_error
+        .expect("lid cavity profile error");
+    assert!(error.vertical_u.max_abs.is_finite());
+    assert!(error.horizontal_v.max_abs.is_finite());
 }

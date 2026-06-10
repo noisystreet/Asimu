@@ -45,8 +45,10 @@ pub struct IncompressibleSimplecConfig<'a> {
     pub velocity_under_relaxation: Real,
     pub pressure_under_relaxation: Real,
     pub pseudo_time_step: Real,
+    pub convection_scheme: crate::discretization::IncompressibleConvectionScheme,
     pub boundary: &'a BoundarySet,
     pub max_iterations: usize,
+    pub min_iterations: usize,
     pub tolerance: Option<Real>,
     pub linear_solvers: IncompressibleLinearSolverConfig,
 }
@@ -99,19 +101,19 @@ pub fn run_incompressible_simplec(
         let mut diagnostic = assemble_simplec_step(&current_fields, &config)?;
         let residual = diagnostic.max_abs_underrelaxed_corrected_divergence;
         let momentum_residual = diagnostic.max_abs_momentum_equation_residual;
-        let velocity_delta = diagnostic.max_abs_corrected_velocity_delta;
+        let velocity_delta = diagnostic.max_abs_corrected_velocity_delta_interior;
         validate_simplec_step(residual, momentum_residual, velocity_delta)?;
         history.push(residual);
         momentum_history.push(momentum_residual);
         current_fields = diagnostic.corrected_fields.clone();
-        let converged = config
-            .tolerance
-            .map(|tolerance| {
-                residual <= tolerance
-                    && momentum_residual <= tolerance
-                    && velocity_delta <= tolerance
-            })
-            .unwrap_or(false);
+        let converged = simplec_converged(
+            config.tolerance,
+            config.min_iterations,
+            history.len(),
+            residual,
+            momentum_residual,
+            velocity_delta,
+        );
         diagnostic.simplec_iterations = history.len();
         diagnostic.simplec_converged = converged;
         diagnostic.simplec_final_residual = residual;
@@ -125,15 +127,28 @@ pub fn run_incompressible_simplec(
     }
     let mut diagnostic =
         last.ok_or_else(|| AsimuError::Solver("SIMPLEC 至少需要一次外层迭代".to_string()))?;
-    diagnostic.simplec_converged = config
-        .tolerance
-        .map(|tolerance| {
-            diagnostic.simplec_final_residual <= tolerance
-                && diagnostic.simplec_final_momentum_residual <= tolerance
-                && diagnostic.max_abs_corrected_velocity_delta <= tolerance
-        })
-        .unwrap_or(false);
+    diagnostic.simplec_converged = simplec_converged(
+        config.tolerance,
+        config.min_iterations,
+        diagnostic.simplec_iterations,
+        diagnostic.simplec_final_residual,
+        diagnostic.simplec_final_momentum_residual,
+        diagnostic.max_abs_corrected_velocity_delta_interior,
+    );
     Ok(diagnostic)
+}
+
+fn simplec_converged(
+    tolerance: Option<Real>,
+    min_iterations: usize,
+    iterations: usize,
+    residual: Real,
+    momentum_residual: Real,
+    velocity_delta: Real,
+) -> bool {
+    iterations >= min_iterations
+        && tolerance
+            .is_some_and(|tol| residual <= tol && momentum_residual <= tol && velocity_delta <= tol)
 }
 
 fn validate_simplec_step(
@@ -171,7 +186,8 @@ fn assemble_simplec_step(
             config.pseudo_time_step,
         )?
         .with_body_force(config.body_force)?
-        .with_velocity_under_relaxation(config.velocity_under_relaxation)?,
+        .with_velocity_under_relaxation(config.velocity_under_relaxation)?
+        .with_convection_scheme(config.convection_scheme),
     )?;
     let max_momentum_d_coefficient = momentum_system
         .d_coefficient
@@ -779,20 +795,6 @@ fn bottom(k: usize) -> usize {
 fn top(k: usize, nz: usize) -> usize {
     (k + 1).min(nz - 1)
 }
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn simplec_step_validation_rejects_divergence() {
-        let err = validate_simplec_step(1.0e60, 1.0, 1.0).expect_err("divergence");
-        assert!(err.to_string().contains("SIMPLEC 发散"));
-    }
-
-    #[test]
-    fn simplec_step_validation_rejects_non_finite_values() {
-        let err = validate_simplec_step(1.0, Real::INFINITY, 1.0).expect_err("non-finite");
-        assert!(err.to_string().contains("非有限值"));
-    }
-}
+#[path = "incompressible_tests.rs"]
+mod tests;

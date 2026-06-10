@@ -526,6 +526,7 @@ fn rejects_gmres_for_connected_multiblock_at_parse() {
             cfl_max: None,
             final_time: None,
             max_steps: Some(10),
+            min_steps: None,
             tolerance: None,
             local_time_step: false,
             cfl_ramp_steps: None,

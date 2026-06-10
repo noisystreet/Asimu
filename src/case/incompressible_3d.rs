@@ -125,8 +125,10 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
             velocity_under_relaxation: config.velocity_under_relaxation,
             pressure_under_relaxation: config.pressure_under_relaxation,
             pseudo_time_step,
+            convection_scheme: config.convection_scheme,
             boundary: &case.boundary,
             max_iterations: steps as usize,
+            min_iterations: case.time.min_steps.unwrap_or(0) as usize,
             tolerance: case.time.tolerance,
             linear_solvers: config.linear_solvers,
         },
@@ -310,7 +312,9 @@ fn incompressible_centerline_profiles(
     fields: &IncompressibleFields,
 ) -> Option<IncompressibleCenterlineProfiles> {
     match case.benchmark_id.as_deref() {
-        Some("lid_driven_cavity_re100") => Some(lid_cavity_centerline_profiles(mesh, fields)),
+        Some(id) if id.starts_with("lid_driven_cavity_re100") => {
+            Some(lid_cavity_centerline_profiles(mesh, fields))
+        }
         Some("channel_poiseuille") if kinematic_viscosity > 0.0 && body_force[0].abs() > 0.0 => {
             Some(channel_poiseuille_centerline_profiles(mesh, fields))
         }
@@ -417,7 +421,11 @@ fn lid_cavity_profile_error(
     case: &CaseSpec,
     profiles: Option<&IncompressibleCenterlineProfiles>,
 ) -> Option<IncompressibleCenterlineProfileError> {
-    if case.benchmark_id.as_deref() != Some("lid_driven_cavity_re100") {
+    if !case
+        .benchmark_id
+        .as_deref()
+        .is_some_and(|id| id.starts_with("lid_driven_cavity_re100"))
+    {
         return None;
     }
     let profiles = profiles?;

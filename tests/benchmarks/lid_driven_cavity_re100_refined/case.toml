@@ -1,10 +1,10 @@
-name = "lid_driven_cavity_re100"
-benchmark_id = "lid_driven_cavity_re100"
+name = "lid_driven_cavity_re100_refined"
+benchmark_id = "lid_driven_cavity_re100_refined"
 
 [mesh]
 kind = "structured_3d"
-nx = 8
-ny = 8
+nx = 12
+ny = 12
 nz = 1
 lx = 1.0
 ly = 1.0
@@ -19,6 +19,7 @@ density = 1.0
 kinematic_viscosity = 0.01
 velocity_under_relaxation = 0.05
 pressure_under_relaxation = 0.01
+convection_scheme = "upwind"
 
 [incompressible.linear.momentum]
 solver = "gmres"

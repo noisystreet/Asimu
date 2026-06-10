@@ -2,6 +2,7 @@
 
 use crate::boundary::{BoundaryKind, BoundarySet};
 use crate::core::Real;
+use crate::discretization::incompressible_face_boundary::incompressible_boundary_face_velocity;
 use crate::error::{AsimuError, Result};
 use crate::field::{IncompressibleFields, ScalarField};
 use crate::mesh::{BoundaryMesh, BoundaryMesh3d, StructuredMesh3d};
@@ -154,7 +155,7 @@ fn add_boundary_fluxes(
         for &face in &patch.face_ids {
             let owner = mesh.face_owner(face)?.index() as usize;
             let geom = mesh.face_geometry_3d(face)?;
-            let velocity = boundary_face_velocity(owner, &patch.kind, fields);
+            let velocity = incompressible_boundary_face_velocity(owner, &patch.kind, fields);
             net[owner] += (velocity[0] * geom.normal.x
                 + velocity[1] * geom.normal.y
                 + velocity[2] * geom.normal.z)
@@ -167,30 +168,6 @@ fn add_boundary_fluxes(
 fn scatter_flux(net: &mut [Real], owner: usize, neighbor: usize, flux_owner_to_neighbor: Real) {
     net[owner] += flux_owner_to_neighbor;
     net[neighbor] -= flux_owner_to_neighbor;
-}
-
-fn boundary_face_velocity(
-    owner: usize,
-    kind: &BoundaryKind,
-    fields: &IncompressibleFields,
-) -> [Real; 3] {
-    match kind {
-        BoundaryKind::Wall { .. } | BoundaryKind::Symmetry => [0.0, 0.0, 0.0],
-        BoundaryKind::MovingWall { velocity } => *velocity,
-        BoundaryKind::IncompressibleVelocityInlet { velocity } => *velocity,
-        BoundaryKind::IncompressiblePressureOutlet { .. } | BoundaryKind::Outlet { .. } => {
-            cell_velocity(fields, owner)
-        }
-        _ => cell_velocity(fields, owner),
-    }
-}
-
-fn cell_velocity(fields: &IncompressibleFields, cell: usize) -> [Real; 3] {
-    [
-        fields.velocity_x.values()[cell],
-        fields.velocity_y.values()[cell],
-        fields.velocity_z.values()[cell],
-    ]
 }
 
 #[cfg(test)]

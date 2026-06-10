@@ -16,6 +16,13 @@ pub struct IncompressibleMomentumPredictorConfig {
     pub pseudo_time_step: Real,
     pub body_force: [Real; 3],
     pub velocity_under_relaxation: Real,
+    pub convection_scheme: IncompressibleConvectionScheme,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IncompressibleConvectionScheme {
+    Upwind,
+    Central,
 }
 
 impl IncompressibleMomentumPredictorConfig {
@@ -35,6 +42,7 @@ impl IncompressibleMomentumPredictorConfig {
             pseudo_time_step,
             body_force: [0.0, 0.0, 0.0],
             velocity_under_relaxation: 1.0,
+            convection_scheme: IncompressibleConvectionScheme::Upwind,
         })
     }
 
@@ -56,6 +64,11 @@ impl IncompressibleMomentumPredictorConfig {
         }
         self.velocity_under_relaxation = value;
         Ok(self)
+    }
+
+    pub fn with_convection_scheme(mut self, value: IncompressibleConvectionScheme) -> Self {
+        self.convection_scheme = value;
+        self
     }
 }
 
@@ -436,6 +449,7 @@ fn add_momentum_convection(
         face_velocity_x(mesh, ctx.fields, i, j, k, true, ctx.periodic_x)
             * ctx.spacing.dy
             * ctx.spacing.dz,
+        ctx.config.convection_scheme,
     );
     add_convective_face(
         mesh,
@@ -446,6 +460,7 @@ fn add_momentum_convection(
         -face_velocity_x(mesh, ctx.fields, i, j, k, false, ctx.periodic_x)
             * ctx.spacing.dy
             * ctx.spacing.dz,
+        ctx.config.convection_scheme,
     );
     add_convective_face(
         mesh,
@@ -453,6 +468,7 @@ fn add_momentum_convection(
         diag,
         neighbor_if(j + 1 < mesh.ny, || (i, j + 1, k)),
         face_velocity_y(mesh, ctx.fields, i, j, k, true) * ctx.spacing.dx * ctx.spacing.dz,
+        ctx.config.convection_scheme,
     );
     add_convective_face(
         mesh,
@@ -460,6 +476,7 @@ fn add_momentum_convection(
         diag,
         neighbor_if(j > 0, || (i, j - 1, k)),
         -face_velocity_y(mesh, ctx.fields, i, j, k, false) * ctx.spacing.dx * ctx.spacing.dz,
+        ctx.config.convection_scheme,
     );
     add_convective_face(
         mesh,
@@ -467,6 +484,7 @@ fn add_momentum_convection(
         diag,
         neighbor_if(k + 1 < mesh.nz, || (i, j, k + 1)),
         face_velocity_z(mesh, ctx.fields, i, j, k, true) * ctx.spacing.dx * ctx.spacing.dy,
+        ctx.config.convection_scheme,
     );
     add_convective_face(
         mesh,
@@ -474,6 +492,7 @@ fn add_momentum_convection(
         diag,
         neighbor_if(k > 0, || (i, j, k - 1)),
         -face_velocity_z(mesh, ctx.fields, i, j, k, false) * ctx.spacing.dx * ctx.spacing.dy,
+        ctx.config.convection_scheme,
     );
 }
 
@@ -483,14 +502,23 @@ fn add_convective_face(
     diag: &mut Real,
     neighbor: Option<(usize, usize, usize)>,
     flux: Real,
+    scheme: IncompressibleConvectionScheme,
 ) {
     let Some((i, j, k)) = neighbor else {
         return;
     };
-    if flux >= 0.0 {
-        *diag += flux;
-    } else {
-        row.push((mesh.cell_index(i, j, k), flux));
+    match scheme {
+        IncompressibleConvectionScheme::Upwind => {
+            if flux >= 0.0 {
+                *diag += flux;
+            } else {
+                row.push((mesh.cell_index(i, j, k), flux));
+            }
+        }
+        IncompressibleConvectionScheme::Central => {
+            *diag += 0.5 * flux;
+            row.push((mesh.cell_index(i, j, k), 0.5 * flux));
+        }
     }
 }
 

@@ -282,6 +282,11 @@ fn advance_unstructured_step(
                     "非结构网格暂不支持 time.scheme = \"gmres\"".to_string(),
                 ));
             }
+            TimeIntegrationScheme::Piso => {
+                return Err(AsimuError::Config(
+                    "非结构可压缩网格不支持 time.scheme = \"piso\"".to_string(),
+                ));
+            }
         }
     }
     let time_integration_ms = elapsed_ms(time_integration_start);
