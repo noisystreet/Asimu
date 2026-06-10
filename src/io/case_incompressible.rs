@@ -19,6 +19,7 @@ pub struct IncompressibleCaseConfig {
     pub velocity_under_relaxation: Real,
     pub pressure_under_relaxation: Real,
     pub convection_scheme: IncompressibleConvectionScheme,
+    pub piso_correctors: usize,
     pub linear_solvers: IncompressibleLinearSolverConfig,
     pub reference: IncompressibleReferenceConfig,
 }
@@ -40,6 +41,7 @@ pub(super) struct IncompressibleToml {
     velocity_under_relaxation: Option<Real>,
     pressure_under_relaxation: Option<Real>,
     convection_scheme: Option<String>,
+    piso_correctors: Option<usize>,
     linear: Option<IncompressibleLinearToml>,
     reference: Option<IncompressibleReferenceToml>,
 }
@@ -100,6 +102,7 @@ pub(super) fn parse_incompressible_config(
         velocity_under_relaxation,
         pressure_under_relaxation,
         convection_scheme: parse_convection_scheme(raw.convection_scheme.as_deref())?,
+        piso_correctors: parse_piso_correctors(raw.piso_correctors)?,
         linear_solvers: parse_linear_solvers(raw.linear.as_ref())?,
         reference: parse_incompressible_reference(raw.reference.as_ref())?,
     })
@@ -115,6 +118,16 @@ fn parse_convection_scheme(raw: Option<&str>) -> Result<IncompressibleConvection
             "[incompressible].convection_scheme 不支持 \"{other}\""
         ))),
     }
+}
+
+fn parse_piso_correctors(raw: Option<usize>) -> Result<usize> {
+    let value = raw.unwrap_or(1);
+    if value == 0 {
+        return Err(AsimuError::Config(
+            "[incompressible].piso_correctors 必须大于 0".to_string(),
+        ));
+    }
+    Ok(value)
 }
 
 fn validate_body_force(value: [Real; 3]) -> Result<[Real; 3]> {

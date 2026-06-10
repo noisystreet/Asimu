@@ -20,6 +20,7 @@ kinematic_viscosity = 0.01
 velocity_under_relaxation = 0.05
 pressure_under_relaxation = 0.01
 convection_scheme = "upwind"
+piso_correctors = 2
 
 [incompressible.linear.momentum]
 solver = "gmres"

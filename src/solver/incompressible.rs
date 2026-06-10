@@ -1,6 +1,6 @@
 //! 不可压缩 SIMPLEC 求解编排。
 
-use crate::boundary::{BoundaryKind, BoundarySet};
+use crate::boundary::BoundarySet;
 use crate::core::Real;
 use crate::discretization::{
     IncompressibleMomentumPredictorConfig, IncompressiblePressureCorrectionConfig,
@@ -12,7 +12,8 @@ use crate::discretization::{
 use crate::error::{AsimuError, Result};
 use crate::field::{IncompressibleFields, ScalarField};
 use crate::linalg::{CsrMatrix, GmresConfig, GmresSolver, IdentityPreconditioner};
-use crate::mesh::{BoundaryMesh, StructuredMesh3d};
+use crate::mesh::StructuredMesh3d;
+use crate::solver::incompressible_diagnostics::max_velocity_delta_by_region;
 use tracing::debug;
 
 const SIMPLEC_DIVERGENCE_LIMIT: Real = 1.0e50;
@@ -46,6 +47,7 @@ pub struct IncompressibleSimplecConfig<'a> {
     pub pressure_under_relaxation: Real,
     pub pseudo_time_step: Real,
     pub convection_scheme: crate::discretization::IncompressibleConvectionScheme,
+    pub pressure_correctors: usize,
     pub boundary: &'a BoundarySet,
     pub max_iterations: usize,
     pub min_iterations: usize,
@@ -204,18 +206,20 @@ fn assemble_simplec_step(
         config.boundary,
     )?;
     let max_abs_predicted_divergence = max_abs_scalar_field(&predicted_divergence);
-    let pressure_step = solve_pressure_correction_step(
+    let mut pressure_step = solve_pressure_correction_step(
         &predicted_divergence,
         &momentum_system.d_coefficient,
         config,
     )?;
-    let corrected = build_corrected_fields_with_diagnostics(
+    let mut corrected = build_corrected_fields_with_diagnostics(
         fields,
         &predicted_fields,
         &pressure_step.solution.correction,
         momentum_system.d_coefficient.values(),
         config,
     )?;
+    (pressure_step, corrected) =
+        apply_additional_pressure_correctors(pressure_step, corrected, &momentum_system, config)?;
     let velocity_delta = max_velocity_delta_by_region(
         mesh,
         config.boundary,
@@ -272,6 +276,32 @@ fn assemble_simplec_step(
         simplec_momentum_residual_history: Vec::new(),
         corrected_fields: corrected.fields,
     })
+}
+
+fn apply_additional_pressure_correctors(
+    mut pressure_step: PressureCorrectionStepDiagnostic,
+    mut corrected: CorrectedFieldsDiagnostic,
+    momentum_system: &crate::discretization::IncompressibleMomentumPredictorSystem,
+    config: &IncompressibleSimplecConfig<'_>,
+) -> Result<(PressureCorrectionStepDiagnostic, CorrectedFieldsDiagnostic)> {
+    for _ in 1..config.pressure_correctors.max(1) {
+        let divergence = compute_incompressible_rhie_chow_divergence_3d(
+            config.mesh,
+            &corrected.fields,
+            &momentum_system.d_coefficient,
+            config.boundary,
+        )?;
+        pressure_step =
+            solve_pressure_correction_step(&divergence, &momentum_system.d_coefficient, config)?;
+        corrected = build_corrected_fields_with_diagnostics(
+            &corrected.fields,
+            &corrected.fields,
+            &pressure_step.solution.correction,
+            momentum_system.d_coefficient.values(),
+            config,
+        )?;
+    }
+    Ok((pressure_step, corrected))
 }
 
 struct CorrectedFieldsDiagnostic {
@@ -571,13 +601,6 @@ fn max_abs_scalar_field(field: &ScalarField) -> Real {
         .fold(0.0, |acc: Real, value| acc.max(value.abs()))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct VelocityDeltaByRegion {
-    all: Real,
-    interior: Real,
-    boundary: Real,
-}
-
 fn max_velocity_delta(fields: &IncompressibleFields, u: &[Real], v: &[Real], w: &[Real]) -> Real {
     let mut max_delta: Real = 0.0;
     for idx in 0..fields.velocity_x.len() {
@@ -586,55 +609,6 @@ fn max_velocity_delta(fields: &IncompressibleFields, u: &[Real], v: &[Real], w: 
         max_delta = max_delta.max((w[idx] - fields.velocity_z.values()[idx]).abs());
     }
     max_delta
-}
-
-fn max_velocity_delta_by_region(
-    mesh: &StructuredMesh3d,
-    boundary: &BoundarySet,
-    fields: &IncompressibleFields,
-    u: &[Real],
-    v: &[Real],
-    w: &[Real],
-) -> Result<VelocityDeltaByRegion> {
-    let mut constrained_owner = vec![false; mesh.num_cells()];
-    for patch in boundary.patches() {
-        if !is_velocity_constrained_kind(&patch.kind) {
-            continue;
-        }
-        for face_id in &patch.face_ids {
-            let owner = mesh.face_owner(*face_id)?;
-            constrained_owner[owner.index() as usize] = true;
-        }
-    }
-
-    let mut delta = VelocityDeltaByRegion {
-        all: 0.0,
-        interior: 0.0,
-        boundary: 0.0,
-    };
-    for idx in 0..fields.velocity_x.len() {
-        let cell_delta = (u[idx] - fields.velocity_x.values()[idx])
-            .abs()
-            .max((v[idx] - fields.velocity_y.values()[idx]).abs())
-            .max((w[idx] - fields.velocity_z.values()[idx]).abs());
-        delta.all = delta.all.max(cell_delta);
-        if constrained_owner[idx] {
-            delta.boundary = delta.boundary.max(cell_delta);
-        } else {
-            delta.interior = delta.interior.max(cell_delta);
-        }
-    }
-    Ok(delta)
-}
-
-fn is_velocity_constrained_kind(kind: &BoundaryKind) -> bool {
-    matches!(
-        kind,
-        BoundaryKind::Wall { .. }
-            | BoundaryKind::MovingWall { .. }
-            | BoundaryKind::IncompressibleVelocityInlet { .. }
-            | BoundaryKind::Inlet { .. }
-    )
 }
 
 fn corrected_incompressible_fields(

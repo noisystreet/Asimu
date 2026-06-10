@@ -390,6 +390,7 @@ pressure = 0.0                  # Pa，解析后除以 rho * U_ref^2
 velocity = [1.0, 0.0, 0.0]       # m/s，解析后除以 U_ref
 body_force = [0.0, 0.0, 0.0]     # m/s^2，每单位质量体力；解析后乘 L_ref/U_ref^2
 convection_scheme = "upwind"      # upwind（默认）| central
+piso_correctors = 1                # 每个外层步的压力校正次数；PISO smoke 常用 2
 density = 1.0
 kinematic_viscosity = 0.01       # m^2/s，解析后为 1/Re
 velocity_under_relaxation = 0.7   # 可选，(0, 1]，默认 1.0

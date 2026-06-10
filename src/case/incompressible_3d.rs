@@ -126,6 +126,7 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
             pressure_under_relaxation: config.pressure_under_relaxation,
             pseudo_time_step,
             convection_scheme: config.convection_scheme,
+            pressure_correctors: config.piso_correctors,
             boundary: &case.boundary,
             max_iterations: steps as usize,
             min_iterations: case.time.min_steps.unwrap_or(0) as usize,
