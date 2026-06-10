@@ -53,7 +53,22 @@ pub struct Incompressible3dRunMetrics {
     pub boundary_velocity_cells: usize,
     pub boundary_pressure_cells: usize,
     pub boundary_ignored_faces: usize,
+    pub centerline_profiles: Option<IncompressibleCenterlineProfiles>,
     pub written: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IncompressibleLineSample {
+    pub coordinate: Real,
+    pub velocity_x: Real,
+    pub velocity_y: Real,
+    pub velocity_z: Real,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IncompressibleCenterlineProfiles {
+    pub vertical_u: Vec<IncompressibleLineSample>,
+    pub horizontal_v: Vec<IncompressibleLineSample>,
 }
 
 pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
@@ -98,6 +113,8 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         &diagnostic.corrected_fields,
         nondimensional_time,
     )?;
+    let centerline_profiles =
+        lid_cavity_centerline_profiles(case, mesh, &diagnostic.corrected_fields);
     info!(
         steps,
         t = %format_log_sci4(physical_time),
@@ -187,9 +204,55 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
             boundary_velocity_cells: boundary_stats.velocity_cells,
             boundary_pressure_cells: boundary_stats.pressure_cells,
             boundary_ignored_faces: boundary_stats.ignored_faces,
+            centerline_profiles,
             written,
         }),
     })
+}
+
+fn lid_cavity_centerline_profiles(
+    case: &CaseSpec,
+    mesh: &StructuredMesh3d,
+    fields: &IncompressibleFields,
+) -> Option<IncompressibleCenterlineProfiles> {
+    if case.benchmark_id.as_deref() != Some("lid_driven_cavity_re100") {
+        return None;
+    }
+    let i_mid = mesh.nx / 2;
+    let j_mid = mesh.ny / 2;
+    let k_mid = mesh.nz / 2;
+    let mut vertical_u = Vec::with_capacity(mesh.ny);
+    for j in 0..mesh.ny {
+        let cell = mesh.cell_index(i_mid, j, k_mid);
+        vertical_u.push(IncompressibleLineSample {
+            coordinate: cell_center_y(mesh, i_mid, j, k_mid),
+            velocity_x: fields.velocity_x.values()[cell],
+            velocity_y: fields.velocity_y.values()[cell],
+            velocity_z: fields.velocity_z.values()[cell],
+        });
+    }
+    let mut horizontal_v = Vec::with_capacity(mesh.nx);
+    for i in 0..mesh.nx {
+        let cell = mesh.cell_index(i, j_mid, k_mid);
+        horizontal_v.push(IncompressibleLineSample {
+            coordinate: cell_center_x(mesh, i, j_mid, k_mid),
+            velocity_x: fields.velocity_x.values()[cell],
+            velocity_y: fields.velocity_y.values()[cell],
+            velocity_z: fields.velocity_z.values()[cell],
+        });
+    }
+    Some(IncompressibleCenterlineProfiles {
+        vertical_u,
+        horizontal_v,
+    })
+}
+
+fn cell_center_x(mesh: &StructuredMesh3d, i: usize, j: usize, k: usize) -> Real {
+    0.5 * (mesh.node_x(i, j, k) + mesh.node_x(i + 1, j, k))
+}
+
+fn cell_center_y(mesh: &StructuredMesh3d, i: usize, j: usize, k: usize) -> Real {
+    0.5 * (mesh.node_y(i, j, k) + mesh.node_y(i, j + 1, k))
 }
 
 fn write_outputs(

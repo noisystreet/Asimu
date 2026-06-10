@@ -11,7 +11,7 @@
 - 前后面 `symmetry` 表示二维方腔；
 - \(L_{ref}=1\)、\(U_{ref}=1\)、\(\nu=0.01\)，因此 \(Re=100\)。
 
-后续完整验证应抽取 \(x=0.5\) 和 \(y=0.5\) 中心线速度，与 Ghia 等人的 Re=100 表格数据比较。
+当前 runner 会在 `Incompressible3dRunMetrics.centerline_profiles` 中返回近似 \(x=0.5\) 和 \(y=0.5\) 的 cell-centered 中心线速度样本；`expected.json` 已记录 Ghia 等人的 Re=100 表格数据。后续完整验证应在网格、压力校正和边界 ghost 完善后启用剖面插值误差判据。
 
 ## 参考文献
 

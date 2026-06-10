@@ -21,7 +21,9 @@ use crate::io::{CaseMesh, CaseSpec, load_case};
 
 pub use compressible_3d::Compressible3dRunMetrics;
 pub use diffusion::DiffusionRunMetrics;
-pub use incompressible_3d::Incompressible3dRunMetrics;
+pub use incompressible_3d::{
+    Incompressible3dRunMetrics, IncompressibleCenterlineProfiles, IncompressibleLineSample,
+};
 pub use sod::SodRunMetrics;
 
 /// 算例运行模式。
