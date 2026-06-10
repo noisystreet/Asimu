@@ -86,7 +86,7 @@ pub fn run_incompressible_simplec(
             .map(|tolerance| residual <= tolerance && momentum_residual <= tolerance)
             .unwrap_or(false);
         diagnostic.simplec_iterations = history.len();
-        diagnostic.simplec_converged = converged || config.tolerance.is_none();
+        diagnostic.simplec_converged = converged;
         diagnostic.simplec_final_residual = residual;
         diagnostic.simplec_final_momentum_residual = momentum_residual;
         diagnostic.simplec_residual_history = history.clone();
@@ -104,7 +104,7 @@ pub fn run_incompressible_simplec(
             diagnostic.simplec_final_residual <= tolerance
                 && diagnostic.simplec_final_momentum_residual <= tolerance
         })
-        .unwrap_or(true);
+        .unwrap_or(false);
     Ok(diagnostic)
 }
 

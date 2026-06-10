@@ -314,7 +314,7 @@ solution_cgns = "flow.cgns"
             1.0e-12
         ));
         assert_eq!(metrics.simplec_iterations, 1);
-        assert!(metrics.simplec_converged);
+        assert!(!metrics.simplec_converged);
         assert_eq!(metrics.simplec_residual_history.len(), 1);
         assert_eq!(metrics.simplec_momentum_residual_history.len(), 1);
         assert!(crate::core::approx_eq(
