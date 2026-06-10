@@ -1,7 +1,7 @@
 {
   "benchmark_id": "lid_driven_cavity_re100",
   "asimu_min_version": "0.3.0",
-  "status": "centerline_error_diagnostic_enabled",
+  "status": "long_iteration_diagnostic",
   "quantities": [
     {
       "name": "reynolds_number",
@@ -11,15 +11,30 @@
     },
     {
       "name": "simplec_iterations",
-      "value": 2,
+      "value": 100,
       "tolerance_abs": 0,
-      "source": "case.toml time.max_steps; velocity update convergence pending"
+      "source": "case.toml time.max_steps; stable long-iteration diagnostic"
     },
     {
       "name": "max_abs_corrected_divergence",
       "value": 0.0,
       "tolerance_abs": 1.0e-8,
-      "source": "pressure-corrected continuity smoke threshold"
+      "source": "pressure-correction equation residual; not the reconstructed velocity divergence"
+    },
+    {
+      "name": "max_abs_underrelaxed_corrected_divergence",
+      "max_value": 0.03,
+      "source": "continuity residual after pressure_under_relaxation scaling; SIMPLEC convergence residual"
+    },
+    {
+      "name": "max_abs_corrected_field_divergence_after_boundary",
+      "max_value": 0.02,
+      "source": "cell-centered divergence recomputed from corrected velocity after boundary reapply"
+    },
+    {
+      "name": "pressure_correction_rhs_active_sum",
+      "max_abs": 1.0e-4,
+      "source": "pressure-correction RHS sum after skipping p'=0 constraint rows"
     },
     {
       "name": "pressure_solve_converged",
@@ -30,7 +45,7 @@
   "profiles": [
     {
       "name": "vertical_centerline_u",
-      "status": "smoke_error_diagnostic_only",
+      "status": "long_iteration_diagnostic",
       "source": "Ghia et al. 1982, Table I",
       "coordinate": "y",
       "velocity_component": "u",
@@ -57,7 +72,7 @@
     },
     {
       "name": "horizontal_centerline_v",
-      "status": "smoke_error_diagnostic_only",
+      "status": "long_iteration_diagnostic",
       "source": "Ghia et al. 1982, Table II",
       "coordinate": "x",
       "velocity_component": "v",

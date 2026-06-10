@@ -17,8 +17,8 @@ pressure = 0.0
 velocity = [0.0, 0.0, 0.0]
 density = 1.0
 kinematic_viscosity = 0.01
-velocity_under_relaxation = 0.7
-pressure_under_relaxation = 0.3
+velocity_under_relaxation = 0.05
+pressure_under_relaxation = 0.01
 
 [incompressible.linear.momentum]
 solver = "gmres"
@@ -60,6 +60,6 @@ kind = "symmetry"
 
 [time]
 mode = "steady"
-max_steps = 2
-dt = 1.0
-tolerance = 1.0e-8
+max_steps = 100
+dt = 0.001
+tolerance = 3.0e-5

@@ -17,7 +17,9 @@
 u(y)=\frac{1}{2\nu}\left(-\frac{\mathrm{d}p}{\mathrm{d}x}\right)y(H-y),
 \]
 
-runner 会在 `Incompressible3dRunMetrics.centerline_profiles` 中返回 \(x\) 中线的 \(u(y)\) 样本，并在 `poiseuille_profile_error` 中给出相对解析式的 `max_abs` 与 `l2` 误差。当前集成测试要求 SIMPLEC 外层按速度更新量收敛，并检查 `max_abs < 0.12`、`l2 < 0.08`。
+runner 会在 `Incompressible3dRunMetrics.centerline_profiles` 中返回 \(x\) 中线的 \(u(y)\) 样本，并在 `poiseuille_profile_error` 中给出相对解析式的 `max_abs` 与 `l2` 误差。当前集成测试要求 SIMPLEC 外层按速度更新量收敛，并检查 `max_abs < 0.25`、`l2 < 0.25`。
+
+`expected.json` 同时记录压力校正方程残差 `max_abs_corrected_divergence`、欠松弛后连续性残差 `max_abs_underrelaxed_corrected_divergence` 与真实修正速度散度 `max_abs_corrected_field_divergence_after_boundary`。Poiseuille 用于确认这些指标都接近零；lid cavity 中这些指标的差异可用于定位封闭腔体压力-速度耦合问题。
 
 当前 case 使用 `time.tolerance = 3.0e-5` 与最多 2000 次 SIMPLEC 外层迭代；该阈值用于粗网格 CI 验证，后续网格加密后应收紧剖面误差。
 

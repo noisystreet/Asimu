@@ -535,13 +535,18 @@ mod tests {
         let mesh = mesh_3x3x3();
         let divergence = ScalarField::uniform(mesh.num_cells(), 1.5).expect("div");
         let d = ScalarField::uniform(mesh.num_cells(), 2.0).expect("d");
+        let boundary = BoundarySet::new(vec![BoundaryPatch::new(
+            "i_max",
+            mesh.resolve_logical_boundary("i_max").expect("faces"),
+            BoundaryKind::IncompressiblePressureOutlet { pressure: 0.0 },
+        )]);
         let config = IncompressiblePressureCorrectionConfig::new(1.0, 0, 0.0).expect("config");
 
         let system = assemble_incompressible_pressure_correction_3d(
             &mesh,
             &divergence,
             &d,
-            &BoundarySet::default(),
+            &boundary,
             config,
         )
         .expect("sys");

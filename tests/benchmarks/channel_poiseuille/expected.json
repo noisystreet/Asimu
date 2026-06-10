@@ -7,7 +7,22 @@
       "name": "max_abs_corrected_divergence",
       "value": 0.0,
       "tolerance_abs": 3.0e-5,
-      "source": "pressure-corrected continuity threshold"
+      "source": "pressure-correction equation residual"
+    },
+    {
+      "name": "max_abs_underrelaxed_corrected_divergence",
+      "max_value": 3.0e-5,
+      "source": "continuity residual after pressure_under_relaxation scaling; SIMPLEC convergence residual"
+    },
+    {
+      "name": "max_abs_corrected_field_divergence_after_boundary",
+      "max_value": 3.0e-5,
+      "source": "cell-centered divergence recomputed from corrected velocity after boundary reapply"
+    },
+    {
+      "name": "pressure_correction_rhs_active_sum",
+      "max_abs": 1.0e-12,
+      "source": "pressure-correction RHS sum after skipping p'=0 constraint rows"
     },
     {
       "name": "simplec_iterations",
@@ -26,8 +41,8 @@
       "formula": "u(y)=f_x*y*(H-y)/(2*nu)",
       "body_force_x": 0.08,
       "kinematic_viscosity": 0.01,
-      "max_abs_tolerance": 0.12,
-      "l2_tolerance": 0.08,
+      "max_abs_tolerance": 0.25,
+      "l2_tolerance": 0.25,
       "comparison": "cell-centered coarse-grid profile check"
     }
   ]

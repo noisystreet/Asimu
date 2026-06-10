@@ -4,6 +4,7 @@ use crate::boundary::BoundarySet;
 use crate::core::Real;
 use crate::discretization::{
     IncompressibleMomentumPredictorConfig, IncompressiblePressureCorrectionConfig,
+    apply_incompressible_boundary_conditions_3d,
     assemble_incompressible_momentum_predictor_with_boundary_3d,
     assemble_incompressible_pressure_correction_3d, compute_incompressible_divergence_3d,
     compute_incompressible_rhie_chow_divergence_3d,
@@ -12,6 +13,7 @@ use crate::error::{AsimuError, Result};
 use crate::field::{IncompressibleFields, ScalarField};
 use crate::linalg::{CsrMatrix, GmresConfig, GmresSolver, IdentityPreconditioner};
 use crate::mesh::StructuredMesh3d;
+use tracing::debug;
 
 const SIMPLEC_DIVERGENCE_LIMIT: Real = 1.0e50;
 
@@ -54,6 +56,10 @@ pub struct IncompressibleSimplecDiagnostic {
     pub max_abs_divergence: Real,
     pub max_abs_predicted_divergence: Real,
     pub max_abs_corrected_divergence: Real,
+    pub max_abs_underrelaxed_corrected_divergence: Real,
+    pub max_abs_corrected_field_divergence_before_boundary: Real,
+    pub max_abs_corrected_field_divergence_after_boundary: Real,
+    pub pressure_correction_rhs_active_sum: Real,
     pub pressure_system_rows: usize,
     pub pressure_system_nnz: usize,
     pub pressure_solve_converged: bool,
@@ -89,7 +95,7 @@ pub fn run_incompressible_simplec(
     let mut last = None;
     for _ in 0..max_iterations {
         let mut diagnostic = assemble_simplec_step(&current_fields, &config)?;
-        let residual = diagnostic.max_abs_corrected_divergence;
+        let residual = diagnostic.max_abs_underrelaxed_corrected_divergence;
         let momentum_residual = diagnostic.max_abs_momentum_equation_residual;
         let velocity_delta = diagnostic.max_abs_corrected_velocity_delta;
         validate_simplec_step(residual, momentum_residual, velocity_delta)?;
@@ -199,25 +205,48 @@ fn assemble_simplec_step(
         &pressure_solution.correction,
         config.density,
     )?;
-    let corrected_fields = corrected_incompressible_fields(
-        mesh,
+    let max_abs_underrelaxed_corrected_divergence =
+        max_scaled_pressure_correction_continuity_residual(
+            &system.matrix,
+            &system.rhs,
+            &pressure_solution.correction,
+            config.density,
+            config.pressure_under_relaxation,
+        )?;
+    let pressure_correction_rhs_active_sum =
+        pressure_correction_active_rhs_sum(&system.matrix, &system.rhs)?;
+    let corrected = build_corrected_fields_with_diagnostics(
         fields,
         &momentum_solution.predicted_fields,
         &pressure_solution.correction,
         momentum_system.d_coefficient.values(),
-        config.pressure_under_relaxation,
-        config.boundary.has_periodic_pair("i_min", "i_max"),
+        config,
     )?;
     let max_abs_corrected_velocity_delta = max_velocity_delta(
         fields,
-        corrected_fields.velocity_x.values(),
-        corrected_fields.velocity_y.values(),
-        corrected_fields.velocity_z.values(),
+        corrected.fields.velocity_x.values(),
+        corrected.fields.velocity_y.values(),
+        corrected.fields.velocity_z.values(),
+    );
+    debug!(
+        pressure_equation_residual = max_abs_corrected_divergence,
+        underrelaxed_pressure_equation_residual = max_abs_underrelaxed_corrected_divergence,
+        corrected_field_divergence_before_boundary = corrected.max_abs_divergence_before_boundary,
+        corrected_field_divergence_after_boundary = corrected.max_abs_divergence_after_boundary,
+        pressure_rhs_active_sum = pressure_correction_rhs_active_sum,
+        velocity_delta = max_abs_corrected_velocity_delta,
+        "SIMPLEC pressure-velocity diagnostic"
     );
     Ok(IncompressibleSimplecDiagnostic {
         max_abs_divergence,
         max_abs_predicted_divergence,
         max_abs_corrected_divergence,
+        max_abs_underrelaxed_corrected_divergence,
+        max_abs_corrected_field_divergence_before_boundary: corrected
+            .max_abs_divergence_before_boundary,
+        max_abs_corrected_field_divergence_after_boundary: corrected
+            .max_abs_divergence_after_boundary,
+        pressure_correction_rhs_active_sum,
         pressure_system_rows: system.matrix.nrows(),
         pressure_system_nnz: system.matrix.values().len(),
         pressure_solve_converged: pressure_solution.converged,
@@ -235,11 +264,44 @@ fn assemble_simplec_step(
         max_abs_corrected_velocity_delta,
         simplec_iterations: 0,
         simplec_converged: false,
-        simplec_final_residual: max_abs_corrected_divergence,
+        simplec_final_residual: max_abs_underrelaxed_corrected_divergence,
         simplec_final_momentum_residual: momentum_solution.max_abs_equation_residual,
         simplec_residual_history: Vec::new(),
         simplec_momentum_residual_history: Vec::new(),
-        corrected_fields,
+        corrected_fields: corrected.fields,
+    })
+}
+
+struct CorrectedFieldsDiagnostic {
+    fields: IncompressibleFields,
+    max_abs_divergence_before_boundary: Real,
+    max_abs_divergence_after_boundary: Real,
+}
+
+fn build_corrected_fields_with_diagnostics(
+    current: &IncompressibleFields,
+    predicted: &IncompressibleFields,
+    pressure_correction: &[Real],
+    d_coefficient: &[Real],
+    config: &IncompressibleSimplecConfig<'_>,
+) -> Result<CorrectedFieldsDiagnostic> {
+    let mesh = config.mesh;
+    let mut fields = corrected_incompressible_fields(
+        mesh,
+        current,
+        predicted,
+        pressure_correction,
+        d_coefficient,
+        config.pressure_under_relaxation,
+        config.boundary.has_periodic_pair("i_min", "i_max"),
+    )?;
+    let max_abs_divergence_before_boundary = max_abs_field_divergence(mesh, &fields)?;
+    apply_incompressible_boundary_conditions_3d(mesh, &mut fields, config.boundary)?;
+    let max_abs_divergence_after_boundary = max_abs_field_divergence(mesh, &fields)?;
+    Ok(CorrectedFieldsDiagnostic {
+        fields,
+        max_abs_divergence_before_boundary,
+        max_abs_divergence_after_boundary,
     })
 }
 
@@ -373,9 +435,24 @@ fn max_pressure_correction_continuity_residual(
     correction: &[Real],
     density: Real,
 ) -> Result<Real> {
+    max_scaled_pressure_correction_continuity_residual(matrix, rhs, correction, density, 1.0)
+}
+
+fn max_scaled_pressure_correction_continuity_residual(
+    matrix: &CsrMatrix,
+    rhs: &[Real],
+    correction: &[Real],
+    density: Real,
+    correction_scale: Real,
+) -> Result<Real> {
     if density <= 0.0 {
         return Err(AsimuError::Linalg(
             "压力校正连续性残差要求正密度".to_string(),
+        ));
+    }
+    if !correction_scale.is_finite() {
+        return Err(AsimuError::Linalg(
+            "压力校正连续性残差缩放必须为有限值".to_string(),
         ));
     }
     if correction.len() != matrix.ncols() || rhs.len() != matrix.nrows() {
@@ -392,9 +469,24 @@ fn max_pressure_correction_continuity_residual(
             .row_entries(row)
             .map(|(col, value)| value * correction[col])
             .sum::<Real>();
-        max_residual = max_residual.max(((rhs_value - ax) / density).abs());
+        max_residual = max_residual.max(((rhs_value - correction_scale * ax) / density).abs());
     }
     Ok(max_residual)
+}
+
+fn pressure_correction_active_rhs_sum(matrix: &CsrMatrix, rhs: &[Real]) -> Result<Real> {
+    if rhs.len() != matrix.nrows() {
+        return Err(AsimuError::Linalg(
+            "压力校正 RHS 长度与矩阵行数不一致".to_string(),
+        ));
+    }
+    let mut sum = 0.0;
+    for (row, value) in rhs.iter().enumerate().take(matrix.nrows()) {
+        if !is_identity_constraint_row(matrix, row) {
+            sum += *value;
+        }
+    }
+    Ok(sum)
 }
 
 fn is_identity_constraint_row(matrix: &CsrMatrix, row: usize) -> bool {
@@ -403,6 +495,17 @@ fn is_identity_constraint_row(matrix: &CsrMatrix, row: usize) -> bool {
         return false;
     };
     entries.next().is_none() && col == row && (value - 1.0).abs() <= Real::EPSILON
+}
+
+fn max_abs_field_divergence(
+    mesh: &StructuredMesh3d,
+    fields: &IncompressibleFields,
+) -> Result<Real> {
+    let divergence = compute_incompressible_divergence_3d(mesh, fields)?;
+    Ok(divergence
+        .values()
+        .iter()
+        .fold(0.0, |acc: Real, value| acc.max(value.abs())))
 }
 
 fn max_velocity_delta(fields: &IncompressibleFields, u: &[Real], v: &[Real], w: &[Real]) -> Real {
@@ -453,9 +556,15 @@ fn corrected_incompressible_fields(
                     current.pressure.values()[cell]
                         + pressure_under_relaxation * pressure_correction[cell],
                 );
-                velocity_x.push(predicted.velocity_x.values()[cell] - d * grad[0]);
-                velocity_y.push(predicted.velocity_y.values()[cell] - d * grad[1]);
-                velocity_z.push(predicted.velocity_z.values()[cell] - d * grad[2]);
+                velocity_x.push(
+                    predicted.velocity_x.values()[cell] - pressure_under_relaxation * d * grad[0],
+                );
+                velocity_y.push(
+                    predicted.velocity_y.values()[cell] - pressure_under_relaxation * d * grad[1],
+                );
+                velocity_z.push(
+                    predicted.velocity_z.values()[cell] - pressure_under_relaxation * d * grad[2],
+                );
             }
         }
     }

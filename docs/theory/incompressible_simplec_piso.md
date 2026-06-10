@@ -215,8 +215,10 @@ I5 起，压力校正 RHS 使用 `compute_incompressible_rhie_chow_divergence_3d
 其中 \(d_f=(d_P+d_N)/2\)。边界面通量由不可压缩边界条件给定：壁面/对称面法向通量为零，速度入口使用给定速度，压力出口使用 owner 速度零梯度外推；结构化 `i_min/i_max` 成对周期边界通过 wrap 面通量进入 Rhie-Chow 连续性残差。
 
 I3 压力校正矩阵使用动量预测矩阵提供的 cell-centered \(d_P\)，内部面取
-\(d_f=(d_P+d_N)/2\)，压力出口 owner 行施加 \(p'=0\)；若没有压力 Dirichlet
-边界，则用 `pressure_reference_cell` 固定参考压力：
+\(d_f=(d_P+d_N)/2\)。压力出口 owner 行施加 \(p'=0\)；当前 owner-cell
+边界 skeleton 还会把无滑移壁、动壁和速度入口 owner 行作为 \(p'=0\) 约束，
+避免压力校正与下一轮边界速度重施加互相抵消。若没有上述约束，则用
+`pressure_reference_cell` 固定参考压力：
 
 \[
 -\nabla\cdot(\rho d_f\nabla p') = \rho R_c \tag{11a}
@@ -231,7 +233,9 @@ a_{nb}=-\rho\frac{d_f}{\Delta n_f^2}
 \tag{11b}
 \]
 
-纯 Neumann 压力校正矩阵奇异；无压力出口时通过 `pressure_reference_cell` 将一行替换为 \(p'=p'_{\mathrm{ref}}\)。
+纯 Neumann 压力校正矩阵奇异；无压力出口或速度约束 owner 行时，通过
+`pressure_reference_cell` 将一行替换为 \(p'=p'_{\mathrm{ref}}\)，并在闭域 RHS
+上移除非参考行均值以满足兼容性条件。
 
 ### 5.4 修正
 
@@ -242,7 +246,7 @@ p \leftarrow p + \alpha_p p' \tag{12}
 `[incompressible].pressure_under_relaxation` 给出 \(\alpha_p\in(0,1]\)，默认 1。
 
 \[
-\mathbf{u} \leftarrow \mathbf{u}^* - d\,\nabla p' \tag{13}
+\mathbf{u} \leftarrow \mathbf{u}^* - \alpha_p d\,\nabla p' \tag{13}
 \]
 
 ## 6. 边界条件
@@ -263,7 +267,7 @@ Ghost 单元距 owner 中心法向距离 \(d_f\)。
 
 详细分工见 [boundary_conditions.md](boundary_conditions.md) §9。
 
-当前实现分两层：`apply_incompressible_boundary_conditions_3d` 先把 `wall`、`moving_wall`、`velocity_inlet`、`pressure_outlet`、`symmetry` 施加到结构化边界 owner 单元并输出统计；`assemble_incompressible_momentum_predictor_with_boundary_3d` 再把速度 Dirichlet、压力出口零梯度与对称/滑移法向约束转化为动量预测矩阵/RHS 的边界面贡献。`i_min/i_max` 成对 `periodic` 不改 owner 单元值，而是在动量、Rhie-Chow、压力校正和速度修正压力梯度中使用周期 wrap 邻接。
+当前实现分两层：`apply_incompressible_boundary_conditions_3d` 先把 `wall`、`moving_wall`、`velocity_inlet`、`pressure_outlet`、`symmetry` 施加到结构化边界 owner 单元并输出统计；SIMPLEC 每次 \(p,\mathbf{u}\) 修正后会再次施加这些 owner-cell 约束，确保壁面/动壁速度不随压力校正漂移。`assemble_incompressible_momentum_predictor_with_boundary_3d` 再把速度 Dirichlet、压力出口零梯度与对称/滑移法向约束转化为动量预测矩阵/RHS 的边界面贡献。`i_min/i_max` 成对 `periodic` 不改 owner 单元值，而是在动量、Rhie-Chow、压力校正和速度修正压力梯度中使用周期 wrap 邻接。
 
 ## 7. PISO 与时间积分
 
@@ -301,7 +305,21 @@ Ghost 单元距 owner 中心法向距离 \(d_f\)。
 
 `solver::run_incompressible_simplec` 已提供 SIMPLEC 外层循环：`time.max_steps` 作为最大外层迭代数，
 `time.tolerance` 为可选收敛阈值；每轮执行动量预测、压力校正、\(p,\mathbf{u}\)
-修正，并把压力校正方程质量残差 \(\max|b_p-A_p p'|\) 与 \(\max|A_u u^*-rhs_u|\) 写入残差历史。预测残差仍来自 Rhie-Chow 面通量；修正后残差使用同一次压力校正方程的线性残差，避免用总压力场重复计算 Rhie-Chow 压力项。设置 `time.tolerance` 时，连续性残差、动量残差与 \(\max|\Delta\mathbf{u}|\) 速度更新量须同时满足阈值才标记收敛；未设置时仅执行固定 `max_steps`，`simplec_converged=false` 表示没有收敛判据。若残差或速度更新量出现非有限值，或任一监控量超过发散保护上限，runner 立即返回求解器错误；输出字段使用最后一次修正后的场。
+修正，并把按 \(\alpha_p\) 缩放后的压力校正连续性残差
+\(\max|b_p-\alpha_p A_p p'|\) 与 \(\max|A_u u^*-rhs_u|\) 写入残差历史。
+预测残差仍来自 Rhie-Chow 面通量；`max_abs_corrected_divergence` 保留全量压力
+校正方程线性残差 \(\max|b_p-A_p p'|\)，用于判断线性系统是否解好。设置
+`time.tolerance` 时，欠松弛后的连续性残差、动量残差与
+\(\max|\Delta\mathbf{u}|\) 速度更新量须同时满足阈值才标记收敛；未设置时仅执行固定
+`max_steps`，`simplec_converged=false` 表示没有收敛判据。若残差或速度更新量出现非有限值，或任一监控量超过发散保护上限，runner 立即返回求解器错误；输出字段使用最后一次重施加边界后的修正场。
+
+为排查封闭腔体收敛，runner 额外记录多类诊断：`max_abs_corrected_divergence`
+表示全量压力校正方程自身的质量残差；`max_abs_underrelaxed_corrected_divergence`
+表示实际欠松弛速度修正后仍剩余的压力校正连续性残差；`max_abs_corrected_field_divergence_before_boundary`
+与 `max_abs_corrected_field_divergence_after_boundary` 则分别重新计算 \(p,\mathbf{u}\)
+修正后、边界重施加前后的 cell-centered \(\nabla\cdot\mathbf{u}\)。这些指标不应混用：
+全量压力方程残差用于判断线性系统是否解好，欠松弛残差用于 SIMPLEC 收敛，cell-centered 散度用于判断边界重施加和速度修正是否仍破坏真实速度场连续性。
+`pressure_correction_rhs_active_sum` 记录跳过 \(p'=0\) identity 约束行后的 RHS 总和，用于检查闭域兼容性。
 
 `[incompressible.linear.momentum]` 与 `[incompressible.linear.pressure]` 分别控制动量预测和压力校正线性求解的 GMRES `restart`、`max_iters` 与 `tolerance`。压力校正默认使用 `restart=64`、`max_iters=500`、`tolerance=1.0e-10`，避免小型 Poisson-like 系统被过早截断；当前首版仍使用 Identity 预条件器，后续会切换到更适合 Poisson 系统的 CG/ILU(0) 或 AMG 路径。
 

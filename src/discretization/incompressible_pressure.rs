@@ -26,8 +26,8 @@ pub fn assemble_incompressible_pressure_correction_3d(
     validate_pressure_inputs(n, divergence, config)?;
     validate_d_coefficient(n, d_coefficient)?;
     let spacing = CartesianSpacing::from_mesh(mesh)?;
-    let pressure_dirichlet = pressure_dirichlet_cells(mesh, boundary)?;
-    let has_pressure_dirichlet = pressure_dirichlet.iter().any(|value| *value);
+    let correction_dirichlet = pressure_correction_dirichlet_cells(mesh, boundary)?;
+    let has_correction_dirichlet = correction_dirichlet.iter().any(|value| *value);
     let periodic_x = boundary.has_periodic_pair("i_min", "i_max");
     let mut rows = (0..n).map(|_| Vec::with_capacity(7)).collect::<Vec<_>>();
     let mut rhs = divergence
@@ -35,6 +35,9 @@ pub fn assemble_incompressible_pressure_correction_3d(
         .iter()
         .map(|value| config.density * value)
         .collect::<Vec<_>>();
+    if !has_correction_dirichlet {
+        remove_closed_domain_rhs_mean(&mut rhs, config.pressure_reference_cell);
+    }
     let ctx = PressureCorrectionCtx {
         mesh,
         spacing,
@@ -46,11 +49,11 @@ pub fn assemble_incompressible_pressure_correction_3d(
         for j in 0..mesh.ny {
             for i in 0..mesh.nx {
                 let row = mesh.cell_index(i, j, k);
-                if pressure_dirichlet[row]
-                    || (!has_pressure_dirichlet && row == config.pressure_reference_cell)
+                if correction_dirichlet[row]
+                    || (!has_correction_dirichlet && row == config.pressure_reference_cell)
                 {
                     rows[row].push((row, 1.0));
-                    rhs[row] = if pressure_dirichlet[row] {
+                    rhs[row] = if correction_dirichlet[row] {
                         0.0
                     } else {
                         config.pressure_reference_value
@@ -221,10 +224,13 @@ fn validate_d_coefficient(n: usize, d_coefficient: &ScalarField) -> Result<()> {
     Ok(())
 }
 
-fn pressure_dirichlet_cells(mesh: &StructuredMesh3d, boundary: &BoundarySet) -> Result<Vec<bool>> {
+fn pressure_correction_dirichlet_cells(
+    mesh: &StructuredMesh3d,
+    boundary: &BoundarySet,
+) -> Result<Vec<bool>> {
     let mut cells = vec![false; mesh.num_cells()];
     for patch in boundary.patches() {
-        if !is_pressure_dirichlet_kind(&patch.kind) {
+        if !is_pressure_correction_dirichlet_kind(&patch.kind) {
             continue;
         }
         for &face in &patch.face_ids {
@@ -235,11 +241,40 @@ fn pressure_dirichlet_cells(mesh: &StructuredMesh3d, boundary: &BoundarySet) -> 
     Ok(cells)
 }
 
-fn is_pressure_dirichlet_kind(kind: &BoundaryKind) -> bool {
+fn is_pressure_correction_dirichlet_kind(kind: &BoundaryKind) -> bool {
     matches!(
         kind,
-        BoundaryKind::IncompressiblePressureOutlet { .. } | BoundaryKind::Outlet { .. }
+        BoundaryKind::Wall { .. }
+            | BoundaryKind::MovingWall { .. }
+            | BoundaryKind::IncompressibleVelocityInlet { .. }
+            | BoundaryKind::IncompressiblePressureOutlet { .. }
+            | BoundaryKind::Outlet { .. }
+            | BoundaryKind::Inlet { .. }
     )
+}
+
+fn remove_closed_domain_rhs_mean(rhs: &mut [Real], pressure_reference_cell: usize) {
+    if rhs.len() <= 1 {
+        return;
+    }
+    let mut sum = 0.0;
+    let mut count = 0usize;
+    for (cell, value) in rhs.iter().enumerate() {
+        if cell == pressure_reference_cell {
+            continue;
+        }
+        sum += *value;
+        count += 1;
+    }
+    if count == 0 {
+        return;
+    }
+    let mean = sum / count as Real;
+    for (cell, value) in rhs.iter_mut().enumerate() {
+        if cell != pressure_reference_cell {
+            *value -= mean;
+        }
+    }
 }
 
 fn neighbor_if(
@@ -247,4 +282,32 @@ fn neighbor_if(
     index: impl FnOnce() -> (usize, usize, usize),
 ) -> Option<(usize, usize, usize)> {
     present.then(index)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::boundary::BoundarySet;
+
+    #[test]
+    fn closed_domain_pressure_rhs_removes_active_mean() {
+        let mesh = StructuredMesh3d::uniform_box("box", 2, 2, 1, 1.0, 1.0, 0.1).expect("mesh");
+        let divergence = ScalarField::from_values(vec![1.0, 2.0, 3.0, 4.0]).expect("divergence");
+        let d = ScalarField::from_values(vec![1.0; mesh.num_cells()]).expect("d");
+        let boundary = BoundarySet::new(Vec::new());
+
+        let system = assemble_incompressible_pressure_correction_3d(
+            &mesh,
+            &divergence,
+            &d,
+            &boundary,
+            IncompressiblePressureCorrectionConfig::new(1.0, 0, 0.0).expect("config"),
+        )
+        .expect("system");
+
+        assert_eq!(system.rhs[0], 0.0);
+        assert!((system.rhs[1] + 1.0).abs() <= Real::EPSILON);
+        assert!(system.rhs[2].abs() <= Real::EPSILON);
+        assert!((system.rhs[3] - 1.0).abs() <= Real::EPSILON);
+    }
 }

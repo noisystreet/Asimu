@@ -208,6 +208,8 @@ fn write_single_block_solution_flow(
     write_flow_cgns(path, mesh, &fields_out, &eos_out, time_out, p_floor)?;
     #[cfg(not(feature = "io-cgns"))]
     let _ = time_out;
+    #[cfg(all(not(feature = "io-cgns"), not(feature = "io-vtk")))]
+    let _ = (path, mesh, fields_out, eos_out, p_floor);
     #[cfg(not(feature = "io-cgns"))]
     if case
         .output

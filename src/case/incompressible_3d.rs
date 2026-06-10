@@ -33,6 +33,10 @@ pub struct Incompressible3dRunMetrics {
     pub max_abs_divergence: Real,
     pub max_abs_predicted_divergence: Real,
     pub max_abs_corrected_divergence: Real,
+    pub max_abs_underrelaxed_corrected_divergence: Real,
+    pub max_abs_corrected_field_divergence_before_boundary: Real,
+    pub max_abs_corrected_field_divergence_after_boundary: Real,
+    pub pressure_correction_rhs_active_sum: Real,
     pub pressure_system_rows: usize,
     pub pressure_system_nnz: usize,
     pub pressure_solve_converged: bool,
@@ -153,6 +157,13 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         max_abs_divergence = %format_log_sci4(diagnostic.max_abs_divergence),
         max_abs_predicted_divergence = %format_log_sci4(diagnostic.max_abs_predicted_divergence),
         max_abs_corrected_divergence = %format_log_sci4(diagnostic.max_abs_corrected_divergence),
+        max_abs_underrelaxed_corrected_divergence =
+            %format_log_sci4(diagnostic.max_abs_underrelaxed_corrected_divergence),
+        max_abs_corrected_field_divergence_before_boundary =
+            %format_log_sci4(diagnostic.max_abs_corrected_field_divergence_before_boundary),
+        max_abs_corrected_field_divergence_after_boundary =
+            %format_log_sci4(diagnostic.max_abs_corrected_field_divergence_after_boundary),
+        pressure_rhs_active_sum = %format_log_sci4(diagnostic.pressure_correction_rhs_active_sum),
         pressure_rows = diagnostic.pressure_system_rows,
         pressure_nnz = diagnostic.pressure_system_nnz,
         pressure_converged = diagnostic.pressure_solve_converged,
@@ -182,7 +193,7 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         benchmark_id: case.benchmark_id.clone(),
         kind: CaseRunKind::Incompressible3dSteady,
         summary: format!(
-            "incompressible_3d_i1 steps={steps} simplec_iters={} simplec_converged={} simplec_residual={} simplec_momentum_residual={} max|div(u)|={} max|div(u*)|={} max|div(u_corr)|={} pressure_rows={} pressure_nnz={} pressure_converged={} pressure_iters={} pressure_residual={} momentum_rows={} momentum_nnz={} momentum_converged={} momentum_iters={} momentum_residual={} bc_velocity_cells={} bc_pressure_cells={}",
+            "incompressible_3d_i1 steps={steps} simplec_iters={} simplec_converged={} simplec_residual={} simplec_momentum_residual={} max|div(u)|={} max|div(u*)|={} max|div(u_corr_eq)|={} max|div(u_corr_underrelaxed_eq)|={} max|div(u_corr_pre_bc)|={} max|div(u_corr_post_bc)|={} pressure_rhs_active_sum={} pressure_rows={} pressure_nnz={} pressure_converged={} pressure_iters={} pressure_residual={} momentum_rows={} momentum_nnz={} momentum_converged={} momentum_iters={} momentum_residual={} bc_velocity_cells={} bc_pressure_cells={}",
             diagnostic.simplec_iterations,
             diagnostic.simplec_converged,
             format_log_sci4(diagnostic.simplec_final_residual),
@@ -190,6 +201,10 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
             format_log_sci4(diagnostic.max_abs_divergence),
             format_log_sci4(diagnostic.max_abs_predicted_divergence),
             format_log_sci4(diagnostic.max_abs_corrected_divergence),
+            format_log_sci4(diagnostic.max_abs_underrelaxed_corrected_divergence),
+            format_log_sci4(diagnostic.max_abs_corrected_field_divergence_before_boundary),
+            format_log_sci4(diagnostic.max_abs_corrected_field_divergence_after_boundary),
+            format_log_sci4(diagnostic.pressure_correction_rhs_active_sum),
             diagnostic.pressure_system_rows,
             diagnostic.pressure_system_nnz,
             diagnostic.pressure_solve_converged,
@@ -241,6 +256,13 @@ fn build_run_metrics(
         max_abs_divergence: diagnostic.max_abs_divergence,
         max_abs_predicted_divergence: diagnostic.max_abs_predicted_divergence,
         max_abs_corrected_divergence: diagnostic.max_abs_corrected_divergence,
+        max_abs_underrelaxed_corrected_divergence: diagnostic
+            .max_abs_underrelaxed_corrected_divergence,
+        max_abs_corrected_field_divergence_before_boundary: diagnostic
+            .max_abs_corrected_field_divergence_before_boundary,
+        max_abs_corrected_field_divergence_after_boundary: diagnostic
+            .max_abs_corrected_field_divergence_after_boundary,
+        pressure_correction_rhs_active_sum: diagnostic.pressure_correction_rhs_active_sum,
         pressure_system_rows: diagnostic.pressure_system_rows,
         pressure_system_nnz: diagnostic.pressure_system_nnz,
         pressure_solve_converged: diagnostic.pressure_solve_converged,
@@ -366,7 +388,10 @@ fn poiseuille_profile_error(
     let k_mid = mesh.nz / 2;
     let mut max_abs: Real = 0.0;
     let mut sum_sq: Real = 0.0;
-    for j in 0..mesh.ny {
+    if mesh.ny <= 2 {
+        return None;
+    }
+    for j in 1..(mesh.ny - 1) {
         let y = cell_center_y(mesh, i_mid, j, k_mid) - y_min;
         let expected = body_force[0] * y * (height - y) / (2.0 * kinematic_viscosity);
         let cell = mesh.cell_index(i_mid, j, k_mid);
@@ -376,7 +401,7 @@ fn poiseuille_profile_error(
     }
     Some(IncompressibleProfileError {
         max_abs,
-        l2: (sum_sq / mesh.ny as Real).sqrt(),
+        l2: (sum_sq / (mesh.ny - 2) as Real).sqrt(),
     })
 }
 
