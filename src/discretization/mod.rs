@@ -72,7 +72,10 @@ pub use incompressible::{
 pub use incompressible_bc::{
     IncompressibleBoundaryApplyStats, apply_incompressible_boundary_conditions_3d,
 };
-pub use incompressible_face_boundary::incompressible_boundary_face_velocity;
+pub use incompressible_face_boundary::{
+    IncompressibleBoundaryFaceState, IncompressibleMassFluxBoundaryKind,
+    incompressible_boundary_face_state, incompressible_boundary_face_velocity,
+};
 pub use incompressible_face_flux::compute_incompressible_face_flux_divergence_3d;
 pub use incompressible_momentum::{
     IncompressibleConvectionScheme, IncompressibleMomentumPredictorConfig,

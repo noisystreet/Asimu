@@ -67,7 +67,7 @@ p^*=\frac{p}{p_{\mathrm{ref}}},
 
 - **FVM**，结构化六面体，**collocated**：\(p,\mathbf{u}\) 存于单元中心。
 - 面质量通量 \(\dot{m}_f = \rho\,\mathbf{u}_f\cdot\mathbf{S}_f\) 经 **Rhie-Chow** 计算，避免压力棋盘格。
-- I1 基础算子限定为 Cartesian 均匀结构化网格；边界缺失邻居暂按零法向梯度 ghost 处理，后续 SIMPLEC/PISO 装配将改由显式边界通量控制。
+- I1 基础算子限定为 Cartesian 均匀结构化网格；不可压缩边界面由统一 face state 描述，集中给出面速度、压力校正约束和通量语义。
 
 ### 2.1 连续性残差（I1）
 
@@ -212,7 +212,7 @@ d_P = \frac{V_P}{a_P^c} \tag{10}
 I5 起，压力校正 RHS 使用 `compute_incompressible_rhie_chow_divergence_3d`
 从面通量计算连续性残差。内部面质量通量为
 \(\dot{m}_f=\rho A_f(\mathbf{u}_f\cdot\mathbf{n}_f-d_f(p_N-p_P)/\Delta n_f)\)，
-其中 \(d_f=(d_P+d_N)/2\)。边界面通量由不可压缩边界条件给定：壁面/对称面法向通量为零，速度入口使用给定速度，压力出口使用 owner 速度零梯度外推；结构化 `i_min/i_max` 成对周期边界通过 wrap 面通量进入 Rhie-Chow 连续性残差。
+其中 \(d_f=(d_P+d_N)/2\)。边界面通量由 `incompressible_boundary_face_state` 给定：壁面/对称面法向通量为零，速度入口与动壁使用给定面速度，压力出口使用 owner 速度零梯度外推；结构化 `i_min/i_max` 成对周期边界通过 wrap 面通量进入 Rhie-Chow 连续性残差。
 
 I3 压力校正矩阵使用动量预测矩阵提供的 cell-centered \(d_P\)，内部面取
 \(d_f=(d_P+d_N)/2\)。压力出口 owner 行施加 \(p'=0\)；当前 owner-cell
@@ -267,7 +267,7 @@ Ghost 单元距 owner 中心法向距离 \(d_f\)。
 
 详细分工见 [boundary_conditions.md](boundary_conditions.md) §9。
 
-当前实现分两层：`apply_incompressible_boundary_conditions_3d` 先把 `wall`、`moving_wall`、`velocity_inlet`、`pressure_outlet`、`symmetry` 施加到结构化边界 owner 单元并输出统计；`wall` / `moving_wall` 在 owner-cell 层只施加无穿透约束，避免把壁面切向速度误当作 cell-centered 值。SIMPLEC 每次动量预测与 \(p,\mathbf{u}\) 修正后会再次施加这些 owner-cell 约束，确保壁面/动壁法向速度不随压力校正漂移。`assemble_incompressible_momentum_predictor_with_boundary_3d` 再把速度 Dirichlet、无滑移/动壁切向驱动、压力出口零梯度与对称/滑移法向约束转化为动量预测矩阵/RHS 的边界面贡献。`i_min/i_max` 成对 `periodic` 不改 owner 单元值，而是在动量、Rhie-Chow、压力校正和速度修正压力梯度中使用周期 wrap 邻接。
+当前实现分两层：`apply_incompressible_boundary_conditions_3d` 先把 `wall`、`moving_wall`、`velocity_inlet`、`pressure_outlet`、`symmetry` 施加到结构化边界 owner 单元并输出统计；`wall` / `moving_wall` 在 owner-cell 层只施加无穿透约束，避免把壁面切向速度误当作 cell-centered 值。pressure-velocity 每次动量预测与 \(p,\mathbf{u}\) 修正后会再次施加这些 owner-cell 约束，确保壁面/动壁法向速度不随压力校正漂移。`incompressible_boundary_face_state` 集中维护 wall、moving_wall、symmetry、velocity inlet 与 pressure outlet 的 face 速度、可选压力和 \(p'=0\) 约束语义；动量预测、Rhie-Chow/face-flux 诊断和压力校正都通过该语义保持一致。`assemble_incompressible_momentum_predictor_with_boundary_3d` 再把速度 Dirichlet、无滑移/动壁切向驱动、压力出口零梯度与对称/滑移法向约束转化为动量预测矩阵/RHS 的边界面贡献。`i_min/i_max` 成对 `periodic` 不改 owner 单元值，而是在动量、Rhie-Chow、压力校正和速度修正压力梯度中使用周期 wrap 邻接。
 
 ## 7. PISO 与时间积分
 
@@ -303,11 +303,11 @@ Ghost 单元距 owner 中心法向距离 \(d_f\)。
 - 连续性：\(\|\nabla\cdot(\rho\mathbf{u}^*)\|_\infty / (\rho U_{\mathrm{ref}})\)
 - 动量：\(\|\mathbf{R}_u\|_\infty / (\rho U_{\mathrm{ref}}^2)\)
 
-`solver::run_incompressible_simplec` 已提供 SIMPLEC/PISO 外层循环：`time.max_steps` 作为最大外层迭代数，
+`solver::run_incompressible_pressure_velocity`（兼容别名 `run_incompressible_simplec`）已提供 SIMPLEC/PISO 外层循环：`time.max_steps` 作为最大外层迭代数，
 `time.min_steps` 作为允许早停前的最小迭代数，`time.tolerance` 为可选收敛阈值；每轮执行动量预测、压力校正、\(p,\mathbf{u}\)
 修正，并把按 \(\alpha_p\) 缩放后的压力校正连续性残差
 \(\max|b_p-\alpha_p A_p p'|\) 与 \(\max|A_u u^*-rhs_u|\) 写入残差历史。
-`[incompressible].piso_correctors > 1` 时，每个外层步会在一次动量预测后重复压力校正与速度修正，作为 PISO 多校正器路径。
+`[incompressible].piso_correctors > 1` 时，每个外层步会在一次动量预测后重复压力校正与速度修正，作为 PISO 多校正器路径，并把每个 corrector 的欠松弛连续性残差与最大 \(p'\) 追加到独立历史中。
 预测残差仍来自 Rhie-Chow 面通量；`max_abs_corrected_divergence` 保留全量压力
 校正方程线性残差 \(\max|b_p-A_p p'|\)，用于判断线性系统是否解好。设置
 `time.tolerance` 时，欠松弛后的连续性残差、动量残差与非速度约束 owner 的
@@ -332,20 +332,21 @@ Ghost 单元距 owner 中心法向距离 \(d_f\)。
 |-----------|----------|------|
 | (1a) 连续性残差 | `discretization::compute_incompressible_divergence_3d` | **I1 已实现** |
 | (1a) 边界面通量散度诊断 | `discretization::compute_incompressible_face_flux_divergence_3d` | **I1 已实现：墙面/对称面无穿透，速度入口/动壁使用 face 速度** |
+| 边界 face state | `discretization::incompressible_boundary_face_state` | **已实现：集中 wall / moving_wall / symmetry / inlet / outlet 的 face 速度、压力与 \(p'=0\) 语义** |
 | (6a) 速度 Laplacian skeleton | `discretization::compute_incompressible_velocity_laplacian_3d` | **I1 已实现** |
 | (8a)–(8c) 动量预测 | `discretization::assemble_incompressible_momentum_predictor_with_boundary_3d` | **已实现：内部扩散/迎风对流、边界面贡献、周期 x wrap、三分量 RHS** |
 | (9)(10) SIMPLEC 系数 | `discretization::assemble_incompressible_momentum_predictor_with_boundary_3d` | **已实现：由动量矩阵一致系数计算 \(d_P\)** |
 | (11a)(11b) 压力校正 Poisson skeleton | `discretization::assemble_incompressible_pressure_poisson_3d` | **I1 已实现：RHS 来自预测速度 \(u^*\) 的散度** |
 | (2a)–(2e) 不可压缩无量纲化 | `io::nondimensional::apply_nondimensionalization_for_incompressible` | **I1 已实现** |
-| I1 runner 诊断闭环 | `case/incompressible_3d.rs`, `solver::run_incompressible_simplec` | **已实现：case 负责输入/输出，solver 负责编排 SIMPLEC 迭代与收敛历史** |
+| I1 runner 诊断闭环 | `case/incompressible_3d.rs`, `solver::run_incompressible_pressure_velocity` | **已实现：case 负责输入/输出，solver 负责编排 pressure-velocity 迭代、algorithm 标签与收敛历史** |
 | (3)(4) Rhie-Chow | `discretization::compute_incompressible_rhie_chow_divergence_3d` | **已实现：内部面压力-速度耦合通量、周期 x wrap 与边界面通量** |
 | (5)(6) 对流/扩散 | `discretization::assemble_incompressible_momentum_predictor_with_boundary_3d` | **已实现：一阶迎风对流、中心扩散与边界贡献** |
 | (8) 完整动量装配 | `discretization::assemble_incompressible_momentum_predictor_with_boundary_3d` | **部分实现：结构化 Cartesian 首版** |
 | (9)(10) 完整 SIMPLEC 系数 | `discretization::assemble_incompressible_momentum_predictor_with_boundary_3d` | **部分实现：\(d_P\) 已导出，\(a_P/a_P^c/H(u)\) 仍待显式 API 化** |
 | (11) 压力 Poisson | `discretization::assemble_incompressible_pressure_correction_3d` | **已实现：面插值 \(d_P\)、压力出口 \(p'=0\)、参考压力策略** |
-| BC ghost | `discretization::apply_incompressible_boundary_conditions_3d` | **部分实现：cell-centered owner 应用与面通量贡献；ghost refresh 待补** |
-| SIMPLEC 循环 | `solver::run_incompressible_simplec` | **已实现：外层迭代、连续性/动量收敛判据与最终修正场** |
-| PISO + BDF1 | `solver/incompressible/piso.rs` | 规划 |
+| BC ghost/face | `discretization::apply_incompressible_boundary_conditions_3d`, `discretization::incompressible_boundary_face_state` | **已实现：cell-centered owner 应用、结构化 face state 与面通量贡献** |
+| SIMPLEC/PISO 循环 | `solver::run_incompressible_pressure_velocity` | **已实现：外层迭代、单/多 pressure corrector、连续性/动量收敛判据与最终修正场** |
+| PISO corrector 历史 | `solver::run_incompressible_pressure_velocity` | **已实现：每个 pressure corrector 的连续性残差与最大 \(p'\) 历史** |
 | CFL / pseudo-transient | `solver/time/pseudo_transient.rs` | 规划 |
 | CG 求解 \(p'\) | `linalg` + `solver/incompressible/linear.rs` | 规划 |
 

@@ -13,10 +13,12 @@ use crate::error::{AsimuError, Result};
 use crate::field::{IncompressibleFields, ScalarField};
 use crate::linalg::{CsrMatrix, GmresConfig, GmresSolver, IdentityPreconditioner};
 use crate::mesh::StructuredMesh3d;
-use crate::solver::incompressible_diagnostics::max_velocity_delta_by_region;
+pub use crate::solver::incompressible_diagnostics::IncompressiblePressureVelocityAlgorithm;
+use crate::solver::incompressible_diagnostics::{
+    max_velocity_delta_by_region, pressure_velocity_algorithm, simplec_converged,
+    validate_simplec_step,
+};
 use tracing::debug;
-
-const SIMPLEC_DIVERGENCE_LIMIT: Real = 1.0e50;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct IncompressibleLinearSolverConfig {
@@ -38,7 +40,7 @@ impl Default for IncompressibleLinearSolverConfig {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct IncompressibleSimplecConfig<'a> {
+pub struct IncompressiblePressureVelocityConfig<'a> {
     pub mesh: &'a StructuredMesh3d,
     pub density: Real,
     pub kinematic_viscosity: Real,
@@ -55,8 +57,12 @@ pub struct IncompressibleSimplecConfig<'a> {
     pub linear_solvers: IncompressibleLinearSolverConfig,
 }
 
+pub type IncompressibleSimplecConfig<'a> = IncompressiblePressureVelocityConfig<'a>;
+
 #[derive(Debug, Clone, PartialEq)]
-pub struct IncompressibleSimplecDiagnostic {
+pub struct IncompressiblePressureVelocityDiagnostic {
+    pub algorithm: IncompressiblePressureVelocityAlgorithm,
+    pub pressure_correctors: usize,
     pub max_abs_divergence: Real,
     pub max_abs_predicted_divergence: Real,
     pub max_abs_corrected_divergence: Real,
@@ -87,17 +93,23 @@ pub struct IncompressibleSimplecDiagnostic {
     pub simplec_final_momentum_residual: Real,
     pub simplec_residual_history: Vec<Real>,
     pub simplec_momentum_residual_history: Vec<Real>,
+    pub pressure_corrector_residual_history: Vec<Real>,
+    pub pressure_corrector_max_correction_history: Vec<Real>,
     pub corrected_fields: IncompressibleFields,
 }
 
-pub fn run_incompressible_simplec(
+pub type IncompressibleSimplecDiagnostic = IncompressiblePressureVelocityDiagnostic;
+
+pub fn run_incompressible_pressure_velocity(
     initial_fields: &IncompressibleFields,
-    config: IncompressibleSimplecConfig<'_>,
-) -> Result<IncompressibleSimplecDiagnostic> {
+    config: IncompressiblePressureVelocityConfig<'_>,
+) -> Result<IncompressiblePressureVelocityDiagnostic> {
     let mut current_fields = initial_fields.clone();
     let max_iterations = config.max_iterations.max(1);
     let mut history = Vec::with_capacity(max_iterations);
     let mut momentum_history = Vec::with_capacity(max_iterations);
+    let mut corrector_residual_history = Vec::new();
+    let mut corrector_max_correction_history = Vec::new();
     let mut last = None;
     for _ in 0..max_iterations {
         let mut diagnostic = assemble_simplec_step(&current_fields, &config)?;
@@ -107,6 +119,10 @@ pub fn run_incompressible_simplec(
         validate_simplec_step(residual, momentum_residual, velocity_delta)?;
         history.push(residual);
         momentum_history.push(momentum_residual);
+        corrector_residual_history
+            .extend_from_slice(&diagnostic.pressure_corrector_residual_history);
+        corrector_max_correction_history
+            .extend_from_slice(&diagnostic.pressure_corrector_max_correction_history);
         current_fields = diagnostic.corrected_fields.clone();
         let converged = simplec_converged(
             config.tolerance,
@@ -122,6 +138,9 @@ pub fn run_incompressible_simplec(
         diagnostic.simplec_final_momentum_residual = momentum_residual;
         diagnostic.simplec_residual_history = history.clone();
         diagnostic.simplec_momentum_residual_history = momentum_history.clone();
+        diagnostic.pressure_corrector_residual_history = corrector_residual_history.clone();
+        diagnostic.pressure_corrector_max_correction_history =
+            corrector_max_correction_history.clone();
         if converged {
             return Ok(diagnostic);
         }
@@ -137,39 +156,16 @@ pub fn run_incompressible_simplec(
         diagnostic.simplec_final_momentum_residual,
         diagnostic.max_abs_corrected_velocity_delta_interior,
     );
+    diagnostic.pressure_corrector_residual_history = corrector_residual_history;
+    diagnostic.pressure_corrector_max_correction_history = corrector_max_correction_history;
     Ok(diagnostic)
 }
 
-fn simplec_converged(
-    tolerance: Option<Real>,
-    min_iterations: usize,
-    iterations: usize,
-    residual: Real,
-    momentum_residual: Real,
-    velocity_delta: Real,
-) -> bool {
-    iterations >= min_iterations
-        && tolerance
-            .is_some_and(|tol| residual <= tol && momentum_residual <= tol && velocity_delta <= tol)
-}
-
-fn validate_simplec_step(
-    residual: Real,
-    momentum_residual: Real,
-    velocity_delta: Real,
-) -> Result<()> {
-    if !residual.is_finite() || !momentum_residual.is_finite() || !velocity_delta.is_finite() {
-        return Err(AsimuError::Solver("SIMPLEC 残差出现非有限值".to_string()));
-    }
-    if residual > SIMPLEC_DIVERGENCE_LIMIT
-        || momentum_residual > SIMPLEC_DIVERGENCE_LIMIT
-        || velocity_delta > SIMPLEC_DIVERGENCE_LIMIT
-    {
-        return Err(AsimuError::Solver(format!(
-            "SIMPLEC 发散：continuity={residual:.4e}, momentum={momentum_residual:.4e}, velocity_delta={velocity_delta:.4e}"
-        )));
-    }
-    Ok(())
+pub fn run_incompressible_simplec(
+    initial_fields: &IncompressibleFields,
+    config: IncompressibleSimplecConfig<'_>,
+) -> Result<IncompressibleSimplecDiagnostic> {
+    run_incompressible_pressure_velocity(initial_fields, config)
 }
 
 fn assemble_simplec_step(
@@ -211,6 +207,8 @@ fn assemble_simplec_step(
         &momentum_system.d_coefficient,
         config,
     )?;
+    let mut corrector_residuals = vec![pressure_step.max_abs_underrelaxed_corrected_divergence];
+    let mut corrector_max_corrections = vec![pressure_step.solution.max_abs_correction];
     let mut corrected = build_corrected_fields_with_diagnostics(
         fields,
         &predicted_fields,
@@ -218,8 +216,14 @@ fn assemble_simplec_step(
         momentum_system.d_coefficient.values(),
         config,
     )?;
-    (pressure_step, corrected) =
-        apply_additional_pressure_correctors(pressure_step, corrected, &momentum_system, config)?;
+    (pressure_step, corrected) = apply_additional_pressure_correctors(
+        pressure_step,
+        corrected,
+        &momentum_system,
+        config,
+        &mut corrector_residuals,
+        &mut corrector_max_corrections,
+    )?;
     let velocity_delta = max_velocity_delta_by_region(
         mesh,
         config.boundary,
@@ -241,6 +245,8 @@ fn assemble_simplec_step(
         "SIMPLEC pressure-velocity diagnostic"
     );
     Ok(IncompressibleSimplecDiagnostic {
+        algorithm: pressure_velocity_algorithm(config.pressure_correctors),
+        pressure_correctors: config.pressure_correctors.max(1),
         max_abs_divergence,
         max_abs_predicted_divergence,
         max_abs_corrected_divergence: pressure_step.max_abs_corrected_divergence,
@@ -274,6 +280,8 @@ fn assemble_simplec_step(
         simplec_final_momentum_residual: momentum_solution.max_abs_equation_residual,
         simplec_residual_history: Vec::new(),
         simplec_momentum_residual_history: Vec::new(),
+        pressure_corrector_residual_history: corrector_residuals,
+        pressure_corrector_max_correction_history: corrector_max_corrections,
         corrected_fields: corrected.fields,
     })
 }
@@ -283,6 +291,8 @@ fn apply_additional_pressure_correctors(
     mut corrected: CorrectedFieldsDiagnostic,
     momentum_system: &crate::discretization::IncompressibleMomentumPredictorSystem,
     config: &IncompressibleSimplecConfig<'_>,
+    residual_history: &mut Vec<Real>,
+    max_correction_history: &mut Vec<Real>,
 ) -> Result<(PressureCorrectionStepDiagnostic, CorrectedFieldsDiagnostic)> {
     for _ in 1..config.pressure_correctors.max(1) {
         let divergence = compute_incompressible_rhie_chow_divergence_3d(
@@ -293,6 +303,8 @@ fn apply_additional_pressure_correctors(
         )?;
         pressure_step =
             solve_pressure_correction_step(&divergence, &momentum_system.d_coefficient, config)?;
+        residual_history.push(pressure_step.max_abs_underrelaxed_corrected_divergence);
+        max_correction_history.push(pressure_step.solution.max_abs_correction);
         corrected = build_corrected_fields_with_diagnostics(
             &corrected.fields,
             &corrected.fields,

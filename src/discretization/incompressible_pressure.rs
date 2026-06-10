@@ -2,6 +2,7 @@
 
 use crate::boundary::{BoundaryKind, BoundarySet};
 use crate::core::Real;
+use crate::discretization::incompressible_face_boundary::incompressible_pressure_correction_dirichlet;
 use crate::discretization::{
     IncompressiblePressureCorrectionConfig, IncompressiblePressureCorrectionSystem,
 };
@@ -242,15 +243,7 @@ fn pressure_correction_dirichlet_cells(
 }
 
 fn is_pressure_correction_dirichlet_kind(kind: &BoundaryKind) -> bool {
-    matches!(
-        kind,
-        BoundaryKind::Wall { .. }
-            | BoundaryKind::MovingWall { .. }
-            | BoundaryKind::IncompressibleVelocityInlet { .. }
-            | BoundaryKind::IncompressiblePressureOutlet { .. }
-            | BoundaryKind::Outlet { .. }
-            | BoundaryKind::Inlet { .. }
-    )
+    incompressible_pressure_correction_dirichlet(kind)
 }
 
 fn remove_closed_domain_rhs_mean(rhs: &mut [Real], pressure_reference_cell: usize) {

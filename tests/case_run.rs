@@ -97,8 +97,18 @@ fn lid_driven_cavity_re100_incompressible_benchmark_runs() {
         Some("lid_driven_cavity_re100")
     );
     let metrics = result.incompressible_3d.expect("incompressible metrics");
+    assert_eq!(metrics.algorithm, "piso");
+    assert_eq!(metrics.pressure_correctors, 2);
     assert_eq!(metrics.simplec_iterations, 100);
     assert!(metrics.simplec_converged);
+    assert_eq!(
+        metrics.pressure_corrector_residual_history.len(),
+        metrics.simplec_iterations * metrics.pressure_correctors
+    );
+    assert_eq!(
+        metrics.pressure_corrector_max_correction_history.len(),
+        metrics.pressure_corrector_residual_history.len()
+    );
     assert!(metrics.simplec_final_residual.is_finite());
     assert!(metrics.max_abs_corrected_divergence < 1.0e-8);
     assert!(
@@ -173,6 +183,8 @@ fn lid_driven_cavity_re100_refined_grid_runs() {
         Some("lid_driven_cavity_re100_refined")
     );
     let metrics = result.incompressible_3d.expect("incompressible metrics");
+    assert_eq!(metrics.algorithm, "piso");
+    assert_eq!(metrics.pressure_correctors, 2);
     assert_eq!(metrics.simplec_iterations, 100);
     assert!(metrics.simplec_final_residual.is_finite());
     assert!(metrics.pressure_solve_converged);

@@ -28,6 +28,8 @@ use super::{CaseRunKind, CaseRunResult};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Incompressible3dRunMetrics {
+    pub algorithm: String,
+    pub pressure_correctors: usize,
     pub steps: u64,
     pub physical_time: f64,
     pub max_abs_divergence: Real,
@@ -60,6 +62,8 @@ pub struct Incompressible3dRunMetrics {
     pub simplec_final_momentum_residual: Real,
     pub simplec_residual_history: Vec<Real>,
     pub simplec_momentum_residual_history: Vec<Real>,
+    pub pressure_corrector_residual_history: Vec<Real>,
+    pub pressure_corrector_max_correction_history: Vec<Real>,
     pub boundary_velocity_cells: usize,
     pub boundary_pressure_cells: usize,
     pub boundary_ignored_faces: usize,
@@ -186,6 +190,8 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         max_abs_corrected_velocity_delta = %format_log_sci4(diagnostic.max_abs_corrected_velocity_delta),
         max_abs_corrected_velocity_delta_interior = %format_log_sci4(diagnostic.max_abs_corrected_velocity_delta_interior),
         max_abs_corrected_velocity_delta_boundary = %format_log_sci4(diagnostic.max_abs_corrected_velocity_delta_boundary),
+        algorithm = diagnostic.algorithm.label(),
+        pressure_correctors = diagnostic.pressure_correctors,
         simplec_iterations = diagnostic.simplec_iterations,
         simplec_converged = diagnostic.simplec_converged,
         simplec_final_residual = %format_log_sci4(diagnostic.simplec_final_residual),
@@ -199,32 +205,7 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         name: case.name.clone(),
         benchmark_id: case.benchmark_id.clone(),
         kind: CaseRunKind::Incompressible3dSteady,
-        summary: format!(
-            "incompressible_3d_i1 steps={steps} simplec_iters={} simplec_converged={} simplec_residual={} simplec_momentum_residual={} max|div(u)|={} max|div(u*)|={} max|div(u_corr_eq)|={} max|div(u_corr_underrelaxed_eq)|={} max|div(u_corr_pre_bc)|={} max|div(u_corr_post_bc)|={} pressure_rhs_active_sum={} pressure_rows={} pressure_nnz={} pressure_converged={} pressure_iters={} pressure_residual={} momentum_rows={} momentum_nnz={} momentum_converged={} momentum_iters={} momentum_residual={} bc_velocity_cells={} bc_pressure_cells={}",
-            diagnostic.simplec_iterations,
-            diagnostic.simplec_converged,
-            format_log_sci4(diagnostic.simplec_final_residual),
-            format_log_sci4(diagnostic.simplec_final_momentum_residual),
-            format_log_sci4(diagnostic.max_abs_divergence),
-            format_log_sci4(diagnostic.max_abs_predicted_divergence),
-            format_log_sci4(diagnostic.max_abs_corrected_divergence),
-            format_log_sci4(diagnostic.max_abs_underrelaxed_corrected_divergence),
-            format_log_sci4(diagnostic.max_abs_corrected_field_divergence_before_boundary),
-            format_log_sci4(diagnostic.max_abs_corrected_field_divergence_after_boundary),
-            format_log_sci4(diagnostic.pressure_correction_rhs_active_sum),
-            diagnostic.pressure_system_rows,
-            diagnostic.pressure_system_nnz,
-            diagnostic.pressure_solve_converged,
-            diagnostic.pressure_solve_iterations,
-            format_log_sci4(diagnostic.pressure_solve_residual),
-            diagnostic.momentum_system_rows,
-            diagnostic.momentum_system_nnz,
-            diagnostic.momentum_solve_converged,
-            diagnostic.momentum_solve_iterations,
-            format_log_sci4(diagnostic.momentum_solve_residual),
-            boundary_stats.velocity_cells,
-            boundary_stats.pressure_cells
-        ),
+        summary: incompressible_summary(steps, &diagnostic, &boundary_stats),
         diffusion: None,
         sod: None,
         compressible_3d: None,
@@ -243,6 +224,41 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
     })
 }
 
+fn incompressible_summary(
+    steps: u64,
+    diagnostic: &IncompressibleSimplecDiagnostic,
+    boundary_stats: &IncompressibleBoundaryApplyStats,
+) -> String {
+    format!(
+        "incompressible_3d_i1 algorithm={} pressure_correctors={} steps={steps} pressure_velocity_iters={} pressure_velocity_converged={} pressure_velocity_residual={} pressure_velocity_momentum_residual={} max|div(u)|={} max|div(u*)|={} max|div(u_corr_eq)|={} max|div(u_corr_underrelaxed_eq)|={} max|div(u_corr_pre_bc)|={} max|div(u_corr_post_bc)|={} pressure_rhs_active_sum={} pressure_rows={} pressure_nnz={} pressure_converged={} pressure_iters={} pressure_residual={} momentum_rows={} momentum_nnz={} momentum_converged={} momentum_iters={} momentum_residual={} bc_velocity_cells={} bc_pressure_cells={}",
+        diagnostic.algorithm.label(),
+        diagnostic.pressure_correctors,
+        diagnostic.simplec_iterations,
+        diagnostic.simplec_converged,
+        format_log_sci4(diagnostic.simplec_final_residual),
+        format_log_sci4(diagnostic.simplec_final_momentum_residual),
+        format_log_sci4(diagnostic.max_abs_divergence),
+        format_log_sci4(diagnostic.max_abs_predicted_divergence),
+        format_log_sci4(diagnostic.max_abs_corrected_divergence),
+        format_log_sci4(diagnostic.max_abs_underrelaxed_corrected_divergence),
+        format_log_sci4(diagnostic.max_abs_corrected_field_divergence_before_boundary),
+        format_log_sci4(diagnostic.max_abs_corrected_field_divergence_after_boundary),
+        format_log_sci4(diagnostic.pressure_correction_rhs_active_sum),
+        diagnostic.pressure_system_rows,
+        diagnostic.pressure_system_nnz,
+        diagnostic.pressure_solve_converged,
+        diagnostic.pressure_solve_iterations,
+        format_log_sci4(diagnostic.pressure_solve_residual),
+        diagnostic.momentum_system_rows,
+        diagnostic.momentum_system_nnz,
+        diagnostic.momentum_solve_converged,
+        diagnostic.momentum_solve_iterations,
+        format_log_sci4(diagnostic.momentum_solve_residual),
+        boundary_stats.velocity_cells,
+        boundary_stats.pressure_cells
+    )
+}
+
 struct BenchmarkDiagnostics {
     centerline_profiles: Option<IncompressibleCenterlineProfiles>,
     poiseuille_profile_error: Option<IncompressibleProfileError>,
@@ -258,6 +274,8 @@ fn build_run_metrics(
     benchmark: BenchmarkDiagnostics,
 ) -> Incompressible3dRunMetrics {
     Incompressible3dRunMetrics {
+        algorithm: diagnostic.algorithm.label().to_string(),
+        pressure_correctors: diagnostic.pressure_correctors,
         steps,
         physical_time,
         max_abs_divergence: diagnostic.max_abs_divergence,
@@ -295,6 +313,9 @@ fn build_run_metrics(
         simplec_final_momentum_residual: diagnostic.simplec_final_momentum_residual,
         simplec_residual_history: diagnostic.simplec_residual_history,
         simplec_momentum_residual_history: diagnostic.simplec_momentum_residual_history,
+        pressure_corrector_residual_history: diagnostic.pressure_corrector_residual_history,
+        pressure_corrector_max_correction_history: diagnostic
+            .pressure_corrector_max_correction_history,
         boundary_velocity_cells: boundary_stats.velocity_cells,
         boundary_pressure_cells: boundary_stats.pressure_cells,
         boundary_ignored_faces: boundary_stats.ignored_faces,

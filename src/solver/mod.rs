@@ -30,8 +30,10 @@ pub use compressible_helpers::{
     refresh_compressible_ghosts_and_primitives,
 };
 pub use incompressible::{
-    IncompressibleLinearSolverConfig, IncompressibleSimplecConfig, IncompressibleSimplecDiagnostic,
-    run_incompressible_simplec,
+    IncompressibleLinearSolverConfig, IncompressiblePressureVelocityAlgorithm,
+    IncompressiblePressureVelocityConfig, IncompressiblePressureVelocityDiagnostic,
+    IncompressibleSimplecConfig, IncompressibleSimplecDiagnostic,
+    run_incompressible_pressure_velocity, run_incompressible_simplec,
 };
 pub use lu_sgs_sweep_unstructured::{
     LuSgsSweepUnstructuredInput, LuSgsSweepUnstructuredParams, LuSgsUnstructuredCouplings,
