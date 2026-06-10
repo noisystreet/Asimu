@@ -23,12 +23,12 @@
     },
     {
       "name": "max_abs_underrelaxed_corrected_divergence",
-      "max_value": 0.03,
+      "max_value": 1.0e-4,
       "source": "continuity residual after pressure_under_relaxation scaling; SIMPLEC convergence residual"
     },
     {
       "name": "max_abs_corrected_field_divergence_after_boundary",
-      "max_value": 0.02,
+      "max_value": 0.03,
       "source": "cell-centered divergence recomputed from corrected velocity after boundary reapply"
     },
     {

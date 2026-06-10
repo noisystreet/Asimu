@@ -267,7 +267,7 @@ Ghost 单元距 owner 中心法向距离 \(d_f\)。
 
 详细分工见 [boundary_conditions.md](boundary_conditions.md) §9。
 
-当前实现分两层：`apply_incompressible_boundary_conditions_3d` 先把 `wall`、`moving_wall`、`velocity_inlet`、`pressure_outlet`、`symmetry` 施加到结构化边界 owner 单元并输出统计；SIMPLEC 每次 \(p,\mathbf{u}\) 修正后会再次施加这些 owner-cell 约束，确保壁面/动壁速度不随压力校正漂移。`assemble_incompressible_momentum_predictor_with_boundary_3d` 再把速度 Dirichlet、压力出口零梯度与对称/滑移法向约束转化为动量预测矩阵/RHS 的边界面贡献。`i_min/i_max` 成对 `periodic` 不改 owner 单元值，而是在动量、Rhie-Chow、压力校正和速度修正压力梯度中使用周期 wrap 邻接。
+当前实现分两层：`apply_incompressible_boundary_conditions_3d` 先把 `wall`、`velocity_inlet`、`pressure_outlet`、`symmetry` 施加到结构化边界 owner 单元并输出统计；`moving_wall` 在 owner-cell 层只施加无穿透约束，避免把壁面切向速度误当作 cell-centered 出流。SIMPLEC 每次动量预测与 \(p,\mathbf{u}\) 修正后会再次施加这些 owner-cell 约束，确保壁面/动壁法向速度不随压力校正漂移。`assemble_incompressible_momentum_predictor_with_boundary_3d` 再把速度 Dirichlet、动壁切向驱动、压力出口零梯度与对称/滑移法向约束转化为动量预测矩阵/RHS 的边界面贡献。`i_min/i_max` 成对 `periodic` 不改 owner 单元值，而是在动量、Rhie-Chow、压力校正和速度修正压力梯度中使用周期 wrap 邻接。
 
 ## 7. PISO 与时间积分
 

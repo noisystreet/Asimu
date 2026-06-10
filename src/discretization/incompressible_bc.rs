@@ -30,8 +30,8 @@ pub fn apply_incompressible_boundary_conditions_3d(
                     }
                     stats.velocity_cells += 1;
                 }
-                BoundaryKind::MovingWall { velocity } => {
-                    set_velocity(fields, owner, *velocity);
+                BoundaryKind::MovingWall { .. } => {
+                    zero_normal_velocity(fields, owner, [normal.x, normal.y, normal.z]);
                     stats.velocity_cells += 1;
                 }
                 BoundaryKind::IncompressibleVelocityInlet { velocity } => {
