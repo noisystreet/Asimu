@@ -1,7 +1,7 @@
 {
   "benchmark_id": "channel_poiseuille",
   "asimu_min_version": "0.3.0",
-  "status": "smoke_until_profile_validation",
+  "status": "profile_diagnostic_enabled_threshold_pending",
   "quantities": [
     {
       "name": "max_abs_corrected_divergence",
@@ -20,5 +20,13 @@
       "source": "pressure GMRES smoke threshold"
     }
   ],
-  "profiles": []
+  "profiles": [
+    {
+      "name": "vertical_centerline_u",
+      "formula": "u(y)=f_x*y*(H-y)/(2*nu)",
+      "body_force_x": 0.08,
+      "kinematic_viscosity": 0.01,
+      "comparison": "diagnostic_only_until_steady_update_convergence"
+    }
+  ]
 }

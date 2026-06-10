@@ -14,6 +14,7 @@
 - 不可压缩 SIMPLEC 修正后连续性残差改为压力校正方程质量残差 `max|b_p - A_p p'|`，Poiseuille 与 lid cavity smoke benchmark 收紧到 `1.0e-8`。
 - 不可压缩 Poiseuille 与 lid cavity smoke benchmark 增加 `time.tolerance = 1.0e-8`，现在要求 SIMPLEC 外层收敛标记为 true。
 - 不可压缩动量预测支持 `[incompressible].body_force = [fx, fy, fz]` 每单位质量体力源项，并按 \(f^*=fL_{\mathrm{ref}}/U_{\mathrm{ref}}^2\) 无量纲化。
+- Poiseuille 不可压缩 benchmark 改为体力驱动，两端压力出口，并输出中心线 \(u(y)\) 与解析 Poiseuille 剖面误差诊断。
 - ADR 0015：三维不可压 NS（collocated FVM + **SIMPLEC** + **PISO**，结构化六面体首版，I0–I6）；补充通量格式、边界条件、时间积分（BDF1/伪瞬态）；理论页 [docs/theory/incompressible_simplec_piso.md](docs/theory/incompressible_simplec_piso.md)
 - ADR 0014：可压 RANS **Menter k-ω SST**（壁距场、分裂 LU-SGS、T0–T5）；理论页 [docs/theory/turbulence_k_omega_sst.md](docs/theory/turbulence_k_omega_sst.md)
 - ADR 0013 **E5**：dual_ellipsoid benchmark 说明（`tests/benchmarks/dual_ellipsoid/`）；scatter 每色桶 1 次契约测试；Chrome trace 桶级 span 改 `trace` 级 + `include_args(false)`

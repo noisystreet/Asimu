@@ -23,6 +23,7 @@ pub use compressible_3d::Compressible3dRunMetrics;
 pub use diffusion::DiffusionRunMetrics;
 pub use incompressible_3d::{
     Incompressible3dRunMetrics, IncompressibleCenterlineProfiles, IncompressibleLineSample,
+    IncompressibleProfileError,
 };
 pub use sod::SodRunMetrics;
 

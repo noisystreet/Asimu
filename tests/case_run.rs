@@ -50,7 +50,20 @@ fn channel_poiseuille_incompressible_benchmark_runs() {
     assert!(metrics.simplec_final_momentum_residual.is_finite());
     assert!(metrics.pressure_solve_converged);
     assert!(metrics.pressure_solve_iterations <= 500);
-    assert!(metrics.centerline_profiles.is_none());
+    let profiles = metrics.centerline_profiles.expect("poiseuille profile");
+    assert_eq!(profiles.vertical_u.len(), 8);
+    assert!(profiles.horizontal_v.is_empty());
+    assert!(
+        profiles
+            .vertical_u
+            .iter()
+            .all(|sample| sample.coordinate.is_finite() && sample.velocity_x.is_finite())
+    );
+    let error = metrics
+        .poiseuille_profile_error
+        .expect("poiseuille profile error");
+    assert!(error.max_abs.is_finite());
+    assert!(error.l2.is_finite());
 }
 
 #[test]

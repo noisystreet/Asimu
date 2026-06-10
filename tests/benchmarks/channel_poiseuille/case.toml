@@ -15,6 +15,7 @@ lz = 0.1
 [incompressible]
 pressure = 0.0
 velocity = [0.0, 0.0, 0.0]
+body_force = [0.08, 0.0, 0.0]
 density = 1.0
 kinematic_viscosity = 0.01
 velocity_under_relaxation = 0.7
@@ -37,8 +38,8 @@ length = 1.0
 velocity = 1.0
 
 [boundary.i_min]
-kind = "velocity_inlet"
-velocity = [1.0, 0.0, 0.0]
+kind = "pressure_outlet"
+pressure = 0.0
 
 [boundary.i_max]
 kind = "pressure_outlet"

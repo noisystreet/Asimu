@@ -7,7 +7,9 @@ use tracing::warn;
 use tracing::{info, info_span};
 
 use crate::core::{Real, format_log_sci4};
-use crate::discretization::apply_incompressible_boundary_conditions_3d;
+use crate::discretization::{
+    IncompressibleBoundaryApplyStats, apply_incompressible_boundary_conditions_3d,
+};
 use crate::error::{AsimuError, Result};
 use crate::field::IncompressibleFields;
 #[cfg(feature = "io-cgns")]
@@ -18,7 +20,9 @@ use crate::io::{
     StructuredVertexSolution, VertexScalarFieldView, write_structured_vertex_solution_cgns,
 };
 use crate::mesh::StructuredMesh3d;
-use crate::solver::{IncompressibleSimplecConfig, run_incompressible_simplec};
+use crate::solver::{
+    IncompressibleSimplecConfig, IncompressibleSimplecDiagnostic, run_incompressible_simplec,
+};
 
 use super::{CaseRunKind, CaseRunResult};
 
@@ -54,6 +58,7 @@ pub struct Incompressible3dRunMetrics {
     pub boundary_pressure_cells: usize,
     pub boundary_ignored_faces: usize,
     pub centerline_profiles: Option<IncompressibleCenterlineProfiles>,
+    pub poiseuille_profile_error: Option<IncompressibleProfileError>,
     pub written: Vec<PathBuf>,
 }
 
@@ -69,6 +74,12 @@ pub struct IncompressibleLineSample {
 pub struct IncompressibleCenterlineProfiles {
     pub vertical_u: Vec<IncompressibleLineSample>,
     pub horizontal_v: Vec<IncompressibleLineSample>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IncompressibleProfileError {
+    pub max_abs: Real,
+    pub l2: Real,
 }
 
 pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
@@ -114,8 +125,20 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         &diagnostic.corrected_fields,
         nondimensional_time,
     )?;
-    let centerline_profiles =
-        lid_cavity_centerline_profiles(case, mesh, &diagnostic.corrected_fields);
+    let centerline_profiles = incompressible_centerline_profiles(
+        case,
+        mesh,
+        config.kinematic_viscosity,
+        config.body_force,
+        &diagnostic.corrected_fields,
+    );
+    let poiseuille_profile_error = poiseuille_profile_error(
+        case,
+        mesh,
+        config.kinematic_viscosity,
+        config.body_force,
+        &diagnostic.corrected_fields,
+    );
     info!(
         steps,
         t = %format_log_sci4(physical_time),
@@ -175,50 +198,83 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         diffusion: None,
         sod: None,
         compressible_3d: None,
-        incompressible_3d: Some(Incompressible3dRunMetrics {
+        incompressible_3d: Some(build_run_metrics(
             steps,
             physical_time,
-            max_abs_divergence: diagnostic.max_abs_divergence,
-            max_abs_predicted_divergence: diagnostic.max_abs_predicted_divergence,
-            max_abs_corrected_divergence: diagnostic.max_abs_corrected_divergence,
-            pressure_system_rows: diagnostic.pressure_system_rows,
-            pressure_system_nnz: diagnostic.pressure_system_nnz,
-            pressure_solve_converged: diagnostic.pressure_solve_converged,
-            pressure_solve_iterations: diagnostic.pressure_solve_iterations,
-            pressure_solve_residual: diagnostic.pressure_solve_residual,
-            max_abs_pressure_correction: diagnostic.max_abs_pressure_correction,
-            momentum_system_rows: diagnostic.momentum_system_rows,
-            momentum_system_nnz: diagnostic.momentum_system_nnz,
-            max_momentum_d_coefficient: diagnostic.max_momentum_d_coefficient,
-            momentum_solve_converged: diagnostic.momentum_solve_converged,
-            momentum_solve_iterations: diagnostic.momentum_solve_iterations,
-            momentum_solve_residual: diagnostic.momentum_solve_residual,
-            max_abs_momentum_equation_residual: diagnostic.max_abs_momentum_equation_residual,
-            max_abs_predicted_velocity_delta: diagnostic.max_abs_predicted_velocity_delta,
-            max_abs_corrected_velocity_delta: diagnostic.max_abs_corrected_velocity_delta,
-            simplec_iterations: diagnostic.simplec_iterations,
-            simplec_converged: diagnostic.simplec_converged,
-            simplec_final_residual: diagnostic.simplec_final_residual,
-            simplec_final_momentum_residual: diagnostic.simplec_final_momentum_residual,
-            simplec_residual_history: diagnostic.simplec_residual_history,
-            simplec_momentum_residual_history: diagnostic.simplec_momentum_residual_history,
-            boundary_velocity_cells: boundary_stats.velocity_cells,
-            boundary_pressure_cells: boundary_stats.pressure_cells,
-            boundary_ignored_faces: boundary_stats.ignored_faces,
+            diagnostic,
+            boundary_stats,
             centerline_profiles,
+            poiseuille_profile_error,
             written,
-        }),
+        )),
     })
 }
 
-fn lid_cavity_centerline_profiles(
+fn build_run_metrics(
+    steps: u64,
+    physical_time: Real,
+    diagnostic: IncompressibleSimplecDiagnostic,
+    boundary_stats: IncompressibleBoundaryApplyStats,
+    centerline_profiles: Option<IncompressibleCenterlineProfiles>,
+    poiseuille_profile_error: Option<IncompressibleProfileError>,
+    written: Vec<PathBuf>,
+) -> Incompressible3dRunMetrics {
+    Incompressible3dRunMetrics {
+        steps,
+        physical_time,
+        max_abs_divergence: diagnostic.max_abs_divergence,
+        max_abs_predicted_divergence: diagnostic.max_abs_predicted_divergence,
+        max_abs_corrected_divergence: diagnostic.max_abs_corrected_divergence,
+        pressure_system_rows: diagnostic.pressure_system_rows,
+        pressure_system_nnz: diagnostic.pressure_system_nnz,
+        pressure_solve_converged: diagnostic.pressure_solve_converged,
+        pressure_solve_iterations: diagnostic.pressure_solve_iterations,
+        pressure_solve_residual: diagnostic.pressure_solve_residual,
+        max_abs_pressure_correction: diagnostic.max_abs_pressure_correction,
+        momentum_system_rows: diagnostic.momentum_system_rows,
+        momentum_system_nnz: diagnostic.momentum_system_nnz,
+        max_momentum_d_coefficient: diagnostic.max_momentum_d_coefficient,
+        momentum_solve_converged: diagnostic.momentum_solve_converged,
+        momentum_solve_iterations: diagnostic.momentum_solve_iterations,
+        momentum_solve_residual: diagnostic.momentum_solve_residual,
+        max_abs_momentum_equation_residual: diagnostic.max_abs_momentum_equation_residual,
+        max_abs_predicted_velocity_delta: diagnostic.max_abs_predicted_velocity_delta,
+        max_abs_corrected_velocity_delta: diagnostic.max_abs_corrected_velocity_delta,
+        simplec_iterations: diagnostic.simplec_iterations,
+        simplec_converged: diagnostic.simplec_converged,
+        simplec_final_residual: diagnostic.simplec_final_residual,
+        simplec_final_momentum_residual: diagnostic.simplec_final_momentum_residual,
+        simplec_residual_history: diagnostic.simplec_residual_history,
+        simplec_momentum_residual_history: diagnostic.simplec_momentum_residual_history,
+        boundary_velocity_cells: boundary_stats.velocity_cells,
+        boundary_pressure_cells: boundary_stats.pressure_cells,
+        boundary_ignored_faces: boundary_stats.ignored_faces,
+        centerline_profiles,
+        poiseuille_profile_error,
+        written,
+    }
+}
+
+fn incompressible_centerline_profiles(
     case: &CaseSpec,
     mesh: &StructuredMesh3d,
+    kinematic_viscosity: Real,
+    body_force: [Real; 3],
     fields: &IncompressibleFields,
 ) -> Option<IncompressibleCenterlineProfiles> {
-    if case.benchmark_id.as_deref() != Some("lid_driven_cavity_re100") {
-        return None;
+    match case.benchmark_id.as_deref() {
+        Some("lid_driven_cavity_re100") => Some(lid_cavity_centerline_profiles(mesh, fields)),
+        Some("channel_poiseuille") if kinematic_viscosity > 0.0 && body_force[0].abs() > 0.0 => {
+            Some(channel_poiseuille_centerline_profiles(mesh, fields))
+        }
+        _ => None,
     }
+}
+
+fn lid_cavity_centerline_profiles(
+    mesh: &StructuredMesh3d,
+    fields: &IncompressibleFields,
+) -> IncompressibleCenterlineProfiles {
     let i_mid = mesh.nx / 2;
     let j_mid = mesh.ny / 2;
     let k_mid = mesh.nz / 2;
@@ -242,9 +298,68 @@ fn lid_cavity_centerline_profiles(
             velocity_z: fields.velocity_z.values()[cell],
         });
     }
-    Some(IncompressibleCenterlineProfiles {
+    IncompressibleCenterlineProfiles {
         vertical_u,
         horizontal_v,
+    }
+}
+
+fn channel_poiseuille_centerline_profiles(
+    mesh: &StructuredMesh3d,
+    fields: &IncompressibleFields,
+) -> IncompressibleCenterlineProfiles {
+    let i_mid = mesh.nx / 2;
+    let k_mid = mesh.nz / 2;
+    let mut vertical_u = Vec::with_capacity(mesh.ny);
+    for j in 0..mesh.ny {
+        let cell = mesh.cell_index(i_mid, j, k_mid);
+        vertical_u.push(IncompressibleLineSample {
+            coordinate: cell_center_y(mesh, i_mid, j, k_mid),
+            velocity_x: fields.velocity_x.values()[cell],
+            velocity_y: fields.velocity_y.values()[cell],
+            velocity_z: fields.velocity_z.values()[cell],
+        });
+    }
+    IncompressibleCenterlineProfiles {
+        vertical_u,
+        horizontal_v: Vec::new(),
+    }
+}
+
+fn poiseuille_profile_error(
+    case: &CaseSpec,
+    mesh: &StructuredMesh3d,
+    kinematic_viscosity: Real,
+    body_force: [Real; 3],
+    fields: &IncompressibleFields,
+) -> Option<IncompressibleProfileError> {
+    if case.benchmark_id.as_deref() != Some("channel_poiseuille")
+        || kinematic_viscosity <= 0.0
+        || body_force[0].abs() <= Real::EPSILON
+    {
+        return None;
+    }
+    let y_min = mesh.node_y(0, 0, 0);
+    let y_max = mesh.node_y(0, mesh.ny, 0);
+    let height = y_max - y_min;
+    if height <= 0.0 {
+        return None;
+    }
+    let i_mid = mesh.nx / 2;
+    let k_mid = mesh.nz / 2;
+    let mut max_abs: Real = 0.0;
+    let mut sum_sq: Real = 0.0;
+    for j in 0..mesh.ny {
+        let y = cell_center_y(mesh, i_mid, j, k_mid) - y_min;
+        let expected = body_force[0] * y * (height - y) / (2.0 * kinematic_viscosity);
+        let cell = mesh.cell_index(i_mid, j, k_mid);
+        let error = fields.velocity_x.values()[cell] - expected;
+        max_abs = max_abs.max(error.abs());
+        sum_sq += error * error;
+    }
+    Some(IncompressibleProfileError {
+        max_abs,
+        l2: (sum_sq / mesh.ny as Real).sqrt(),
     })
 }
 
