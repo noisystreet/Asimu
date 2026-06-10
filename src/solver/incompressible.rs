@@ -166,6 +166,12 @@ fn assemble_simplec_step(
         IncompressiblePressureCorrectionConfig::new(config.density, 0, 0.0)?,
     )?;
     let pressure_solution = solve_pressure_correction(&system, config.linear_solvers.pressure)?;
+    let max_abs_corrected_divergence = max_pressure_correction_continuity_residual(
+        &system.matrix,
+        &system.rhs,
+        &pressure_solution.correction,
+        config.density,
+    )?;
     let corrected_fields = corrected_incompressible_fields(
         mesh,
         fields,
@@ -174,11 +180,6 @@ fn assemble_simplec_step(
         momentum_system.d_coefficient.values(),
         config.pressure_under_relaxation,
     )?;
-    let corrected_divergence = compute_incompressible_divergence_3d(mesh, &corrected_fields)?;
-    let max_abs_corrected_divergence = corrected_divergence
-        .values()
-        .iter()
-        .fold(0.0, |acc: Real, value| acc.max(value.abs()));
     let max_abs_corrected_velocity_delta = max_velocity_delta(
         fields,
         corrected_fields.velocity_x.values(),
@@ -336,6 +337,44 @@ fn max_linear_system_residual(matrix: &CsrMatrix, solution: &[Real], rhs: &[Real
         max_residual = max_residual.max((ax - rhs_value).abs());
     }
     Ok(max_residual)
+}
+
+fn max_pressure_correction_continuity_residual(
+    matrix: &CsrMatrix,
+    rhs: &[Real],
+    correction: &[Real],
+    density: Real,
+) -> Result<Real> {
+    if density <= 0.0 {
+        return Err(AsimuError::Linalg(
+            "压力校正连续性残差要求正密度".to_string(),
+        ));
+    }
+    if correction.len() != matrix.ncols() || rhs.len() != matrix.nrows() {
+        return Err(AsimuError::Linalg(
+            "压力校正连续性残差向量长度与矩阵尺寸不一致".to_string(),
+        ));
+    }
+    let mut max_residual: Real = 0.0;
+    for (row, rhs_value) in rhs.iter().enumerate().take(matrix.nrows()) {
+        if is_identity_constraint_row(matrix, row) {
+            continue;
+        }
+        let ax = matrix
+            .row_entries(row)
+            .map(|(col, value)| value * correction[col])
+            .sum::<Real>();
+        max_residual = max_residual.max(((rhs_value - ax) / density).abs());
+    }
+    Ok(max_residual)
+}
+
+fn is_identity_constraint_row(matrix: &CsrMatrix, row: usize) -> bool {
+    let mut entries = matrix.row_entries(row);
+    let Some((col, value)) = entries.next() else {
+        return false;
+    };
+    entries.next().is_none() && col == row && (value - 1.0).abs() <= Real::EPSILON
 }
 
 fn max_velocity_delta(fields: &IncompressibleFields, u: &[Real], v: &[Real], w: &[Real]) -> Real {

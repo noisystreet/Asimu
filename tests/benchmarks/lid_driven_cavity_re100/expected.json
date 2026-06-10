@@ -16,6 +16,12 @@
       "source": "case.toml time.max_steps"
     },
     {
+      "name": "max_abs_corrected_divergence",
+      "value": 0.0,
+      "tolerance_abs": 1.0e-8,
+      "source": "pressure-corrected continuity smoke threshold"
+    },
+    {
       "name": "pressure_solve_converged",
       "value": true,
       "source": "pressure GMRES smoke threshold"

@@ -11,6 +11,7 @@
 - 不可压缩 V&V 骨架算例：`tests/benchmarks/channel_poiseuille/` 与 `tests/benchmarks/lid_driven_cavity_re100/`，包含 case、expected 与 case runner smoke 测试；lid cavity 指标可导出中心线剖面，并记录 Ghia et al. (1982) Re=100 参考点。
 - 不可压缩 SIMPLEC 收敛语义：未配置 `time.tolerance` 时仅执行固定外层步数，不再把 `simplec_converged` 误标为 true。
 - 不可压缩压力校正 GMRES 默认迭代预算提高到 `restart=64`、`max_iters=500`、`tolerance=1.0e-10`，Poiseuille 与 lid cavity smoke benchmark 现在要求压力校正收敛。
+- 不可压缩 SIMPLEC 修正后连续性残差改为压力校正方程质量残差 `max|b_p - A_p p'|`，Poiseuille 与 lid cavity smoke benchmark 收紧到 `1.0e-8`。
 - ADR 0015：三维不可压 NS（collocated FVM + **SIMPLEC** + **PISO**，结构化六面体首版，I0–I6）；补充通量格式、边界条件、时间积分（BDF1/伪瞬态）；理论页 [docs/theory/incompressible_simplec_piso.md](docs/theory/incompressible_simplec_piso.md)
 - ADR 0014：可压 RANS **Menter k-ω SST**（壁距场、分裂 LU-SGS、T0–T5）；理论页 [docs/theory/turbulence_k_omega_sst.md](docs/theory/turbulence_k_omega_sst.md)
 - ADR 0013 **E5**：dual_ellipsoid benchmark 说明（`tests/benchmarks/dual_ellipsoid/`）；scatter 每色桶 1 次契约测试；Chrome trace 桶级 span 改 `trace` 级 + `include_args(false)`

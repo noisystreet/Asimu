@@ -6,8 +6,8 @@
     {
       "name": "max_abs_corrected_divergence",
       "value": 0.0,
-      "tolerance_abs": 20.0,
-      "source": "SIMPLEC smoke threshold"
+      "tolerance_abs": 1.0e-8,
+      "source": "pressure-corrected continuity smoke threshold"
     },
     {
       "name": "simplec_iterations",
