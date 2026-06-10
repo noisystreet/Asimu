@@ -14,6 +14,11 @@
       "value": 2,
       "tolerance_abs": 0,
       "source": "case.toml time.max_steps"
+    },
+    {
+      "name": "pressure_solve_converged",
+      "value": true,
+      "source": "pressure GMRES smoke threshold"
     }
   ],
   "profiles": []

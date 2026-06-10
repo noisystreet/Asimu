@@ -386,9 +386,9 @@ tolerance = 1.0e-8                # 可选，默认 1.0e-8
 
 [incompressible.linear.pressure]
 solver = "gmres"                  # 当前仅 gmres
-restart = 30
-max_iters = 100
-tolerance = 1.0e-8
+restart = 64                      # 可选，默认 64
+max_iters = 500                   # 可选，默认 500
+tolerance = 1.0e-10               # 可选，默认 1.0e-10
 
 [incompressible.reference]
 length = 1.0                     # L_ref，m

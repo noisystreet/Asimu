@@ -13,10 +13,23 @@ use crate::field::{IncompressibleFields, ScalarField};
 use crate::linalg::{CsrMatrix, GmresConfig, GmresSolver, IdentityPreconditioner};
 use crate::mesh::StructuredMesh3d;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct IncompressibleLinearSolverConfig {
     pub momentum: GmresConfig,
     pub pressure: GmresConfig,
+}
+
+impl Default for IncompressibleLinearSolverConfig {
+    fn default() -> Self {
+        Self {
+            momentum: GmresConfig::default(),
+            pressure: GmresConfig {
+                restart: 64,
+                max_iters: 500,
+                tolerance: 1.0e-10,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

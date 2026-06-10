@@ -28,9 +28,9 @@ tolerance = 1.0e-9
 
 [incompressible.linear.pressure]
 solver = "gmres"
-restart = 16
-max_iters = 50
-tolerance = 1.0e-9
+restart = 64
+max_iters = 500
+tolerance = 1.0e-10
 
 [incompressible.reference]
 length = 1.0
