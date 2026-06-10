@@ -1,0 +1,31 @@
+{
+  "benchmark_id": "lid_driven_cavity_re100",
+  "asimu_min_version": "0.3.0",
+  "status": "smoke_until_centerline_validation",
+  "quantities": [
+    {
+      "name": "reynolds_number",
+      "value": 100.0,
+      "tolerance_abs": 0.0,
+      "source": "L_ref * U_ref / nu"
+    },
+    {
+      "name": "simplec_iterations",
+      "value": 2,
+      "tolerance_abs": 0,
+      "source": "case.toml time.max_steps"
+    }
+  ],
+  "profiles": [
+    {
+      "name": "vertical_centerline_u",
+      "status": "planned",
+      "source": "Ghia et al. 1982, Table I"
+    },
+    {
+      "name": "horizontal_centerline_v",
+      "status": "planned",
+      "source": "Ghia et al. 1982, Table II"
+    }
+  ]
+}

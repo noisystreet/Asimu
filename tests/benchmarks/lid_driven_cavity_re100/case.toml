@@ -1,0 +1,64 @@
+name = "lid_driven_cavity_re100"
+benchmark_id = "lid_driven_cavity_re100"
+
+[mesh]
+kind = "structured_3d"
+nx = 8
+ny = 8
+nz = 1
+lx = 1.0
+ly = 1.0
+lz = 0.1
+
+[physics]
+
+[incompressible]
+pressure = 0.0
+velocity = [0.0, 0.0, 0.0]
+density = 1.0
+kinematic_viscosity = 0.01
+velocity_under_relaxation = 0.7
+pressure_under_relaxation = 0.3
+
+[incompressible.linear.momentum]
+solver = "gmres"
+restart = 16
+max_iters = 50
+tolerance = 1.0e-9
+
+[incompressible.linear.pressure]
+solver = "gmres"
+restart = 16
+max_iters = 50
+tolerance = 1.0e-9
+
+[incompressible.reference]
+length = 1.0
+velocity = 1.0
+
+[boundary.i_min]
+kind = "wall"
+no_slip = true
+
+[boundary.i_max]
+kind = "wall"
+no_slip = true
+
+[boundary.j_min]
+kind = "wall"
+no_slip = true
+
+[boundary.j_max]
+kind = "moving_wall"
+velocity = [1.0, 0.0, 0.0]
+
+[boundary.k_min]
+kind = "symmetry"
+
+[boundary.k_max]
+kind = "symmetry"
+
+[time]
+mode = "steady"
+max_steps = 2
+dt = 1.0

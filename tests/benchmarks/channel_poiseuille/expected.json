@@ -1,0 +1,20 @@
+{
+  "benchmark_id": "channel_poiseuille",
+  "asimu_min_version": "0.3.0",
+  "status": "smoke_until_profile_validation",
+  "quantities": [
+    {
+      "name": "max_abs_corrected_divergence",
+      "value": 0.0,
+      "tolerance_abs": 20.0,
+      "source": "SIMPLEC smoke threshold"
+    },
+    {
+      "name": "simplec_iterations",
+      "value": 2,
+      "tolerance_abs": 0,
+      "source": "case.toml time.max_steps"
+    }
+  ],
+  "profiles": []
+}

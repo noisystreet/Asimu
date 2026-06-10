@@ -35,3 +35,35 @@ fn sod_muscl_hllc_via_case_runner() {
     assert_eq!(metrics.limiter, "van_albada");
     assert!(metrics.l1_density < 0.02);
 }
+
+#[test]
+fn channel_poiseuille_incompressible_benchmark_runs() {
+    let result =
+        run_case_path(Path::new("tests/benchmarks/channel_poiseuille/case.toml")).expect("run");
+    assert_eq!(result.kind, CaseRunKind::Incompressible3dSteady);
+    assert_eq!(result.benchmark_id.as_deref(), Some("channel_poiseuille"));
+    let metrics = result.incompressible_3d.expect("incompressible metrics");
+    assert_eq!(metrics.simplec_iterations, 2);
+    assert!(metrics.simplec_final_residual.is_finite());
+    assert!(metrics.simplec_final_momentum_residual.is_finite());
+    assert!(metrics.pressure_solve_residual.is_finite());
+    assert!(metrics.pressure_solve_iterations <= 50);
+}
+
+#[test]
+fn lid_driven_cavity_re100_incompressible_benchmark_runs() {
+    let result = run_case_path(Path::new(
+        "tests/benchmarks/lid_driven_cavity_re100/case.toml",
+    ))
+    .expect("run");
+    assert_eq!(result.kind, CaseRunKind::Incompressible3dSteady);
+    assert_eq!(
+        result.benchmark_id.as_deref(),
+        Some("lid_driven_cavity_re100")
+    );
+    let metrics = result.incompressible_3d.expect("incompressible metrics");
+    assert_eq!(metrics.simplec_iterations, 2);
+    assert!(metrics.simplec_final_residual.is_finite());
+    assert!(metrics.simplec_final_momentum_residual.is_finite());
+    assert!(metrics.momentum_solve_converged);
+}

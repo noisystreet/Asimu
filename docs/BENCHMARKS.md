@@ -1,6 +1,6 @@
 # asimu 验证算例库（V&V Benchmarks）
 
-> 与 golden test（防回归）互补：本目录关注 **物理正确性** 与 **文献对比**。  
+> 与 golden test（防回归）互补：本目录关注 **物理正确性** 与 **文献对比**。
 > 架构：[ARCHITECTURE.md](ARCHITECTURE.md) §8.5.6 · 数据：[DATA_MODEL.md](DATA_MODEL.md)
 
 **状态**：规划（v0.2 起 1D 算例，v0.4+ 2D 方腔）· 目录：`tests/benchmarks/`
@@ -58,8 +58,8 @@ tests/benchmarks/
 |----|------|-----------|----------|-----|
 | `1d_diffusion_analytical` | v0.2 | 1D 稳态扩散，Dirichlet | 解析解 | 必跑 |
 | `1d_advection_diffusion` | v0.2 | 1D 对流-扩散 | 解析 / manufactured | 必跑 |
-| `channel_poiseuille` | v0.3 | 2D 不可压通道 | 解析速度剖面 | 必跑 |
-| `lid_driven_cavity_re100` | v0.4 | 方腔 Re=100 | Ghia 1982 中心线速度 | 可选 ignore |
+| `channel_poiseuille` | v0.3 | 2D 不可压通道 | 解析速度剖面（当前 smoke 骨架） | 必跑 |
+| `lid_driven_cavity_re100` | v0.4 | 方腔 Re=100 | Ghia 1982 中心线速度（当前 smoke 骨架） | 必跑 smoke，完整剖面可选 ignore |
 | `backward_facing_step` | v1.x | 台阶流 | 实验/文献（待定） | ignore |
 
 ---
