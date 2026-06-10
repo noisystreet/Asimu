@@ -89,7 +89,8 @@ pub fn run_incompressible_simplec(
         let mut diagnostic = assemble_simplec_step(&current_fields, &config)?;
         let residual = diagnostic.max_abs_corrected_divergence;
         let momentum_residual = diagnostic.max_abs_momentum_equation_residual;
-        if !residual.is_finite() || !momentum_residual.is_finite() {
+        let velocity_delta = diagnostic.max_abs_corrected_velocity_delta;
+        if !residual.is_finite() || !momentum_residual.is_finite() || !velocity_delta.is_finite() {
             return Err(AsimuError::Solver("SIMPLEC 残差出现非有限值".to_string()));
         }
         history.push(residual);
@@ -97,7 +98,11 @@ pub fn run_incompressible_simplec(
         current_fields = diagnostic.corrected_fields.clone();
         let converged = config
             .tolerance
-            .map(|tolerance| residual <= tolerance && momentum_residual <= tolerance)
+            .map(|tolerance| {
+                residual <= tolerance
+                    && momentum_residual <= tolerance
+                    && velocity_delta <= tolerance
+            })
             .unwrap_or(false);
         diagnostic.simplec_iterations = history.len();
         diagnostic.simplec_converged = converged;
@@ -117,6 +122,7 @@ pub fn run_incompressible_simplec(
         .map(|tolerance| {
             diagnostic.simplec_final_residual <= tolerance
                 && diagnostic.simplec_final_momentum_residual <= tolerance
+                && diagnostic.max_abs_corrected_velocity_delta <= tolerance
         })
         .unwrap_or(false);
     Ok(diagnostic)

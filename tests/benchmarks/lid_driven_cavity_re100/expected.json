@@ -11,8 +11,9 @@
     },
     {
       "name": "simplec_iterations",
-      "max_value": 2,
-      "source": "time.tolerance early stop"
+      "value": 2,
+      "tolerance_abs": 0,
+      "source": "case.toml time.max_steps; velocity update convergence pending"
     },
     {
       "name": "max_abs_corrected_divergence",

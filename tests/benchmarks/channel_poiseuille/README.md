@@ -19,7 +19,7 @@ u(y)=\frac{1}{2\nu}\left(-\frac{\mathrm{d}p}{\mathrm{d}x}\right)y(H-y),
 
 runner 会在 `Incompressible3dRunMetrics.centerline_profiles` 中返回 \(x\) 中线的 \(u(y)\) 样本，并在 `poiseuille_profile_error` 中给出相对解析式的 `max_abs` 与 `l2` 误差。后续在稳态更新量收敛判据完善后，`expected.json` 中的诊断标记应替换为剖面误差阈值。
 
-当前 smoke 判据要求压力校正收敛，且 SIMPLEC 外层在 `time.tolerance = 1.0e-8` 下报告收敛。
+当前 smoke 判据要求压力校正收敛，连续性与动量线性残差低于 `time.tolerance = 1.0e-8`；SIMPLEC 外层还会检查速度更新量，因此该粗网格 2 步 case 预计 `simplec_converged=false`，用于暴露“尚未稳态”的状态。
 
 ## 参考文献
 

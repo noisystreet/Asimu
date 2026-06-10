@@ -301,7 +301,7 @@ Ghost 单元距 owner 中心法向距离 \(d_f\)。
 
 `solver::run_incompressible_simplec` 已提供 SIMPLEC 外层循环：`time.max_steps` 作为最大外层迭代数，
 `time.tolerance` 为可选收敛阈值；每轮执行动量预测、压力校正、\(p,\mathbf{u}\)
-修正，并把压力校正方程质量残差 \(\max|b_p-A_p p'|\) 与 \(\max|A_u u^*-rhs_u|\) 写入残差历史。预测残差仍来自 Rhie-Chow 面通量；修正后残差使用同一次压力校正方程的线性残差，避免用总压力场重复计算 Rhie-Chow 压力项。设置 `time.tolerance` 时，连续性与动量残差须同时满足阈值才标记收敛；未设置时仅执行固定 `max_steps`，`simplec_converged=false` 表示没有收敛判据。若残差出现非有限值，runner 立即返回求解器错误；输出字段使用最后一次修正后的场。
+修正，并把压力校正方程质量残差 \(\max|b_p-A_p p'|\) 与 \(\max|A_u u^*-rhs_u|\) 写入残差历史。预测残差仍来自 Rhie-Chow 面通量；修正后残差使用同一次压力校正方程的线性残差，避免用总压力场重复计算 Rhie-Chow 压力项。设置 `time.tolerance` 时，连续性残差、动量残差与 \(\max|\Delta\mathbf{u}|\) 速度更新量须同时满足阈值才标记收敛；未设置时仅执行固定 `max_steps`，`simplec_converged=false` 表示没有收敛判据。若残差或速度更新量出现非有限值，runner 立即返回求解器错误；输出字段使用最后一次修正后的场。
 
 `[incompressible.linear.momentum]` 与 `[incompressible.linear.pressure]` 分别控制动量预测和压力校正线性求解的 GMRES `restart`、`max_iters` 与 `tolerance`。压力校正默认使用 `restart=64`、`max_iters=500`、`tolerance=1.0e-10`，避免小型 Poisson-like 系统被过早截断；当前首版仍使用 Identity 预条件器，后续会切换到更适合 Poisson 系统的 CG/ILU(0) 或 AMG 路径。
 
