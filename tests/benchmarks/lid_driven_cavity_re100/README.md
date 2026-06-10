@@ -15,7 +15,7 @@
 
 当前判据要求 100 步 SIMPLEC 外层稳定完成，压力校正与动量线性求解收敛，并把欠松弛后连续性残差压到 `3.0e-5` 以内；SIMPLEC 外层仍使用 `time.tolerance = 3.0e-5` 同时检查连续性、动量残差与总速度更新量，因此该粗网格 case 预计 `simplec_converged=false`，用于暴露“连续性已达标但速度约束边界 owner 的速度更新量仍略高”的状态。
 
-排查收敛时同时查看 `max_abs_corrected_divergence`、`max_abs_underrelaxed_corrected_divergence` 与 `max_abs_corrected_field_divergence_after_boundary`：第一项是全量压力校正方程残差，第二项是按 `pressure_under_relaxation` 实际修正后的 SIMPLEC 连续性残差，第三项是修正速度并重施加边界后的真实 cell-centered 散度。`max_abs_corrected_velocity_delta_interior` / `boundary` 会把速度更新量拆成非速度约束 owner 与速度约束边界 owner 两类；当前剩余超阈值项来自后者。若第一项很小而后两项仍大，优先检查速度修正、Rhie-Chow 通量和边界一致性。
+排查收敛时同时查看 `max_abs_corrected_divergence`、`max_abs_underrelaxed_corrected_divergence` 与 `max_abs_corrected_field_divergence_after_boundary`：第一项是全量压力校正方程残差，第二项是按 `pressure_under_relaxation` 实际修正后的 SIMPLEC 连续性残差，第三项是修正速度并重施加边界后的边界感知 face-flux 散度。`max_abs_corrected_velocity_delta_interior` / `boundary` 会把速度更新量拆成非速度约束 owner 与速度约束边界 owner 两类；当前剩余超阈值项来自后者。若第一项很小而后两项仍大，优先检查速度修正、Rhie-Chow 通量和边界一致性。
 
 ## 参考文献
 

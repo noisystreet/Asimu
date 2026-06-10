@@ -98,7 +98,7 @@ let result = solver.run(&mesh)?;
 | `CaseSpec::build_initial_fields()` | 构建 `Fields` |
 | `CaseSpec::initial_scalar(name)` | 单标量；未声明则全零 |
 | `CaseSpec::build_multiblock_conserved_fields(blocks)` | 按 block 顺序构建多块守恒初场 |
-| `Incompressible3dRunMetrics` | I1 runner 指标：SIMPLEC 外层迭代/收敛/连续性与动量残差历史、初始 cell-centered 散度、预测 Rhie-Chow 散度、全量压力校正方程质量残差、按 `pressure_under_relaxation` 缩放后的压力校正连续性残差、修正场重施加边界前/后的真实 cell-centered 散度、压力校正 active RHS 总和、压力校正 CSR 行数/非零数、GMRES 收敛与最大 \(p'\)、动量预测 CSR、三分量 GMRES 收敛、最大 \(d_P\)、总速度变化及非速度约束 owner / 速度约束边界 owner 的速度变化拆分、不可压缩边界应用统计、Poiseuille 解析剖面误差、lid cavity Ghia 中心线误差，以及 lid cavity / Poiseuille benchmark 的中心线剖面诊断 |
+| `Incompressible3dRunMetrics` | I1 runner 指标：SIMPLEC 外层迭代/收敛/连续性与动量残差历史、初始边界面通量散度、预测 Rhie-Chow 散度、全量压力校正方程质量残差、按 `pressure_under_relaxation` 缩放后的压力校正连续性残差、修正场重施加边界前/后的边界感知 face-flux 散度、压力校正 active RHS 总和、压力校正 CSR 行数/非零数、GMRES 收敛与最大 \(p'\)、动量预测 CSR、三分量 GMRES 收敛、最大 \(d_P\)、总速度变化及非速度约束 owner / 速度约束边界 owner 的速度变化拆分、不可压缩边界应用统计、Poiseuille 解析剖面误差、lid cavity Ghia 中心线误差，以及 lid cavity / Poiseuille benchmark 的中心线剖面诊断 |
 | `run_incompressible_simplec(config)` | 不可压缩 SIMPLEC solver 层编排：动量预测、Rhie-Chow 连续性 RHS、压力校正、\(p,\mathbf{u}\) 欠松弛修正、修正后边界重施加，以及连续性/动量/速度更新量收敛判据；结构化路径支持 `i_min/i_max` 成对周期边界 |
 | `IncompressibleLinearSolverConfig` | 不可压缩动量/压力线性求解配置；当前映射 `[incompressible.linear.momentum]` 与 `[incompressible.linear.pressure]` 的 GMRES 参数，压力校正默认使用更高迭代预算 |
 | `load_conserved_fields(path)` / `write_conserved_fields(path, fields)` | 单 block restart TOML（version=1） |
@@ -252,6 +252,7 @@ name=<mesh_name>;cells=<count>
 | `InteriorFaceColoring` | 非结构内面贪心着色桶；`for_each_face_index` 按桶遍历；默认启用 `parallel-fvm` 时 `par_map_buckets` 桶内 rayon 并行 compute + 串行 scatter |
 | `viscous_assembly` | 结构/非结构共用粘性边界面通量（`viscous_flux_at_boundary`）、scatter（`accumulate_viscous_*`）与壁面梯度外推 |
 | `compute_incompressible_divergence_3d` | 结构化 3D 不可压缩 I1 连续性残差 \(\nabla\cdot\mathbf{u}\) |
+| `compute_incompressible_face_flux_divergence_3d` | 结构化 3D 不可压缩边界感知 face-flux 散度诊断，墙面/对称面无穿透、速度入口/动壁使用边界面速度 |
 | `compute_incompressible_velocity_laplacian_3d` | 结构化 3D 不可压缩 I1 速度三分量 Laplacian skeleton |
 | `apply_incompressible_boundary_conditions_3d` | 结构化 3D 不可压缩 cell-centered 边界应用，支持 wall / moving_wall / velocity_inlet / pressure_outlet / symmetry |
 | `compute_incompressible_rhie_chow_divergence_3d` | 结构化 3D 不可压缩 Rhie-Chow 面质量通量连续性残差 |

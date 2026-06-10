@@ -15,6 +15,7 @@ pub mod gradient_unstructured;
 pub mod hllc;
 pub mod incompressible;
 pub mod incompressible_bc;
+pub mod incompressible_face_flux;
 pub mod incompressible_momentum;
 pub mod incompressible_pressure;
 pub mod incompressible_rhie_chow;
@@ -68,6 +69,7 @@ pub use incompressible::{
 pub use incompressible_bc::{
     IncompressibleBoundaryApplyStats, apply_incompressible_boundary_conditions_3d,
 };
+pub use incompressible_face_flux::compute_incompressible_face_flux_divergence_3d;
 pub use incompressible_momentum::{
     IncompressibleMomentumPredictorConfig, IncompressibleMomentumPredictorSystem,
     assemble_incompressible_momentum_predictor_3d,

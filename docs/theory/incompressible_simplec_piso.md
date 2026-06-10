@@ -267,7 +267,7 @@ Ghost 单元距 owner 中心法向距离 \(d_f\)。
 
 详细分工见 [boundary_conditions.md](boundary_conditions.md) §9。
 
-当前实现分两层：`apply_incompressible_boundary_conditions_3d` 先把 `wall`、`velocity_inlet`、`pressure_outlet`、`symmetry` 施加到结构化边界 owner 单元并输出统计；`moving_wall` 在 owner-cell 层只施加无穿透约束，避免把壁面切向速度误当作 cell-centered 出流。SIMPLEC 每次动量预测与 \(p,\mathbf{u}\) 修正后会再次施加这些 owner-cell 约束，确保壁面/动壁法向速度不随压力校正漂移。`assemble_incompressible_momentum_predictor_with_boundary_3d` 再把速度 Dirichlet、动壁切向驱动、压力出口零梯度与对称/滑移法向约束转化为动量预测矩阵/RHS 的边界面贡献。`i_min/i_max` 成对 `periodic` 不改 owner 单元值，而是在动量、Rhie-Chow、压力校正和速度修正压力梯度中使用周期 wrap 邻接。
+当前实现分两层：`apply_incompressible_boundary_conditions_3d` 先把 `wall`、`moving_wall`、`velocity_inlet`、`pressure_outlet`、`symmetry` 施加到结构化边界 owner 单元并输出统计；`wall` / `moving_wall` 在 owner-cell 层只施加无穿透约束，避免把壁面切向速度误当作 cell-centered 值。SIMPLEC 每次动量预测与 \(p,\mathbf{u}\) 修正后会再次施加这些 owner-cell 约束，确保壁面/动壁法向速度不随压力校正漂移。`assemble_incompressible_momentum_predictor_with_boundary_3d` 再把速度 Dirichlet、无滑移/动壁切向驱动、压力出口零梯度与对称/滑移法向约束转化为动量预测矩阵/RHS 的边界面贡献。`i_min/i_max` 成对 `periodic` 不改 owner 单元值，而是在动量、Rhie-Chow、压力校正和速度修正压力梯度中使用周期 wrap 邻接。
 
 ## 7. PISO 与时间积分
 
@@ -316,9 +316,9 @@ Ghost 单元距 owner 中心法向距离 \(d_f\)。
 为排查封闭腔体收敛，runner 额外记录多类诊断：`max_abs_corrected_divergence`
 表示全量压力校正方程自身的质量残差；`max_abs_underrelaxed_corrected_divergence`
 表示实际欠松弛速度修正后仍剩余的压力校正连续性残差；`max_abs_corrected_field_divergence_before_boundary`
-与 `max_abs_corrected_field_divergence_after_boundary` 则分别重新计算 \(p,\mathbf{u}\)
-修正后、边界重施加前后的 cell-centered \(\nabla\cdot\mathbf{u}\)。这些指标不应混用：
-全量压力方程残差用于判断线性系统是否解好，欠松弛残差用于 SIMPLEC 收敛，cell-centered 散度用于判断边界重施加和速度修正是否仍破坏真实速度场连续性。
+与 `max_abs_corrected_field_divergence_after_boundary` 则分别用边界感知 face-flux 净通量重新计算 \(p,\mathbf{u}\)
+修正后、边界重施加前后的 \(\nabla\cdot\mathbf{u}\)。这些指标不应混用：
+全量压力方程残差用于判断线性系统是否解好，欠松弛残差用于 SIMPLEC 收敛，face-flux 散度用于判断边界面通量、边界重施加和速度修正是否仍破坏真实速度场连续性。
 `pressure_correction_rhs_active_sum` 记录跳过 \(p'=0\) identity 约束行后的 RHS 总和，用于检查闭域兼容性。
 `max_abs_corrected_velocity_delta_interior` 与 `max_abs_corrected_velocity_delta_boundary`
 把总速度更新量拆成非速度约束 owner 和速度约束边界 owner 两类，用于判断收敛受内部场演化还是边界 owner 重施加主导；SIMPLEC 收敛判据仍使用总速度更新量。
@@ -330,6 +330,7 @@ Ghost 单元距 owner 中心法向距离 \(d_f\)。
 | 式 / 步骤 | 代码位置 | 状态 |
 |-----------|----------|------|
 | (1a) 连续性残差 | `discretization::compute_incompressible_divergence_3d` | **I1 已实现** |
+| (1a) 边界面通量散度诊断 | `discretization::compute_incompressible_face_flux_divergence_3d` | **I1 已实现：墙面/对称面无穿透，速度入口/动壁使用 face 速度** |
 | (6a) 速度 Laplacian skeleton | `discretization::compute_incompressible_velocity_laplacian_3d` | **I1 已实现** |
 | (8a)–(8c) 动量预测 | `discretization::assemble_incompressible_momentum_predictor_with_boundary_3d` | **已实现：内部扩散/迎风对流、边界面贡献、周期 x wrap、三分量 RHS** |
 | (9)(10) SIMPLEC 系数 | `discretization::assemble_incompressible_momentum_predictor_with_boundary_3d` | **已实现：由动量矩阵一致系数计算 \(d_P\)** |

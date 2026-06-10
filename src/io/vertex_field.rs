@@ -139,8 +139,10 @@ fn temperature_from_primitive(prim: &PrimitiveState, eos: &IdealGasEoS) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(any(feature = "io-vtk", feature = "io-cgns"))]
     use crate::field::ConservedFields;
     use crate::mesh::StructuredMesh3d;
+    #[cfg(any(feature = "io-vtk", feature = "io-cgns"))]
     use crate::physics::{FreestreamParams, IdealGasEoS};
 
     #[cfg(any(feature = "io-vtk", feature = "io-cgns"))]

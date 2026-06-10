@@ -23,6 +23,8 @@
 - 不可压缩 SIMPLEC 增加收敛排查诊断：记录修正场边界重施加前/后的真实 cell-centered 散度，以及跳过 \(p'=0\) 约束行后的压力校正 RHS 总和，用于区分压力方程残差小与速度场真实连续性未收敛。
 - 不可压缩 SIMPLEC 收敛残差改为按 `pressure_under_relaxation` 缩放后的压力校正连续性残差 `max|b_p - alpha_p A_p p'|`，避免全量压力校正方程残差很小但实际欠松弛速度修正尚未满足连续性时误判收敛。
 - 不可压缩 SIMPLEC 速度更新量诊断拆分为总量、非速度约束 owner 与速度约束边界 owner，用于定位 lid cavity 剩余 `max|Delta u|` 是否由边界 owner 重施加主导。
+- 不可压缩 SIMPLEC 修正场散度诊断改为边界感知 face-flux 净通量，墙面/对称面使用无穿透面通量，速度入口/动壁使用给定面速度，避免用零梯度 cell-centered 差分误读边界面连续性。
+- 不可压缩 `wall no_slip` owner-cell 边界应用改为只约束法向速度，切向无滑移通过动量边界面源项驱动，避免 owner-cell 层与面源项双重施加切向壁速。
 - 不可压缩 `moving_wall` owner-cell 边界应用改为只约束法向速度，切向壁速通过动量边界面源项驱动，避免 lid cavity 顶盖 owner 单元被强制为切向壁速后在侧壁附近产生虚假的 cell-centered 水平通量。
 - ADR 0015：三维不可压 NS（collocated FVM + **SIMPLEC** + **PISO**，结构化六面体首版，I0–I6）；补充通量格式、边界条件、时间积分（BDF1/伪瞬态）；理论页 [docs/theory/incompressible_simplec_piso.md](docs/theory/incompressible_simplec_piso.md)
 - ADR 0014：可压 RANS **Menter k-ω SST**（壁距场、分裂 LU-SGS、T0–T5）；理论页 [docs/theory/turbulence_k_omega_sst.md](docs/theory/turbulence_k_omega_sst.md)

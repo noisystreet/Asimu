@@ -22,12 +22,8 @@ pub fn apply_incompressible_boundary_conditions_3d(
             let owner = mesh.face_owner(face)?.index() as usize;
             let normal = mesh.face_normal_3d(face)?;
             match &patch.kind {
-                BoundaryKind::Wall { no_slip, .. } => {
-                    if *no_slip {
-                        set_velocity(fields, owner, [0.0, 0.0, 0.0]);
-                    } else {
-                        zero_normal_velocity(fields, owner, [normal.x, normal.y, normal.z]);
-                    }
+                BoundaryKind::Wall { .. } => {
+                    zero_normal_velocity(fields, owner, [normal.x, normal.y, normal.z]);
                     stats.velocity_cells += 1;
                 }
                 BoundaryKind::MovingWall { .. } => {
@@ -166,6 +162,27 @@ mod tests {
             "j_min",
             mesh.resolve_logical_boundary("j_min").expect("faces"),
             BoundaryKind::Symmetry,
+        )]);
+
+        apply_incompressible_boundary_conditions_3d(&mesh, &mut fields, &boundary).expect("bc");
+
+        assert_eq!(fields.velocity_x.values()[0], 1.0);
+        assert_eq!(fields.velocity_y.values()[0], 0.0);
+        assert_eq!(fields.velocity_z.values()[0], 3.0);
+    }
+
+    #[test]
+    fn no_slip_wall_only_removes_owner_normal_velocity() {
+        let mesh = StructuredMesh3d::uniform_box("box", 1, 1, 1, 1.0, 1.0, 1.0).expect("mesh");
+        let mut fields =
+            IncompressibleFields::uniform(mesh.num_cells(), 0.0, [1.0, 2.0, 3.0]).expect("fields");
+        let boundary = BoundarySet::new(vec![BoundaryPatch::new(
+            "j_min",
+            mesh.resolve_logical_boundary("j_min").expect("faces"),
+            BoundaryKind::Wall {
+                no_slip: true,
+                heat: crate::boundary::WallHeat::Adiabatic,
+            },
         )]);
 
         apply_incompressible_boundary_conditions_3d(&mesh, &mut fields, &boundary).expect("bc");

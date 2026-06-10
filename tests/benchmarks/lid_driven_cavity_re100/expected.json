@@ -29,7 +29,7 @@
     {
       "name": "max_abs_corrected_field_divergence_after_boundary",
       "max_value": 0.03,
-      "source": "cell-centered divergence recomputed from corrected velocity after boundary reapply"
+      "source": "boundary-aware face-flux divergence recomputed from corrected velocity after boundary reapply"
     },
     {
       "name": "pressure_correction_rhs_active_sum",

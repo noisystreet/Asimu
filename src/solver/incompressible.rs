@@ -6,7 +6,7 @@ use crate::discretization::{
     IncompressibleMomentumPredictorConfig, IncompressiblePressureCorrectionConfig,
     apply_incompressible_boundary_conditions_3d,
     assemble_incompressible_momentum_predictor_with_boundary_3d,
-    assemble_incompressible_pressure_correction_3d, compute_incompressible_divergence_3d,
+    assemble_incompressible_pressure_correction_3d, compute_incompressible_face_flux_divergence_3d,
     compute_incompressible_rhie_chow_divergence_3d,
 };
 use crate::error::{AsimuError, Result};
@@ -160,7 +160,7 @@ fn assemble_simplec_step(
     config: &IncompressibleSimplecConfig<'_>,
 ) -> Result<IncompressibleSimplecDiagnostic> {
     let mesh = config.mesh;
-    let divergence = compute_incompressible_divergence_3d(mesh, fields)?;
+    let divergence = compute_incompressible_face_flux_divergence_3d(mesh, fields, config.boundary)?;
     let max_abs_divergence = max_abs_scalar_field(&divergence);
     let momentum_system = assemble_incompressible_momentum_predictor_with_boundary_3d(
         mesh,
@@ -335,9 +335,11 @@ fn build_corrected_fields_with_diagnostics(
         config.pressure_under_relaxation,
         config.boundary.has_periodic_pair("i_min", "i_max"),
     )?;
-    let max_abs_divergence_before_boundary = max_abs_field_divergence(mesh, &fields)?;
+    let max_abs_divergence_before_boundary =
+        max_abs_field_divergence(mesh, &fields, config.boundary)?;
     apply_incompressible_boundary_conditions_3d(mesh, &mut fields, config.boundary)?;
-    let max_abs_divergence_after_boundary = max_abs_field_divergence(mesh, &fields)?;
+    let max_abs_divergence_after_boundary =
+        max_abs_field_divergence(mesh, &fields, config.boundary)?;
     Ok(CorrectedFieldsDiagnostic {
         fields,
         max_abs_divergence_before_boundary,
@@ -540,8 +542,9 @@ fn is_identity_constraint_row(matrix: &CsrMatrix, row: usize) -> bool {
 fn max_abs_field_divergence(
     mesh: &StructuredMesh3d,
     fields: &IncompressibleFields,
+    boundary: &BoundarySet,
 ) -> Result<Real> {
-    let divergence = compute_incompressible_divergence_3d(mesh, fields)?;
+    let divergence = compute_incompressible_face_flux_divergence_3d(mesh, fields, boundary)?;
     Ok(max_abs_scalar_field(&divergence))
 }
 
