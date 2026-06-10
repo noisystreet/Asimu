@@ -62,3 +62,4 @@ kind = "symmetry"
 mode = "steady"
 max_steps = 2
 dt = 1.0
+tolerance = 1.0e-8

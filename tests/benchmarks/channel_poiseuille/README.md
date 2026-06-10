@@ -19,6 +19,8 @@ u(y)=\frac{1}{2\nu}\left(-\frac{\mathrm{d}p}{\mathrm{d}x}\right)y(H-y),
 
 后续在入口剖面、压力梯度驱动或体力源项支持完善后，`expected.json` 中的 smoke 阈值应替换为剖面误差阈值。
 
+当前 smoke 判据要求压力校正收敛，且 SIMPLEC 外层在 `time.tolerance = 1.0e-8` 下报告收敛。
+
 ## 参考文献
 
 1. White, F. M. (2011). *Fluid Mechanics*, 7th ed., McGraw-Hill. Chapter 3, internal viscous flows.

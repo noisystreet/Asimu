@@ -43,7 +43,8 @@ fn channel_poiseuille_incompressible_benchmark_runs() {
     assert_eq!(result.kind, CaseRunKind::Incompressible3dSteady);
     assert_eq!(result.benchmark_id.as_deref(), Some("channel_poiseuille"));
     let metrics = result.incompressible_3d.expect("incompressible metrics");
-    assert_eq!(metrics.simplec_iterations, 2);
+    assert!((1..=2).contains(&metrics.simplec_iterations));
+    assert!(metrics.simplec_converged);
     assert!(metrics.simplec_final_residual.is_finite());
     assert!(metrics.simplec_final_residual < 1.0e-8);
     assert!(metrics.simplec_final_momentum_residual.is_finite());
@@ -69,7 +70,8 @@ fn lid_driven_cavity_re100_incompressible_benchmark_runs() {
         Some("lid_driven_cavity_re100")
     );
     let metrics = result.incompressible_3d.expect("incompressible metrics");
-    assert_eq!(metrics.simplec_iterations, 2);
+    assert!((1..=2).contains(&metrics.simplec_iterations));
+    assert!(metrics.simplec_converged);
     assert!(metrics.simplec_final_residual.is_finite());
     assert!(metrics.simplec_final_residual < 1.0e-8);
     assert!(metrics.simplec_final_momentum_residual.is_finite());

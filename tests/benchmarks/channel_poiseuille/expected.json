@@ -11,9 +11,8 @@
     },
     {
       "name": "simplec_iterations",
-      "value": 2,
-      "tolerance_abs": 0,
-      "source": "case.toml time.max_steps"
+      "max_value": 2,
+      "source": "time.tolerance early stop"
     },
     {
       "name": "pressure_solve_converged",
