@@ -23,7 +23,7 @@
     },
     {
       "name": "max_abs_underrelaxed_corrected_divergence",
-      "max_value": 1.0e-4,
+      "max_value": 3.0e-5,
       "source": "continuity residual after pressure_under_relaxation scaling; SIMPLEC convergence residual"
     },
     {
