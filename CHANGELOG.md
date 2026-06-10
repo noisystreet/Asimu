@@ -18,6 +18,7 @@
 - 不可压缩 SIMPLEC 外层收敛判据加入速度更新量 \(\max|\Delta\mathbf{u}|\)，避免体力驱动或方腔算例在线性残差小但尚未稳态时被误标为收敛。
 - 不可压缩 SIMPLEC 外层增加发散保护；GMRES 对兼容 Hessenberg 退化回代不再报错，由重算残差决定是否继续迭代或标记未收敛。
 - 结构化不可压缩 SIMPLEC 支持 `i_min/i_max` 成对周期边界的动量、Rhie-Chow、压力校正与速度修正路径；Poiseuille benchmark 升级为周期体力驱动并启用解析剖面误差阈值。
+- Lid cavity Re=100 benchmark 增加基于 Ghia et al. (1982) 中心线表格的误差诊断；长迭代封闭腔体收敛仍作为后续压力-速度耦合改进目标。
 - ADR 0015：三维不可压 NS（collocated FVM + **SIMPLEC** + **PISO**，结构化六面体首版，I0–I6）；补充通量格式、边界条件、时间积分（BDF1/伪瞬态）；理论页 [docs/theory/incompressible_simplec_piso.md](docs/theory/incompressible_simplec_piso.md)
 - ADR 0014：可压 RANS **Menter k-ω SST**（壁距场、分裂 LU-SGS、T0–T5）；理论页 [docs/theory/turbulence_k_omega_sst.md](docs/theory/turbulence_k_omega_sst.md)
 - ADR 0013 **E5**：dual_ellipsoid benchmark 说明（`tests/benchmarks/dual_ellipsoid/`）；scatter 每色桶 1 次契约测试；Chrome trace 桶级 span 改 `trace` 级 + `include_args(false)`

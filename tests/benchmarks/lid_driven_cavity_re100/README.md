@@ -11,7 +11,7 @@
 - 前后面 `symmetry` 表示二维方腔；
 - \(L_{ref}=1\)、\(U_{ref}=1\)、\(\nu=0.01\)，因此 \(Re=100\)。
 
-当前 runner 会在 `Incompressible3dRunMetrics.centerline_profiles` 中返回近似 \(x=0.5\) 和 \(y=0.5\) 的 cell-centered 中心线速度样本；`expected.json` 已记录 Ghia 等人的 Re=100 表格数据。后续完整验证应在网格、压力校正和边界 ghost 完善后启用剖面插值误差判据。
+当前 runner 会在 `Incompressible3dRunMetrics.centerline_profiles` 中返回近似 \(x=0.5\) 和 \(y=0.5\) 的 cell-centered 中心线速度样本，并在 `lid_cavity_profile_error` 中给出相对 Ghia 等人 Re=100 表格数据的线性插值误差。该误差目前仅作 smoke 诊断；后续完整验证应在封闭腔体长迭代稳定后收紧剖面误差阈值。
 
 当前 smoke 判据要求压力校正收敛，连续性与动量线性残差低于 `time.tolerance = 1.0e-8`；SIMPLEC 外层还会检查速度更新量，因此该粗网格 2 步 case 预计 `simplec_converged=false`，用于暴露“尚未稳态”的状态。
 

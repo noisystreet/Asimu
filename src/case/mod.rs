@@ -22,8 +22,8 @@ use crate::io::{CaseMesh, CaseSpec, load_case};
 pub use compressible_3d::Compressible3dRunMetrics;
 pub use diffusion::DiffusionRunMetrics;
 pub use incompressible_3d::{
-    Incompressible3dRunMetrics, IncompressibleCenterlineProfiles, IncompressibleLineSample,
-    IncompressibleProfileError,
+    Incompressible3dRunMetrics, IncompressibleCenterlineProfileError,
+    IncompressibleCenterlineProfiles, IncompressibleLineSample, IncompressibleProfileError,
 };
 pub use sod::SodRunMetrics;
 

@@ -73,7 +73,7 @@ fn lid_driven_cavity_re100_incompressible_benchmark_runs() {
     let expected =
         std::fs::read_to_string("tests/benchmarks/lid_driven_cavity_re100/expected.json")
             .expect("expected");
-    assert!(expected.contains("reference_loaded_solver_comparison_pending"));
+    assert!(expected.contains("smoke_error_diagnostic_only"));
     assert!(expected.contains("Ghia et al. 1982"));
     let result = run_case_path(Path::new(
         "tests/benchmarks/lid_driven_cavity_re100/case.toml",
@@ -107,4 +107,13 @@ fn lid_driven_cavity_re100_incompressible_benchmark_runs() {
             .iter()
             .all(|sample| sample.coordinate.is_finite() && sample.velocity_y.is_finite())
     );
+    let error = metrics
+        .lid_cavity_profile_error
+        .expect("lid cavity profile error");
+    assert!(error.vertical_u.max_abs.is_finite());
+    assert!(error.vertical_u.l2.is_finite());
+    assert!(error.horizontal_v.max_abs.is_finite());
+    assert!(error.horizontal_v.l2.is_finite());
+    assert!(error.vertical_u.max_abs < 2.0);
+    assert!(error.horizontal_v.max_abs < 2.0);
 }

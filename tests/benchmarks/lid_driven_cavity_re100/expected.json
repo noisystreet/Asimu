@@ -1,7 +1,7 @@
 {
   "benchmark_id": "lid_driven_cavity_re100",
   "asimu_min_version": "0.3.0",
-  "status": "smoke_until_centerline_validation",
+  "status": "centerline_error_diagnostic_enabled",
   "quantities": [
     {
       "name": "reynolds_number",
@@ -30,10 +30,11 @@
   "profiles": [
     {
       "name": "vertical_centerline_u",
-      "status": "reference_loaded_solver_comparison_pending",
+      "status": "smoke_error_diagnostic_only",
       "source": "Ghia et al. 1982, Table I",
       "coordinate": "y",
       "velocity_component": "u",
+      "max_abs_tolerance": 2.0,
       "points": [
         { "y": 1.0, "u": 1.0 },
         { "y": 0.9766, "u": 0.84123 },
@@ -56,10 +57,11 @@
     },
     {
       "name": "horizontal_centerline_v",
-      "status": "reference_loaded_solver_comparison_pending",
+      "status": "smoke_error_diagnostic_only",
       "source": "Ghia et al. 1982, Table II",
       "coordinate": "x",
       "velocity_component": "v",
+      "max_abs_tolerance": 2.0,
       "points": [
         { "x": 1.0, "v": 0.0 },
         { "x": 0.9688, "v": -0.05906 },

@@ -59,6 +59,7 @@ pub struct Incompressible3dRunMetrics {
     pub boundary_ignored_faces: usize,
     pub centerline_profiles: Option<IncompressibleCenterlineProfiles>,
     pub poiseuille_profile_error: Option<IncompressibleProfileError>,
+    pub lid_cavity_profile_error: Option<IncompressibleCenterlineProfileError>,
     pub written: Vec<PathBuf>,
 }
 
@@ -80,6 +81,12 @@ pub struct IncompressibleCenterlineProfiles {
 pub struct IncompressibleProfileError {
     pub max_abs: Real,
     pub l2: Real,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IncompressibleCenterlineProfileError {
+    pub vertical_u: IncompressibleProfileError,
+    pub horizontal_v: IncompressibleProfileError,
 }
 
 pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
@@ -139,6 +146,7 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         config.body_force,
         &diagnostic.corrected_fields,
     );
+    let lid_cavity_profile_error = lid_cavity_profile_error(case, centerline_profiles.as_ref());
     info!(
         steps,
         t = %format_log_sci4(physical_time),
@@ -203,11 +211,21 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
             physical_time,
             diagnostic,
             boundary_stats,
-            centerline_profiles,
-            poiseuille_profile_error,
-            written,
+            BenchmarkDiagnostics {
+                centerline_profiles,
+                poiseuille_profile_error,
+                lid_cavity_profile_error,
+                written,
+            },
         )),
     })
+}
+
+struct BenchmarkDiagnostics {
+    centerline_profiles: Option<IncompressibleCenterlineProfiles>,
+    poiseuille_profile_error: Option<IncompressibleProfileError>,
+    lid_cavity_profile_error: Option<IncompressibleCenterlineProfileError>,
+    written: Vec<PathBuf>,
 }
 
 fn build_run_metrics(
@@ -215,9 +233,7 @@ fn build_run_metrics(
     physical_time: Real,
     diagnostic: IncompressibleSimplecDiagnostic,
     boundary_stats: IncompressibleBoundaryApplyStats,
-    centerline_profiles: Option<IncompressibleCenterlineProfiles>,
-    poiseuille_profile_error: Option<IncompressibleProfileError>,
-    written: Vec<PathBuf>,
+    benchmark: BenchmarkDiagnostics,
 ) -> Incompressible3dRunMetrics {
     Incompressible3dRunMetrics {
         steps,
@@ -249,9 +265,10 @@ fn build_run_metrics(
         boundary_velocity_cells: boundary_stats.velocity_cells,
         boundary_pressure_cells: boundary_stats.pressure_cells,
         boundary_ignored_faces: boundary_stats.ignored_faces,
-        centerline_profiles,
-        poiseuille_profile_error,
-        written,
+        centerline_profiles: benchmark.centerline_profiles,
+        poiseuille_profile_error: benchmark.poiseuille_profile_error,
+        lid_cavity_profile_error: benchmark.lid_cavity_profile_error,
+        written: benchmark.written,
     }
 }
 
@@ -362,6 +379,108 @@ fn poiseuille_profile_error(
         l2: (sum_sq / mesh.ny as Real).sqrt(),
     })
 }
+
+fn lid_cavity_profile_error(
+    case: &CaseSpec,
+    profiles: Option<&IncompressibleCenterlineProfiles>,
+) -> Option<IncompressibleCenterlineProfileError> {
+    if case.benchmark_id.as_deref() != Some("lid_driven_cavity_re100") {
+        return None;
+    }
+    let profiles = profiles?;
+    Some(IncompressibleCenterlineProfileError {
+        vertical_u: profile_error_against_reference(
+            &profiles.vertical_u,
+            &GHIA_RE100_VERTICAL_U,
+            |sample| sample.velocity_x,
+        )?,
+        horizontal_v: profile_error_against_reference(
+            &profiles.horizontal_v,
+            &GHIA_RE100_HORIZONTAL_V,
+            |sample| sample.velocity_y,
+        )?,
+    })
+}
+
+fn profile_error_against_reference(
+    samples: &[IncompressibleLineSample],
+    reference: &[(Real, Real)],
+    value: impl Fn(&IncompressibleLineSample) -> Real,
+) -> Option<IncompressibleProfileError> {
+    if samples.is_empty() || reference.len() < 2 {
+        return None;
+    }
+    let mut max_abs: Real = 0.0;
+    let mut sum_sq: Real = 0.0;
+    for sample in samples {
+        let expected = interpolate_reference(reference, sample.coordinate)?;
+        let error = value(sample) - expected;
+        max_abs = max_abs.max(error.abs());
+        sum_sq += error * error;
+    }
+    Some(IncompressibleProfileError {
+        max_abs,
+        l2: (sum_sq / samples.len() as Real).sqrt(),
+    })
+}
+
+fn interpolate_reference(reference: &[(Real, Real)], coordinate: Real) -> Option<Real> {
+    let mut sorted = reference.to_vec();
+    sorted.sort_by(|a, b| a.0.total_cmp(&b.0));
+    for pair in sorted.windows(2) {
+        let (x0, y0) = pair[0];
+        let (x1, y1) = pair[1];
+        if coordinate >= x0 && coordinate <= x1 {
+            let t = if (x1 - x0).abs() <= Real::EPSILON {
+                0.0
+            } else {
+                (coordinate - x0) / (x1 - x0)
+            };
+            return Some(y0 + t * (y1 - y0));
+        }
+    }
+    None
+}
+
+const GHIA_RE100_VERTICAL_U: [(Real, Real); 17] = [
+    (1.0, 1.0),
+    (0.9766, 0.84123),
+    (0.9688, 0.78871),
+    (0.9609, 0.73722),
+    (0.9531, 0.68717),
+    (0.8516, 0.23151),
+    (0.7344, 0.00332),
+    (0.6172, -0.13641),
+    (0.5, -0.20581),
+    (0.4531, -0.2109),
+    (0.2813, -0.15662),
+    (0.1719, -0.1015),
+    (0.1016, -0.06434),
+    (0.0703, -0.04775),
+    (0.0625, -0.04192),
+    (0.0547, -0.03717),
+    (0.0, 0.0),
+];
+
+const GHIA_RE100_HORIZONTAL_V: [(Real, Real); 17] = [
+    (1.0, 0.0),
+    (0.9688, -0.05906),
+    (0.9609, -0.07391),
+    (0.9531, -0.08864),
+    (0.9453, -0.10313),
+    (0.9063, -0.16914),
+    (0.8594, -0.22445),
+    (0.8047, -0.24533),
+    (0.5, 0.05454),
+    (0.2344, 0.17527),
+    (0.2266, 0.17507),
+    (0.1563, 0.16077),
+    (0.0938, 0.12317),
+    (0.0781, 0.1089),
+    (0.0703, 0.10091),
+    (0.0625, 0.09233),
+    (0.0, 0.0),
+];
 
 fn cell_center_x(mesh: &StructuredMesh3d, i: usize, j: usize, k: usize) -> Real {
     0.5 * (mesh.node_x(i, j, k) + mesh.node_x(i + 1, j, k))
