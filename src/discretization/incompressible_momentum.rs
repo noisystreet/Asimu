@@ -105,12 +105,14 @@ pub fn assemble_incompressible_momentum_predictor_with_boundary_3d(
     let mut rhs_z = Vec::with_capacity(n);
     let mut d = Vec::with_capacity(n);
     let boundary_terms = boundary_momentum_contributions(mesh, fields, boundary, config)?;
+    let periodic_x = boundary.has_periodic_pair("i_min", "i_max");
     let ctx = MomentumAssemblyCtx {
         mesh,
         spacing,
         fields,
         config,
         time_coeff,
+        periodic_x,
     };
     for k in 0..mesh.nz {
         for j in 0..mesh.ny {
@@ -122,7 +124,8 @@ pub fn assemble_incompressible_momentum_predictor_with_boundary_3d(
                     (i, j, k),
                     boundary_terms.diagonal[row],
                 );
-                let grad_p = pressure_gradient(mesh, fields.pressure.values(), i, j, k, spacing);
+                let grad_p =
+                    pressure_gradient(mesh, fields.pressure.values(), i, j, k, spacing, periodic_x);
                 let relax_source = momentum_relaxation_source(rows[row].last_mut(), config)?;
                 let rhs_cell_x = time_coeff * fields.velocity_x.values()[row] - volume * grad_p[0]
                     + volume * config.body_force[0]
@@ -218,6 +221,7 @@ struct MomentumAssemblyCtx<'a> {
     fields: &'a IncompressibleFields,
     config: IncompressibleMomentumPredictorConfig,
     time_coeff: Real,
+    periodic_x: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -264,6 +268,9 @@ fn add_boundary_face_momentum(
     config: IncompressibleMomentumPredictorConfig,
     out: &mut BoundaryMomentumContributions,
 ) {
+    if matches!(kind, BoundaryKind::Periodic { .. }) {
+        return;
+    }
     if let Some(velocity) = boundary_velocity_dirichlet(kind) {
         let diffusion = config.kinematic_viscosity * geom.area / geom.spacing;
         out.diagonal[owner] += diffusion;
@@ -355,14 +362,16 @@ fn add_momentum_predictor_neighbors(
         mesh,
         row,
         &mut diag,
-        neighbor_if(i > 0, || (i - 1, j, k)),
+        neighbor_if(i > 0, || (i - 1, j, k))
+            .or_else(|| neighbor_if(ctx.periodic_x && i == 0, || (mesh.nx - 1, j, k))),
         cx,
     );
     add_neighbor_if_present(
         mesh,
         row,
         &mut diag,
-        neighbor_if(i + 1 < mesh.nx, || (i + 1, j, k)),
+        neighbor_if(i + 1 < mesh.nx, || (i + 1, j, k))
+            .or_else(|| neighbor_if(ctx.periodic_x && i + 1 == mesh.nx, || (0, j, k))),
         cx,
     );
     add_neighbor_if_present(
@@ -393,7 +402,7 @@ fn add_momentum_predictor_neighbors(
         neighbor_if(k + 1 < mesh.nz, || (i, j, k + 1)),
         cz,
     );
-    add_momentum_convection(mesh, row, &mut diag, cell, ctx.spacing, ctx.fields);
+    add_momentum_convection(ctx, row, &mut diag, cell);
     let consistent_coeff = diag + row.iter().map(|(_, value)| *value).sum::<Real>();
     row.push((center, diag));
     consistent_coeff.max(ctx.time_coeff)
@@ -411,55 +420,60 @@ fn momentum_relaxation_source(
 }
 
 fn add_momentum_convection(
-    mesh: &StructuredMesh3d,
+    ctx: MomentumAssemblyCtx<'_>,
     row: &mut Vec<(usize, Real)>,
     diag: &mut Real,
     cell: (usize, usize, usize),
-    spacing: CartesianSpacing,
-    fields: &IncompressibleFields,
 ) {
     let (i, j, k) = cell;
+    let mesh = ctx.mesh;
     add_convective_face(
         mesh,
         row,
         diag,
-        neighbor_if(i + 1 < mesh.nx, || (i + 1, j, k)),
-        face_velocity_x(mesh, fields, i, j, k, true) * spacing.dy * spacing.dz,
+        neighbor_if(i + 1 < mesh.nx, || (i + 1, j, k))
+            .or_else(|| neighbor_if(ctx.periodic_x && i + 1 == mesh.nx, || (0, j, k))),
+        face_velocity_x(mesh, ctx.fields, i, j, k, true, ctx.periodic_x)
+            * ctx.spacing.dy
+            * ctx.spacing.dz,
     );
     add_convective_face(
         mesh,
         row,
         diag,
-        neighbor_if(i > 0, || (i - 1, j, k)),
-        -face_velocity_x(mesh, fields, i, j, k, false) * spacing.dy * spacing.dz,
+        neighbor_if(i > 0, || (i - 1, j, k))
+            .or_else(|| neighbor_if(ctx.periodic_x && i == 0, || (mesh.nx - 1, j, k))),
+        -face_velocity_x(mesh, ctx.fields, i, j, k, false, ctx.periodic_x)
+            * ctx.spacing.dy
+            * ctx.spacing.dz,
     );
     add_convective_face(
         mesh,
         row,
         diag,
         neighbor_if(j + 1 < mesh.ny, || (i, j + 1, k)),
-        face_velocity_y(mesh, fields, i, j, k, true) * spacing.dx * spacing.dz,
+        face_velocity_y(mesh, ctx.fields, i, j, k, true) * ctx.spacing.dx * ctx.spacing.dz,
     );
     add_convective_face(
         mesh,
         row,
         diag,
         neighbor_if(j > 0, || (i, j - 1, k)),
-        -face_velocity_y(mesh, fields, i, j, k, false) * spacing.dx * spacing.dz,
+        -face_velocity_y(mesh, ctx.fields, i, j, k, false) * ctx.spacing.dx * ctx.spacing.dz,
     );
     add_convective_face(
         mesh,
         row,
         diag,
         neighbor_if(k + 1 < mesh.nz, || (i, j, k + 1)),
-        face_velocity_z(mesh, fields, i, j, k, true) * spacing.dx * spacing.dy,
+        face_velocity_z(mesh, ctx.fields, i, j, k, true) * ctx.spacing.dx * ctx.spacing.dy,
     );
     add_convective_face(
         mesh,
         row,
         diag,
         neighbor_if(k > 0, || (i, j, k - 1)),
-        -face_velocity_z(mesh, fields, i, j, k, false) * spacing.dx * spacing.dy,
+        -face_velocity_z(mesh, ctx.fields, i, j, k, false) * ctx.spacing.dx * ctx.spacing.dy,
     );
 }
 
@@ -500,9 +514,10 @@ fn pressure_gradient(
     j: usize,
     k: usize,
     spacing: CartesianSpacing,
+    periodic_x: bool,
 ) -> [Real; 3] {
     [
-        central_diff_x(mesh, pressure, i, j, k, spacing.dx),
+        central_diff_x(mesh, pressure, i, j, k, spacing.dx, periodic_x),
         central_diff_y(mesh, pressure, i, j, k, spacing.dy),
         central_diff_z(mesh, pressure, i, j, k, spacing.dz),
     ]
@@ -515,8 +530,13 @@ fn face_velocity_x(
     j: usize,
     k: usize,
     upper: bool,
+    periodic_x: bool,
 ) -> Real {
-    let neighbor_i = if upper { east(i, mesh.nx) } else { west(i) };
+    let neighbor_i = if upper {
+        east_with_periodic(i, mesh.nx, periodic_x)
+    } else {
+        west_with_periodic(i, mesh.nx, periodic_x)
+    };
     0.5 * (cell_value(mesh, fields.velocity_x.values(), i, j, k)
         + cell_value(mesh, fields.velocity_x.values(), neighbor_i, j, k))
 }
@@ -554,9 +574,21 @@ fn central_diff_x(
     j: usize,
     k: usize,
     dx: Real,
+    periodic_x: bool,
 ) -> Real {
-    (cell_value(mesh, values, east(i, mesh.nx), j, k) - cell_value(mesh, values, west(i), j, k))
-        / (2.0 * dx)
+    (cell_value(
+        mesh,
+        values,
+        east_with_periodic(i, mesh.nx, periodic_x),
+        j,
+        k,
+    ) - cell_value(
+        mesh,
+        values,
+        west_with_periodic(i, mesh.nx, periodic_x),
+        j,
+        k,
+    )) / (2.0 * dx)
 }
 
 fn central_diff_y(
@@ -600,6 +632,22 @@ fn west(i: usize) -> usize {
 
 fn east(i: usize, nx: usize) -> usize {
     (i + 1).min(nx - 1)
+}
+
+fn west_with_periodic(i: usize, nx: usize, periodic_x: bool) -> usize {
+    if periodic_x && i == 0 {
+        nx - 1
+    } else {
+        west(i)
+    }
+}
+
+fn east_with_periodic(i: usize, nx: usize, periodic_x: bool) -> usize {
+    if periodic_x && i + 1 == nx {
+        0
+    } else {
+        east(i, nx)
+    }
 }
 
 fn south(j: usize) -> usize {

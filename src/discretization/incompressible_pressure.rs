@@ -28,6 +28,7 @@ pub fn assemble_incompressible_pressure_correction_3d(
     let spacing = CartesianSpacing::from_mesh(mesh)?;
     let pressure_dirichlet = pressure_dirichlet_cells(mesh, boundary)?;
     let has_pressure_dirichlet = pressure_dirichlet.iter().any(|value| *value);
+    let periodic_x = boundary.has_periodic_pair("i_min", "i_max");
     let mut rows = (0..n).map(|_| Vec::with_capacity(7)).collect::<Vec<_>>();
     let mut rhs = divergence
         .values()
@@ -39,6 +40,7 @@ pub fn assemble_incompressible_pressure_correction_3d(
         spacing,
         density: config.density,
         d: d_coefficient.values(),
+        periodic_x,
     };
     for k in 0..mesh.nz {
         for j in 0..mesh.ny {
@@ -96,6 +98,7 @@ struct PressureCorrectionCtx<'a> {
     spacing: CartesianSpacing,
     density: Real,
     d: &'a [Real],
+    periodic_x: bool,
 }
 
 fn add_pressure_correction_neighbors(
@@ -111,7 +114,8 @@ fn add_pressure_correction_neighbors(
         row,
         &mut diag,
         center,
-        neighbor_if(i > 0, || (i - 1, j, k)),
+        neighbor_if(i > 0, || (i - 1, j, k))
+            .or_else(|| neighbor_if(ctx.periodic_x && i == 0, || (ctx.mesh.nx - 1, j, k))),
         ctx.spacing.dx,
     );
     add_d_neighbor(
@@ -119,7 +123,8 @@ fn add_pressure_correction_neighbors(
         row,
         &mut diag,
         center,
-        neighbor_if(i + 1 < ctx.mesh.nx, || (i + 1, j, k)),
+        neighbor_if(i + 1 < ctx.mesh.nx, || (i + 1, j, k))
+            .or_else(|| neighbor_if(ctx.periodic_x && i + 1 == ctx.mesh.nx, || (0, j, k))),
         ctx.spacing.dx,
     );
     add_d_neighbor(

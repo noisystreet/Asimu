@@ -58,6 +58,24 @@ impl BoundarySet {
         self.patches.iter().find(|p| p.name == name)
     }
 
+    #[must_use]
+    pub fn has_periodic_pair(&self, a: &str, b: &str) -> bool {
+        let mut a_to_b = false;
+        let mut b_to_a = false;
+        for patch in &self.patches {
+            match (patch.name.as_str(), &patch.kind) {
+                (name, BoundaryKind::Periodic { partner }) if name == a && partner == b => {
+                    a_to_b = true;
+                }
+                (name, BoundaryKind::Periodic { partner }) if name == b && partner == a => {
+                    b_to_a = true;
+                }
+                _ => {}
+            }
+        }
+        a_to_b && b_to_a
+    }
+
     /// 将各边界 patch 名称与边界条件写入日志（`info` 级别）。
     pub fn log_patches(&self) {
         let patches = self.patches();
@@ -79,5 +97,33 @@ impl BoundarySet {
                 "边界 patch"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_reciprocal_periodic_pair() {
+        let set = BoundarySet::new(vec![
+            BoundaryPatch::new(
+                "i_min",
+                Vec::new(),
+                BoundaryKind::Periodic {
+                    partner: "i_max".to_string(),
+                },
+            ),
+            BoundaryPatch::new(
+                "i_max",
+                Vec::new(),
+                BoundaryKind::Periodic {
+                    partner: "i_min".to_string(),
+                },
+            ),
+        ]);
+
+        assert!(set.has_periodic_pair("i_min", "i_max"));
+        assert!(!set.has_periodic_pair("j_min", "j_max"));
     }
 }

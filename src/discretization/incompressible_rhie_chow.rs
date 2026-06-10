@@ -26,7 +26,15 @@ pub fn compute_incompressible_rhie_chow_divergence_3d(
     }
     let spacing = CartesianSpacing::from_mesh(mesh)?;
     let mut net = vec![0.0; mesh.num_cells()];
-    add_interior_fluxes(mesh, fields, d_coefficient.values(), spacing, &mut net);
+    let periodic_x = boundary.has_periodic_pair("i_min", "i_max");
+    add_interior_fluxes(
+        mesh,
+        fields,
+        d_coefficient.values(),
+        spacing,
+        periodic_x,
+        &mut net,
+    );
     add_boundary_fluxes(mesh, fields, boundary, &mut net)?;
     let volume = spacing.volume();
     for value in &mut net {
@@ -69,6 +77,7 @@ fn add_interior_fluxes(
     fields: &IncompressibleFields,
     d: &[Real],
     spacing: CartesianSpacing,
+    periodic_x: bool,
     net: &mut [Real],
 ) {
     let ax = spacing.dy * spacing.dz;
@@ -79,6 +88,19 @@ fn add_interior_fluxes(
             for i in 0..mesh.nx.saturating_sub(1) {
                 let left = mesh.cell_index(i, j, k);
                 let right = mesh.cell_index(i + 1, j, k);
+                let u_face =
+                    0.5 * (fields.velocity_x.values()[left] + fields.velocity_x.values()[right]);
+                let d_face = 0.5 * (d[left] + d[right]);
+                let dp = fields.pressure.values()[right] - fields.pressure.values()[left];
+                scatter_pair(net, left, right, (u_face - d_face * dp / spacing.dx) * ax);
+            }
+        }
+    }
+    if periodic_x && mesh.nx > 1 {
+        for k in 0..mesh.nz {
+            for j in 0..mesh.ny {
+                let left = mesh.cell_index(mesh.nx - 1, j, k);
+                let right = mesh.cell_index(0, j, k);
                 let u_face =
                     0.5 * (fields.velocity_x.values()[left] + fields.velocity_x.values()[right]);
                 let d_face = 0.5 * (d[left] + d[right]);
@@ -127,6 +149,9 @@ fn add_boundary_fluxes(
     net: &mut [Real],
 ) -> Result<()> {
     for patch in boundary.patches() {
+        if matches!(patch.kind, BoundaryKind::Periodic { .. }) {
+            continue;
+        }
         for &face in &patch.face_ids {
             let owner = mesh.face_owner(face)?.index() as usize;
             let geom = mesh.face_geometry_3d(face)?;

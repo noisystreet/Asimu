@@ -206,6 +206,7 @@ fn assemble_simplec_step(
         &pressure_solution.correction,
         momentum_system.d_coefficient.values(),
         config.pressure_under_relaxation,
+        config.boundary.has_periodic_pair("i_min", "i_max"),
     )?;
     let max_abs_corrected_velocity_delta = max_velocity_delta(
         fields,
@@ -421,6 +422,7 @@ fn corrected_incompressible_fields(
     pressure_correction: &[Real],
     d_coefficient: &[Real],
     pressure_under_relaxation: Real,
+    periodic_x: bool,
 ) -> Result<IncompressibleFields> {
     let n = mesh.num_cells();
     if pressure_correction.len() != n || d_coefficient.len() != n {
@@ -437,8 +439,15 @@ fn corrected_incompressible_fields(
         for j in 0..mesh.ny {
             for i in 0..mesh.nx {
                 let cell = mesh.cell_index(i, j, k);
-                let grad =
-                    pressure_correction_gradient(mesh, pressure_correction, i, j, k, spacing);
+                let grad = pressure_correction_gradient(
+                    mesh,
+                    pressure_correction,
+                    i,
+                    j,
+                    k,
+                    spacing,
+                    periodic_x,
+                );
                 let d = d_coefficient[cell];
                 pressure.push(
                     current.pressure.values()[cell]
@@ -490,11 +499,22 @@ fn pressure_correction_gradient(
     j: usize,
     k: usize,
     spacing: CartesianSpacing,
+    periodic_x: bool,
 ) -> [Real; 3] {
     [
-        (cell_value(mesh, pressure_correction, east(i, mesh.nx), j, k)
-            - cell_value(mesh, pressure_correction, west(i), j, k))
-            / (2.0 * spacing.dx),
+        (cell_value(
+            mesh,
+            pressure_correction,
+            east_with_periodic(i, mesh.nx, periodic_x),
+            j,
+            k,
+        ) - cell_value(
+            mesh,
+            pressure_correction,
+            west_with_periodic(i, mesh.nx, periodic_x),
+            j,
+            k,
+        )) / (2.0 * spacing.dx),
         (cell_value(mesh, pressure_correction, i, north(j, mesh.ny), k)
             - cell_value(mesh, pressure_correction, i, south(j), k))
             / (2.0 * spacing.dy),
@@ -514,6 +534,22 @@ fn west(i: usize) -> usize {
 
 fn east(i: usize, nx: usize) -> usize {
     (i + 1).min(nx - 1)
+}
+
+fn west_with_periodic(i: usize, nx: usize, periodic_x: bool) -> usize {
+    if periodic_x && i == 0 {
+        nx - 1
+    } else {
+        west(i)
+    }
+}
+
+fn east_with_periodic(i: usize, nx: usize, periodic_x: bool) -> usize {
+    if periodic_x && i + 1 == nx {
+        0
+    } else {
+        east(i, nx)
+    }
 }
 
 fn south(j: usize) -> usize {

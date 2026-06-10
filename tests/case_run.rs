@@ -43,8 +43,8 @@ fn channel_poiseuille_incompressible_benchmark_runs() {
     assert_eq!(result.kind, CaseRunKind::Incompressible3dSteady);
     assert_eq!(result.benchmark_id.as_deref(), Some("channel_poiseuille"));
     let metrics = result.incompressible_3d.expect("incompressible metrics");
-    assert_eq!(metrics.simplec_iterations, 2);
-    assert!(!metrics.simplec_converged);
+    assert!(metrics.simplec_iterations <= 2000);
+    assert!(metrics.simplec_converged);
     assert!(metrics.simplec_final_residual.is_finite());
     assert!(metrics.simplec_final_residual < 1.0e-8);
     assert!(metrics.simplec_final_momentum_residual.is_finite());
@@ -64,6 +64,8 @@ fn channel_poiseuille_incompressible_benchmark_runs() {
         .expect("poiseuille profile error");
     assert!(error.max_abs.is_finite());
     assert!(error.l2.is_finite());
+    assert!(error.max_abs < 0.12, "max_abs={}", error.max_abs);
+    assert!(error.l2 < 0.08, "l2={}", error.l2);
 }
 
 #[test]

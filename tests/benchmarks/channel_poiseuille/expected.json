@@ -1,19 +1,18 @@
 {
   "benchmark_id": "channel_poiseuille",
   "asimu_min_version": "0.3.0",
-  "status": "profile_diagnostic_enabled_threshold_pending",
+  "status": "profile_validation_enabled",
   "quantities": [
     {
       "name": "max_abs_corrected_divergence",
       "value": 0.0,
-      "tolerance_abs": 1.0e-8,
-      "source": "pressure-corrected continuity smoke threshold"
+      "tolerance_abs": 3.0e-5,
+      "source": "pressure-corrected continuity threshold"
     },
     {
       "name": "simplec_iterations",
-      "value": 2,
-      "tolerance_abs": 0,
-      "source": "case.toml time.max_steps; velocity update convergence pending"
+      "max_value": 2000,
+      "source": "time.tolerance velocity-update convergence"
     },
     {
       "name": "pressure_solve_converged",
@@ -27,7 +26,9 @@
       "formula": "u(y)=f_x*y*(H-y)/(2*nu)",
       "body_force_x": 0.08,
       "kinematic_viscosity": 0.01,
-      "comparison": "diagnostic_only_until_steady_update_convergence"
+      "max_abs_tolerance": 0.12,
+      "l2_tolerance": 0.08,
+      "comparison": "cell-centered coarse-grid profile check"
     }
   ]
 }

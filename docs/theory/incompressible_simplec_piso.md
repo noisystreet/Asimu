@@ -191,7 +191,7 @@ rhs_\phi=\frac{V_P}{\Delta\tau}\phi_P^n - V_P(\nabla p^n)_\phi + V_P f_\phi.
 \tag{8c}
 \]
 
-`[incompressible].body_force` 输入 SI 加速度，解析后使用 \(\mathbf{f}^*=\mathbf{f}L_{\mathrm{ref}}/U_{\mathrm{ref}}^2\) 进入 (8c)。欠松弛按 (8) 后的规则修改对角与 RHS。动量边界面贡献来自 `BoundarySet`：速度入口、无滑移/动壁按 Dirichlet 速度加入扩散源项与入流迎风源项；压力出口按零梯度速度使用 owner 外推；对称/滑移壁去除法向通量。
+`[incompressible].body_force` 输入 SI 加速度，解析后使用 \(\mathbf{f}^*=\mathbf{f}L_{\mathrm{ref}}/U_{\mathrm{ref}}^2\) 进入 (8c)。欠松弛按 (8) 后的规则修改对角与 RHS。动量边界面贡献来自 `BoundarySet`：速度入口、无滑移/动壁按 Dirichlet 速度加入扩散源项与入流迎风源项；压力出口按零梯度速度使用 owner 外推；对称/滑移壁去除法向通量；结构化 `i_min/i_max` 成对 `periodic` 作为内部 wrap 邻接进入动量矩阵与压力梯度。
 
 ### 5.2 一致系数
 
@@ -212,7 +212,7 @@ d_P = \frac{V_P}{a_P^c} \tag{10}
 I5 起，压力校正 RHS 使用 `compute_incompressible_rhie_chow_divergence_3d`
 从面通量计算连续性残差。内部面质量通量为
 \(\dot{m}_f=\rho A_f(\mathbf{u}_f\cdot\mathbf{n}_f-d_f(p_N-p_P)/\Delta n_f)\)，
-其中 \(d_f=(d_P+d_N)/2\)。边界面通量由不可压缩边界条件给定：壁面/对称面法向通量为零，速度入口使用给定速度，压力出口使用 owner 速度零梯度外推。
+其中 \(d_f=(d_P+d_N)/2\)。边界面通量由不可压缩边界条件给定：壁面/对称面法向通量为零，速度入口使用给定速度，压力出口使用 owner 速度零梯度外推；结构化 `i_min/i_max` 成对周期边界通过 wrap 面通量进入 Rhie-Chow 连续性残差。
 
 I3 压力校正矩阵使用动量预测矩阵提供的 cell-centered \(d_P\)，内部面取
 \(d_f=(d_P+d_N)/2\)，压力出口 owner 行施加 \(p'=0\)；若没有压力 Dirichlet
@@ -263,7 +263,7 @@ Ghost 单元距 owner 中心法向距离 \(d_f\)。
 
 详细分工见 [boundary_conditions.md](boundary_conditions.md) §9。
 
-当前实现分两层：`apply_incompressible_boundary_conditions_3d` 先把 `wall`、`moving_wall`、`velocity_inlet`、`pressure_outlet`、`symmetry` 施加到结构化边界 owner 单元并输出统计；`assemble_incompressible_momentum_predictor_with_boundary_3d` 再把速度 Dirichlet、压力出口零梯度与对称/滑移法向约束转化为动量预测矩阵/RHS 的边界面贡献。压力修正与 Rhie-Chow 面质量通量仍在后续阶段继续补齐。
+当前实现分两层：`apply_incompressible_boundary_conditions_3d` 先把 `wall`、`moving_wall`、`velocity_inlet`、`pressure_outlet`、`symmetry` 施加到结构化边界 owner 单元并输出统计；`assemble_incompressible_momentum_predictor_with_boundary_3d` 再把速度 Dirichlet、压力出口零梯度与对称/滑移法向约束转化为动量预测矩阵/RHS 的边界面贡献。`i_min/i_max` 成对 `periodic` 不改 owner 单元值，而是在动量、Rhie-Chow、压力校正和速度修正压力梯度中使用周期 wrap 邻接。
 
 ## 7. PISO 与时间积分
 
@@ -311,12 +311,12 @@ Ghost 单元距 owner 中心法向距离 \(d_f\)。
 |-----------|----------|------|
 | (1a) 连续性残差 | `discretization::compute_incompressible_divergence_3d` | **I1 已实现** |
 | (6a) 速度 Laplacian skeleton | `discretization::compute_incompressible_velocity_laplacian_3d` | **I1 已实现** |
-| (8a)–(8c) 动量预测 | `discretization::assemble_incompressible_momentum_predictor_with_boundary_3d` | **已实现：内部扩散/迎风对流、边界面贡献、三分量 RHS** |
+| (8a)–(8c) 动量预测 | `discretization::assemble_incompressible_momentum_predictor_with_boundary_3d` | **已实现：内部扩散/迎风对流、边界面贡献、周期 x wrap、三分量 RHS** |
 | (9)(10) SIMPLEC 系数 | `discretization::assemble_incompressible_momentum_predictor_with_boundary_3d` | **已实现：由动量矩阵一致系数计算 \(d_P\)** |
 | (11a)(11b) 压力校正 Poisson skeleton | `discretization::assemble_incompressible_pressure_poisson_3d` | **I1 已实现：RHS 来自预测速度 \(u^*\) 的散度** |
 | (2a)–(2e) 不可压缩无量纲化 | `io::nondimensional::apply_nondimensionalization_for_incompressible` | **I1 已实现** |
 | I1 runner 诊断闭环 | `case/incompressible_3d.rs`, `solver::run_incompressible_simplec` | **已实现：case 负责输入/输出，solver 负责编排 SIMPLEC 迭代与收敛历史** |
-| (3)(4) Rhie-Chow | `discretization::compute_incompressible_rhie_chow_divergence_3d` | **已实现：内部面压力-速度耦合通量与边界面通量** |
+| (3)(4) Rhie-Chow | `discretization::compute_incompressible_rhie_chow_divergence_3d` | **已实现：内部面压力-速度耦合通量、周期 x wrap 与边界面通量** |
 | (5)(6) 对流/扩散 | `discretization::assemble_incompressible_momentum_predictor_with_boundary_3d` | **已实现：一阶迎风对流、中心扩散与边界贡献** |
 | (8) 完整动量装配 | `discretization::assemble_incompressible_momentum_predictor_with_boundary_3d` | **部分实现：结构化 Cartesian 首版** |
 | (9)(10) 完整 SIMPLEC 系数 | `discretization::assemble_incompressible_momentum_predictor_with_boundary_3d` | **部分实现：\(d_P\) 已导出，\(a_P/a_P^c/H(u)\) 仍待显式 API 化** |

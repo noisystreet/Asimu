@@ -211,6 +211,19 @@ velocity = [1.0, 0.0, 0.0]       # m/s，解析后除以 U_ref
 | `velocity_inlet` | `velocity` | 指定入口速度 |
 | `pressure_outlet` | `pressure` 或 `static_pressure` | 指定出口压力 |
 | `symmetry` | 无 | 去除 owner 法向速度 |
+| `periodic` | `partner` | 当前不可压缩 SIMPLEC 支持 `i_min`/`i_max` 成对周期 wrap |
+
+周期充分发展方向示例：
+
+```toml
+[boundary.i_min]
+kind = "periodic"
+partner = "i_max"
+
+[boundary.i_max]
+kind = "periodic"
+partner = "i_min"
+```
 
 ---
 
