@@ -146,7 +146,7 @@ impl GmresSolver {
                 break;
             }
         }
-        update_solution(x, work, used)?;
+        update_solution(x, work, used);
         Ok(used)
     }
 }
@@ -256,9 +256,9 @@ fn apply_givens_to_rhs(work: &mut GmresWork, row: usize, cs: Real, sn: Real) {
     work.g[row] = temp;
 }
 
-fn update_solution(x: &mut [Real], work: &GmresWork, used: usize) -> Result<()> {
+fn update_solution(x: &mut [Real], work: &GmresWork, used: usize) {
     if used == 0 {
-        return Ok(());
+        return;
     }
     let mut y = vec![0.0; used];
     for i in (0..used).rev() {
@@ -268,14 +268,14 @@ fn update_solution(x: &mut [Real], work: &GmresWork, used: usize) -> Result<()> 
         }
         let diag = work.h[i][i];
         if diag.abs() <= Real::EPSILON {
-            return Err(AsimuError::Linalg(format!("GMRES Hessenberg 零主元: {i}")));
+            y[i] = 0.0;
+            continue;
         }
         y[i] = rhs / diag;
     }
     for (basis, coeff) in work.v.iter().take(used).zip(y.iter()) {
         axpy(x, basis, *coeff);
     }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -333,5 +333,29 @@ mod tests {
         assert!((x[0] - 1.0).abs() < 1.0e-10);
         assert!((x[1] - 1.0).abs() < 1.0e-10);
         assert!((x[2] - 1.0).abs() < 1.0e-10);
+    }
+
+    #[test]
+    fn gmres_accepts_compatible_hessenberg_breakdown() {
+        let mut matrix = CsrMatrix::from_rows(2, 2, vec![vec![(0, 1.0)], vec![(0, 0.0), (1, 0.0)]])
+            .expect("csr");
+        let mut x = [0.0; 2];
+        let report = GmresSolver::new(GmresConfig {
+            restart: 2,
+            max_iters: 2,
+            tolerance: 1.0e-12,
+        })
+        .expect("gmres")
+        .solve(
+            &mut matrix,
+            &IdentityPreconditioner::new(2),
+            &[1.0, 0.0],
+            &mut x,
+        )
+        .expect("solve");
+
+        assert!(report.converged, "{report:?}");
+        assert!((x[0] - 1.0).abs() < 1.0e-10);
+        assert!(x[1].abs() < 1.0e-10);
     }
 }

@@ -13,6 +13,8 @@ use crate::field::{IncompressibleFields, ScalarField};
 use crate::linalg::{CsrMatrix, GmresConfig, GmresSolver, IdentityPreconditioner};
 use crate::mesh::StructuredMesh3d;
 
+const SIMPLEC_DIVERGENCE_LIMIT: Real = 1.0e50;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct IncompressibleLinearSolverConfig {
     pub momentum: GmresConfig,
@@ -90,9 +92,7 @@ pub fn run_incompressible_simplec(
         let residual = diagnostic.max_abs_corrected_divergence;
         let momentum_residual = diagnostic.max_abs_momentum_equation_residual;
         let velocity_delta = diagnostic.max_abs_corrected_velocity_delta;
-        if !residual.is_finite() || !momentum_residual.is_finite() || !velocity_delta.is_finite() {
-            return Err(AsimuError::Solver("SIMPLEC 残差出现非有限值".to_string()));
-        }
+        validate_simplec_step(residual, momentum_residual, velocity_delta)?;
         history.push(residual);
         momentum_history.push(momentum_residual);
         current_fields = diagnostic.corrected_fields.clone();
@@ -126,6 +126,25 @@ pub fn run_incompressible_simplec(
         })
         .unwrap_or(false);
     Ok(diagnostic)
+}
+
+fn validate_simplec_step(
+    residual: Real,
+    momentum_residual: Real,
+    velocity_delta: Real,
+) -> Result<()> {
+    if !residual.is_finite() || !momentum_residual.is_finite() || !velocity_delta.is_finite() {
+        return Err(AsimuError::Solver("SIMPLEC 残差出现非有限值".to_string()));
+    }
+    if residual > SIMPLEC_DIVERGENCE_LIMIT
+        || momentum_residual > SIMPLEC_DIVERGENCE_LIMIT
+        || velocity_delta > SIMPLEC_DIVERGENCE_LIMIT
+    {
+        return Err(AsimuError::Solver(format!(
+            "SIMPLEC 发散：continuity={residual:.4e}, momentum={momentum_residual:.4e}, velocity_delta={velocity_delta:.4e}"
+        )));
+    }
+    Ok(())
 }
 
 fn assemble_simplec_step(
@@ -511,4 +530,21 @@ fn bottom(k: usize) -> usize {
 
 fn top(k: usize, nz: usize) -> usize {
     (k + 1).min(nz - 1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn simplec_step_validation_rejects_divergence() {
+        let err = validate_simplec_step(1.0e60, 1.0, 1.0).expect_err("divergence");
+        assert!(err.to_string().contains("SIMPLEC 发散"));
+    }
+
+    #[test]
+    fn simplec_step_validation_rejects_non_finite_values() {
+        let err = validate_simplec_step(1.0, Real::INFINITY, 1.0).expect_err("non-finite");
+        assert!(err.to_string().contains("非有限值"));
+    }
 }
