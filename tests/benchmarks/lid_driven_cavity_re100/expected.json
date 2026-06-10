@@ -37,6 +37,16 @@
       "source": "pressure-correction RHS sum after skipping p'=0 constraint rows"
     },
     {
+      "name": "max_abs_corrected_velocity_delta_interior",
+      "max_value": 1.0e-6,
+      "source": "velocity update outside velocity-constrained boundary owner cells"
+    },
+    {
+      "name": "max_abs_corrected_velocity_delta_boundary",
+      "max_value": 1.0e-3,
+      "source": "velocity update on velocity-constrained boundary owner cells; currently dominates the total velocity update"
+    },
+    {
       "name": "pressure_solve_converged",
       "value": true,
       "source": "pressure GMRES smoke threshold"

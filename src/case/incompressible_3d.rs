@@ -52,6 +52,8 @@ pub struct Incompressible3dRunMetrics {
     pub max_abs_momentum_equation_residual: Real,
     pub max_abs_predicted_velocity_delta: Real,
     pub max_abs_corrected_velocity_delta: Real,
+    pub max_abs_corrected_velocity_delta_interior: Real,
+    pub max_abs_corrected_velocity_delta_boundary: Real,
     pub simplec_iterations: usize,
     pub simplec_converged: bool,
     pub simplec_final_residual: Real,
@@ -179,6 +181,8 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         max_abs_momentum_equation_residual = %format_log_sci4(diagnostic.max_abs_momentum_equation_residual),
         max_abs_predicted_velocity_delta = %format_log_sci4(diagnostic.max_abs_predicted_velocity_delta),
         max_abs_corrected_velocity_delta = %format_log_sci4(diagnostic.max_abs_corrected_velocity_delta),
+        max_abs_corrected_velocity_delta_interior = %format_log_sci4(diagnostic.max_abs_corrected_velocity_delta_interior),
+        max_abs_corrected_velocity_delta_boundary = %format_log_sci4(diagnostic.max_abs_corrected_velocity_delta_boundary),
         simplec_iterations = diagnostic.simplec_iterations,
         simplec_converged = diagnostic.simplec_converged,
         simplec_final_residual = %format_log_sci4(diagnostic.simplec_final_residual),
@@ -278,6 +282,10 @@ fn build_run_metrics(
         max_abs_momentum_equation_residual: diagnostic.max_abs_momentum_equation_residual,
         max_abs_predicted_velocity_delta: diagnostic.max_abs_predicted_velocity_delta,
         max_abs_corrected_velocity_delta: diagnostic.max_abs_corrected_velocity_delta,
+        max_abs_corrected_velocity_delta_interior: diagnostic
+            .max_abs_corrected_velocity_delta_interior,
+        max_abs_corrected_velocity_delta_boundary: diagnostic
+            .max_abs_corrected_velocity_delta_boundary,
         simplec_iterations: diagnostic.simplec_iterations,
         simplec_converged: diagnostic.simplec_converged,
         simplec_final_residual: diagnostic.simplec_final_residual,

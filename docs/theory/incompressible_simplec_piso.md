@@ -320,6 +320,8 @@ Ghost 单元距 owner 中心法向距离 \(d_f\)。
 修正后、边界重施加前后的 cell-centered \(\nabla\cdot\mathbf{u}\)。这些指标不应混用：
 全量压力方程残差用于判断线性系统是否解好，欠松弛残差用于 SIMPLEC 收敛，cell-centered 散度用于判断边界重施加和速度修正是否仍破坏真实速度场连续性。
 `pressure_correction_rhs_active_sum` 记录跳过 \(p'=0\) identity 约束行后的 RHS 总和，用于检查闭域兼容性。
+`max_abs_corrected_velocity_delta_interior` 与 `max_abs_corrected_velocity_delta_boundary`
+把总速度更新量拆成非速度约束 owner 和速度约束边界 owner 两类，用于判断收敛受内部场演化还是边界 owner 重施加主导；SIMPLEC 收敛判据仍使用总速度更新量。
 
 `[incompressible.linear.momentum]` 与 `[incompressible.linear.pressure]` 分别控制动量预测和压力校正线性求解的 GMRES `restart`、`max_iters` 与 `tolerance`。压力校正默认使用 `restart=64`、`max_iters=500`、`tolerance=1.0e-10`，避免小型 Poisson-like 系统被过早截断；当前首版仍使用 Identity 预条件器，后续会切换到更适合 Poisson 系统的 CG/ILU(0) 或 AMG 路径。
 
