@@ -12,6 +12,7 @@ use crate::solver::IncompressibleLinearSolverConfig;
 pub struct IncompressibleCaseConfig {
     pub pressure: Real,
     pub velocity: [Real; 3],
+    pub body_force: [Real; 3],
     pub density: Real,
     pub kinematic_viscosity: Real,
     pub velocity_under_relaxation: Real,
@@ -31,6 +32,7 @@ pub struct IncompressibleReferenceConfig {
 pub(super) struct IncompressibleToml {
     pressure: Option<Real>,
     velocity: Option<[Real; 3]>,
+    body_force: Option<[Real; 3]>,
     density: Option<Real>,
     kinematic_viscosity: Option<Real>,
     velocity_under_relaxation: Option<Real>,
@@ -89,6 +91,7 @@ pub(super) fn parse_incompressible_config(
     Ok(IncompressibleCaseConfig {
         pressure: raw.pressure.unwrap_or(0.0),
         velocity: raw.velocity.unwrap_or([0.0, 0.0, 0.0]),
+        body_force: validate_body_force(raw.body_force.unwrap_or([0.0, 0.0, 0.0]))?,
         density,
         kinematic_viscosity,
         velocity_under_relaxation,
@@ -96,6 +99,15 @@ pub(super) fn parse_incompressible_config(
         linear_solvers: parse_linear_solvers(raw.linear.as_ref())?,
         reference: parse_incompressible_reference(raw.reference.as_ref())?,
     })
+}
+
+fn validate_body_force(value: [Real; 3]) -> Result<[Real; 3]> {
+    if value.iter().any(|component| !component.is_finite()) {
+        return Err(AsimuError::Config(
+            "[incompressible].body_force 分量必须为有限值".to_string(),
+        ));
+    }
+    Ok(value)
 }
 
 fn parse_linear_solvers(

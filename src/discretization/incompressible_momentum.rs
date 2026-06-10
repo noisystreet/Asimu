@@ -14,6 +14,7 @@ use crate::mesh::{BoundaryMesh, BoundaryMesh3d, FaceGeometry3d, StructuredMesh3d
 pub struct IncompressibleMomentumPredictorConfig {
     pub kinematic_viscosity: Real,
     pub pseudo_time_step: Real,
+    pub body_force: [Real; 3],
     pub velocity_under_relaxation: Real,
 }
 
@@ -32,8 +33,19 @@ impl IncompressibleMomentumPredictorConfig {
         Ok(Self {
             kinematic_viscosity,
             pseudo_time_step,
+            body_force: [0.0, 0.0, 0.0],
             velocity_under_relaxation: 1.0,
         })
+    }
+
+    pub fn with_body_force(mut self, value: [Real; 3]) -> Result<Self> {
+        if value.iter().any(|component| !component.is_finite()) {
+            return Err(AsimuError::Config(
+                "不可压缩动量预测 body_force 分量必须为有限值".to_string(),
+            ));
+        }
+        self.body_force = value;
+        Ok(self)
     }
 
     pub fn with_velocity_under_relaxation(mut self, value: Real) -> Result<Self> {
@@ -113,12 +125,15 @@ pub fn assemble_incompressible_momentum_predictor_with_boundary_3d(
                 let grad_p = pressure_gradient(mesh, fields.pressure.values(), i, j, k, spacing);
                 let relax_source = momentum_relaxation_source(rows[row].last_mut(), config)?;
                 let rhs_cell_x = time_coeff * fields.velocity_x.values()[row] - volume * grad_p[0]
+                    + volume * config.body_force[0]
                     + relax_source * fields.velocity_x.values()[row]
                     + boundary_terms.rhs_x[row];
                 let rhs_cell_y = time_coeff * fields.velocity_y.values()[row] - volume * grad_p[1]
+                    + volume * config.body_force[1]
                     + relax_source * fields.velocity_y.values()[row]
                     + boundary_terms.rhs_y[row];
                 let rhs_cell_z = time_coeff * fields.velocity_z.values()[row] - volume * grad_p[2]
+                    + volume * config.body_force[2]
                     + relax_source * fields.velocity_z.values()[row]
                     + boundary_terms.rhs_z[row];
                 rhs_x.push(rhs_cell_x);
@@ -153,6 +168,15 @@ fn validate_config(config: IncompressibleMomentumPredictorConfig) -> Result<()> 
     {
         return Err(AsimuError::Config(
             "不可压缩动量预测 velocity_under_relaxation 必须位于 (0, 1]".to_string(),
+        ));
+    }
+    if config
+        .body_force
+        .iter()
+        .any(|component| !component.is_finite())
+    {
+        return Err(AsimuError::Config(
+            "不可压缩动量预测 body_force 分量必须为有限值".to_string(),
         ));
     }
     Ok(())
@@ -655,5 +679,28 @@ mod tests {
         assert!(approx_eq(system.rhs_x[0], 1.0, 1.0e-12));
         assert!(approx_eq(system.rhs_y[0], 0.0, 1.0e-12));
         assert!(approx_eq(system.rhs_z[0], 0.0, 1.0e-12));
+    }
+
+    #[test]
+    fn body_force_adds_component_rhs_source() {
+        let mesh = StructuredMesh3d::uniform_box("box", 1, 1, 1, 1.0, 1.0, 1.0).expect("mesh");
+        let fields =
+            IncompressibleFields::uniform(mesh.num_cells(), 0.0, [0.0, 0.0, 0.0]).expect("fields");
+        let config = IncompressibleMomentumPredictorConfig::new(0.0, 1.0)
+            .expect("config")
+            .with_body_force([2.0, -3.0, 4.0])
+            .expect("body force");
+
+        let system = assemble_incompressible_momentum_predictor_with_boundary_3d(
+            &mesh,
+            &fields,
+            &BoundarySet::default(),
+            config,
+        )
+        .expect("system");
+
+        assert!(approx_eq(system.rhs_x[0], 2.0, 1.0e-12));
+        assert!(approx_eq(system.rhs_y[0], -3.0, 1.0e-12));
+        assert!(approx_eq(system.rhs_z[0], 4.0, 1.0e-12));
     }
 }

@@ -37,6 +37,7 @@ pub struct IncompressibleSimplecConfig<'a> {
     pub mesh: &'a StructuredMesh3d,
     pub density: Real,
     pub kinematic_viscosity: Real,
+    pub body_force: [Real; 3],
     pub velocity_under_relaxation: Real,
     pub pressure_under_relaxation: Real,
     pub pseudo_time_step: Real,
@@ -139,6 +140,7 @@ fn assemble_simplec_step(
             config.kinematic_viscosity,
             config.pseudo_time_step,
         )?
+        .with_body_force(config.body_force)?
         .with_velocity_under_relaxation(config.velocity_under_relaxation)?,
     )?;
     let max_momentum_d_coefficient = momentum_system

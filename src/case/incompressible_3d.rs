@@ -97,6 +97,7 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
             mesh,
             density: config.density,
             kinematic_viscosity: config.kinematic_viscosity,
+            body_force: config.body_force,
             velocity_under_relaxation: config.velocity_under_relaxation,
             pressure_under_relaxation: config.pressure_under_relaxation,
             pseudo_time_step,

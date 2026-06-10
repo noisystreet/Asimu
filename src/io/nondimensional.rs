@@ -179,6 +179,9 @@ pub(super) fn apply_nondimensionalization_for_incompressible(case: &mut CaseSpec
         for value in &mut config.velocity {
             *value = reference.nondimensional_velocity(*value);
         }
+        for value in &mut config.body_force {
+            *value = nondimensional_incompressible_body_force(*value, &reference);
+        }
         config.density = 1.0;
         config.kinematic_viscosity = reference.inv_reynolds();
     }
@@ -186,6 +189,13 @@ pub(super) fn apply_nondimensionalization_for_incompressible(case: &mut CaseSpec
     scale_incompressible_time(&mut case.time, &reference);
     case.incompressible_reference = Some(reference);
     Ok(())
+}
+
+fn nondimensional_incompressible_body_force(
+    acceleration: Real,
+    reference: &IncompressibleReferenceScales,
+) -> Real {
+    acceleration * reference.length / (reference.velocity * reference.velocity)
 }
 
 fn scale_incompressible_boundary_set(
@@ -358,6 +368,7 @@ lz = 1.0
 [incompressible]
 pressure = 18.0
 velocity = [6.0, 0.0, 0.0]
+body_force = [18.0, 0.0, -9.0]
 density = 2.0
 kinematic_viscosity = 0.5
 pressure_under_relaxation = 0.3
@@ -375,6 +386,8 @@ final_time = 8.0
         let inc = case.incompressible.expect("inc");
         assert!((inc.pressure - 1.0).abs() < 1.0e-12);
         assert!((inc.velocity[0] - 2.0).abs() < 1.0e-12);
+        assert!((inc.body_force[0] - 4.0).abs() < 1.0e-12);
+        assert!((inc.body_force[2] + 2.0).abs() < 1.0e-12);
         assert!((inc.density - 1.0).abs() < 1.0e-12);
         assert!((inc.kinematic_viscosity - (0.5 / 6.0)).abs() < 1.0e-12);
         assert!((inc.pressure_under_relaxation - 0.3).abs() < 1.0e-12);
