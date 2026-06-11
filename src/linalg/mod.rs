@@ -3,6 +3,7 @@
 //! 理论：[`docs/theory/linear_gmres.md`](../../docs/theory/linear_gmres.md)。
 
 mod gmres;
+mod pcg;
 mod preconditioner;
 mod sparse;
 
@@ -10,10 +11,12 @@ use crate::core::Real;
 use crate::error::{AsimuError, Result};
 
 pub use gmres::{GmresConfig, GmresReport, GmresSolver};
+pub use pcg::{PcgConfig, PcgReport, PcgSolver};
 pub use preconditioner::{
-    CellBlockDiagonalPreconditioner, IdentityPreconditioner, LusgsDiagonalPreconditioner,
+    CellBlockDiagonalPreconditioner, CsrJacobiPreconditioner, IdentityPreconditioner,
+    LusgsDiagonalPreconditioner,
 };
-pub use sparse::{CsrMatrix, Ilu0Preconditioner};
+pub use sparse::{CsrMatrix, CsrMatrixView, Ilu0Preconditioner};
 
 /// 线性算子 \(y=A x\)。允许矩阵无关实现。
 pub trait LinearOperator {

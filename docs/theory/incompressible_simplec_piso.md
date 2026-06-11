@@ -307,7 +307,7 @@ Ghost 单元距 owner 中心法向距离 \(d_f\)。
 `time.min_steps` 作为允许早停前的最小迭代数，`time.tolerance` 为可选收敛阈值；每轮执行动量预测、压力校正、\(p,\mathbf{u}\)
 修正，并把按 \(\alpha_p\) 缩放后的压力校正连续性残差
 \(\max|b_p-\alpha_p A_p p'|\) 与 \(\max|A_u u^*-rhs_u|\) 写入残差历史。
-`[incompressible].piso_correctors > 1` 时，每个外层步会在一次动量预测后重复压力校正与速度修正，作为 PISO 多校正器路径，并把每个 corrector 的欠松弛连续性残差与最大 \(p'\) 追加到独立历史中。
+`time.scheme = "simplec"` 时 case 层强制单 pressure corrector；`time.scheme = "piso"` 且 `[incompressible].piso_correctors > 1` 时，每个外层步会在一次动量预测后重复压力校正与速度修正，作为 PISO 多校正器路径，并把每个 corrector 的欠松弛连续性残差与最大 \(p'\) 追加到独立历史中。
 预测残差仍来自 Rhie-Chow 面通量；`max_abs_corrected_divergence` 保留全量压力
 校正方程线性残差 \(\max|b_p-A_p p'|\)，用于判断线性系统是否解好。设置
 `time.tolerance` 时，欠松弛后的连续性残差、动量残差与非速度约束 owner 的

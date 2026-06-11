@@ -6,7 +6,10 @@ use crate::core::Real;
 use crate::discretization::IncompressibleConvectionScheme;
 use crate::error::{AsimuError, Result};
 use crate::linalg::GmresConfig;
-use crate::solver::IncompressibleLinearSolverConfig;
+use crate::solver::{
+    IncompressibleLinearSolverConfig, IncompressiblePressureLinearSolverConfig,
+    IncompressiblePressureLinearSolverKind,
+};
 
 /// 不可压缩 Navier-Stokes I0/I1 配置（SI 输入，解析后切换为星号量）。
 #[derive(Debug, Clone, PartialEq)]
@@ -147,9 +150,64 @@ fn parse_linear_solvers(
         return Ok(defaults);
     };
     Ok(IncompressibleLinearSolverConfig {
-        momentum: parse_gmres_config(raw.momentum.as_ref(), defaults.momentum, "momentum")?,
-        pressure: parse_gmres_config(raw.pressure.as_ref(), defaults.pressure, "pressure")?,
+        momentum: parse_momentum_gmres_config(
+            raw.momentum.as_ref(),
+            defaults.momentum,
+            "momentum",
+        )?,
+        pressure: parse_pressure_linear_solver(raw.pressure.as_ref(), defaults.pressure)?,
     })
+}
+
+fn parse_momentum_gmres_config(
+    raw: Option<&IncompressibleGmresToml>,
+    defaults: GmresConfig,
+    name: &str,
+) -> Result<GmresConfig> {
+    parse_gmres_config(raw, defaults, name)
+}
+
+fn parse_pressure_linear_solver(
+    raw: Option<&IncompressibleGmresToml>,
+    defaults: IncompressiblePressureLinearSolverConfig,
+) -> Result<IncompressiblePressureLinearSolverConfig> {
+    let Some(raw) = raw else {
+        return Ok(defaults);
+    };
+    let kind = match raw
+        .solver
+        .as_deref()
+        .unwrap_or("pcg")
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "gmres" => IncompressiblePressureLinearSolverKind::Gmres,
+        "pcg" | "cg" | "preconditioned_cg" | "preconditioned-cg" => {
+            IncompressiblePressureLinearSolverKind::Pcg
+        }
+        other => {
+            return Err(AsimuError::Config(format!(
+                "[incompressible.linear.pressure].solver 不支持 \"{other}\"（可用 gmres、pcg）"
+            )));
+        }
+    };
+    let config = IncompressiblePressureLinearSolverConfig {
+        kind,
+        max_iters: raw.max_iters.unwrap_or(defaults.max_iters),
+        tolerance: raw.tolerance.unwrap_or(defaults.tolerance),
+        gmres_restart: raw.restart.unwrap_or(defaults.gmres_restart),
+    };
+    if config.max_iters == 0
+        || !config.tolerance.is_finite()
+        || config.tolerance <= 0.0
+        || (kind == IncompressiblePressureLinearSolverKind::Gmres && config.gmres_restart == 0)
+    {
+        return Err(AsimuError::Config(
+            "[incompressible.linear.pressure] max_iters/tolerance/restart 参数无效".to_string(),
+        ));
+    }
+    Ok(config)
 }
 
 fn parse_gmres_config(

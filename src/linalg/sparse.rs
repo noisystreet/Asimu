@@ -123,6 +123,38 @@ impl LinearOperator for CsrMatrix {
     }
 }
 
+/// CSR 矩阵只读视图，避免 Krylov 求解路径 clone 系数矩阵。
+#[derive(Debug, Clone, Copy)]
+pub struct CsrMatrixView<'a> {
+    matrix: &'a CsrMatrix,
+}
+
+impl<'a> CsrMatrixView<'a> {
+    #[must_use]
+    pub fn new(matrix: &'a CsrMatrix) -> Self {
+        Self { matrix }
+    }
+}
+
+impl LinearOperator for CsrMatrixView<'_> {
+    fn dimension(&self) -> usize {
+        self.matrix.ncols()
+    }
+
+    fn apply(&mut self, x: &[Real], y: &mut [Real]) -> Result<()> {
+        ensure_vector_len(x, self.matrix.ncols(), "csr view input")?;
+        ensure_vector_len(y, self.matrix.nrows(), "csr view output")?;
+        for (row, dst) in y.iter_mut().enumerate().take(self.matrix.nrows()) {
+            *dst = self
+                .matrix
+                .row_entries(row)
+                .map(|(col, value)| value * x[col])
+                .sum();
+        }
+        Ok(())
+    }
+}
+
 /// ILU(0) 预条件器（与 CSR 非零结构一致）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct Ilu0Preconditioner {

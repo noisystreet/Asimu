@@ -21,7 +21,8 @@ use crate::io::{
 };
 use crate::mesh::StructuredMesh3d;
 use crate::solver::{
-    IncompressibleSimplecConfig, IncompressibleSimplecDiagnostic, run_incompressible_simplec,
+    IncompressibleSimplecConfig, IncompressibleSimplecDiagnostic, TimeIntegrationScheme,
+    run_incompressible_simplec,
 };
 
 use super::{CaseRunKind, CaseRunResult};
@@ -130,7 +131,7 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
             pressure_under_relaxation: config.pressure_under_relaxation,
             pseudo_time_step,
             convection_scheme: config.convection_scheme,
-            pressure_correctors: config.piso_correctors,
+            pressure_correctors: incompressible_pressure_correctors(case, config.piso_correctors),
             boundary: &case.boundary,
             max_iterations: steps as usize,
             min_iterations: case.time.min_steps.unwrap_or(0) as usize,
@@ -222,6 +223,14 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
             },
         )),
     })
+}
+
+fn incompressible_pressure_correctors(case: &CaseSpec, configured: usize) -> usize {
+    match case.time.scheme {
+        Some(TimeIntegrationScheme::Simplec) => 1,
+        Some(TimeIntegrationScheme::Piso) => configured.max(1),
+        _ => configured.max(1),
+    }
 }
 
 fn incompressible_summary(

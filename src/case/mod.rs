@@ -259,7 +259,11 @@ solution_cgns = "flow.cgns"
             1.0e-10,
             1.0e-16
         ));
-        assert_eq!(incompressible.linear_solvers.pressure.restart, 6);
+        assert_eq!(
+            incompressible.linear_solvers.pressure.kind,
+            crate::solver::IncompressiblePressureLinearSolverKind::Gmres
+        );
+        assert_eq!(incompressible.linear_solvers.pressure.gmres_restart, 6);
         assert_eq!(incompressible.linear_solvers.pressure.max_iters, 12);
         assert!(crate::core::approx_eq(
             incompressible.linear_solvers.pressure.tolerance,

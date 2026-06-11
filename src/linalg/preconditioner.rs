@@ -1,6 +1,7 @@
 use crate::core::Real;
 use crate::error::{AsimuError, Result};
 
+use super::sparse::CsrMatrix;
 use super::{Preconditioner, ensure_vector_len};
 
 /// 恒等预条件器。
@@ -131,6 +132,58 @@ impl CellBlockDiagonalPreconditioner {
     #[must_use]
     pub fn num_blocks(&self) -> usize {
         self.inverse_blocks.len() / (self.block_size * self.block_size)
+    }
+}
+
+/// CSR 矩阵 Jacobi（对角）预条件器：\(z_i = r_i / A_{ii}\)。
+#[derive(Debug, Clone, PartialEq)]
+pub struct CsrJacobiPreconditioner {
+    inverse_diagonal: Vec<Real>,
+}
+
+impl CsrJacobiPreconditioner {
+    pub fn from_matrix(matrix: &CsrMatrix) -> Result<Self> {
+        if matrix.nrows() != matrix.ncols() {
+            return Err(AsimuError::Linalg("Jacobi 预条件器需要方阵".to_string()));
+        }
+        let n = matrix.nrows();
+        let mut inverse_diagonal = vec![0.0; n];
+        for (row, inv) in inverse_diagonal.iter_mut().enumerate() {
+            let Some(diag) = matrix
+                .row_entries(row)
+                .find_map(|(col, value)| (col == row).then_some(value))
+            else {
+                return Err(AsimuError::Linalg(format!(
+                    "Jacobi 预条件器缺少对角元: row={row}"
+                )));
+            };
+            if diag.abs() <= Real::EPSILON {
+                return Err(AsimuError::Linalg(format!(
+                    "Jacobi 预条件器零对角元: row={row}"
+                )));
+            }
+            *inv = 1.0 / diag;
+        }
+        Ok(Self { inverse_diagonal })
+    }
+}
+
+impl Preconditioner for CsrJacobiPreconditioner {
+    fn dimension(&self) -> usize {
+        self.inverse_diagonal.len()
+    }
+
+    fn apply(&self, rhs: &[Real], out: &mut [Real]) -> Result<()> {
+        ensure_vector_len(rhs, self.dimension(), "csr jacobi rhs")?;
+        ensure_vector_len(out, self.dimension(), "csr jacobi out")?;
+        for ((dst, src), inv) in out
+            .iter_mut()
+            .zip(rhs.iter())
+            .zip(self.inverse_diagonal.iter())
+        {
+            *dst = inv * src;
+        }
+        Ok(())
     }
 }
 

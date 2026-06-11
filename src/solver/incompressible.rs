@@ -11,7 +11,10 @@ use crate::discretization::{
 };
 use crate::error::{AsimuError, Result};
 use crate::field::{IncompressibleFields, ScalarField};
-use crate::linalg::{CsrMatrix, GmresConfig, GmresSolver, IdentityPreconditioner};
+use crate::linalg::{
+    CsrJacobiPreconditioner, CsrMatrix, CsrMatrixView, GmresConfig, GmresSolver,
+    IdentityPreconditioner, PcgSolver,
+};
 use crate::mesh::StructuredMesh3d;
 pub use crate::solver::incompressible_diagnostics::IncompressiblePressureVelocityAlgorithm;
 use crate::solver::incompressible_diagnostics::{
@@ -20,24 +23,10 @@ use crate::solver::incompressible_diagnostics::{
 };
 use tracing::debug;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct IncompressibleLinearSolverConfig {
-    pub momentum: GmresConfig,
-    pub pressure: GmresConfig,
-}
-
-impl Default for IncompressibleLinearSolverConfig {
-    fn default() -> Self {
-        Self {
-            momentum: GmresConfig::default(),
-            pressure: GmresConfig {
-                restart: 64,
-                max_iters: 500,
-                tolerance: 1.0e-10,
-            },
-        }
-    }
-}
+pub use crate::solver::incompressible_linear::{
+    IncompressibleLinearSolverConfig, IncompressiblePressureLinearSolverConfig,
+    IncompressiblePressureLinearSolverKind,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub struct IncompressiblePressureVelocityConfig<'a> {
@@ -424,26 +413,42 @@ struct MomentumPredictorSolveDiagnostic {
 
 fn solve_pressure_correction(
     system: &crate::discretization::IncompressiblePressureCorrectionSystem,
-    gmres_config: GmresConfig,
+    config: IncompressiblePressureLinearSolverConfig,
 ) -> Result<PressureCorrectionSolveDiagnostic> {
     let n = system.matrix.nrows();
-    let mut matrix = system.matrix.clone();
-    let preconditioner = IdentityPreconditioner::new(n);
-    let solver = GmresSolver::new(gmres_config)?;
+    let mut matrix = CsrMatrixView::new(&system.matrix);
     let mut pressure_correction = vec![0.0; n];
-    let report = solver.solve(
-        &mut matrix,
-        &preconditioner,
-        &system.rhs,
-        &mut pressure_correction,
-    )?;
+    let (converged, iterations, residual_norm) = match config.kind {
+        IncompressiblePressureLinearSolverKind::Gmres => {
+            let preconditioner = IdentityPreconditioner::new(n);
+            let solver = GmresSolver::new(config.gmres_config())?;
+            let report = solver.solve(
+                &mut matrix,
+                &preconditioner,
+                &system.rhs,
+                &mut pressure_correction,
+            )?;
+            (report.converged, report.iterations, report.residual_norm)
+        }
+        IncompressiblePressureLinearSolverKind::Pcg => {
+            let preconditioner = CsrJacobiPreconditioner::from_matrix(&system.matrix)?;
+            let solver = PcgSolver::new(config.pcg_config())?;
+            let report = solver.solve(
+                &mut matrix,
+                &preconditioner,
+                &system.rhs,
+                &mut pressure_correction,
+            )?;
+            (report.converged, report.iterations, report.residual_norm)
+        }
+    };
     let max_abs_correction = pressure_correction
         .iter()
         .fold(0.0, |acc: Real, value| acc.max(value.abs()));
     Ok(PressureCorrectionSolveDiagnostic {
-        converged: report.converged,
-        iterations: report.iterations,
-        residual_norm: report.residual_norm,
+        converged,
+        iterations,
+        residual_norm,
         max_abs_correction,
         correction: pressure_correction,
     })
@@ -499,7 +504,7 @@ fn solve_momentum_component(
     gmres_config: GmresConfig,
 ) -> Result<MomentumComponentSolve> {
     let n = system.matrix.nrows();
-    let mut matrix = system.matrix.clone();
+    let mut matrix = CsrMatrixView::new(&system.matrix);
     let preconditioner = IdentityPreconditioner::new(n);
     let solver = GmresSolver::new(gmres_config)?;
     let mut solution = vec![0.0; n];

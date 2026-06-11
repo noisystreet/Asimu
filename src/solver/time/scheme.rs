@@ -2,7 +2,7 @@
 
 use crate::error::{AsimuError, Result};
 
-/// 可压缩时间推进格式。
+/// 时间推进 / pressure-velocity 耦合格式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TimeIntegrationScheme {
     /// 经典四阶 Runge-Kutta（默认）。
@@ -14,6 +14,8 @@ pub enum TimeIntegrationScheme {
     LuSgs,
     /// Matrix-free GMRES 隐式伪时间（LU-SGS 对角预条件器）。
     Gmres,
+    /// 不可压缩 SIMPLEC 稳态 pressure-velocity 路径（可压缩求解器不支持）。
+    Simplec,
     /// 不可压缩 PISO smoke 路径（可压缩求解器不支持）。
     Piso,
 }
@@ -25,9 +27,10 @@ impl TimeIntegrationScheme {
             "euler" | "forward_euler" | "euler1" | "rk1" | "euler_1" => Ok(Self::Euler),
             "lu_sgs" | "lusgs" | "lu-sgs" => Ok(Self::LuSgs),
             "gmres" | "jfnk" | "matrix_free_gmres" | "matrix-free-gmres" => Ok(Self::Gmres),
+            "simplec" => Ok(Self::Simplec),
             "piso" => Ok(Self::Piso),
             other => Err(AsimuError::Config(format!(
-                "不支持的 time.scheme \"{other}\"（可用 rk4、euler、lu_sgs、gmres、piso）"
+                "不支持的 time.scheme \"{other}\"（可用 rk4、euler、lu_sgs、gmres、simplec、piso）"
             ))),
         }
     }
@@ -39,6 +42,7 @@ impl TimeIntegrationScheme {
             Self::Euler => "euler",
             Self::LuSgs => "lu_sgs",
             Self::Gmres => "gmres",
+            Self::Simplec => "simplec",
             Self::Piso => "piso",
         }
     }
@@ -74,6 +78,14 @@ mod tests {
         assert_eq!(
             TimeIntegrationScheme::parse("piso").expect("piso"),
             TimeIntegrationScheme::Piso
+        );
+    }
+
+    #[test]
+    fn parses_simplec_alias() {
+        assert_eq!(
+            TimeIntegrationScheme::parse("simplec").expect("simplec"),
+            TimeIntegrationScheme::Simplec
         );
     }
 
