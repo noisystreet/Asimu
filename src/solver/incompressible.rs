@@ -8,7 +8,7 @@ use crate::discretization::{
     apply_incompressible_boundary_conditions_3d,
     assemble_incompressible_momentum_predictor_with_boundary_and_flux_3d,
     assemble_incompressible_pressure_correction_3d, compute_incompressible_face_flux_divergence_3d,
-    corrected_incompressible_fields_rhie_chow_3d,
+    corrected_incompressible_fields_rhie_chow_3d, incompressible_pressure_correction_dirichlet,
 };
 use crate::error::{AsimuError, Result};
 use crate::field::{IncompressibleFields, ScalarField};
@@ -140,7 +140,7 @@ pub fn run_incompressible_pressure_velocity(
         let step_no = step + 1;
         let (mut diagnostic, timing, next_face_flux) =
             assemble_simplec_step(&current_fields, current_face_flux.as_ref(), &config)?;
-        let residual = diagnostic.max_abs_underrelaxed_corrected_divergence;
+        let residual = diagnostic.max_abs_corrected_field_divergence_after_boundary;
         let momentum_residual = diagnostic.max_abs_momentum_equation_residual;
         let velocity_delta = diagnostic.max_abs_corrected_velocity_delta_interior;
         validate_simplec_step(residual, momentum_residual, velocity_delta)?;
@@ -316,7 +316,6 @@ fn assemble_simplec_step(
     )?;
     timing.pressure_ms = elapsed_ms(pressure_start);
     let correct_start = Instant::now();
-    let mut corrector_residuals = vec![pressure_step.max_abs_underrelaxed_corrected_divergence];
     let mut corrector_max_corrections = vec![pressure_step.solution.max_abs_correction];
     let mut accumulated_pressure_correction = pressure_step.solution.correction.clone();
     face_flux.apply_pressure_correction(
@@ -333,6 +332,7 @@ fn assemble_simplec_step(
         config,
         &face_flux,
     )?;
+    let mut corrector_residuals = vec![corrected.max_abs_divergence_after_boundary];
     (pressure_step, corrected) = apply_additional_pressure_correctors(
         pressure_step,
         corrected,
@@ -401,7 +401,7 @@ fn assemble_simplec_step(
         max_abs_corrected_velocity_delta_boundary: velocity_delta.boundary,
         simplec_iterations: 0,
         simplec_converged: false,
-        simplec_final_residual: pressure_step.max_abs_underrelaxed_corrected_divergence,
+        simplec_final_residual: corrected.max_abs_divergence_after_boundary,
         simplec_final_momentum_residual: momentum_solution.max_abs_equation_residual,
         simplec_residual_history: Vec::new(),
         simplec_momentum_residual_history: Vec::new(),
@@ -481,7 +481,6 @@ fn apply_additional_pressure_correctors(
             &pressure_step.solution.correction,
             1.0,
         )?;
-        residual_history.push(pressure_step.max_abs_underrelaxed_corrected_divergence);
         corrected = build_corrected_fields_with_diagnostics(
             current_fields,
             predicted_fields,
@@ -490,6 +489,7 @@ fn apply_additional_pressure_correctors(
             config,
             face_flux,
         )?;
+        residual_history.push(corrected.max_abs_divergence_after_boundary);
     }
     Ok((pressure_step, corrected))
 }
@@ -520,7 +520,8 @@ fn solve_pressure_correction_step(
         config.boundary,
         IncompressiblePressureCorrectionConfig::new(config.density, 0, 0.0)?,
     )?;
-    let solution = if pressure_correction_rhs_satisfies_coupling_tolerance(
+    let mut solution = if pressure_correction_rhs_satisfies_coupling_tolerance(
+        config.mesh,
         &system.rhs,
         config.density,
         config.tolerance,
@@ -529,10 +530,12 @@ fn solve_pressure_correction_step(
     } else {
         solve_pressure_correction(&system, config.linear_solvers.pressure)?
     };
+    normalize_closed_pressure_reference(&mut solution.correction, config);
     let max_abs_corrected_divergence = max_pressure_correction_continuity_residual(
         &system.matrix,
         &system.rhs,
         &solution.correction,
+        config.mesh,
         config.density,
     )?;
     let max_abs_underrelaxed_corrected_divergence =
@@ -540,6 +543,7 @@ fn solve_pressure_correction_step(
             &system.matrix,
             &system.rhs,
             &solution.correction,
+            config.mesh,
             config.density,
             config.pressure_under_relaxation,
         )?;
@@ -554,11 +558,14 @@ fn solve_pressure_correction_step(
 }
 
 fn pressure_correction_rhs_satisfies_coupling_tolerance(
+    mesh: &StructuredMesh3d,
     rhs: &[Real],
     density: Real,
     tolerance: Option<Real>,
 ) -> bool {
-    tolerance.is_some_and(|tol| max_abs_slice(rhs) / density <= tol)
+    tolerance.is_some_and(|tol| {
+        max_abs_pressure_rhs_divergence(mesh, rhs, density).is_ok_and(|residual| residual <= tol)
+    })
 }
 
 fn zero_pressure_correction_solution(
@@ -571,6 +578,26 @@ fn zero_pressure_correction_solution(
         max_abs_correction: 0.0,
         correction: vec![0.0; system.matrix.nrows()],
     }
+}
+
+fn normalize_closed_pressure_reference(
+    pressure_correction: &mut [Real],
+    config: &IncompressibleSimplecConfig<'_>,
+) {
+    if has_pressure_correction_dirichlet(config.boundary) || pressure_correction.is_empty() {
+        return;
+    }
+    let reference = pressure_correction[0];
+    for value in pressure_correction {
+        *value -= reference;
+    }
+}
+
+fn has_pressure_correction_dirichlet(boundary: &BoundarySet) -> bool {
+    boundary
+        .patches()
+        .iter()
+        .any(|patch| incompressible_pressure_correction_dirichlet(&patch.kind))
 }
 
 fn predicted_fields_with_boundary(
@@ -617,15 +644,17 @@ fn max_pressure_correction_continuity_residual(
     matrix: &CsrMatrix,
     rhs: &[Real],
     correction: &[Real],
+    mesh: &StructuredMesh3d,
     density: Real,
 ) -> Result<Real> {
-    max_scaled_pressure_correction_continuity_residual(matrix, rhs, correction, density, 1.0)
+    max_scaled_pressure_correction_continuity_residual(matrix, rhs, correction, mesh, density, 1.0)
 }
 
 fn max_scaled_pressure_correction_continuity_residual(
     matrix: &CsrMatrix,
     rhs: &[Real],
     correction: &[Real],
+    mesh: &StructuredMesh3d,
     density: Real,
     correction_scale: Real,
 ) -> Result<Real> {
@@ -644,18 +673,59 @@ fn max_scaled_pressure_correction_continuity_residual(
             "压力校正连续性残差向量长度与矩阵尺寸不一致".to_string(),
         ));
     }
+    if rhs.len() != mesh.num_cells() {
+        return Err(AsimuError::Linalg(
+            "压力校正连续性残差长度与网格单元数不一致".to_string(),
+        ));
+    }
     let mut max_residual: Real = 0.0;
     for (row, rhs_value) in rhs.iter().enumerate().take(matrix.nrows()) {
         if is_identity_constraint_row(matrix, row) {
             continue;
         }
+        let (i, j, k) = cell_ijk(mesh, row);
+        let volume = mesh.cell_metric(i, j, k).volume;
         let ax = matrix
             .row_entries(row)
             .map(|(col, value)| value * correction[col])
             .sum::<Real>();
-        max_residual = max_residual.max(((rhs_value - correction_scale * ax) / density).abs());
+        max_residual =
+            max_residual.max(((rhs_value - correction_scale * ax) / (density * volume)).abs());
     }
     Ok(max_residual)
+}
+
+fn max_abs_pressure_rhs_divergence(
+    mesh: &StructuredMesh3d,
+    rhs: &[Real],
+    density: Real,
+) -> Result<Real> {
+    if density <= 0.0 {
+        return Err(AsimuError::Linalg(
+            "压力校正 RHS 散度要求正密度".to_string(),
+        ));
+    }
+    if rhs.len() != mesh.num_cells() {
+        return Err(AsimuError::Linalg(
+            "压力校正 RHS 长度与网格单元数不一致".to_string(),
+        ));
+    }
+    let mut max_residual: Real = 0.0;
+    for (cell, rhs_value) in rhs.iter().enumerate() {
+        let (i, j, k) = cell_ijk(mesh, cell);
+        let volume = mesh.cell_metric(i, j, k).volume;
+        max_residual = max_residual.max((rhs_value / (density * volume)).abs());
+    }
+    Ok(max_residual)
+}
+
+fn cell_ijk(mesh: &StructuredMesh3d, cell: usize) -> (usize, usize, usize) {
+    let cells_per_layer = mesh.nx * mesh.ny;
+    let k = cell / cells_per_layer;
+    let rem = cell % cells_per_layer;
+    let j = rem / mesh.nx;
+    let i = rem % mesh.nx;
+    (i, j, k)
 }
 
 fn pressure_correction_active_rhs_sum(matrix: &CsrMatrix, rhs: &[Real]) -> Result<Real> {

@@ -26,44 +26,36 @@ pub fn assemble_incompressible_pressure_correction_3d(
     let n = mesh.num_cells();
     validate_pressure_inputs(n, divergence, config)?;
     validate_d_coefficient(n, d_coefficient)?;
-    let spacing = CartesianSpacing::from_mesh(mesh)?;
     let correction_dirichlet = pressure_correction_dirichlet_cells(mesh, boundary)?;
     let has_correction_dirichlet = correction_dirichlet.iter().any(|value| *value);
     let periodic_x = boundary.has_periodic_pair("i_min", "i_max");
     let mut rows = (0..n).map(|_| Vec::with_capacity(7)).collect::<Vec<_>>();
-    let mut rhs = divergence
-        .values()
-        .iter()
-        .map(|value| config.density * value)
-        .collect::<Vec<_>>();
+    let mut rhs = pressure_correction_integrated_rhs(mesh, divergence, config.density);
+    let fixed_pressure = correction_dirichlet.clone();
+    let fixed_values = vec![0.0; n];
     if is_closed_pressure_correction_cavity(boundary) {
         remove_active_pressure_rhs_mean(&mut rhs, &correction_dirichlet);
     } else if !has_correction_dirichlet {
-        remove_closed_domain_rhs_mean(&mut rhs, config.pressure_reference_cell);
+        remove_closed_domain_rhs_mean(&mut rhs);
     }
     let ctx = PressureCorrectionCtx {
         mesh,
-        spacing,
         density: config.density,
         d: d_coefficient.values(),
+        fixed_pressure: &fixed_pressure,
+        fixed_values: &fixed_values,
         periodic_x,
     };
     for k in 0..mesh.nz {
         for j in 0..mesh.ny {
             for i in 0..mesh.nx {
                 let row = mesh.cell_index(i, j, k);
-                if correction_dirichlet[row]
-                    || (!has_correction_dirichlet && row == config.pressure_reference_cell)
-                {
+                if fixed_pressure[row] {
                     rows[row].push((row, 1.0));
-                    rhs[row] = if correction_dirichlet[row] {
-                        0.0
-                    } else {
-                        config.pressure_reference_value
-                    };
+                    rhs[row] = fixed_values[row];
                     continue;
                 }
-                add_pressure_correction_neighbors(ctx, &mut rows[row], (i, j, k));
+                add_pressure_correction_neighbors(ctx, &mut rows[row], &mut rhs[row], (i, j, k));
             }
         }
     }
@@ -74,115 +66,226 @@ pub fn assemble_incompressible_pressure_correction_3d(
 }
 
 #[derive(Debug, Clone, Copy)]
-struct CartesianSpacing {
-    dx: Real,
-    dy: Real,
-    dz: Real,
-}
-
-impl CartesianSpacing {
-    fn from_mesh(mesh: &StructuredMesh3d) -> Result<Self> {
-        let dx = mesh.node_x(1, 0, 0) - mesh.node_x(0, 0, 0);
-        let dy = mesh.node_y(0, 1, 0) - mesh.node_y(0, 0, 0);
-        let dz = mesh.node_z(0, 0, 1) - mesh.node_z(0, 0, 0);
-        if dx.abs() <= Real::EPSILON || dy.abs() <= Real::EPSILON || dz.abs() <= Real::EPSILON {
-            return Err(AsimuError::Mesh(
-                "不可压缩压力校正要求正的 Cartesian 网格间距".to_string(),
-            ));
-        }
-        Ok(Self {
-            dx: dx.abs(),
-            dy: dy.abs(),
-            dz: dz.abs(),
-        })
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
 struct PressureCorrectionCtx<'a> {
     mesh: &'a StructuredMesh3d,
-    spacing: CartesianSpacing,
     density: Real,
     d: &'a [Real],
+    fixed_pressure: &'a [bool],
+    fixed_values: &'a [Real],
     periodic_x: bool,
 }
 
 fn add_pressure_correction_neighbors(
     ctx: PressureCorrectionCtx<'_>,
     row: &mut Vec<(usize, Real)>,
+    rhs: &mut Real,
+    cell: (usize, usize, usize),
+) {
+    let center = ctx.mesh.cell_index(cell.0, cell.1, cell.2);
+    let mut diag = 0.0;
+    add_x_neighbors(ctx, row, rhs, &mut diag, center, cell);
+    add_y_neighbors(ctx, row, rhs, &mut diag, center, cell);
+    add_z_neighbors(ctx, row, rhs, &mut diag, center, cell);
+    row.push((center, diag));
+}
+
+fn add_x_neighbors(
+    ctx: PressureCorrectionCtx<'_>,
+    row: &mut Vec<(usize, Real)>,
+    rhs: &mut Real,
+    diag: &mut Real,
+    center: usize,
     cell: (usize, usize, usize),
 ) {
     let (i, j, k) = cell;
-    let center = ctx.mesh.cell_index(i, j, k);
-    let mut diag = 0.0;
     add_d_neighbor(
         ctx,
         row,
-        &mut diag,
+        rhs,
+        diag,
         center,
-        neighbor_if(i > 0, || (i - 1, j, k))
-            .or_else(|| neighbor_if(ctx.periodic_x && i == 0, || (ctx.mesh.nx - 1, j, k))),
-        ctx.spacing.dx,
+        neighbor_with_coeff(i > 0, || (i - 1, j, k), || face_coeff_x(ctx, i - 1, j, k)).or_else(
+            || {
+                neighbor_with_coeff(
+                    ctx.periodic_x && i == 0,
+                    || (ctx.mesh.nx - 1, j, k),
+                    || face_coeff_x(ctx, 0, j, k),
+                )
+            },
+        ),
     );
     add_d_neighbor(
         ctx,
         row,
-        &mut diag,
+        rhs,
+        diag,
         center,
-        neighbor_if(i + 1 < ctx.mesh.nx, || (i + 1, j, k))
-            .or_else(|| neighbor_if(ctx.periodic_x && i + 1 == ctx.mesh.nx, || (0, j, k))),
-        ctx.spacing.dx,
+        neighbor_with_coeff(
+            i + 1 < ctx.mesh.nx,
+            || (i + 1, j, k),
+            || face_coeff_x(ctx, i, j, k),
+        )
+        .or_else(|| {
+            neighbor_with_coeff(
+                ctx.periodic_x && i + 1 == ctx.mesh.nx,
+                || (0, j, k),
+                || face_coeff_x(ctx, ctx.mesh.nx - 2, j, k),
+            )
+        }),
+    );
+}
+
+fn add_y_neighbors(
+    ctx: PressureCorrectionCtx<'_>,
+    row: &mut Vec<(usize, Real)>,
+    rhs: &mut Real,
+    diag: &mut Real,
+    center: usize,
+    cell: (usize, usize, usize),
+) {
+    let (i, j, k) = cell;
+    add_d_neighbor(
+        ctx,
+        row,
+        rhs,
+        diag,
+        center,
+        neighbor_with_coeff(j > 0, || (i, j - 1, k), || face_coeff_y(ctx, i, j - 1, k)),
     );
     add_d_neighbor(
         ctx,
         row,
-        &mut diag,
+        rhs,
+        diag,
         center,
-        neighbor_if(j > 0, || (i, j - 1, k)),
-        ctx.spacing.dy,
+        neighbor_with_coeff(
+            j + 1 < ctx.mesh.ny,
+            || (i, j + 1, k),
+            || face_coeff_y(ctx, i, j, k),
+        ),
+    );
+}
+
+fn add_z_neighbors(
+    ctx: PressureCorrectionCtx<'_>,
+    row: &mut Vec<(usize, Real)>,
+    rhs: &mut Real,
+    diag: &mut Real,
+    center: usize,
+    cell: (usize, usize, usize),
+) {
+    let (i, j, k) = cell;
+    add_d_neighbor(
+        ctx,
+        row,
+        rhs,
+        diag,
+        center,
+        neighbor_with_coeff(k > 0, || (i, j, k - 1), || face_coeff_z(ctx, i, j, k - 1)),
     );
     add_d_neighbor(
         ctx,
         row,
-        &mut diag,
+        rhs,
+        diag,
         center,
-        neighbor_if(j + 1 < ctx.mesh.ny, || (i, j + 1, k)),
-        ctx.spacing.dy,
+        neighbor_with_coeff(
+            k + 1 < ctx.mesh.nz,
+            || (i, j, k + 1),
+            || face_coeff_z(ctx, i, j, k),
+        ),
     );
-    add_d_neighbor(
-        ctx,
-        row,
-        &mut diag,
-        center,
-        neighbor_if(k > 0, || (i, j, k - 1)),
-        ctx.spacing.dz,
-    );
-    add_d_neighbor(
-        ctx,
-        row,
-        &mut diag,
-        center,
-        neighbor_if(k + 1 < ctx.mesh.nz, || (i, j, k + 1)),
-        ctx.spacing.dz,
-    );
-    row.push((center, diag));
 }
 
 fn add_d_neighbor(
     ctx: PressureCorrectionCtx<'_>,
     row: &mut Vec<(usize, Real)>,
+    rhs: &mut Real,
     diag: &mut Real,
-    center: usize,
-    neighbor: Option<(usize, usize, usize)>,
-    spacing: Real,
+    _center: usize,
+    neighbor: Option<((usize, usize, usize), Real)>,
 ) {
-    if let Some((i, j, k)) = neighbor {
+    if let Some(((i, j, k), coeff)) = neighbor {
         let col = ctx.mesh.cell_index(i, j, k);
-        let d_face = 0.5 * (ctx.d[center] + ctx.d[col]);
-        let coeff = ctx.density * d_face / (spacing * spacing);
         *diag += coeff;
-        row.push((col, -coeff));
+        if ctx.fixed_pressure[col] {
+            *rhs += coeff * ctx.fixed_values[col];
+        } else {
+            row.push((col, -coeff));
+        }
     }
+}
+
+fn pressure_correction_integrated_rhs(
+    mesh: &StructuredMesh3d,
+    divergence: &ScalarField,
+    density: Real,
+) -> Vec<Real> {
+    let mut rhs = vec![0.0; mesh.num_cells()];
+    for k in 0..mesh.nz {
+        for j in 0..mesh.ny {
+            for i in 0..mesh.nx {
+                let cell = mesh.cell_index(i, j, k);
+                rhs[cell] = density * divergence.values()[cell] * mesh.cell_metric(i, j, k).volume;
+            }
+        }
+    }
+    rhs
+}
+
+fn face_coeff_x(ctx: PressureCorrectionCtx<'_>, i: usize, j: usize, k: usize) -> Real {
+    let owner = CellCoord { i, j, k };
+    let neighbor = CellCoord { i: i + 1, j, k };
+    let face = ctx.mesh.i_face_metric(i, j, k);
+    pressure_face_coeff(ctx, owner, neighbor, face)
+}
+
+fn face_coeff_y(ctx: PressureCorrectionCtx<'_>, i: usize, j: usize, k: usize) -> Real {
+    let owner = CellCoord { i, j, k };
+    let neighbor = CellCoord { i, j: j + 1, k };
+    let face = ctx.mesh.j_face_metric(i, j, k);
+    pressure_face_coeff(ctx, owner, neighbor, face)
+}
+
+fn face_coeff_z(ctx: PressureCorrectionCtx<'_>, i: usize, j: usize, k: usize) -> Real {
+    let owner = CellCoord { i, j, k };
+    let neighbor = CellCoord { i, j, k: k + 1 };
+    let face = ctx.mesh.k_face_metric(i, j, k);
+    pressure_face_coeff(ctx, owner, neighbor, face)
+}
+
+fn pressure_face_coeff(
+    ctx: PressureCorrectionCtx<'_>,
+    owner: CellCoord,
+    neighbor: CellCoord,
+    face: crate::mesh::FaceMetric,
+) -> Real {
+    let left = ctx.mesh.cell_index(owner.i, owner.j, owner.k);
+    let right = ctx.mesh.cell_index(neighbor.i, neighbor.j, neighbor.k);
+    let d_face = 0.5 * (ctx.d[left] + ctx.d[right]);
+    ctx.density * d_face * face.area / owner_neighbor_distance(ctx.mesh, owner, neighbor, &face)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CellCoord {
+    i: usize,
+    j: usize,
+    k: usize,
+}
+
+fn owner_neighbor_distance(
+    mesh: &StructuredMesh3d,
+    owner: CellCoord,
+    neighbor: CellCoord,
+    face: &crate::mesh::FaceMetric,
+) -> Real {
+    let owner_center = mesh.cell_metric(owner.i, owner.j, owner.k).center;
+    let neighbor_center = mesh.cell_metric(neighbor.i, neighbor.j, neighbor.k).center;
+    let dx = neighbor_center.x - owner_center.x;
+    let dy = neighbor_center.y - owner_center.y;
+    let dz = neighbor_center.z - owner_center.z;
+    let projected = (dx * face.normal.x + dy * face.normal.y + dz * face.normal.z).abs();
+    projected.max(Real::EPSILON)
 }
 
 fn validate_pressure_inputs(
@@ -264,27 +367,13 @@ fn is_closed_pressure_correction_cavity(boundary: &BoundarySet) -> bool {
     })
 }
 
-fn remove_closed_domain_rhs_mean(rhs: &mut [Real], pressure_reference_cell: usize) {
-    if rhs.len() <= 1 {
+fn remove_closed_domain_rhs_mean(rhs: &mut [Real]) {
+    if rhs.is_empty() {
         return;
     }
-    let mut sum = 0.0;
-    let mut count = 0usize;
-    for (cell, value) in rhs.iter().enumerate() {
-        if cell == pressure_reference_cell {
-            continue;
-        }
-        sum += *value;
-        count += 1;
-    }
-    if count == 0 {
-        return;
-    }
-    let mean = sum / count as Real;
-    for (cell, value) in rhs.iter_mut().enumerate() {
-        if cell != pressure_reference_cell {
-            *value -= mean;
-        }
+    let mean = rhs.iter().sum::<Real>() / rhs.len() as Real;
+    for value in rhs.iter_mut() {
+        *value -= mean;
     }
 }
 
@@ -310,11 +399,12 @@ fn remove_active_pressure_rhs_mean(rhs: &mut [Real], pressure_correction_dirichl
     }
 }
 
-fn neighbor_if(
+fn neighbor_with_coeff(
     present: bool,
     index: impl FnOnce() -> (usize, usize, usize),
-) -> Option<(usize, usize, usize)> {
-    present.then(index)
+    coeff: impl FnOnce() -> Real,
+) -> Option<((usize, usize, usize), Real)> {
+    present.then(|| (index(), coeff()))
 }
 
 #[cfg(test)]
@@ -339,10 +429,39 @@ mod tests {
         )
         .expect("system");
 
-        assert_eq!(system.rhs[0], 0.0);
-        assert!((system.rhs[1] + 1.0).abs() <= Real::EPSILON);
-        assert!(system.rhs[2].abs() <= Real::EPSILON);
-        assert!((system.rhs[3] - 1.0).abs() <= Real::EPSILON);
+        assert!((system.rhs[0] + 0.0375).abs() <= Real::EPSILON);
+        assert!((system.rhs[1] + 0.0125).abs() <= Real::EPSILON);
+        assert!((system.rhs[2] - 0.0125).abs() <= Real::EPSILON);
+        assert!((system.rhs[3] - 0.0375).abs() <= Real::EPSILON);
+    }
+
+    #[test]
+    fn closed_pressure_reference_keeps_continuity_rows_for_pcg() {
+        let mesh = StructuredMesh3d::uniform_box("box", 3, 3, 1, 1.0, 1.0, 0.1).expect("mesh");
+        let divergence = ScalarField::from_values(vec![1.0; mesh.num_cells()]).expect("divergence");
+        let d = ScalarField::from_values(vec![1.0; mesh.num_cells()]).expect("d");
+        let boundary = BoundarySet::new(Vec::new());
+
+        let system = assemble_incompressible_pressure_correction_3d(
+            &mesh,
+            &divergence,
+            &d,
+            &boundary,
+            IncompressiblePressureCorrectionConfig::new(1.0, 0, 0.0).expect("config"),
+        )
+        .expect("system");
+
+        assert_ne!(
+            system.matrix.row_entries(0).collect::<Vec<_>>(),
+            vec![(0, 1.0)]
+        );
+        let neighbor = mesh.cell_index(1, 0, 0);
+        let row = system.matrix.row_entries(neighbor).collect::<Vec<_>>();
+        assert!(
+            row.iter().any(|(col, _)| *col == 0),
+            "closed-domain pressure reference should not drop continuity columns: {row:?}"
+        );
+        assert_matrix_symmetric(&system.matrix, 1.0e-12);
     }
 
     #[test]
@@ -408,5 +527,24 @@ mod tests {
             sum += *value;
         }
         sum
+    }
+
+    fn assert_matrix_symmetric(matrix: &CsrMatrix, tolerance: Real) {
+        for row in 0..matrix.nrows() {
+            for (col, value) in matrix.row_entries(row) {
+                let mirror = matrix_entry(matrix, col, row);
+                assert!(
+                    (value - mirror).abs() <= tolerance,
+                    "matrix asymmetric at ({row},{col}): {value} vs {mirror}"
+                );
+            }
+        }
+    }
+
+    fn matrix_entry(matrix: &CsrMatrix, row: usize, col: usize) -> Real {
+        matrix
+            .row_entries(row)
+            .find_map(|(entry_col, value)| (entry_col == col).then_some(value))
+            .unwrap_or(0.0)
     }
 }

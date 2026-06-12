@@ -35,7 +35,6 @@ impl IncompressibleFaceFluxField {
                 "面通量 d_P 长度与网格单元数不一致".to_string(),
             ));
         }
-        let spacing = CartesianSpacing::from_mesh(mesh)?;
         let boundary_map = IncompressibleBoundaryOwnerMap::build(mesh, boundary);
         let periodic_x = boundary.has_periodic_pair("i_min", "i_max");
         let mut flux = Self::zeros(mesh, periodic_x);
@@ -43,7 +42,6 @@ impl IncompressibleFaceFluxField {
             mesh,
             fields,
             d_coefficient.values(),
-            spacing,
             &boundary_map,
             &mut flux,
         );
@@ -64,43 +62,24 @@ impl IncompressibleFaceFluxField {
                 "面通量压力校正长度与网格单元数不一致".to_string(),
             ));
         }
-        let spacing = CartesianSpacing::from_mesh(mesh)?;
-        update_x_fluxes(
-            mesh,
-            d_coefficient,
-            pressure_correction,
-            scale,
-            spacing,
-            self,
-        );
-        update_y_fluxes(
-            mesh,
-            d_coefficient,
-            pressure_correction,
-            scale,
-            spacing,
-            self,
-        );
-        update_z_fluxes(
-            mesh,
-            d_coefficient,
-            pressure_correction,
-            scale,
-            spacing,
-            self,
-        );
+        update_x_fluxes(mesh, d_coefficient, pressure_correction, scale, self);
+        update_y_fluxes(mesh, d_coefficient, pressure_correction, scale, self);
+        update_z_fluxes(mesh, d_coefficient, pressure_correction, scale, self);
         Ok(())
     }
 
     pub fn divergence(&self, mesh: &StructuredMesh3d) -> Result<ScalarField> {
-        let spacing = CartesianSpacing::from_mesh(mesh)?;
         let mut net = self.boundary_net.clone();
         scatter_x_fluxes(mesh, self, &mut net);
         scatter_y_fluxes(mesh, self, &mut net);
         scatter_z_fluxes(mesh, self, &mut net);
-        let volume = spacing.volume();
-        for value in &mut net {
-            *value /= volume;
+        for k in 0..mesh.nz {
+            for j in 0..mesh.ny {
+                for i in 0..mesh.nx {
+                    let cell = mesh.cell_index(i, j, k);
+                    net[cell] /= mesh.cell_metric(i, j, k).volume;
+                }
+            }
         }
         ScalarField::from_values(net)
     }
@@ -143,59 +122,31 @@ impl IncompressibleFaceFluxField {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-struct CartesianSpacing {
-    dx: Real,
-    dy: Real,
-    dz: Real,
-}
-
-impl CartesianSpacing {
-    fn from_mesh(mesh: &StructuredMesh3d) -> Result<Self> {
-        let dx = mesh.node_x(1, 0, 0) - mesh.node_x(0, 0, 0);
-        let dy = mesh.node_y(0, 1, 0) - mesh.node_y(0, 0, 0);
-        let dz = mesh.node_z(0, 0, 1) - mesh.node_z(0, 0, 0);
-        if dx.abs() <= Real::EPSILON || dy.abs() <= Real::EPSILON || dz.abs() <= Real::EPSILON {
-            return Err(AsimuError::Mesh(
-                "不可压缩面通量要求正的 Cartesian 网格间距".to_string(),
-            ));
-        }
-        Ok(Self {
-            dx: dx.abs(),
-            dy: dy.abs(),
-            dz: dz.abs(),
-        })
-    }
-
-    fn volume(self) -> Real {
-        self.dx * self.dy * self.dz
-    }
-}
-
 fn fill_internal_rhie_chow_fluxes(
     mesh: &StructuredMesh3d,
     fields: &IncompressibleFields,
     d: &[Real],
-    spacing: CartesianSpacing,
     boundary: &IncompressibleBoundaryOwnerMap,
     flux: &mut IncompressibleFaceFluxField,
 ) {
-    let ax = spacing.dy * spacing.dz;
-    let ay = spacing.dx * spacing.dz;
-    let az = spacing.dx * spacing.dy;
     for k in 0..mesh.nz {
         for j in 0..mesh.ny {
             for i in 0..mesh.nx.saturating_sub(1) {
                 let left = mesh.cell_index(i, j, k);
                 let right = mesh.cell_index(i + 1, j, k);
+                let metric = mesh.i_face_metric(i, j, k);
+                let spacing = owner_neighbor_distance(mesh, (i, j, k), (i + 1, j, k), &metric);
                 flux.phi_x[x_index(mesh, i, j, k)] =
-                    rhie_chow_face_flux(fields, d, left, right, 0, spacing.dx, boundary) * ax;
+                    rhie_chow_face_flux(fields, d, left, right, 0, spacing, boundary) * metric.area;
             }
             if let Some(phi_x_periodic) = flux.phi_x_periodic.as_mut() {
                 let left = mesh.cell_index(mesh.nx - 1, j, k);
                 let right = mesh.cell_index(0, j, k);
+                let metric = mesh.i_face_metric(mesh.nx - 1, j, k);
+                let spacing =
+                    owner_neighbor_distance(mesh, (mesh.nx - 1, j, k), (0, j, k), &metric);
                 phi_x_periodic[x_periodic_index(mesh, j, k)] =
-                    rhie_chow_face_flux(fields, d, left, right, 0, spacing.dx, boundary) * ax;
+                    rhie_chow_face_flux(fields, d, left, right, 0, spacing, boundary) * metric.area;
             }
         }
     }
@@ -204,8 +155,10 @@ fn fill_internal_rhie_chow_fluxes(
             for i in 0..mesh.nx {
                 let left = mesh.cell_index(i, j, k);
                 let right = mesh.cell_index(i, j + 1, k);
+                let metric = mesh.j_face_metric(i, j, k);
+                let spacing = owner_neighbor_distance(mesh, (i, j, k), (i, j + 1, k), &metric);
                 flux.phi_y[y_index(mesh, i, j, k)] =
-                    rhie_chow_face_flux(fields, d, left, right, 1, spacing.dy, boundary) * ay;
+                    rhie_chow_face_flux(fields, d, left, right, 1, spacing, boundary) * metric.area;
             }
         }
     }
@@ -214,8 +167,10 @@ fn fill_internal_rhie_chow_fluxes(
             for i in 0..mesh.nx {
                 let left = mesh.cell_index(i, j, k);
                 let right = mesh.cell_index(i, j, k + 1);
+                let metric = mesh.k_face_metric(i, j, k);
+                let spacing = owner_neighbor_distance(mesh, (i, j, k), (i, j, k + 1), &metric);
                 flux.phi_z[z_index(mesh, i, j, k)] =
-                    rhie_chow_face_flux(fields, d, left, right, 2, spacing.dz, boundary) * az;
+                    rhie_chow_face_flux(fields, d, left, right, 2, spacing, boundary) * metric.area;
             }
         }
     }
@@ -266,25 +221,28 @@ fn update_x_fluxes(
     d: &[Real],
     p_corr: &[Real],
     scale: Real,
-    spacing: CartesianSpacing,
     flux: &mut IncompressibleFaceFluxField,
 ) {
-    let area = spacing.dy * spacing.dz;
     for k in 0..mesh.nz {
         for j in 0..mesh.ny {
             for i in 0..mesh.nx.saturating_sub(1) {
                 let left = mesh.cell_index(i, j, k);
                 let right = mesh.cell_index(i + 1, j, k);
                 let idx = x_index(mesh, i, j, k);
+                let metric = mesh.i_face_metric(i, j, k);
+                let spacing = owner_neighbor_distance(mesh, (i, j, k), (i + 1, j, k), &metric);
                 flux.phi_x[idx] +=
-                    pressure_flux_delta(d, p_corr, left, right, spacing.dx) * area * scale;
+                    pressure_flux_delta(d, p_corr, left, right, spacing) * metric.area * scale;
             }
             if let Some(phi_x_periodic) = flux.phi_x_periodic.as_mut() {
                 let left = mesh.cell_index(mesh.nx - 1, j, k);
                 let right = mesh.cell_index(0, j, k);
                 let idx = x_periodic_index(mesh, j, k);
+                let metric = mesh.i_face_metric(mesh.nx - 1, j, k);
+                let spacing =
+                    owner_neighbor_distance(mesh, (mesh.nx - 1, j, k), (0, j, k), &metric);
                 phi_x_periodic[idx] +=
-                    pressure_flux_delta(d, p_corr, left, right, spacing.dx) * area * scale;
+                    pressure_flux_delta(d, p_corr, left, right, spacing) * metric.area * scale;
             }
         }
     }
@@ -295,18 +253,18 @@ fn update_y_fluxes(
     d: &[Real],
     p_corr: &[Real],
     scale: Real,
-    spacing: CartesianSpacing,
     flux: &mut IncompressibleFaceFluxField,
 ) {
-    let area = spacing.dx * spacing.dz;
     for k in 0..mesh.nz {
         for j in 0..mesh.ny.saturating_sub(1) {
             for i in 0..mesh.nx {
                 let left = mesh.cell_index(i, j, k);
                 let right = mesh.cell_index(i, j + 1, k);
                 let idx = y_index(mesh, i, j, k);
+                let metric = mesh.j_face_metric(i, j, k);
+                let spacing = owner_neighbor_distance(mesh, (i, j, k), (i, j + 1, k), &metric);
                 flux.phi_y[idx] +=
-                    pressure_flux_delta(d, p_corr, left, right, spacing.dy) * area * scale;
+                    pressure_flux_delta(d, p_corr, left, right, spacing) * metric.area * scale;
             }
         }
     }
@@ -317,18 +275,18 @@ fn update_z_fluxes(
     d: &[Real],
     p_corr: &[Real],
     scale: Real,
-    spacing: CartesianSpacing,
     flux: &mut IncompressibleFaceFluxField,
 ) {
-    let area = spacing.dx * spacing.dy;
     for k in 0..mesh.nz.saturating_sub(1) {
         for j in 0..mesh.ny {
             for i in 0..mesh.nx {
                 let left = mesh.cell_index(i, j, k);
                 let right = mesh.cell_index(i, j, k + 1);
                 let idx = z_index(mesh, i, j, k);
+                let metric = mesh.k_face_metric(i, j, k);
+                let spacing = owner_neighbor_distance(mesh, (i, j, k), (i, j, k + 1), &metric);
                 flux.phi_z[idx] +=
-                    pressure_flux_delta(d, p_corr, left, right, spacing.dz) * area * scale;
+                    pressure_flux_delta(d, p_corr, left, right, spacing) * metric.area * scale;
             }
         }
     }
@@ -342,6 +300,21 @@ fn pressure_flux_delta(
     spacing: Real,
 ) -> Real {
     0.5 * (d[left] + d[right]) * (pressure_correction[right] - pressure_correction[left]) / spacing
+}
+
+fn owner_neighbor_distance(
+    mesh: &StructuredMesh3d,
+    owner: (usize, usize, usize),
+    neighbor: (usize, usize, usize),
+    face: &crate::mesh::FaceMetric,
+) -> Real {
+    let owner_center = mesh.cell_metric(owner.0, owner.1, owner.2).center;
+    let neighbor_center = mesh.cell_metric(neighbor.0, neighbor.1, neighbor.2).center;
+    let dx = neighbor_center.x - owner_center.x;
+    let dy = neighbor_center.y - owner_center.y;
+    let dz = neighbor_center.z - owner_center.z;
+    let projected = (dx * face.normal.x + dy * face.normal.y + dz * face.normal.z).abs();
+    projected.max(Real::EPSILON)
 }
 
 fn scatter_x_fluxes(mesh: &StructuredMesh3d, flux: &IncompressibleFaceFluxField, net: &mut [Real]) {
@@ -422,6 +395,9 @@ fn z_index(mesh: &StructuredMesh3d, i: usize, j: usize, k: usize) -> usize {
 mod tests {
     use super::*;
     use crate::core::approx_eq;
+    use crate::discretization::{
+        IncompressiblePressureCorrectionConfig, assemble_incompressible_pressure_correction_3d,
+    };
 
     #[test]
     fn pressure_correction_reduces_two_cell_flux_divergence() {
@@ -446,5 +422,66 @@ mod tests {
                 .iter()
                 .all(|value| approx_eq(*value, 0.0, 1.0e-12))
         );
+    }
+
+    #[test]
+    fn pressure_matrix_and_phi_correction_match_on_nonuniform_mesh() {
+        let mesh = nonuniform_two_cell_mesh();
+        let fields =
+            IncompressibleFields::uniform(mesh.num_cells(), 0.0, [1.0, 0.0, 0.0]).expect("fields");
+        let d = ScalarField::uniform(mesh.num_cells(), 1.0).expect("d");
+        let boundary = BoundarySet::default();
+        let mut flux = IncompressibleFaceFluxField::from_rhie_chow(&mesh, &fields, &d, &boundary)
+            .expect("flux");
+        let predicted = flux.divergence(&mesh).expect("predicted");
+        let system = assemble_incompressible_pressure_correction_3d(
+            &mesh,
+            &predicted,
+            &d,
+            &boundary,
+            IncompressiblePressureCorrectionConfig::new(1.0, 0, 0.0).expect("config"),
+        )
+        .expect("system");
+        let correction = [0.0, -0.75];
+
+        flux.apply_pressure_correction(&mesh, d.values(), &correction, 1.0)
+            .expect("correct");
+        let corrected = flux.divergence(&mesh).expect("corrected");
+
+        let cell = 1;
+        let ax = system
+            .matrix
+            .row_entries(cell)
+            .map(|(col, value)| value * correction[col])
+            .sum::<Real>();
+        let expected = (system.rhs[cell] - ax) / mesh.cell_metric(1, 0, 0).volume;
+        assert!(
+            approx_eq(corrected.values()[cell], expected, 1.0e-12),
+            "corrected={} expected={expected} rhs={} ax={} volume={}",
+            corrected.values()[cell],
+            system.rhs[cell],
+            ax,
+            mesh.cell_metric(1, 0, 0).volume
+        );
+    }
+
+    fn nonuniform_two_cell_mesh() -> StructuredMesh3d {
+        let nx = 2;
+        let ny = 1;
+        let nz = 1;
+        let xs = [0.0, 0.5, 2.0];
+        let mut px = Vec::new();
+        let mut py = Vec::new();
+        let mut pz = Vec::new();
+        for k in 0..=nz {
+            for j in 0..=ny {
+                for &x in &xs {
+                    px.push(x);
+                    py.push(j as Real);
+                    pz.push(k as Real);
+                }
+            }
+        }
+        StructuredMesh3d::new("nonuniform", nx, ny, nz, px, py, pz).expect("mesh")
     }
 }

@@ -78,6 +78,7 @@ pub use incompressible_bc::{
 pub use incompressible_face_boundary::{
     IncompressibleBoundaryFaceState, IncompressibleMassFluxBoundaryKind,
     incompressible_boundary_face_state, incompressible_boundary_face_velocity,
+    incompressible_pressure_correction_dirichlet,
 };
 pub use incompressible_face_flux::compute_incompressible_face_flux_divergence_3d;
 pub use incompressible_momentum::{
