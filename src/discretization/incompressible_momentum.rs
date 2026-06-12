@@ -8,7 +8,11 @@ use crate::discretization::incompressible_bc::{
     incompressible_boundary_owner_velocity_target, interior_neighbor_index,
 };
 use crate::discretization::incompressible_boundary_flux::{
-    IncompressibleBoundaryOwnerMap, StructuredMomentumFaceQuery, structured_momentum_face_velocity,
+    IncompressibleBoundaryOwnerMap, interior_face_velocity,
+};
+use crate::discretization::incompressible_momentum_geometry::{
+    owner_neighbor_distance, pressure_gradient, scalar_cross_diffusion_source,
+    structured_scalar_gradients,
 };
 use crate::discretization::incompressible_phi::IncompressibleFaceFluxField;
 use crate::error::{AsimuError, Result};
@@ -127,9 +131,6 @@ pub fn assemble_incompressible_momentum_predictor_with_boundary_and_flux_3d(
 ) -> Result<IncompressibleMomentumPredictorSystem> {
     fields.validate_len(mesh.num_cells())?;
     validate_config(config)?;
-    let spacing = CartesianSpacing::from_mesh(mesh)?;
-    let volume = spacing.volume();
-    let time_coeff = volume / config.pseudo_time_step;
     let n = mesh.num_cells();
     let mut rows = (0..n).map(|_| Vec::with_capacity(7)).collect::<Vec<_>>();
     let mut rhs_x = Vec::with_capacity(n);
@@ -139,12 +140,18 @@ pub fn assemble_incompressible_momentum_predictor_with_boundary_and_flux_3d(
     let boundary_terms = boundary_momentum_contributions(mesh, fields, boundary, config)?;
     let periodic_x = boundary.has_periodic_pair("i_min", "i_max");
     let boundary_map = IncompressibleBoundaryOwnerMap::build(mesh, boundary);
+    let pressure_gradients =
+        structured_scalar_gradients(mesh, fields.pressure.values(), periodic_x);
+    let velocity_x_gradients =
+        structured_scalar_gradients(mesh, fields.velocity_x.values(), periodic_x);
+    let velocity_y_gradients =
+        structured_scalar_gradients(mesh, fields.velocity_y.values(), periodic_x);
+    let velocity_z_gradients =
+        structured_scalar_gradients(mesh, fields.velocity_z.values(), periodic_x);
     let ctx = MomentumAssemblyCtx {
         mesh,
-        spacing,
         fields,
         config,
-        time_coeff,
         periodic_x,
         boundary_map: &boundary_map,
         face_flux,
@@ -153,24 +160,58 @@ pub fn assemble_incompressible_momentum_predictor_with_boundary_and_flux_3d(
         for j in 0..mesh.ny {
             for i in 0..mesh.nx {
                 let row = mesh.cell_index(i, j, k);
+                let volume = mesh.cell_metric(i, j, k).volume;
+                let time_coeff = volume / config.pseudo_time_step;
                 let consistent_coeff = add_momentum_predictor_neighbors(
                     ctx,
                     &mut rows[row],
                     (i, j, k),
                     boundary_terms.diagonal[row],
+                    time_coeff,
                 );
-                let grad_p =
-                    pressure_gradient(mesh, fields.pressure.values(), i, j, k, spacing, periodic_x);
+                let grad_p = pressure_gradient(
+                    mesh,
+                    fields.pressure.values(),
+                    &pressure_gradients,
+                    i,
+                    j,
+                    k,
+                    periodic_x,
+                );
+                let diffusion_source_x = scalar_cross_diffusion_source(
+                    mesh,
+                    &velocity_x_gradients,
+                    (i, j, k),
+                    config.kinematic_viscosity,
+                    periodic_x,
+                );
+                let diffusion_source_y = scalar_cross_diffusion_source(
+                    mesh,
+                    &velocity_y_gradients,
+                    (i, j, k),
+                    config.kinematic_viscosity,
+                    periodic_x,
+                );
+                let diffusion_source_z = scalar_cross_diffusion_source(
+                    mesh,
+                    &velocity_z_gradients,
+                    (i, j, k),
+                    config.kinematic_viscosity,
+                    periodic_x,
+                );
                 let relax_source = momentum_relaxation_source(rows[row].last_mut(), config)?;
                 let rhs_cell_x = time_coeff * fields.velocity_x.values()[row] - volume * grad_p[0]
+                    + diffusion_source_x
                     + volume * config.body_force[0]
                     + relax_source * fields.velocity_x.values()[row]
                     + boundary_terms.rhs_x[row];
                 let rhs_cell_y = time_coeff * fields.velocity_y.values()[row] - volume * grad_p[1]
+                    + diffusion_source_y
                     + volume * config.body_force[1]
                     + relax_source * fields.velocity_y.values()[row]
                     + boundary_terms.rhs_y[row];
                 let rhs_cell_z = time_coeff * fields.velocity_z.values()[row] - volume * grad_p[2]
+                    + diffusion_source_z
                     + volume * config.body_force[2]
                     + relax_source * fields.velocity_z.values()[row]
                     + boundary_terms.rhs_z[row];
@@ -221,41 +262,10 @@ fn validate_config(config: IncompressibleMomentumPredictorConfig) -> Result<()> 
 }
 
 #[derive(Debug, Clone, Copy)]
-struct CartesianSpacing {
-    dx: Real,
-    dy: Real,
-    dz: Real,
-}
-
-impl CartesianSpacing {
-    fn from_mesh(mesh: &StructuredMesh3d) -> Result<Self> {
-        let dx = mesh.node_x(1, 0, 0) - mesh.node_x(0, 0, 0);
-        let dy = mesh.node_y(0, 1, 0) - mesh.node_y(0, 0, 0);
-        let dz = mesh.node_z(0, 0, 1) - mesh.node_z(0, 0, 0);
-        if dx.abs() <= Real::EPSILON || dy.abs() <= Real::EPSILON || dz.abs() <= Real::EPSILON {
-            return Err(AsimuError::Mesh(
-                "不可压缩 Cartesian 动量装配要求正的网格间距".to_string(),
-            ));
-        }
-        Ok(Self {
-            dx: dx.abs(),
-            dy: dy.abs(),
-            dz: dz.abs(),
-        })
-    }
-
-    fn volume(self) -> Real {
-        self.dx * self.dy * self.dz
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
 struct MomentumAssemblyCtx<'a> {
     mesh: &'a StructuredMesh3d,
-    spacing: CartesianSpacing,
     fields: &'a IncompressibleFields,
     config: IncompressibleMomentumPredictorConfig,
-    time_coeff: Real,
     periodic_x: bool,
     boundary_map: &'a IncompressibleBoundaryOwnerMap,
     face_flux: Option<&'a IncompressibleFaceFluxField>,
@@ -393,62 +403,123 @@ fn add_momentum_predictor_neighbors(
     row: &mut Vec<(usize, Real)>,
     cell: (usize, usize, usize),
     boundary_diagonal: Real,
+    time_coeff: Real,
 ) -> Real {
     let (i, j, k) = cell;
     let mesh = ctx.mesh;
     let center = mesh.cell_index(i, j, k);
-    let cx = ctx.config.kinematic_viscosity * ctx.spacing.dy * ctx.spacing.dz / ctx.spacing.dx;
-    let cy = ctx.config.kinematic_viscosity * ctx.spacing.dx * ctx.spacing.dz / ctx.spacing.dy;
-    let cz = ctx.config.kinematic_viscosity * ctx.spacing.dx * ctx.spacing.dy / ctx.spacing.dz;
-    let mut diag = ctx.time_coeff + boundary_diagonal;
-    add_neighbor_if_present(
-        mesh,
-        row,
-        &mut diag,
-        neighbor_if(i > 0, || (i - 1, j, k))
-            .or_else(|| neighbor_if(ctx.periodic_x && i == 0, || (mesh.nx - 1, j, k))),
-        cx,
-    );
-    add_neighbor_if_present(
-        mesh,
-        row,
-        &mut diag,
-        neighbor_if(i + 1 < mesh.nx, || (i + 1, j, k))
-            .or_else(|| neighbor_if(ctx.periodic_x && i + 1 == mesh.nx, || (0, j, k))),
-        cx,
-    );
-    add_neighbor_if_present(
-        mesh,
-        row,
-        &mut diag,
-        neighbor_if(j > 0, || (i, j - 1, k)),
-        cy,
-    );
-    add_neighbor_if_present(
-        mesh,
-        row,
-        &mut diag,
-        neighbor_if(j + 1 < mesh.ny, || (i, j + 1, k)),
-        cy,
-    );
-    add_neighbor_if_present(
-        mesh,
-        row,
-        &mut diag,
-        neighbor_if(k > 0, || (i, j, k - 1)),
-        cz,
-    );
-    add_neighbor_if_present(
-        mesh,
-        row,
-        &mut diag,
-        neighbor_if(k + 1 < mesh.nz, || (i, j, k + 1)),
-        cz,
-    );
+    let mut diag = time_coeff + boundary_diagonal;
+    add_diffusion_x_neighbors(ctx, row, &mut diag, cell);
+    add_diffusion_y_neighbors(ctx, row, &mut diag, cell);
+    add_diffusion_z_neighbors(ctx, row, &mut diag, cell);
     add_momentum_convection(ctx, row, &mut diag, cell);
     let consistent_coeff = diag + row.iter().map(|(_, value)| *value).sum::<Real>();
     row.push((center, diag));
-    consistent_coeff.max(ctx.time_coeff)
+    consistent_coeff.max(time_coeff)
+}
+
+fn add_diffusion_x_neighbors(
+    ctx: MomentumAssemblyCtx<'_>,
+    row: &mut Vec<(usize, Real)>,
+    diag: &mut Real,
+    cell: (usize, usize, usize),
+) {
+    let (i, j, k) = cell;
+    let mesh = ctx.mesh;
+    add_neighbor_if_present(
+        mesh,
+        row,
+        diag,
+        neighbor_with_coeff(
+            i > 0,
+            || (i - 1, j, k),
+            || diffusion_coeff_x(ctx, i - 1, j, k),
+        )
+        .or_else(|| {
+            neighbor_with_coeff(
+                ctx.periodic_x && i == 0,
+                || (mesh.nx - 1, j, k),
+                || diffusion_coeff_x(ctx, 0, j, k),
+            )
+        }),
+    );
+    add_neighbor_if_present(
+        mesh,
+        row,
+        diag,
+        neighbor_with_coeff(
+            i + 1 < mesh.nx,
+            || (i + 1, j, k),
+            || diffusion_coeff_x(ctx, i, j, k),
+        )
+        .or_else(|| {
+            neighbor_with_coeff(
+                ctx.periodic_x && i + 1 == mesh.nx,
+                || (0, j, k),
+                || diffusion_coeff_x(ctx, mesh.nx.saturating_sub(2), j, k),
+            )
+        }),
+    );
+}
+
+fn add_diffusion_y_neighbors(
+    ctx: MomentumAssemblyCtx<'_>,
+    row: &mut Vec<(usize, Real)>,
+    diag: &mut Real,
+    cell: (usize, usize, usize),
+) {
+    let (i, j, k) = cell;
+    let mesh = ctx.mesh;
+    add_neighbor_if_present(
+        mesh,
+        row,
+        diag,
+        neighbor_with_coeff(
+            j > 0,
+            || (i, j - 1, k),
+            || diffusion_coeff_y(ctx, i, j - 1, k),
+        ),
+    );
+    add_neighbor_if_present(
+        mesh,
+        row,
+        diag,
+        neighbor_with_coeff(
+            j + 1 < mesh.ny,
+            || (i, j + 1, k),
+            || diffusion_coeff_y(ctx, i, j, k),
+        ),
+    );
+}
+
+fn add_diffusion_z_neighbors(
+    ctx: MomentumAssemblyCtx<'_>,
+    row: &mut Vec<(usize, Real)>,
+    diag: &mut Real,
+    cell: (usize, usize, usize),
+) {
+    let (i, j, k) = cell;
+    let mesh = ctx.mesh;
+    add_neighbor_if_present(
+        mesh,
+        row,
+        diag,
+        neighbor_with_coeff(
+            k > 0,
+            || (i, j, k - 1),
+            || diffusion_coeff_z(ctx, i, j, k - 1),
+        ),
+    );
+    add_neighbor_if_present(
+        mesh,
+        row,
+        diag,
+        neighbor_with_coeff(
+            k + 1 < mesh.nz,
+            || (i, j, k + 1),
+            || diffusion_coeff_z(ctx, i, j, k),
+        ),
+    );
 }
 
 fn momentum_relaxation_source(
@@ -462,7 +533,36 @@ fn momentum_relaxation_source(
     Ok((1.0 - config.velocity_under_relaxation) * original / config.velocity_under_relaxation)
 }
 
+fn diffusion_coeff_x(ctx: MomentumAssemblyCtx<'_>, i: usize, j: usize, k: usize) -> Real {
+    let face = ctx.mesh.i_face_metric(i, j, k);
+    ctx.config.kinematic_viscosity * face.area
+        / owner_neighbor_distance(ctx.mesh, (i, j, k), (i + 1, j, k), &face)
+}
+
+fn diffusion_coeff_y(ctx: MomentumAssemblyCtx<'_>, i: usize, j: usize, k: usize) -> Real {
+    let face = ctx.mesh.j_face_metric(i, j, k);
+    ctx.config.kinematic_viscosity * face.area
+        / owner_neighbor_distance(ctx.mesh, (i, j, k), (i, j + 1, k), &face)
+}
+
+fn diffusion_coeff_z(ctx: MomentumAssemblyCtx<'_>, i: usize, j: usize, k: usize) -> Real {
+    let face = ctx.mesh.k_face_metric(i, j, k);
+    ctx.config.kinematic_viscosity * face.area
+        / owner_neighbor_distance(ctx.mesh, (i, j, k), (i, j, k + 1), &face)
+}
+
 fn add_momentum_convection(
+    ctx: MomentumAssemblyCtx<'_>,
+    row: &mut Vec<(usize, Real)>,
+    diag: &mut Real,
+    cell: (usize, usize, usize),
+) {
+    add_convection_x(ctx, row, diag, cell);
+    add_convection_y(ctx, row, diag, cell);
+    add_convection_z(ctx, row, diag, cell);
+}
+
+fn add_convection_x(
     ctx: MomentumAssemblyCtx<'_>,
     row: &mut Vec<(usize, Real)>,
     diag: &mut Real,
@@ -470,86 +570,190 @@ fn add_momentum_convection(
 ) {
     let (i, j, k) = cell;
     let mesh = ctx.mesh;
-    let face_velocity = |axis: usize, upper: bool| {
-        structured_momentum_face_velocity(StructuredMomentumFaceQuery {
-            mesh,
-            fields: ctx.fields,
-            axis,
-            cell: (i, j, k),
-            upper,
-            periodic_x: ctx.periodic_x,
-            boundary: ctx.boundary_map,
-        })
+    add_convective_face(
+        mesh,
+        row,
+        diag,
+        neighbor_with_flux(
+            i + 1 < mesh.nx,
+            || (i + 1, j, k),
+            || convective_flux(ctx, cell, 0, true),
+        )
+        .or_else(|| {
+            neighbor_with_flux(
+                ctx.periodic_x && i + 1 == mesh.nx,
+                || (0, j, k),
+                || convective_flux(ctx, cell, 0, true),
+            )
+        }),
+        ctx.config.convection_scheme,
+    );
+    add_convective_face(
+        mesh,
+        row,
+        diag,
+        neighbor_with_flux(
+            i > 0,
+            || (i - 1, j, k),
+            || convective_flux(ctx, cell, 0, false),
+        )
+        .or_else(|| {
+            neighbor_with_flux(
+                ctx.periodic_x && i == 0,
+                || (mesh.nx - 1, j, k),
+                || convective_flux(ctx, cell, 0, false),
+            )
+        }),
+        ctx.config.convection_scheme,
+    );
+}
+
+fn add_convection_y(
+    ctx: MomentumAssemblyCtx<'_>,
+    row: &mut Vec<(usize, Real)>,
+    diag: &mut Real,
+    cell: (usize, usize, usize),
+) {
+    let (i, j, k) = cell;
+    let mesh = ctx.mesh;
+    add_convective_face(
+        mesh,
+        row,
+        diag,
+        neighbor_with_flux(
+            j + 1 < mesh.ny,
+            || (i, j + 1, k),
+            || convective_flux(ctx, cell, 1, true),
+        ),
+        ctx.config.convection_scheme,
+    );
+    add_convective_face(
+        mesh,
+        row,
+        diag,
+        neighbor_with_flux(
+            j > 0,
+            || (i, j - 1, k),
+            || convective_flux(ctx, cell, 1, false),
+        ),
+        ctx.config.convection_scheme,
+    );
+}
+
+fn add_convection_z(
+    ctx: MomentumAssemblyCtx<'_>,
+    row: &mut Vec<(usize, Real)>,
+    diag: &mut Real,
+    cell: (usize, usize, usize),
+) {
+    let (i, j, k) = cell;
+    let mesh = ctx.mesh;
+    add_convective_face(
+        mesh,
+        row,
+        diag,
+        neighbor_with_flux(
+            k + 1 < mesh.nz,
+            || (i, j, k + 1),
+            || convective_flux(ctx, cell, 2, true),
+        ),
+        ctx.config.convection_scheme,
+    );
+    add_convective_face(
+        mesh,
+        row,
+        diag,
+        neighbor_with_flux(
+            k > 0,
+            || (i, j, k - 1),
+            || convective_flux(ctx, cell, 2, false),
+        ),
+        ctx.config.convection_scheme,
+    );
+}
+
+fn convective_flux(
+    ctx: MomentumAssemblyCtx<'_>,
+    cell: (usize, usize, usize),
+    axis: usize,
+    upper: bool,
+) -> Real {
+    ctx.face_flux
+        .and_then(|flux| flux.cell_face_flux(ctx.mesh, axis, cell, upper))
+        .unwrap_or_else(|| fallback_convective_flux(ctx, cell, axis, upper))
+}
+
+fn fallback_convective_flux(
+    ctx: MomentumAssemblyCtx<'_>,
+    cell: (usize, usize, usize),
+    axis: usize,
+    upper: bool,
+) -> Real {
+    let mesh = ctx.mesh;
+    let (i, j, k) = cell;
+    let (left, right, metric) = match (axis, upper) {
+        (0, true) if i + 1 < mesh.nx => (
+            mesh.cell_index(i, j, k),
+            mesh.cell_index(i + 1, j, k),
+            mesh.i_face_metric(i, j, k),
+        ),
+        (0, true) if ctx.periodic_x && i + 1 == mesh.nx && mesh.nx > 1 => (
+            mesh.cell_index(mesh.nx - 1, j, k),
+            mesh.cell_index(0, j, k),
+            mesh.i_face_metric(mesh.nx - 2, j, k),
+        ),
+        (0, false) if i > 0 => (
+            mesh.cell_index(i - 1, j, k),
+            mesh.cell_index(i, j, k),
+            mesh.i_face_metric(i - 1, j, k),
+        ),
+        (0, false) if ctx.periodic_x && i == 0 && mesh.nx > 1 => (
+            mesh.cell_index(mesh.nx - 1, j, k),
+            mesh.cell_index(0, j, k),
+            mesh.i_face_metric(mesh.nx - 2, j, k),
+        ),
+        (1, true) => (
+            mesh.cell_index(i, j, k),
+            mesh.cell_index(i, j + 1, k),
+            mesh.j_face_metric(i, j, k),
+        ),
+        (1, false) => (
+            mesh.cell_index(i, j - 1, k),
+            mesh.cell_index(i, j, k),
+            mesh.j_face_metric(i, j - 1, k),
+        ),
+        (2, true) => (
+            mesh.cell_index(i, j, k),
+            mesh.cell_index(i, j, k + 1),
+            mesh.k_face_metric(i, j, k),
+        ),
+        (2, false) => (
+            mesh.cell_index(i, j, k - 1),
+            mesh.cell_index(i, j, k),
+            mesh.k_face_metric(i, j, k - 1),
+        ),
+        _ => return 0.0,
     };
-    let convective_flux = |axis: usize, upper: bool, area: Real| {
-        ctx.face_flux
-            .and_then(|flux| flux.cell_face_flux(mesh, axis, cell, upper))
-            .unwrap_or_else(|| {
-                let flux = face_velocity(axis, upper) * area;
-                if upper { flux } else { -flux }
-            })
-    };
-    add_convective_face(
-        mesh,
-        row,
-        diag,
-        neighbor_if(i + 1 < mesh.nx, || (i + 1, j, k))
-            .or_else(|| neighbor_if(ctx.periodic_x && i + 1 == mesh.nx, || (0, j, k))),
-        convective_flux(0, true, ctx.spacing.dy * ctx.spacing.dz),
-        ctx.config.convection_scheme,
-    );
-    add_convective_face(
-        mesh,
-        row,
-        diag,
-        neighbor_if(i > 0, || (i - 1, j, k))
-            .or_else(|| neighbor_if(ctx.periodic_x && i == 0, || (mesh.nx - 1, j, k))),
-        convective_flux(0, false, ctx.spacing.dy * ctx.spacing.dz),
-        ctx.config.convection_scheme,
-    );
-    add_convective_face(
-        mesh,
-        row,
-        diag,
-        neighbor_if(j + 1 < mesh.ny, || (i, j + 1, k)),
-        convective_flux(1, true, ctx.spacing.dx * ctx.spacing.dz),
-        ctx.config.convection_scheme,
-    );
-    add_convective_face(
-        mesh,
-        row,
-        diag,
-        neighbor_if(j > 0, || (i, j - 1, k)),
-        convective_flux(1, false, ctx.spacing.dx * ctx.spacing.dz),
-        ctx.config.convection_scheme,
-    );
-    add_convective_face(
-        mesh,
-        row,
-        diag,
-        neighbor_if(k + 1 < mesh.nz, || (i, j, k + 1)),
-        convective_flux(2, true, ctx.spacing.dx * ctx.spacing.dy),
-        ctx.config.convection_scheme,
-    );
-    add_convective_face(
-        mesh,
-        row,
-        diag,
-        neighbor_if(k > 0, || (i, j, k - 1)),
-        convective_flux(2, false, ctx.spacing.dx * ctx.spacing.dy),
-        ctx.config.convection_scheme,
-    );
+    let velocity = [
+        interior_face_velocity(ctx.fields, left, right, 0, ctx.boundary_map),
+        interior_face_velocity(ctx.fields, left, right, 1, ctx.boundary_map),
+        interior_face_velocity(ctx.fields, left, right, 2, ctx.boundary_map),
+    ];
+    let flux = (velocity[0] * metric.normal.x
+        + velocity[1] * metric.normal.y
+        + velocity[2] * metric.normal.z)
+        * metric.area;
+    if upper { flux } else { -flux }
 }
 
 fn add_convective_face(
     mesh: &StructuredMesh3d,
     row: &mut Vec<(usize, Real)>,
     diag: &mut Real,
-    neighbor: Option<(usize, usize, usize)>,
-    flux: Real,
+    neighbor: Option<((usize, usize, usize), Real)>,
     scheme: IncompressibleConvectionScheme,
 ) {
-    let Some((i, j, k)) = neighbor else {
+    let Some(((i, j, k), flux)) = neighbor else {
         return;
     };
     match scheme {
@@ -567,217 +771,30 @@ fn add_convective_face(
     }
 }
 
+fn neighbor_with_flux(
+    present: bool,
+    index: impl FnOnce() -> (usize, usize, usize),
+    flux: impl FnOnce() -> Real,
+) -> Option<((usize, usize, usize), Real)> {
+    present.then(|| (index(), flux()))
+}
+
 fn add_neighbor_if_present(
     mesh: &StructuredMesh3d,
     row: &mut Vec<(usize, Real)>,
     diag: &mut Real,
-    neighbor: Option<(usize, usize, usize)>,
-    coeff: Real,
+    neighbor: Option<((usize, usize, usize), Real)>,
 ) {
-    if let Some((i, j, k)) = neighbor {
+    if let Some(((i, j, k), coeff)) = neighbor {
         *diag += coeff;
         row.push((mesh.cell_index(i, j, k), -coeff));
     }
 }
 
-fn pressure_gradient(
-    mesh: &StructuredMesh3d,
-    pressure: &[Real],
-    i: usize,
-    j: usize,
-    k: usize,
-    spacing: CartesianSpacing,
-    periodic_x: bool,
-) -> [Real; 3] {
-    [
-        central_diff_x(mesh, pressure, i, j, k, spacing.dx, periodic_x),
-        central_diff_y(mesh, pressure, i, j, k, spacing.dy),
-        central_diff_z(mesh, pressure, i, j, k, spacing.dz),
-    ]
-}
-
-fn central_diff_x(
-    mesh: &StructuredMesh3d,
-    values: &[Real],
-    i: usize,
-    j: usize,
-    k: usize,
-    dx: Real,
-    periodic_x: bool,
-) -> Real {
-    (cell_value(
-        mesh,
-        values,
-        east_with_periodic(i, mesh.nx, periodic_x),
-        j,
-        k,
-    ) - cell_value(
-        mesh,
-        values,
-        west_with_periodic(i, mesh.nx, periodic_x),
-        j,
-        k,
-    )) / (2.0 * dx)
-}
-
-fn central_diff_y(
-    mesh: &StructuredMesh3d,
-    values: &[Real],
-    i: usize,
-    j: usize,
-    k: usize,
-    dy: Real,
-) -> Real {
-    (cell_value(mesh, values, i, north(j, mesh.ny), k) - cell_value(mesh, values, i, south(j), k))
-        / (2.0 * dy)
-}
-
-fn central_diff_z(
-    mesh: &StructuredMesh3d,
-    values: &[Real],
-    i: usize,
-    j: usize,
-    k: usize,
-    dz: Real,
-) -> Real {
-    (cell_value(mesh, values, i, j, top(k, mesh.nz)) - cell_value(mesh, values, i, j, bottom(k)))
-        / (2.0 * dz)
-}
-
-fn cell_value(mesh: &StructuredMesh3d, values: &[Real], i: usize, j: usize, k: usize) -> Real {
-    values[mesh.cell_index(i, j, k)]
-}
-
-fn neighbor_if(
+fn neighbor_with_coeff(
     present: bool,
     index: impl FnOnce() -> (usize, usize, usize),
-) -> Option<(usize, usize, usize)> {
-    present.then(index)
-}
-
-fn west(i: usize) -> usize {
-    i.saturating_sub(1)
-}
-
-fn east(i: usize, nx: usize) -> usize {
-    (i + 1).min(nx - 1)
-}
-
-fn west_with_periodic(i: usize, nx: usize, periodic_x: bool) -> usize {
-    if periodic_x && i == 0 {
-        nx - 1
-    } else {
-        west(i)
-    }
-}
-
-fn east_with_periodic(i: usize, nx: usize, periodic_x: bool) -> usize {
-    if periodic_x && i + 1 == nx {
-        0
-    } else {
-        east(i, nx)
-    }
-}
-
-fn south(j: usize) -> usize {
-    j.saturating_sub(1)
-}
-
-fn north(j: usize, ny: usize) -> usize {
-    (j + 1).min(ny - 1)
-}
-
-fn bottom(k: usize) -> usize {
-    k.saturating_sub(1)
-}
-
-fn top(k: usize, nz: usize) -> usize {
-    (k + 1).min(nz - 1)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::boundary::BoundaryPatch;
-    use crate::core::approx_eq;
-    use crate::mesh::BoundaryMesh;
-
-    #[test]
-    fn moving_wall_adds_boundary_diffusion_source() {
-        let mesh = StructuredMesh3d::uniform_box("box", 1, 1, 1, 1.0, 1.0, 1.0).expect("mesh");
-        let fields =
-            IncompressibleFields::uniform(mesh.num_cells(), 0.0, [0.0, 0.0, 0.0]).expect("fields");
-        let boundary = BoundarySet::new(vec![BoundaryPatch::new(
-            "j_max",
-            mesh.resolve_logical_boundary("j_max").expect("faces"),
-            BoundaryKind::MovingWall {
-                velocity: [2.0, 0.0, 0.0],
-            },
-        )]);
-        let config = IncompressibleMomentumPredictorConfig::new(0.25, 1.0).expect("config");
-
-        let system = assemble_incompressible_momentum_predictor_with_boundary_3d(
-            &mesh, &fields, &boundary, config,
-        )
-        .expect("system");
-
-        let row = system.matrix.row_entries(0).collect::<Vec<_>>();
-        assert_eq!(row, vec![(0, 1.5)]);
-        assert!(approx_eq(system.rhs_x[0], 1.0, 1.0e-12));
-        assert!(approx_eq(system.rhs_y[0], 0.0, 1.0e-12));
-        assert!(approx_eq(
-            system.d_coefficient.values()[0],
-            2.0 / 3.0,
-            1.0e-12
-        ));
-    }
-
-    #[test]
-    fn velocity_inlet_adds_upwind_boundary_convection_source() {
-        let mesh = StructuredMesh3d::uniform_box("box", 1, 1, 1, 1.0, 1.0, 1.0).expect("mesh");
-        let fields =
-            IncompressibleFields::uniform(mesh.num_cells(), 0.0, [0.0, 0.0, 0.0]).expect("fields");
-        let boundary = BoundarySet::new(vec![BoundaryPatch::new(
-            "i_min",
-            mesh.resolve_logical_boundary("i_min").expect("faces"),
-            BoundaryKind::IncompressibleVelocityInlet {
-                velocity: [1.0, 0.0, 0.0],
-            },
-        )]);
-        let config = IncompressibleMomentumPredictorConfig::new(0.0, 1.0).expect("config");
-
-        let system = assemble_incompressible_momentum_predictor_with_boundary_3d(
-            &mesh, &fields, &boundary, config,
-        )
-        .expect("system");
-
-        let row = system.matrix.row_entries(0).collect::<Vec<_>>();
-        assert_eq!(row, vec![(0, 1.0)]);
-        assert!(approx_eq(system.rhs_x[0], 1.0, 1.0e-12));
-        assert!(approx_eq(system.rhs_y[0], 0.0, 1.0e-12));
-        assert!(approx_eq(system.rhs_z[0], 0.0, 1.0e-12));
-    }
-
-    #[test]
-    fn body_force_adds_component_rhs_source() {
-        let mesh = StructuredMesh3d::uniform_box("box", 1, 1, 1, 1.0, 1.0, 1.0).expect("mesh");
-        let fields =
-            IncompressibleFields::uniform(mesh.num_cells(), 0.0, [0.0, 0.0, 0.0]).expect("fields");
-        let config = IncompressibleMomentumPredictorConfig::new(0.0, 1.0)
-            .expect("config")
-            .with_body_force([2.0, -3.0, 4.0])
-            .expect("body force");
-
-        let system = assemble_incompressible_momentum_predictor_with_boundary_3d(
-            &mesh,
-            &fields,
-            &BoundarySet::default(),
-            config,
-        )
-        .expect("system");
-
-        assert!(approx_eq(system.rhs_x[0], 2.0, 1.0e-12));
-        assert!(approx_eq(system.rhs_y[0], -3.0, 1.0e-12));
-        assert!(approx_eq(system.rhs_z[0], 4.0, 1.0e-12));
-    }
+    coeff: impl FnOnce() -> Real,
+) -> Option<((usize, usize, usize), Real)> {
+    present.then(|| (index(), coeff()))
 }

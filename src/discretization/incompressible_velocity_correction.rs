@@ -56,7 +56,6 @@ pub fn corrected_incompressible_fields_rhie_chow_3d(
         pressure_under_relaxation,
         boundary,
         periodic_x,
-        spacing: CartesianSpacing::from_mesh(mesh)?,
         boundary_map: IncompressibleBoundaryOwnerMap::build(mesh, boundary),
     };
     let pressure = build_updated_pressure(current, pressure_correction, pressure_under_relaxation)?;
@@ -97,18 +96,7 @@ struct RhieChowVelocityCorrectionCtx<'a> {
     pressure_under_relaxation: Real,
     boundary: &'a BoundarySet,
     periodic_x: bool,
-    spacing: CartesianSpacing,
     boundary_map: IncompressibleBoundaryOwnerMap,
-}
-
-impl RhieChowVelocityCorrectionCtx<'_> {
-    fn axis_spacing(&self, component: usize) -> Real {
-        match component {
-            0 => self.spacing.dx,
-            1 => self.spacing.dy,
-            _ => self.spacing.dz,
-        }
-    }
 }
 
 fn build_updated_pressure(
@@ -134,12 +122,11 @@ fn reconstruct_component(
     k: usize,
 ) -> Result<Real> {
     let owner = ctx.mesh.cell_index(i, j, k);
-    let spacing = ctx.axis_spacing(component);
     let mut sum = 0.0;
     let mut count = 0usize;
     for spec in axis_face_specs(ctx.mesh, component, i, j, k, ctx.periodic_x, ctx.boundary) {
         if let Some((left, right)) = spec.left.zip(spec.right) {
-            sum += rhie_chow_face_velocity(ctx, left, right, component, spacing)?;
+            sum += rhie_chow_face_velocity(ctx, left, right, component)?;
             count += 1;
         } else if let Some(patch) = spec.lower_patch.or(spec.upper_patch) {
             sum += boundary_face_component(ctx.predicted, patch, owner, component);
@@ -314,37 +301,123 @@ fn rhie_chow_face_velocity(
     left: usize,
     right: usize,
     component: usize,
-    spacing: Real,
 ) -> Result<Real> {
     let u_face = interior_face_velocity(ctx.predicted, left, right, component, &ctx.boundary_map);
+    let metric = face_metric_between(ctx.mesh, left, right)?;
+    let spacing = owner_neighbor_distance(ctx.mesh, left, right, &metric);
     let d_face = 0.5 * (ctx.d_coefficient[left] + ctx.d_coefficient[right]);
     let dp = ctx.pressure_correction[right] - ctx.pressure_correction[left];
-    Ok(u_face - ctx.pressure_under_relaxation * d_face * dp / spacing)
+    let normal = match component {
+        0 => metric.normal.x,
+        1 => metric.normal.y,
+        _ => metric.normal.z,
+    };
+    Ok(u_face - ctx.pressure_under_relaxation * d_face * dp * normal / spacing)
 }
 
-#[derive(Debug, Clone, Copy)]
-struct CartesianSpacing {
-    dx: Real,
-    dy: Real,
-    dz: Real,
-}
-
-impl CartesianSpacing {
-    fn from_mesh(mesh: &StructuredMesh3d) -> Result<Self> {
-        let dx = mesh.node_x(1, 0, 0) - mesh.node_x(0, 0, 0);
-        let dy = mesh.node_y(0, 1, 0) - mesh.node_y(0, 0, 0);
-        let dz = mesh.node_z(0, 0, 1) - mesh.node_z(0, 0, 0);
-        if dx.abs() <= Real::EPSILON || dy.abs() <= Real::EPSILON || dz.abs() <= Real::EPSILON {
-            return Err(AsimuError::Mesh(
-                "Rhie-Chow 速度重构要求正的 Cartesian 网格间距".to_string(),
-            ));
-        }
-        Ok(Self {
-            dx: dx.abs(),
-            dy: dy.abs(),
-            dz: dz.abs(),
-        })
+fn face_metric_between(
+    mesh: &StructuredMesh3d,
+    left: usize,
+    right: usize,
+) -> Result<crate::mesh::FaceMetric> {
+    let (li, lj, lk) = cell_ijk(mesh, left);
+    let (ri, rj, rk) = cell_ijk(mesh, right);
+    if lj == rj && lk == rk {
+        return x_face_metric_between(mesh, li, ri, lj, lk);
     }
+    if li == ri && lk == rk {
+        return y_face_metric_between(mesh, li, lj, rj, lk);
+    }
+    if li == ri && lj == rj {
+        return z_face_metric_between(mesh, li, lj, lk, rk);
+    }
+    Err(AsimuError::Mesh(
+        "Rhie-Chow 速度重构无法识别内部面邻接关系".to_string(),
+    ))
+}
+
+fn x_face_metric_between(
+    mesh: &StructuredMesh3d,
+    left_i: usize,
+    right_i: usize,
+    j: usize,
+    k: usize,
+) -> Result<crate::mesh::FaceMetric> {
+    if left_i + 1 == right_i {
+        return Ok(mesh.i_face_metric(left_i, j, k));
+    }
+    if right_i + 1 == left_i {
+        return Ok(mesh.i_face_metric(right_i, j, k));
+    }
+    if left_i + 1 == mesh.nx && right_i == 0 && mesh.nx > 1 {
+        return Ok(mesh.i_face_metric(mesh.nx - 2, j, k));
+    }
+    Err(AsimuError::Mesh(
+        "Rhie-Chow 速度重构无法识别 i 向内部面".to_string(),
+    ))
+}
+
+fn y_face_metric_between(
+    mesh: &StructuredMesh3d,
+    i: usize,
+    left_j: usize,
+    right_j: usize,
+    k: usize,
+) -> Result<crate::mesh::FaceMetric> {
+    if left_j + 1 == right_j {
+        return Ok(mesh.j_face_metric(i, left_j, k));
+    }
+    if right_j + 1 == left_j {
+        return Ok(mesh.j_face_metric(i, right_j, k));
+    }
+    Err(AsimuError::Mesh(
+        "Rhie-Chow 速度重构无法识别 j 向内部面".to_string(),
+    ))
+}
+
+fn z_face_metric_between(
+    mesh: &StructuredMesh3d,
+    i: usize,
+    j: usize,
+    left_k: usize,
+    right_k: usize,
+) -> Result<crate::mesh::FaceMetric> {
+    if left_k + 1 == right_k {
+        return Ok(mesh.k_face_metric(i, j, left_k));
+    }
+    if right_k + 1 == left_k {
+        return Ok(mesh.k_face_metric(i, j, right_k));
+    }
+    Err(AsimuError::Mesh(
+        "Rhie-Chow 速度重构无法识别 k 向内部面".to_string(),
+    ))
+}
+
+fn owner_neighbor_distance(
+    mesh: &StructuredMesh3d,
+    left: usize,
+    right: usize,
+    face: &crate::mesh::FaceMetric,
+) -> Real {
+    let (li, lj, lk) = cell_ijk(mesh, left);
+    let (ri, rj, rk) = cell_ijk(mesh, right);
+    let left_center = mesh.cell_metric(li, lj, lk).center;
+    let right_center = mesh.cell_metric(ri, rj, rk).center;
+    let dx = right_center.x - left_center.x;
+    let dy = right_center.y - left_center.y;
+    let dz = right_center.z - left_center.z;
+    (dx * face.normal.x + dy * face.normal.y + dz * face.normal.z)
+        .abs()
+        .max(Real::EPSILON)
+}
+
+fn cell_ijk(mesh: &StructuredMesh3d, cell: usize) -> (usize, usize, usize) {
+    let cells_per_layer = mesh.nx * mesh.ny;
+    let k = cell / cells_per_layer;
+    let rem = cell % cells_per_layer;
+    let j = rem / mesh.nx;
+    let i = rem % mesh.nx;
+    (i, j, k)
 }
 
 #[cfg(test)]

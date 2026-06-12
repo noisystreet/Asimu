@@ -11,6 +11,8 @@ pub mod face_flux;
 pub mod flux_common;
 pub mod flux_config;
 pub mod gradient;
+#[cfg(test)]
+mod gradient_tests;
 pub mod gradient_unstructured;
 pub mod hllc;
 pub mod incompressible;
@@ -19,6 +21,7 @@ pub mod incompressible_boundary_flux;
 pub mod incompressible_face_boundary;
 pub mod incompressible_face_flux;
 pub mod incompressible_momentum;
+mod incompressible_momentum_geometry;
 #[cfg(test)]
 mod incompressible_momentum_tests;
 pub mod incompressible_phi;

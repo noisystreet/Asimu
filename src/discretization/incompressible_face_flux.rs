@@ -6,7 +6,7 @@ use crate::discretization::incompressible_boundary_flux::{
     IncompressibleBoundaryOwnerMap, interior_face_velocity,
 };
 use crate::discretization::incompressible_face_boundary::incompressible_boundary_mass_flux;
-use crate::error::{AsimuError, Result};
+use crate::error::Result;
 use crate::field::{IncompressibleFields, ScalarField};
 use crate::mesh::{BoundaryMesh, BoundaryMesh3d, StructuredMesh3d};
 
@@ -20,68 +20,37 @@ pub fn compute_incompressible_face_flux_divergence_3d(
     boundary: &BoundarySet,
 ) -> Result<ScalarField> {
     fields.validate_len(mesh.num_cells())?;
-    let spacing = CartesianSpacing::from_mesh(mesh)?;
     let boundary_map = IncompressibleBoundaryOwnerMap::build(mesh, boundary);
     let mut net = vec![0.0; mesh.num_cells()];
     let periodic_x = boundary.has_periodic_pair("i_min", "i_max");
-    add_internal_fluxes(mesh, fields, spacing, periodic_x, &boundary_map, &mut net);
+    add_internal_fluxes(mesh, fields, periodic_x, &boundary_map, &mut net);
     add_boundary_fluxes(mesh, fields, boundary, &mut net)?;
-    let volume = spacing.volume();
-    for value in &mut net {
-        *value /= volume;
+    for k in 0..mesh.nz {
+        for j in 0..mesh.ny {
+            for i in 0..mesh.nx {
+                let cell = mesh.cell_index(i, j, k);
+                net[cell] /= mesh.cell_metric(i, j, k).volume;
+            }
+        }
     }
     ScalarField::from_values(net)
-}
-
-#[derive(Debug, Clone, Copy)]
-struct CartesianSpacing {
-    dx: Real,
-    dy: Real,
-    dz: Real,
-}
-
-impl CartesianSpacing {
-    fn from_mesh(mesh: &StructuredMesh3d) -> Result<Self> {
-        let dx = mesh.node_x(1, 0, 0) - mesh.node_x(0, 0, 0);
-        let dy = mesh.node_y(0, 1, 0) - mesh.node_y(0, 0, 0);
-        let dz = mesh.node_z(0, 0, 1) - mesh.node_z(0, 0, 0);
-        if dx.abs() <= Real::EPSILON || dy.abs() <= Real::EPSILON || dz.abs() <= Real::EPSILON {
-            return Err(AsimuError::Mesh(
-                "不可压缩 face-flux 散度要求正的 Cartesian 网格间距".to_string(),
-            ));
-        }
-        Ok(Self {
-            dx: dx.abs(),
-            dy: dy.abs(),
-            dz: dz.abs(),
-        })
-    }
-
-    fn volume(self) -> Real {
-        self.dx * self.dy * self.dz
-    }
 }
 
 fn add_internal_fluxes(
     mesh: &StructuredMesh3d,
     fields: &IncompressibleFields,
-    spacing: CartesianSpacing,
     periodic_x: bool,
     boundary: &IncompressibleBoundaryOwnerMap,
     net: &mut [Real],
 ) {
-    let ax = spacing.dy * spacing.dz;
-    let ay = spacing.dx * spacing.dz;
-    let az = spacing.dx * spacing.dy;
-    add_x_fluxes(mesh, fields, ax, periodic_x, boundary, net);
-    add_y_fluxes(mesh, fields, ay, boundary, net);
-    add_z_fluxes(mesh, fields, az, boundary, net);
+    add_x_fluxes(mesh, fields, periodic_x, boundary, net);
+    add_y_fluxes(mesh, fields, boundary, net);
+    add_z_fluxes(mesh, fields, boundary, net);
 }
 
 fn add_x_fluxes(
     mesh: &StructuredMesh3d,
     fields: &IncompressibleFields,
-    area: Real,
     periodic_x: bool,
     boundary: &IncompressibleBoundaryOwnerMap,
     net: &mut [Real],
@@ -91,8 +60,9 @@ fn add_x_fluxes(
             for i in 0..mesh.nx.saturating_sub(1) {
                 let left = mesh.cell_index(i, j, k);
                 let right = mesh.cell_index(i + 1, j, k);
-                let u_face = interior_face_velocity(fields, left, right, 0, boundary);
-                scatter_flux(net, left, right, u_face * area);
+                let metric = mesh.i_face_metric(i, j, k);
+                let flux = interior_face_normal_flux(fields, left, right, &metric, boundary);
+                scatter_flux(net, left, right, flux);
             }
         }
     }
@@ -101,8 +71,9 @@ fn add_x_fluxes(
             for j in 0..mesh.ny {
                 let left = mesh.cell_index(mesh.nx - 1, j, k);
                 let right = mesh.cell_index(0, j, k);
-                let u_face = interior_face_velocity(fields, left, right, 0, boundary);
-                scatter_flux(net, left, right, u_face * area);
+                let metric = mesh.i_face_metric(mesh.nx.saturating_sub(2), j, k);
+                let flux = interior_face_normal_flux(fields, left, right, &metric, boundary);
+                scatter_flux(net, left, right, flux);
             }
         }
     }
@@ -111,7 +82,6 @@ fn add_x_fluxes(
 fn add_y_fluxes(
     mesh: &StructuredMesh3d,
     fields: &IncompressibleFields,
-    area: Real,
     boundary: &IncompressibleBoundaryOwnerMap,
     net: &mut [Real],
 ) {
@@ -120,8 +90,9 @@ fn add_y_fluxes(
             for i in 0..mesh.nx {
                 let left = mesh.cell_index(i, j, k);
                 let right = mesh.cell_index(i, j + 1, k);
-                let v_face = interior_face_velocity(fields, left, right, 1, boundary);
-                scatter_flux(net, left, right, v_face * area);
+                let metric = mesh.j_face_metric(i, j, k);
+                let flux = interior_face_normal_flux(fields, left, right, &metric, boundary);
+                scatter_flux(net, left, right, flux);
             }
         }
     }
@@ -130,7 +101,6 @@ fn add_y_fluxes(
 fn add_z_fluxes(
     mesh: &StructuredMesh3d,
     fields: &IncompressibleFields,
-    area: Real,
     boundary: &IncompressibleBoundaryOwnerMap,
     net: &mut [Real],
 ) {
@@ -139,11 +109,28 @@ fn add_z_fluxes(
             for i in 0..mesh.nx {
                 let left = mesh.cell_index(i, j, k);
                 let right = mesh.cell_index(i, j, k + 1);
-                let w_face = interior_face_velocity(fields, left, right, 2, boundary);
-                scatter_flux(net, left, right, w_face * area);
+                let metric = mesh.k_face_metric(i, j, k);
+                let flux = interior_face_normal_flux(fields, left, right, &metric, boundary);
+                scatter_flux(net, left, right, flux);
             }
         }
     }
+}
+
+fn interior_face_normal_flux(
+    fields: &IncompressibleFields,
+    left: usize,
+    right: usize,
+    metric: &crate::mesh::FaceMetric,
+    boundary: &IncompressibleBoundaryOwnerMap,
+) -> Real {
+    let velocity = [
+        interior_face_velocity(fields, left, right, 0, boundary),
+        interior_face_velocity(fields, left, right, 1, boundary),
+        interior_face_velocity(fields, left, right, 2, boundary),
+    ];
+    (velocity[0] * metric.normal.x + velocity[1] * metric.normal.y + velocity[2] * metric.normal.z)
+        * metric.area
 }
 
 fn add_boundary_fluxes(
@@ -182,6 +169,7 @@ mod tests {
     use super::*;
     use crate::boundary::{BoundaryPatch, WallHeat};
     use crate::core::approx_eq;
+    use crate::mesh::MeshMetricMode;
 
     #[test]
     fn wall_ignores_owner_normal_velocity() {
@@ -220,5 +208,45 @@ mod tests {
             .expect("divergence");
 
         assert!(approx_eq(div.values()[0], -1.0, 1.0e-12));
+    }
+
+    #[test]
+    fn curvilinear_internal_flux_uses_face_normal_projection() {
+        let mut mesh = sheared_two_cell_mesh();
+        mesh.set_metric_mode(MeshMetricMode::Curvilinear);
+        let fields =
+            IncompressibleFields::uniform(mesh.num_cells(), 0.0, [0.0, 1.0, 0.0]).expect("fields");
+
+        let div =
+            compute_incompressible_face_flux_divergence_3d(&mesh, &fields, &BoundarySet::default())
+                .expect("divergence");
+
+        assert!(div.values()[0].abs() > 0.1);
+        assert!(approx_eq(
+            div.values()[0] * mesh.cell_metric(0, 0, 0).volume
+                + div.values()[1] * mesh.cell_metric(1, 0, 0).volume,
+            0.0,
+            1.0e-12
+        ));
+    }
+
+    fn sheared_two_cell_mesh() -> StructuredMesh3d {
+        let nx = 2;
+        let ny = 1;
+        let nz = 1;
+        let shear = 0.5;
+        let mut px = Vec::new();
+        let mut py = Vec::new();
+        let mut pz = Vec::new();
+        for k in 0..=nz {
+            for j in 0..=ny {
+                for i in 0..=nx {
+                    px.push(i as Real + shear * j as Real);
+                    py.push(j as Real);
+                    pz.push(k as Real);
+                }
+            }
+        }
+        StructuredMesh3d::new("sheared", nx, ny, nz, px, py, pz).expect("mesh")
     }
 }

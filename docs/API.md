@@ -253,15 +253,15 @@ name=<mesh_name>;cells=<count>
 | `InteriorFaceColoring` | 非结构内面贪心着色桶；`for_each_face_index` 按桶遍历；默认启用 `parallel-fvm` 时 `par_map_buckets` 桶内 rayon 并行 compute + 串行 scatter |
 | `viscous_assembly` | 结构/非结构共用粘性边界面通量（`viscous_flux_at_boundary`）、scatter（`accumulate_viscous_*`）与壁面梯度外推 |
 | `compute_incompressible_divergence_3d` | 结构化 3D 不可压缩 I1 连续性残差 \(\nabla\cdot\mathbf{u}\) |
-| `compute_incompressible_face_flux_divergence_3d` | 结构化 3D 不可压缩边界感知 face-flux 散度诊断，墙面/对称面无穿透、速度入口/动壁使用边界面速度 |
+| `compute_incompressible_face_flux_divergence_3d` | 结构化 3D 不可压缩边界感知 face-flux 散度诊断，内部面使用局部 \(\mathbf{u}_f\cdot\mathbf{S}_f\)，墙面/对称面无穿透、速度入口/动壁使用边界面速度 |
 | `incompressible_boundary_face_state` | 不可压缩边界 face state 统一入口，集中给出 face 速度、可选边界压力、压力校正约束语义与质量通量类型，供 face-flux、Rhie-Chow 与压力校正路径复用 |
 | `compute_incompressible_velocity_laplacian_3d` | 结构化 3D 不可压缩 I1 速度三分量 Laplacian skeleton |
 | `apply_incompressible_boundary_conditions_3d` | 结构化 3D 不可压缩 cell-centered 边界应用，支持 wall / moving_wall / velocity_inlet / pressure_outlet / symmetry |
-| `compute_incompressible_rhie_chow_divergence_3d` / `IncompressibleFaceFluxField` | 结构化 3D 不可压缩 Rhie-Chow 面质量通量连续性残差；显式 `phi` 字段可由 Rhie-Chow 初始化、由 pressure correction 直接更新，并供动量对流项复用 |
-| `assemble_incompressible_pressure_correction_3d` | 结构化 3D 不可压缩压力校正 CSR，使用面插值 \(d_P\)、压力出口 \(p'=0\)、wall/moving wall/symmetry Neumann-like 通量语义与参考压力策略 |
+| `compute_incompressible_rhie_chow_divergence_3d` / `IncompressibleFaceFluxField` | 结构化 3D 不可压缩 Rhie-Chow 面质量通量连续性残差；显式 `phi` 字段可由 Rhie-Chow 初始化、由 pressure correction 直接更新，并供动量对流项复用；Cartesian 与结构化贴体网格均使用局部面面积、法向和单元体积 |
+| `assemble_incompressible_pressure_correction_3d` | 结构化 3D 不可压缩压力校正 CSR，使用面插值 \(d_P\)、局部 \(A_f/\Delta n_f\)、压力出口 \(p'=0\)、wall/moving wall/symmetry Neumann-like 通量语义与参考压力策略 |
 | `assemble_incompressible_pressure_poisson_3d` | 结构化 3D 不可压缩 I1 压力校正 Poisson CSR 兼容骨架 |
 | `IncompressiblePressureCorrectionConfig` / `IncompressiblePressureCorrectionSystem` | 压力校正装配配置与 `CsrMatrix + rhs` 输出 |
-| `assemble_incompressible_momentum_predictor_3d` / `assemble_incompressible_momentum_predictor_with_boundary_3d` / `assemble_incompressible_momentum_predictor_with_boundary_and_flux_3d` | 结构化 3D 不可压缩伪瞬态动量预测 CSR，含内部扩散、一阶迎风对流、可选显式 `phi` 对流通量、动量边界面贡献、压力梯度、每单位质量体力源项、欠松弛与 \(d_P\) |
+| `assemble_incompressible_momentum_predictor_3d` / `assemble_incompressible_momentum_predictor_with_boundary_3d` / `assemble_incompressible_momentum_predictor_with_boundary_and_flux_3d` | 结构化 3D 不可压缩伪瞬态动量预测 CSR，含基于局部 metric 的内部扩散、非正交交叉扩散 deferred correction、一阶迎风对流、可选显式 `phi` 对流通量、动量边界面贡献、共享结构化标量梯度驱动的 Green-Gauss 压力梯度、每单位质量体力源项、欠松弛与 \(d_P\) |
 | `IncompressibleMomentumPredictorConfig` / `IncompressibleMomentumPredictorSystem` | 动量预测装配配置（含 `body_force`）与三分量共用 `CsrMatrix`、`rhs_x/y/z`、`d_coefficient` |
 | `assemble_diffusion_placeholder` | 尺寸校验 + RHS 清零占位 |
 

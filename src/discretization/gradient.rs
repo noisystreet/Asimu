@@ -224,6 +224,189 @@ pub fn compute_structured_gradients_3d(
     Ok(())
 }
 
+/// 结构化网格任意 cell-centered 标量的物理空间梯度。
+///
+/// 与可压缩结构梯度使用同一类局部物理差分假设：用相邻单元中心构造
+/// \(\Delta\phi=\Delta\mathbf{x}\cdot\nabla\phi\)，再由局部最小二乘正规方程
+/// 得到 Cartesian 梯度。边界缺失方向自然退化为单侧邻接；准二维网格的缺失
+/// 方向返回零梯度分量。
+pub(crate) fn compute_structured_scalar_gradients_3d(
+    mesh: &StructuredMesh3d,
+    values: &[Real],
+    periodic_x: bool,
+) -> Vec<Vector3> {
+    let mut gradients = Vec::with_capacity(mesh.num_cells());
+    for k in 0..mesh.nz {
+        for j in 0..mesh.ny {
+            for i in 0..mesh.nx {
+                gradients.push(scalar_cell_lsq_gradient(mesh, values, i, j, k, periodic_x));
+            }
+        }
+    }
+    gradients
+}
+
+fn scalar_cell_lsq_gradient(
+    mesh: &StructuredMesh3d,
+    values: &[Real],
+    i: usize,
+    j: usize,
+    k: usize,
+    periodic_x: bool,
+) -> Vector3 {
+    let center = mesh.cell_index(i, j, k);
+    let center_point = mesh.cell_metric(i, j, k).center;
+    let mut normal = [[0.0; 3]; 3];
+    let mut rhs = [0.0; 3];
+    accumulate_scalar_lsq_neighbor(
+        mesh,
+        values,
+        center,
+        center_point,
+        scalar_neighbor_i(mesh, i, j, k, false, periodic_x),
+        &mut normal,
+        &mut rhs,
+    );
+    accumulate_scalar_lsq_neighbor(
+        mesh,
+        values,
+        center,
+        center_point,
+        scalar_neighbor_i(mesh, i, j, k, true, periodic_x),
+        &mut normal,
+        &mut rhs,
+    );
+    accumulate_scalar_lsq_neighbor(
+        mesh,
+        values,
+        center,
+        center_point,
+        scalar_neighbor(j > 0, || (i, j - 1, k)),
+        &mut normal,
+        &mut rhs,
+    );
+    accumulate_scalar_lsq_neighbor(
+        mesh,
+        values,
+        center,
+        center_point,
+        scalar_neighbor(j + 1 < mesh.ny, || (i, j + 1, k)),
+        &mut normal,
+        &mut rhs,
+    );
+    accumulate_scalar_lsq_neighbor(
+        mesh,
+        values,
+        center,
+        center_point,
+        scalar_neighbor(k > 0, || (i, j, k - 1)),
+        &mut normal,
+        &mut rhs,
+    );
+    accumulate_scalar_lsq_neighbor(
+        mesh,
+        values,
+        center,
+        center_point,
+        scalar_neighbor(k + 1 < mesh.nz, || (i, j, k + 1)),
+        &mut normal,
+        &mut rhs,
+    );
+    solve_regularized_3x3(normal, rhs)
+}
+
+fn scalar_neighbor(
+    present: bool,
+    index: impl FnOnce() -> (usize, usize, usize),
+) -> Option<(usize, usize, usize)> {
+    present.then(index)
+}
+
+fn scalar_neighbor_i(
+    mesh: &StructuredMesh3d,
+    i: usize,
+    j: usize,
+    k: usize,
+    upper: bool,
+    periodic_x: bool,
+) -> Option<(usize, usize, usize)> {
+    match (upper, i) {
+        (false, 0) if periodic_x && mesh.nx > 1 => Some((mesh.nx - 1, j, k)),
+        (false, 0) => None,
+        (false, _) => Some((i - 1, j, k)),
+        (true, _) if i + 1 < mesh.nx => Some((i + 1, j, k)),
+        (true, _) if periodic_x && mesh.nx > 1 => Some((0, j, k)),
+        _ => None,
+    }
+}
+
+fn accumulate_scalar_lsq_neighbor(
+    mesh: &StructuredMesh3d,
+    values: &[Real],
+    center: usize,
+    center_point: Vector3,
+    neighbor: Option<(usize, usize, usize)>,
+    normal: &mut [[Real; 3]; 3],
+    rhs: &mut [Real; 3],
+) {
+    let Some((i, j, k)) = neighbor else {
+        return;
+    };
+    let neighbor_idx = mesh.cell_index(i, j, k);
+    let delta = vec_sub(mesh.cell_metric(i, j, k).center, center_point);
+    let dphi = values[neighbor_idx] - values[center];
+    let r = [delta.x, delta.y, delta.z];
+    for a in 0..3 {
+        rhs[a] += r[a] * dphi;
+        for b in 0..3 {
+            normal[a][b] += r[a] * r[b];
+        }
+    }
+}
+
+fn solve_regularized_3x3(mut matrix: [[Real; 3]; 3], mut rhs: [Real; 3]) -> Vector3 {
+    let trace = matrix[0][0] + matrix[1][1] + matrix[2][2];
+    if trace.abs() <= Real::EPSILON {
+        return Vector3::new(0.0, 0.0, 0.0);
+    }
+    let lambda = trace.abs() * 1.0e-14;
+    for (i, row) in matrix.iter_mut().enumerate() {
+        row[i] += lambda;
+    }
+    for pivot in 0..3 {
+        let mut best = pivot;
+        for row in (pivot + 1)..3 {
+            if matrix[row][pivot].abs() > matrix[best][pivot].abs() {
+                best = row;
+            }
+        }
+        if matrix[best][pivot].abs() <= Real::EPSILON {
+            continue;
+        }
+        if best != pivot {
+            matrix.swap(pivot, best);
+            rhs.swap(pivot, best);
+        }
+        let inv = 1.0 / matrix[pivot][pivot];
+        for value in matrix[pivot].iter_mut().skip(pivot) {
+            *value *= inv;
+        }
+        rhs[pivot] *= inv;
+        let pivot_row = matrix[pivot];
+        for row in 0..3 {
+            if row == pivot {
+                continue;
+            }
+            let factor = matrix[row][pivot];
+            for (value, pivot_value) in matrix[row].iter_mut().zip(pivot_row.iter()).skip(pivot) {
+                *value -= factor * pivot_value;
+            }
+            rhs[row] -= factor * rhs[pivot];
+        }
+    }
+    Vector3::new(rhs[0], rhs[1], rhs[2])
+}
+
 struct DifferenceGradientContext<'a> {
     mesh: &'a StructuredMesh3d,
     primitives: &'a PrimitiveFields,
@@ -523,85 +706,6 @@ impl GradientFields {
             for v in f.values_mut() {
                 *v = 0.0;
             }
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::discretization::freestream_pair::{FreestreamPairFixture, uniform_farfield_box};
-
-    #[test]
-    fn uniform_flow_has_zero_velocity_gradient() {
-        let pair = FreestreamPairFixture::air_sutherland(0.1);
-        pair.for_each_inviscid_side(|side| {
-            let (mesh, boundary, _fields, ghosts) =
-                uniform_farfield_box(4, 4, 4, 1.0, 1.0, 1.0, side);
-            let mut prim = PrimitiveFields::zeros(mesh.num_cells()).expect("prim");
-            prim.fill_from_conserved(&_fields, side.eos, side.min_pressure)
-                .expect("fill");
-            let mut grad = GradientFields::zeros(mesh.num_cells()).expect("grad");
-            compute_structured_gradients_3d(
-                &mesh,
-                &prim,
-                side.eos,
-                &boundary,
-                &ghosts,
-                side.min_pressure,
-                side.viscous,
-                &mut grad,
-            )
-            .expect("grad");
-            for i in 0..mesh.num_cells() {
-                let g = grad.velocity_grad_at(i);
-                for comp in [g.du, g.dv, g.dw] {
-                    assert!(
-                        comp.iter().all(|&x| x.abs() < 1.0e-10),
-                        "{} velocity gradient cell {i}",
-                        side.label
-                    );
-                }
-            }
-        });
-    }
-
-    #[test]
-    fn linear_field_recovers_constant_structured_gradient() {
-        let mesh = StructuredMesh3d::uniform_box("box", 4, 4, 4, 1.0, 1.0, 1.0).expect("mesh");
-        let eos = IdealGasEoS::AIR_STANDARD;
-        let boundary = BoundarySet::new(Vec::new());
-        let ghosts = BoundaryGhostBuffer::new();
-        let mut prim = PrimitiveFields::zeros(mesh.num_cells()).expect("prim");
-        for k in 0..mesh.nz {
-            for j in 0..mesh.ny {
-                for i in 0..mesh.nx {
-                    let cell = mesh.cell_index(i, j, k);
-                    let c = mesh.cell_metric(i, j, k).center;
-                    prim.density.values_mut()[cell] = 1.0;
-                    prim.pressure.values_mut()[cell] = 101_325.0;
-                    prim.velocity_x.values_mut()[cell] = 2.0 * c.x + 3.0 * c.y - 4.0 * c.z;
-                    prim.velocity_y.values_mut()[cell] = -c.x + 0.5 * c.y + c.z;
-                    prim.velocity_z.values_mut()[cell] = 7.0 * c.x - 2.0 * c.y + 0.25 * c.z;
-                }
-            }
-        }
-        let mut grad = GradientFields::zeros(mesh.num_cells()).expect("grad");
-        compute_structured_gradients_3d(
-            &mesh, &prim, &eos, &boundary, &ghosts, 1.0e-6, None, &mut grad,
-        )
-        .expect("grad");
-        for cell in 0..mesh.num_cells() {
-            let g = grad.velocity_grad_at(cell);
-            assert!((g.du[0] - 2.0).abs() < 1.0e-12);
-            assert!((g.du[1] - 3.0).abs() < 1.0e-12);
-            assert!((g.du[2] + 4.0).abs() < 1.0e-12);
-            assert!((g.dv[0] + 1.0).abs() < 1.0e-12);
-            assert!((g.dv[1] - 0.5).abs() < 1.0e-12);
-            assert!((g.dv[2] - 1.0).abs() < 1.0e-12);
-            assert!((g.dw[0] - 7.0).abs() < 1.0e-12);
-            assert!((g.dw[1] + 2.0).abs() < 1.0e-12);
-            assert!((g.dw[2] - 0.25).abs() < 1.0e-12);
         }
     }
 }

@@ -67,7 +67,10 @@ p^*=\frac{p}{p_{\mathrm{ref}}},
 
 - **FVM**，结构化六面体，**collocated**：\(p,\mathbf{u}\) 存于单元中心。
 - 面质量通量 \(\dot{m}_f = \rho\,\mathbf{u}_f\cdot\mathbf{S}_f\) 经 **Rhie-Chow** 计算，避免压力棋盘格。
-- I1 基础算子限定为 Cartesian 均匀结构化网格；不可压缩边界面由统一 face state 描述，集中给出面速度、压力校正约束和通量语义。
+- I1 基础算子支持结构化 Cartesian 与 CGNS 贴体网格的局部几何度量：内部面使用
+  \(\mathbf{S}_f=A_f\mathbf{n}_f\)、相邻单元中心法向距离 \(\Delta n_f\) 与
+  单元体积 \(V_P\)。动量扩散矩阵保留正交隐式项，非正交交叉扩散采用
+  deferred correction 显式加入 RHS。
 
 ### 2.1 连续性残差（I1）
 
@@ -126,7 +129,23 @@ Rhie-Chow **仅**用于 \(\dot{m}_f\) 与压力修正源项 \(\nabla\cdot(\rho\m
 \Phi_f^{\mathrm{visc}} = -\rho\nu (\nabla \phi)_f \cdot \mathbf{S}_f \tag{6}
 \]
 
-内面 \((\nabla\phi)_f\) 为中心差分；壁面用 ghost \(\phi_g\)（§6）。
+内面 \((\nabla\phi)_f\cdot\mathbf{S}_f\) 使用
+\((\phi_N-\phi_O)A_f/\Delta n_f\) 的面法向投影；壁面用 ghost \(\phi_g\)（§6）。
+贴体网格上将面积向量分解为正交隐式部分与非正交修正：
+
+\[
+\mathbf{S}_f = \mathbf{E}_f + \mathbf{T}_f,\qquad
+\mathbf{E}_f = \frac{\mathbf{S}_f\cdot\mathbf{S}_f}{\mathbf{S}_f\cdot\mathbf{d}_{ON}}\mathbf{d}_{ON}
+\tag{6b}
+\]
+
+\[
+\Phi_f^{cross}=\nu \left(\nabla\phi\right)_f\cdot\mathbf{T}_f
+\tag{6c}
+\]
+
+其中 \(\mathbf{d}_{ON}=\mathbf{x}_N-\mathbf{x}_O\)，\((\nabla\phi)_f\)
+由相邻 cell-centered 标量梯度平均得到；标量梯度复用 `gradient.rs` 的结构化物理空间差分/最小二乘 helper。
 
 I1 先提供速度分量 Laplacian skeleton：
 
@@ -155,7 +174,9 @@ I1 先提供速度分量 Laplacian skeleton：
 a_P \phi_P = \sum a_{nb}\phi_{nb} + H(\phi) - (p_E - p_W)_\phi + V_P f_\phi \tag{8}
 \]
 
-I1 结构化实现中，扩散项和一阶迎风对流项先进入左端矩阵；压力梯度、每单位质量体力 \(\mathbf{f}\) 与边界源项进入 RHS；后续会把更多格式与完整 \(H(\phi)\) 拆分补齐。
+I1 结构化实现中，扩散项和一阶迎风对流项先进入左端矩阵；压力梯度使用共享结构化标量梯度
+重构 \(p_f\) 后的 Green-Gauss 面积分 \(\nabla p_P\approx V_P^{-1}\sum_f p_f\mathbf{S}_f\)，
+每单位质量体力 \(\mathbf{f}\) 与边界源项进入 RHS；后续会把更多格式与完整 \(H(\phi)\) 拆分补齐。
 
 **欠松弛（SIMPLEC）**：\(a_P \leftarrow a_P/\alpha_u\)，\(H \leftarrow H + (1-\alpha_u)a_P\phi_P/\alpha_u\)。
 
@@ -216,7 +237,9 @@ d_P = \frac{V_P}{a_P^c} \tag{10}
 \tag{11c}
 \]
 
-压力校正 RHS 使用当前显式 \(\phi_f^k\) 的散度；内部面 \(d_f=(d_P+d_N)/2\)。边界面通量由 `incompressible_boundary_face_state` 给定：壁面/对称面法向通量为零，速度入口与动壁使用给定面速度，压力出口使用 owner 速度零梯度外推；结构化 `i_min/i_max` 成对周期边界通过 wrap 面通量进入 Rhie-Chow 连续性残差。
+压力校正 RHS 使用当前显式 \(\phi_f^k\) 的散度；内部面 \(d_f=(d_P+d_N)/2\)，
+\(A_f\) 与 \(\Delta n_f\) 来自结构化网格局部 metric。边界面通量由
+`incompressible_boundary_face_state` 给定：壁面/对称面法向通量为零，速度入口与动壁使用给定面速度，压力出口使用 owner 速度零梯度外推；结构化 `i_min/i_max` 成对周期边界通过 wrap 面通量进入 Rhie-Chow 连续性残差。
 
 I3 压力校正矩阵使用动量预测矩阵提供的 cell-centered \(d_P\)，内部面取
 \(d_f=(d_P+d_N)/2\)。压力出口 owner 行施加 \(p'=0\)；wall、moving wall、symmetry 与 velocity inlet 不固定 \(p'\)，相当于 pressure correction 的零法向梯度/固定边界通量处理，使 (11c) 只修正内部面通量而不破坏无穿透壁面通量。若没有上述 Dirichlet 约束，则用 `pressure_reference_cell` 固定参考压力：
@@ -344,8 +367,8 @@ Ghost 单元距 owner 中心法向距离 \(d_f\)。
 | (2a)–(2e) 不可压缩无量纲化 | `io::nondimensional::apply_nondimensionalization_for_incompressible` | **I1 已实现** |
 | I1 runner 诊断闭环 | `case/incompressible_3d.rs`, `solver::run_incompressible_pressure_velocity` | **已实现：case 负责输入/输出，solver 负责编排 pressure-velocity 迭代、algorithm 标签与收敛历史** |
 | (3)(4)(11c) Rhie-Chow / 显式 \(\phi\) | `discretization::IncompressibleFaceFluxField` | **已实现：内部面压力-速度耦合通量、pressure-correction 面通量更新、周期 x wrap 与边界面通量** |
-| (5)(6) 对流/扩散 | `discretization::assemble_incompressible_momentum_predictor_with_boundary_and_flux_3d` | **已实现：一阶迎风对流、显式 \(\phi\) 通量、中心扩散与边界贡献** |
-| (8) 完整动量装配 | `discretization::assemble_incompressible_momentum_predictor_with_boundary_and_flux_3d` | **部分实现：结构化 Cartesian 首版** |
+| (5)(6) 对流/扩散 | `discretization::assemble_incompressible_momentum_predictor_with_boundary_and_flux_3d` | **已实现：一阶迎风对流、显式 \(\phi\) 通量、中心扩散、非正交交叉扩散 deferred correction 与边界贡献** |
+| (8) 完整动量装配 | `discretization::assemble_incompressible_momentum_predictor_with_boundary_and_flux_3d` | **部分实现：结构化 Cartesian/贴体局部 metric、压力梯度面心重构与非正交扩散修正；\(H(u)\) API 化待补** |
 | (9)(10) 完整 SIMPLEC 系数 | `discretization::assemble_incompressible_momentum_predictor_with_boundary_and_flux_3d` | **部分实现：\(d_P\) 已导出，\(a_P/a_P^c/H(u)\) 仍待显式 API 化** |
 | (11) 压力 Poisson | `discretization::assemble_incompressible_pressure_correction_3d` | **已实现：面插值 \(d_P\)、pressure outlet \(p'=0\)、wall/moving wall/symmetry Neumann-like 通量语义、参考压力策略** |
 | (13) Rhie-Chow 一致速度修正 | `discretization::corrected_incompressible_fields_rhie_chow_3d` | **已实现：用累计 \(p'\) 与 face-consistent 梯度重构 cell-centered 速度** |

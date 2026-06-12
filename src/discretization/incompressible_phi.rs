@@ -137,16 +137,18 @@ fn fill_internal_rhie_chow_fluxes(
                 let metric = mesh.i_face_metric(i, j, k);
                 let spacing = owner_neighbor_distance(mesh, (i, j, k), (i + 1, j, k), &metric);
                 flux.phi_x[x_index(mesh, i, j, k)] =
-                    rhie_chow_face_flux(fields, d, left, right, 0, spacing, boundary) * metric.area;
+                    rhie_chow_face_flux(fields, d, left, right, spacing, &metric, boundary)
+                        * metric.area;
             }
             if let Some(phi_x_periodic) = flux.phi_x_periodic.as_mut() {
                 let left = mesh.cell_index(mesh.nx - 1, j, k);
                 let right = mesh.cell_index(0, j, k);
-                let metric = mesh.i_face_metric(mesh.nx - 1, j, k);
+                let metric = mesh.i_face_metric(mesh.nx.saturating_sub(2), j, k);
                 let spacing =
                     owner_neighbor_distance(mesh, (mesh.nx - 1, j, k), (0, j, k), &metric);
                 phi_x_periodic[x_periodic_index(mesh, j, k)] =
-                    rhie_chow_face_flux(fields, d, left, right, 0, spacing, boundary) * metric.area;
+                    rhie_chow_face_flux(fields, d, left, right, spacing, &metric, boundary)
+                        * metric.area;
             }
         }
     }
@@ -158,7 +160,8 @@ fn fill_internal_rhie_chow_fluxes(
                 let metric = mesh.j_face_metric(i, j, k);
                 let spacing = owner_neighbor_distance(mesh, (i, j, k), (i, j + 1, k), &metric);
                 flux.phi_y[y_index(mesh, i, j, k)] =
-                    rhie_chow_face_flux(fields, d, left, right, 1, spacing, boundary) * metric.area;
+                    rhie_chow_face_flux(fields, d, left, right, spacing, &metric, boundary)
+                        * metric.area;
             }
         }
     }
@@ -170,7 +173,8 @@ fn fill_internal_rhie_chow_fluxes(
                 let metric = mesh.k_face_metric(i, j, k);
                 let spacing = owner_neighbor_distance(mesh, (i, j, k), (i, j, k + 1), &metric);
                 flux.phi_z[z_index(mesh, i, j, k)] =
-                    rhie_chow_face_flux(fields, d, left, right, 2, spacing, boundary) * metric.area;
+                    rhie_chow_face_flux(fields, d, left, right, spacing, &metric, boundary)
+                        * metric.area;
             }
         }
     }
@@ -181,11 +185,13 @@ fn rhie_chow_face_flux(
     d: &[Real],
     left: usize,
     right: usize,
-    component: usize,
     spacing: Real,
+    metric: &crate::mesh::FaceMetric,
     boundary: &IncompressibleBoundaryOwnerMap,
 ) -> Real {
-    let u_face = interior_face_velocity(fields, left, right, component, boundary);
+    let u_face = interior_face_velocity(fields, left, right, 0, boundary) * metric.normal.x
+        + interior_face_velocity(fields, left, right, 1, boundary) * metric.normal.y
+        + interior_face_velocity(fields, left, right, 2, boundary) * metric.normal.z;
     let d_face = 0.5 * (d[left] + d[right]);
     let dp = fields.pressure.values()[right] - fields.pressure.values()[left];
     u_face - d_face * dp / spacing
@@ -238,7 +244,7 @@ fn update_x_fluxes(
                 let left = mesh.cell_index(mesh.nx - 1, j, k);
                 let right = mesh.cell_index(0, j, k);
                 let idx = x_periodic_index(mesh, j, k);
-                let metric = mesh.i_face_metric(mesh.nx - 1, j, k);
+                let metric = mesh.i_face_metric(mesh.nx.saturating_sub(2), j, k);
                 let spacing =
                     owner_neighbor_distance(mesh, (mesh.nx - 1, j, k), (0, j, k), &metric);
                 phi_x_periodic[idx] +=
