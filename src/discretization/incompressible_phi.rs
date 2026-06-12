@@ -5,9 +5,7 @@
 
 use crate::boundary::{BoundaryKind, BoundarySet};
 use crate::core::Real;
-use crate::discretization::incompressible_boundary_flux::{
-    IncompressibleBoundaryOwnerMap, interior_face_velocity,
-};
+use crate::discretization::incompressible_boundary_flux::interior_face_velocity;
 use crate::discretization::incompressible_face_boundary::incompressible_boundary_mass_flux;
 use crate::error::{AsimuError, Result};
 use crate::field::{IncompressibleFields, ScalarField};
@@ -35,16 +33,9 @@ impl IncompressibleFaceFluxField {
                 "面通量 d_P 长度与网格单元数不一致".to_string(),
             ));
         }
-        let boundary_map = IncompressibleBoundaryOwnerMap::build(mesh, boundary);
         let periodic_x = boundary.has_periodic_pair("i_min", "i_max");
         let mut flux = Self::zeros(mesh, periodic_x);
-        fill_internal_rhie_chow_fluxes(
-            mesh,
-            fields,
-            d_coefficient.values(),
-            &boundary_map,
-            &mut flux,
-        );
+        fill_internal_rhie_chow_fluxes(mesh, fields, d_coefficient.values(), &mut flux);
         fill_boundary_net(mesh, fields, boundary, &mut flux.boundary_net)?;
         Ok(flux)
     }
@@ -126,7 +117,6 @@ fn fill_internal_rhie_chow_fluxes(
     mesh: &StructuredMesh3d,
     fields: &IncompressibleFields,
     d: &[Real],
-    boundary: &IncompressibleBoundaryOwnerMap,
     flux: &mut IncompressibleFaceFluxField,
 ) {
     for k in 0..mesh.nz {
@@ -137,8 +127,7 @@ fn fill_internal_rhie_chow_fluxes(
                 let metric = mesh.i_face_metric(i, j, k);
                 let spacing = owner_neighbor_distance(mesh, (i, j, k), (i + 1, j, k), &metric);
                 flux.phi_x[x_index(mesh, i, j, k)] =
-                    rhie_chow_face_flux(fields, d, left, right, spacing, &metric, boundary)
-                        * metric.area;
+                    rhie_chow_face_flux(fields, d, left, right, spacing, &metric) * metric.area;
             }
             if let Some(phi_x_periodic) = flux.phi_x_periodic.as_mut() {
                 let left = mesh.cell_index(mesh.nx - 1, j, k);
@@ -147,8 +136,7 @@ fn fill_internal_rhie_chow_fluxes(
                 let spacing =
                     owner_neighbor_distance(mesh, (mesh.nx - 1, j, k), (0, j, k), &metric);
                 phi_x_periodic[x_periodic_index(mesh, j, k)] =
-                    rhie_chow_face_flux(fields, d, left, right, spacing, &metric, boundary)
-                        * metric.area;
+                    rhie_chow_face_flux(fields, d, left, right, spacing, &metric) * metric.area;
             }
         }
     }
@@ -160,8 +148,7 @@ fn fill_internal_rhie_chow_fluxes(
                 let metric = mesh.j_face_metric(i, j, k);
                 let spacing = owner_neighbor_distance(mesh, (i, j, k), (i, j + 1, k), &metric);
                 flux.phi_y[y_index(mesh, i, j, k)] =
-                    rhie_chow_face_flux(fields, d, left, right, spacing, &metric, boundary)
-                        * metric.area;
+                    rhie_chow_face_flux(fields, d, left, right, spacing, &metric) * metric.area;
             }
         }
     }
@@ -173,8 +160,7 @@ fn fill_internal_rhie_chow_fluxes(
                 let metric = mesh.k_face_metric(i, j, k);
                 let spacing = owner_neighbor_distance(mesh, (i, j, k), (i, j, k + 1), &metric);
                 flux.phi_z[z_index(mesh, i, j, k)] =
-                    rhie_chow_face_flux(fields, d, left, right, spacing, &metric, boundary)
-                        * metric.area;
+                    rhie_chow_face_flux(fields, d, left, right, spacing, &metric) * metric.area;
             }
         }
     }
@@ -187,11 +173,10 @@ fn rhie_chow_face_flux(
     right: usize,
     spacing: Real,
     metric: &crate::mesh::FaceMetric,
-    boundary: &IncompressibleBoundaryOwnerMap,
 ) -> Real {
-    let u_face = interior_face_velocity(fields, left, right, 0, boundary) * metric.normal.x
-        + interior_face_velocity(fields, left, right, 1, boundary) * metric.normal.y
-        + interior_face_velocity(fields, left, right, 2, boundary) * metric.normal.z;
+    let u_face = interior_face_velocity(fields, left, right, 0) * metric.normal.x
+        + interior_face_velocity(fields, left, right, 1) * metric.normal.y
+        + interior_face_velocity(fields, left, right, 2) * metric.normal.z;
     let d_face = 0.5 * (d[left] + d[right]);
     let dp = fields.pressure.values()[right] - fields.pressure.values()[left];
     u_face - d_face * dp / spacing

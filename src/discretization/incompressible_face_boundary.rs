@@ -40,11 +40,6 @@ pub(crate) fn cell_velocity(fields: &IncompressibleFields, cell: usize) -> [Real
     ]
 }
 
-#[must_use]
-pub(crate) fn is_normal_component(component: usize, normal: [Real; 3]) -> bool {
-    normal[component].abs() > 0.5
-}
-
 /// 边界质量通量（owner 单元净入通量，已含面积）。
 #[must_use]
 pub(crate) fn incompressible_boundary_mass_flux(

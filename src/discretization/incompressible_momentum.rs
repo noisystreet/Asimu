@@ -7,9 +7,7 @@ use crate::core::Real;
 use crate::discretization::incompressible_bc::{
     incompressible_boundary_owner_velocity_target, interior_neighbor_index,
 };
-use crate::discretization::incompressible_boundary_flux::{
-    IncompressibleBoundaryOwnerMap, interior_face_velocity,
-};
+use crate::discretization::incompressible_boundary_flux::interior_face_velocity;
 use crate::discretization::incompressible_momentum_geometry::{
     owner_neighbor_distance, pressure_gradient, scalar_cross_diffusion_source,
     structured_scalar_gradients,
@@ -139,7 +137,6 @@ pub fn assemble_incompressible_momentum_predictor_with_boundary_and_flux_3d(
     let mut d = Vec::with_capacity(n);
     let boundary_terms = boundary_momentum_contributions(mesh, fields, boundary, config)?;
     let periodic_x = boundary.has_periodic_pair("i_min", "i_max");
-    let boundary_map = IncompressibleBoundaryOwnerMap::build(mesh, boundary);
     let pressure_gradients =
         structured_scalar_gradients(mesh, fields.pressure.values(), periodic_x);
     let velocity_x_gradients =
@@ -153,7 +150,6 @@ pub fn assemble_incompressible_momentum_predictor_with_boundary_and_flux_3d(
         fields,
         config,
         periodic_x,
-        boundary_map: &boundary_map,
         face_flux,
     };
     for k in 0..mesh.nz {
@@ -267,7 +263,6 @@ struct MomentumAssemblyCtx<'a> {
     fields: &'a IncompressibleFields,
     config: IncompressibleMomentumPredictorConfig,
     periodic_x: bool,
-    boundary_map: &'a IncompressibleBoundaryOwnerMap,
     face_flux: Option<&'a IncompressibleFaceFluxField>,
 }
 
@@ -735,9 +730,9 @@ fn fallback_convective_flux(
         _ => return 0.0,
     };
     let velocity = [
-        interior_face_velocity(ctx.fields, left, right, 0, ctx.boundary_map),
-        interior_face_velocity(ctx.fields, left, right, 1, ctx.boundary_map),
-        interior_face_velocity(ctx.fields, left, right, 2, ctx.boundary_map),
+        interior_face_velocity(ctx.fields, left, right, 0),
+        interior_face_velocity(ctx.fields, left, right, 1),
+        interior_face_velocity(ctx.fields, left, right, 2),
     ];
     let flux = (velocity[0] * metric.normal.x
         + velocity[1] * metric.normal.y

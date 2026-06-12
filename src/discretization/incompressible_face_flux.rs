@@ -2,9 +2,7 @@
 
 use crate::boundary::{BoundaryKind, BoundarySet};
 use crate::core::Real;
-use crate::discretization::incompressible_boundary_flux::{
-    IncompressibleBoundaryOwnerMap, interior_face_velocity,
-};
+use crate::discretization::incompressible_boundary_flux::interior_face_velocity;
 use crate::discretization::incompressible_face_boundary::incompressible_boundary_mass_flux;
 use crate::error::Result;
 use crate::field::{IncompressibleFields, ScalarField};
@@ -20,10 +18,9 @@ pub fn compute_incompressible_face_flux_divergence_3d(
     boundary: &BoundarySet,
 ) -> Result<ScalarField> {
     fields.validate_len(mesh.num_cells())?;
-    let boundary_map = IncompressibleBoundaryOwnerMap::build(mesh, boundary);
     let mut net = vec![0.0; mesh.num_cells()];
     let periodic_x = boundary.has_periodic_pair("i_min", "i_max");
-    add_internal_fluxes(mesh, fields, periodic_x, &boundary_map, &mut net);
+    add_internal_fluxes(mesh, fields, periodic_x, &mut net);
     add_boundary_fluxes(mesh, fields, boundary, &mut net)?;
     for k in 0..mesh.nz {
         for j in 0..mesh.ny {
@@ -40,19 +37,17 @@ fn add_internal_fluxes(
     mesh: &StructuredMesh3d,
     fields: &IncompressibleFields,
     periodic_x: bool,
-    boundary: &IncompressibleBoundaryOwnerMap,
     net: &mut [Real],
 ) {
-    add_x_fluxes(mesh, fields, periodic_x, boundary, net);
-    add_y_fluxes(mesh, fields, boundary, net);
-    add_z_fluxes(mesh, fields, boundary, net);
+    add_x_fluxes(mesh, fields, periodic_x, net);
+    add_y_fluxes(mesh, fields, net);
+    add_z_fluxes(mesh, fields, net);
 }
 
 fn add_x_fluxes(
     mesh: &StructuredMesh3d,
     fields: &IncompressibleFields,
     periodic_x: bool,
-    boundary: &IncompressibleBoundaryOwnerMap,
     net: &mut [Real],
 ) {
     for k in 0..mesh.nz {
@@ -61,7 +56,7 @@ fn add_x_fluxes(
                 let left = mesh.cell_index(i, j, k);
                 let right = mesh.cell_index(i + 1, j, k);
                 let metric = mesh.i_face_metric(i, j, k);
-                let flux = interior_face_normal_flux(fields, left, right, &metric, boundary);
+                let flux = interior_face_normal_flux(fields, left, right, &metric);
                 scatter_flux(net, left, right, flux);
             }
         }
@@ -72,45 +67,35 @@ fn add_x_fluxes(
                 let left = mesh.cell_index(mesh.nx - 1, j, k);
                 let right = mesh.cell_index(0, j, k);
                 let metric = mesh.i_face_metric(mesh.nx.saturating_sub(2), j, k);
-                let flux = interior_face_normal_flux(fields, left, right, &metric, boundary);
+                let flux = interior_face_normal_flux(fields, left, right, &metric);
                 scatter_flux(net, left, right, flux);
             }
         }
     }
 }
 
-fn add_y_fluxes(
-    mesh: &StructuredMesh3d,
-    fields: &IncompressibleFields,
-    boundary: &IncompressibleBoundaryOwnerMap,
-    net: &mut [Real],
-) {
+fn add_y_fluxes(mesh: &StructuredMesh3d, fields: &IncompressibleFields, net: &mut [Real]) {
     for k in 0..mesh.nz {
         for j in 0..mesh.ny.saturating_sub(1) {
             for i in 0..mesh.nx {
                 let left = mesh.cell_index(i, j, k);
                 let right = mesh.cell_index(i, j + 1, k);
                 let metric = mesh.j_face_metric(i, j, k);
-                let flux = interior_face_normal_flux(fields, left, right, &metric, boundary);
+                let flux = interior_face_normal_flux(fields, left, right, &metric);
                 scatter_flux(net, left, right, flux);
             }
         }
     }
 }
 
-fn add_z_fluxes(
-    mesh: &StructuredMesh3d,
-    fields: &IncompressibleFields,
-    boundary: &IncompressibleBoundaryOwnerMap,
-    net: &mut [Real],
-) {
+fn add_z_fluxes(mesh: &StructuredMesh3d, fields: &IncompressibleFields, net: &mut [Real]) {
     for k in 0..mesh.nz.saturating_sub(1) {
         for j in 0..mesh.ny {
             for i in 0..mesh.nx {
                 let left = mesh.cell_index(i, j, k);
                 let right = mesh.cell_index(i, j, k + 1);
                 let metric = mesh.k_face_metric(i, j, k);
-                let flux = interior_face_normal_flux(fields, left, right, &metric, boundary);
+                let flux = interior_face_normal_flux(fields, left, right, &metric);
                 scatter_flux(net, left, right, flux);
             }
         }
@@ -122,12 +107,11 @@ fn interior_face_normal_flux(
     left: usize,
     right: usize,
     metric: &crate::mesh::FaceMetric,
-    boundary: &IncompressibleBoundaryOwnerMap,
 ) -> Real {
     let velocity = [
-        interior_face_velocity(fields, left, right, 0, boundary),
-        interior_face_velocity(fields, left, right, 1, boundary),
-        interior_face_velocity(fields, left, right, 2, boundary),
+        interior_face_velocity(fields, left, right, 0),
+        interior_face_velocity(fields, left, right, 1),
+        interior_face_velocity(fields, left, right, 2),
     ];
     (velocity[0] * metric.normal.x + velocity[1] * metric.normal.y + velocity[2] * metric.normal.z)
         * metric.area

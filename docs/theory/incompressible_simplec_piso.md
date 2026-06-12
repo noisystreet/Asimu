@@ -204,7 +204,7 @@ a_T=a_B=\nu\frac{\Delta x\Delta y}{\Delta z},
 \tag{8b}
 \]
 
-面通量优先使用上一步 pressure-corrected 显式 \(\phi_f\)；首步尚无 \(\phi_f\) 时由 cell-centered 速度线性插值得到 \(F_f=(\mathbf{u}_f\cdot\mathbf{n}_f)A_f\)，\(\phi_f^{up}\) 取一阶迎风。
+面通量优先使用上一步 pressure-corrected 显式 \(\phi_f\)；首步尚无 \(\phi_f\) 时由相邻真实 cell-centered 速度线性插值得到 \(F_f=(\mathbf{u}_f\cdot\mathbf{n}_f)A_f\)，\(\phi_f^{up}\) 取一阶迎风。内部面不使用 wall / moving wall / symmetry 的 ghost 值替代任一侧 cell；这些边界语义只通过边界面质量通量与动量边界源项进入。
 
 \[
 a_P=\frac{V_P}{\Delta\tau}+\sum a_{nb}^{diff}+\sum_f \max(F_f,0),\qquad
@@ -237,7 +237,7 @@ d_P = \frac{V_P}{a_P^c} \tag{10}
 \tag{11c}
 \]
 
-压力校正 RHS 使用当前显式 \(\phi_f^k\) 的散度；内部面 \(d_f=(d_P+d_N)/2\)，
+压力校正 RHS 使用当前显式 \(\phi_f^k\) 的散度；内部面速度插值只使用 owner/neighbor 两侧真实 cell，\(d_f=(d_P+d_N)/2\)，
 \(A_f\) 与 \(\Delta n_f\) 来自结构化网格局部 metric。边界面通量由
 `incompressible_boundary_face_state` 给定：壁面/对称面法向通量为零，速度入口与动壁使用给定面速度，压力出口使用 owner 速度零梯度外推；结构化 `i_min/i_max` 成对周期边界通过 wrap 面通量进入 Rhie-Chow 连续性残差。
 
@@ -293,7 +293,7 @@ Ghost 单元距 owner 中心法向距离 \(d_f\)。
 
 详细分工见 [boundary_conditions.md](boundary_conditions.md) §9。
 
-当前实现分两层：`apply_incompressible_boundary_conditions_3d` 先把 `wall`、`moving_wall`、`velocity_inlet`、`pressure_outlet`、`symmetry` 施加到结构化边界 owner 单元并输出统计；`wall` / `moving_wall` 在 owner-cell 层只施加无穿透约束，避免把壁面切向速度误当作 cell-centered 值。pressure-velocity 每次动量预测与 \(p,\mathbf{u}\) 修正后会再次施加这些 owner-cell 约束，确保壁面/动壁法向速度不随压力校正漂移。`incompressible_boundary_face_state` 集中维护 wall、moving_wall、symmetry、velocity inlet 与 pressure outlet 的 face 速度、可选压力和 \(p'=0\) 约束语义；动量预测、Rhie-Chow/face-flux 诊断和压力校正都通过该语义保持一致。`assemble_incompressible_momentum_predictor_with_boundary_3d` 再把速度 Dirichlet、无滑移/动壁切向驱动、压力出口零梯度与对称/滑移法向约束转化为动量预测矩阵/RHS 的边界面贡献。`i_min/i_max` 成对 `periodic` 不改 owner 单元值，而是在动量、Rhie-Chow、压力校正和速度修正压力梯度中使用周期 wrap 邻接。
+当前实现分两层：`apply_incompressible_boundary_conditions_3d` 先把 `wall`、`moving_wall`、`velocity_inlet`、`pressure_outlet`、`symmetry` 施加到结构化边界 owner 单元并输出统计；`wall` / `symmetry` 在 owner-cell 层施加无穿透约束，`moving_wall` 将 owner 速度设置为给定壁速相对局部法向的切向分量，避免曲面动壁产生法向速度。pressure-velocity 每次动量预测与 \(p,\mathbf{u}\) 修正后会再次施加这些 owner-cell 约束，确保壁面/动壁法向速度不随压力校正漂移。`incompressible_boundary_face_state` 集中维护 wall、moving_wall、symmetry、velocity inlet 与 pressure outlet 的 face 速度、可选压力和 \(p'=0\) 约束语义；动量预测、Rhie-Chow/face-flux 诊断和压力校正都通过该语义保持一致。`assemble_incompressible_momentum_predictor_with_boundary_3d` 再把速度 Dirichlet、无滑移/动壁切向驱动、压力出口零梯度与对称/滑移法向约束转化为动量预测矩阵/RHS 的边界面贡献。CGNS patch 可使用任意名称（如 `dom-*`），依赖 `FaceId` 而不是逻辑 patch 名映射到结构化边界面；`i_min/i_max` 成对 `periodic` 不改 owner 单元值，而是在动量、Rhie-Chow、压力校正和速度修正压力梯度中使用周期 wrap 邻接。
 
 ## 7. PISO 与时间积分
 

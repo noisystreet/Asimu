@@ -6,13 +6,11 @@
 
 use crate::boundary::{BoundaryPatch, BoundarySet};
 use crate::core::Real;
-use crate::discretization::incompressible_boundary_flux::{
-    IncompressibleBoundaryOwnerMap, interior_face_velocity,
-};
+use crate::discretization::incompressible_boundary_flux::interior_face_velocity;
 use crate::discretization::incompressible_face_boundary::incompressible_boundary_face_velocity;
 use crate::error::{AsimuError, Result};
 use crate::field::{IncompressibleFields, ScalarField};
-use crate::mesh::StructuredMesh3d;
+use crate::mesh::{LogicalFace3d, StructuredMesh3d};
 
 /// Rhie-Chow 速度重构参数。
 pub struct RhieChowVelocityCorrectionConfig<'a> {
@@ -56,7 +54,6 @@ pub fn corrected_incompressible_fields_rhie_chow_3d(
         pressure_under_relaxation,
         boundary,
         periodic_x,
-        boundary_map: IncompressibleBoundaryOwnerMap::build(mesh, boundary),
     };
     let pressure = build_updated_pressure(current, pressure_correction, pressure_under_relaxation)?;
     let (velocity_x, velocity_y, velocity_z) = reconstruct_velocity_components(&ctx)?;
@@ -96,7 +93,6 @@ struct RhieChowVelocityCorrectionCtx<'a> {
     pressure_under_relaxation: Real,
     boundary: &'a BoundarySet,
     periodic_x: bool,
-    boundary_map: IncompressibleBoundaryOwnerMap,
 }
 
 fn build_updated_pressure(
@@ -188,7 +184,10 @@ fn axis_face_specs<'a>(
                 specs.push(AxisFaceSpec {
                     left: None,
                     right: None,
-                    lower_patch: find_patch(boundary, "i_min"),
+                    lower_patch: find_patch_for_face(
+                        boundary,
+                        boundary_face_id(mesh, LogicalFace3d::IMin, i, j, k),
+                    ),
                     upper_patch: None,
                 });
             }
@@ -211,7 +210,10 @@ fn axis_face_specs<'a>(
                     left: None,
                     right: None,
                     lower_patch: None,
-                    upper_patch: find_patch(boundary, "i_max"),
+                    upper_patch: find_patch_for_face(
+                        boundary,
+                        boundary_face_id(mesh, LogicalFace3d::IMax, i, j, k),
+                    ),
                 });
             }
         }
@@ -227,7 +229,10 @@ fn axis_face_specs<'a>(
                 specs.push(AxisFaceSpec {
                     left: None,
                     right: None,
-                    lower_patch: find_patch(boundary, "j_min"),
+                    lower_patch: find_patch_for_face(
+                        boundary,
+                        boundary_face_id(mesh, LogicalFace3d::JMin, i, j, k),
+                    ),
                     upper_patch: None,
                 });
             }
@@ -243,7 +248,10 @@ fn axis_face_specs<'a>(
                     left: None,
                     right: None,
                     lower_patch: None,
-                    upper_patch: find_patch(boundary, "j_max"),
+                    upper_patch: find_patch_for_face(
+                        boundary,
+                        boundary_face_id(mesh, LogicalFace3d::JMax, i, j, k),
+                    ),
                 });
             }
         }
@@ -259,7 +267,10 @@ fn axis_face_specs<'a>(
                 specs.push(AxisFaceSpec {
                     left: None,
                     right: None,
-                    lower_patch: find_patch(boundary, "k_min"),
+                    lower_patch: find_patch_for_face(
+                        boundary,
+                        boundary_face_id(mesh, LogicalFace3d::KMin, i, j, k),
+                    ),
                     upper_patch: None,
                 });
             }
@@ -275,7 +286,10 @@ fn axis_face_specs<'a>(
                     left: None,
                     right: None,
                     lower_patch: None,
-                    upper_patch: find_patch(boundary, "k_max"),
+                    upper_patch: find_patch_for_face(
+                        boundary,
+                        boundary_face_id(mesh, LogicalFace3d::KMax, i, j, k),
+                    ),
                 });
             }
         }
@@ -283,8 +297,29 @@ fn axis_face_specs<'a>(
     specs
 }
 
-fn find_patch<'a>(boundary: &'a BoundarySet, name: &str) -> Option<&'a BoundaryPatch> {
-    boundary.patches().iter().find(|patch| patch.name == name)
+fn find_patch_for_face(
+    boundary: &BoundarySet,
+    face: crate::core::FaceId,
+) -> Option<&BoundaryPatch> {
+    boundary
+        .patches()
+        .iter()
+        .find(|patch| patch.face_ids.contains(&face))
+}
+
+fn boundary_face_id(
+    mesh: &StructuredMesh3d,
+    face: LogicalFace3d,
+    i: usize,
+    j: usize,
+    k: usize,
+) -> crate::core::FaceId {
+    let local = match face {
+        LogicalFace3d::IMin | LogicalFace3d::IMax => j + k * mesh.ny,
+        LogicalFace3d::JMin | LogicalFace3d::JMax => i + k * mesh.nx,
+        LogicalFace3d::KMin | LogicalFace3d::KMax => i + j * mesh.nx,
+    };
+    face.encode(local as u32)
 }
 
 fn boundary_face_component(
@@ -302,7 +337,7 @@ fn rhie_chow_face_velocity(
     right: usize,
     component: usize,
 ) -> Result<Real> {
-    let u_face = interior_face_velocity(ctx.predicted, left, right, component, &ctx.boundary_map);
+    let u_face = interior_face_velocity(ctx.predicted, left, right, component);
     let metric = face_metric_between(ctx.mesh, left, right)?;
     let spacing = owner_neighbor_distance(ctx.mesh, left, right, &metric);
     let d_face = 0.5 * (ctx.d_coefficient[left] + ctx.d_coefficient[right]);
@@ -423,7 +458,9 @@ fn cell_ijk(mesh: &StructuredMesh3d, cell: usize) -> (usize, usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::boundary::{BoundaryKind, BoundaryPatch};
     use crate::core::approx_eq;
+    use crate::mesh::BoundaryMesh;
 
     #[test]
     fn uniform_pressure_preserves_predicted_velocity() {
@@ -451,5 +488,38 @@ mod tests {
 
         assert!(approx_eq(corrected.velocity_x.values()[0], 0.3, 1.0e-12));
         assert!(approx_eq(corrected.velocity_y.values()[0], 0.4, 1.0e-12));
+    }
+
+    #[test]
+    fn boundary_reconstruction_uses_face_ids_not_patch_names() {
+        let mesh = StructuredMesh3d::uniform_box("box", 1, 1, 1, 1.0, 1.0, 1.0).expect("mesh");
+        let current =
+            IncompressibleFields::uniform(mesh.num_cells(), 0.0, [0.0, 0.0, 0.0]).expect("cur");
+        let predicted =
+            IncompressibleFields::uniform(mesh.num_cells(), 0.0, [0.0, 0.0, 0.0]).expect("pred");
+        let d = vec![0.01; mesh.num_cells()];
+        let p_corr = vec![0.0; mesh.num_cells()];
+        let boundary = BoundarySet::new(vec![BoundaryPatch::new(
+            "dom-inlet",
+            mesh.resolve_logical_boundary("i_min").expect("faces"),
+            BoundaryKind::IncompressibleVelocityInlet {
+                velocity: [2.0, 0.0, 0.0],
+            },
+        )]);
+
+        let corrected =
+            corrected_incompressible_fields_rhie_chow_3d(RhieChowVelocityCorrectionConfig {
+                mesh: &mesh,
+                current: &current,
+                predicted: &predicted,
+                pressure_correction: &p_corr,
+                d_coefficient: &d,
+                pressure_under_relaxation: 1.0,
+                boundary: &boundary,
+                periodic_x: false,
+            })
+            .expect("corrected");
+
+        assert!(approx_eq(corrected.velocity_x.values()[0], 2.0, 1.0e-12));
     }
 }
