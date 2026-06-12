@@ -1,5 +1,6 @@
 //! 算例编排集成测试（与 CLI 共用 `case::run_case_path`）。
 
+use std::fs;
 use std::path::Path;
 
 use asimu::case::{CaseRunKind, run_case_path};
@@ -168,6 +169,105 @@ fn lid_driven_cavity_re100_incompressible_benchmark_runs() {
         "horizontal_v max_abs={}",
         error.horizontal_v.max_abs
     );
+}
+
+#[test]
+fn incompressible_runner_writes_residual_csv() {
+    let root = std::env::temp_dir().join(format!(
+        "asimu_incompressible_output_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("temp dir");
+    let case_path = root.join("case.toml");
+    fs::write(
+        &case_path,
+        r#"
+name = "incompressible_output_smoke"
+
+[mesh]
+kind = "structured_3d"
+nx = 4
+ny = 4
+nz = 1
+lx = 1.0
+ly = 1.0
+lz = 0.1
+
+[physics]
+
+[incompressible]
+pressure = 0.0
+velocity = [0.0, 0.0, 0.0]
+density = 1.0
+kinematic_viscosity = 0.01
+velocity_under_relaxation = 0.05
+pressure_under_relaxation = 0.01
+piso_correctors = 2
+
+[incompressible.linear.momentum]
+solver = "gmres"
+restart = 8
+max_iters = 20
+tolerance = 1.0e-8
+
+[incompressible.linear.pressure]
+solver = "pcg"
+max_iters = 100
+tolerance = 1.0e-10
+
+[incompressible.reference]
+length = 1.0
+velocity = 1.0
+
+[boundary.i_min]
+kind = "wall"
+no_slip = true
+
+[boundary.i_max]
+kind = "wall"
+no_slip = true
+
+[boundary.j_min]
+kind = "wall"
+no_slip = true
+
+[boundary.j_max]
+kind = "moving_wall"
+velocity = [1.0, 0.0, 0.0]
+
+[boundary.k_min]
+kind = "symmetry"
+
+[boundary.k_max]
+kind = "symmetry"
+
+[time]
+mode = "transient"
+scheme = "piso"
+max_steps = 3
+min_steps = 3
+dt = 0.0005
+tolerance = 1.0e-4
+
+[output]
+dir = "out"
+residual_csv = "residual.csv"
+"#,
+    )
+    .expect("write case");
+
+    let result = run_case_path(&case_path).expect("run");
+    let metrics = result.incompressible_3d.expect("incompressible metrics");
+    assert_eq!(metrics.simplec_iterations, 3);
+    let residual = root.join("out/residual.csv");
+    assert!(residual.is_file(), "missing {}", residual.display());
+    assert!(metrics.written.contains(&residual));
+    let csv = fs::read_to_string(&residual).expect("read residual");
+    assert!(csv.contains("face_flux_divergence"));
+    assert!(csv.contains("velocity_delta_interior"));
+    assert_eq!(csv.lines().count(), 4);
+    let _ = fs::remove_dir_all(&root);
 }
 
 #[test]

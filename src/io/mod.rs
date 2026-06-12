@@ -15,7 +15,7 @@ pub use case::{
     CaseMesh, CaseObservabilityConfig, CaseOutputConfig, CaseSpec, CaseTimeConfig, CaseTimeMode,
     SodCaseConfig, load_case, parse_case_str, resolve_case_output_path,
 };
-pub use residual::write_residual_csv;
+pub use residual::{write_incompressible_residual_csv, write_residual_csv};
 pub use restart::{
     initial_multiblock_conserved_fields, load_conserved_fields, load_multiblock_conserved_fields,
     write_conserved_fields, write_multiblock_conserved_fields,

@@ -48,10 +48,36 @@ pub struct IncompressiblePressureVelocityConfig<'a> {
     pub min_iterations: usize,
     pub tolerance: Option<Real>,
     pub require_velocity_convergence: bool,
+    pub snapshot_interval: Option<usize>,
     pub linear_solvers: IncompressibleLinearSolverConfig,
 }
 
 pub type IncompressibleSimplecConfig<'a> = IncompressiblePressureVelocityConfig<'a>;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IncompressiblePressureVelocityStepInfo {
+    pub step: u64,
+    pub nondimensional_time: Real,
+    pub continuity: Real,
+    pub momentum_residual: Real,
+    pub velocity_delta_interior: Real,
+    pub face_flux_divergence: Real,
+    pub pressure_equation_residual: Real,
+    pub pressure_solve_converged: bool,
+    pub pressure_solve_iterations: usize,
+    pub pressure_solve_residual: Real,
+    pub momentum_solve_converged: bool,
+    pub momentum_solve_iterations: usize,
+    pub momentum_solve_residual: Real,
+    pub converged: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IncompressiblePressureVelocitySnapshot {
+    pub step: u64,
+    pub nondimensional_time: Real,
+    pub fields: IncompressibleFields,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct IncompressiblePressureVelocityDiagnostic {
@@ -89,6 +115,8 @@ pub struct IncompressiblePressureVelocityDiagnostic {
     pub simplec_momentum_residual_history: Vec<Real>,
     pub pressure_corrector_residual_history: Vec<Real>,
     pub pressure_corrector_max_correction_history: Vec<Real>,
+    pub step_history: Vec<IncompressiblePressureVelocityStepInfo>,
+    pub snapshots: Vec<IncompressiblePressureVelocitySnapshot>,
     pub corrected_fields: IncompressibleFields,
 }
 
@@ -104,6 +132,8 @@ pub fn run_incompressible_pressure_velocity(
     let mut momentum_history = Vec::with_capacity(max_iterations);
     let mut corrector_residual_history = Vec::new();
     let mut corrector_max_correction_history = Vec::new();
+    let mut step_history = Vec::with_capacity(max_iterations);
+    let mut snapshots = Vec::new();
     let mut last = None;
     let mut current_face_flux: Option<IncompressibleFaceFluxField> = None;
     for step in 0..max_iterations {
@@ -139,6 +169,21 @@ pub fn run_incompressible_pressure_velocity(
         diagnostic.pressure_corrector_residual_history = corrector_residual_history.clone();
         diagnostic.pressure_corrector_max_correction_history =
             corrector_max_correction_history.clone();
+        step_history.push(incompressible_step_info(
+            step_no as u64,
+            &diagnostic,
+            config.pseudo_time_step,
+            converged,
+        ));
+        if snapshot_due(step_no, config.snapshot_interval) {
+            snapshots.push(IncompressiblePressureVelocitySnapshot {
+                step: step_no as u64,
+                nondimensional_time: step_no as Real * config.pseudo_time_step,
+                fields: diagnostic.corrected_fields.clone(),
+            });
+        }
+        diagnostic.step_history = step_history.clone();
+        diagnostic.snapshots = snapshots.clone();
         let is_final = converged || step_no == max_iterations;
         log_simplec_step(SimplecStepLog {
             step: step_no,
@@ -180,7 +225,37 @@ pub fn run_incompressible_pressure_velocity(
     );
     diagnostic.pressure_corrector_residual_history = corrector_residual_history;
     diagnostic.pressure_corrector_max_correction_history = corrector_max_correction_history;
+    diagnostic.step_history = step_history;
+    diagnostic.snapshots = snapshots;
     Ok(diagnostic)
+}
+
+fn incompressible_step_info(
+    step: u64,
+    diagnostic: &IncompressiblePressureVelocityDiagnostic,
+    pseudo_time_step: Real,
+    converged: bool,
+) -> IncompressiblePressureVelocityStepInfo {
+    IncompressiblePressureVelocityStepInfo {
+        step,
+        nondimensional_time: step as Real * pseudo_time_step,
+        continuity: diagnostic.simplec_final_residual,
+        momentum_residual: diagnostic.simplec_final_momentum_residual,
+        velocity_delta_interior: diagnostic.max_abs_corrected_velocity_delta_interior,
+        face_flux_divergence: diagnostic.max_abs_corrected_field_divergence_after_boundary,
+        pressure_equation_residual: diagnostic.max_abs_corrected_divergence,
+        pressure_solve_converged: diagnostic.pressure_solve_converged,
+        pressure_solve_iterations: diagnostic.pressure_solve_iterations,
+        pressure_solve_residual: diagnostic.pressure_solve_residual,
+        momentum_solve_converged: diagnostic.momentum_solve_converged,
+        momentum_solve_iterations: diagnostic.momentum_solve_iterations,
+        momentum_solve_residual: diagnostic.momentum_solve_residual,
+        converged,
+    }
+}
+
+fn snapshot_due(step: usize, interval: Option<usize>) -> bool {
+    interval.is_some_and(|value| value > 0 && step % value == 0)
 }
 
 fn velocity_convergence_metric(velocity_delta: Real, required: bool) -> Real {
@@ -332,6 +407,8 @@ fn assemble_simplec_step(
         simplec_momentum_residual_history: Vec::new(),
         pressure_corrector_residual_history: corrector_residuals,
         pressure_corrector_max_correction_history: corrector_max_corrections,
+        step_history: Vec::new(),
+        snapshots: Vec::new(),
         corrected_fields: corrected.fields,
     };
     Ok((diagnostic, timing, face_flux))

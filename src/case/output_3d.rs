@@ -335,7 +335,7 @@ pub(crate) fn write_residual_outputs(
             let plot_path =
                 resolve_case_output_path(case.case_dir.as_deref(), &output.dir, plot_name)?;
             let _span = info_span!("plot_residual", path = %plot_path.display()).entered();
-            if let Err(err) = try_plot_residual(&path, &plot_path) {
+            if let Err(err) = plot_residual_csv(&path, &plot_path) {
                 warn!(error = %err, "残差曲线图未生成（需 python3 + matplotlib）");
             } else {
                 info!(path = %plot_path.display(), "已写出残差曲线图");
@@ -363,7 +363,7 @@ pub fn flow_cgns_name_for_step(base: &str, step: u64) -> String {
     }
 }
 
-fn try_plot_residual(csv: &Path, png: &Path) -> Result<()> {
+pub(crate) fn plot_residual_csv(csv: &Path, png: &Path) -> Result<()> {
     let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scripts/plot_residual.py");
     if !script.is_file() {
         return Err(AsimuError::Exec("plot_residual.py 不存在".to_string()));

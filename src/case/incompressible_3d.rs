@@ -14,6 +14,7 @@ use crate::error::{AsimuError, Result};
 use crate::field::IncompressibleFields;
 #[cfg(feature = "io-cgns")]
 use crate::field::ScalarField;
+use crate::io::write_incompressible_residual_csv;
 use crate::io::{CaseSpec, CaseTimeMode, resolve_case_output_path};
 #[cfg(feature = "io-cgns")]
 use crate::io::{
@@ -21,8 +22,8 @@ use crate::io::{
 };
 use crate::mesh::StructuredMesh3d;
 use crate::solver::{
-    IncompressibleSimplecConfig, IncompressibleSimplecDiagnostic, TimeIntegrationScheme,
-    run_incompressible_simplec,
+    IncompressiblePressureVelocitySnapshot, IncompressibleSimplecConfig,
+    IncompressibleSimplecDiagnostic, TimeIntegrationScheme, run_incompressible_simplec,
 };
 
 use super::{CaseRunKind, CaseRunResult};
@@ -108,12 +109,6 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         .ok_or_else(|| AsimuError::Config("不可压缩算例须包含 [incompressible] 段".to_string()))?;
     let steps = case.time.max_steps.unwrap_or(1);
     let dt = case.time.dt.unwrap_or(0.0);
-    let nondimensional_time = dt * steps as f64;
-    let physical_time = case
-        .incompressible_reference
-        .as_ref()
-        .map(|reference| nondimensional_time * reference.time_scale())
-        .unwrap_or(nondimensional_time);
     let mut fields =
         IncompressibleFields::uniform(mesh.num_cells(), config.pressure, config.velocity)?;
     fields.validate_len(mesh.num_cells())?;
@@ -137,16 +132,15 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
             min_iterations: case.time.min_steps.unwrap_or(0) as usize,
             tolerance: case.time.tolerance,
             require_velocity_convergence: case.time.mode == CaseTimeMode::Steady,
+            snapshot_interval: incompressible_snapshot_interval(case),
             linear_solvers: config.linear_solvers,
         },
     )?;
 
-    let written = write_outputs(
-        case,
-        mesh,
-        &diagnostic.corrected_fields,
-        nondimensional_time,
-    )?;
+    let completed_steps = diagnostic.simplec_iterations as u64;
+    let nondimensional_time = dt * completed_steps as f64;
+    let physical_time = physical_time_from_nondimensional(case, nondimensional_time);
+    let written = write_outputs(case, mesh, &diagnostic, nondimensional_time)?;
     let centerline_profiles = incompressible_centerline_profiles(
         case,
         mesh,
@@ -212,7 +206,7 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         sod: None,
         compressible_3d: None,
         incompressible_3d: Some(build_run_metrics(
-            steps,
+            completed_steps,
             physical_time,
             diagnostic,
             boundary_stats,
@@ -232,6 +226,28 @@ fn incompressible_pressure_correctors(case: &CaseSpec, configured: usize) -> usi
         Some(TimeIntegrationScheme::Piso) => configured.max(1),
         _ => configured.max(1),
     }
+}
+
+fn incompressible_snapshot_interval(case: &CaseSpec) -> Option<usize> {
+    case.output
+        .as_ref()
+        .filter(|output| output.wants_interval_flow())
+        .and_then(|output| output.solution_every)
+        .map(|value| value as usize)
+}
+
+fn physical_time_from_nondimensional(case: &CaseSpec, nondimensional_time: Real) -> Real {
+    case.incompressible_reference
+        .as_ref()
+        .map(|reference| nondimensional_time * reference.time_scale())
+        .unwrap_or(nondimensional_time)
+}
+
+fn incompressible_physical_time_scale(case: &CaseSpec) -> Real {
+    case.incompressible_reference
+        .as_ref()
+        .map(|reference| reference.time_scale())
+        .unwrap_or(1.0)
 }
 
 fn incompressible_summary(
@@ -566,19 +582,88 @@ fn cell_center_y(mesh: &StructuredMesh3d, i: usize, j: usize, k: usize) -> Real 
 fn write_outputs(
     case: &CaseSpec,
     mesh: &StructuredMesh3d,
-    fields: &IncompressibleFields,
+    diagnostic: &IncompressibleSimplecDiagnostic,
     nondimensional_time: f64,
 ) -> Result<Vec<PathBuf>> {
     let Some(output) = &case.output else {
         return Ok(Vec::new());
     };
     let mut written = Vec::new();
+    written.extend(write_incompressible_residual_outputs(case, diagnostic)?);
+    written.extend(write_interval_snapshots(case, mesh, &diagnostic.snapshots)?);
     if let Some(name) = &output.solution_cgns {
         let path = resolve_case_output_path(case.case_dir.as_deref(), &output.dir, name)?;
-        let (mesh_out, fields_out, time_out) =
-            prepare_dimensional_incompressible_output(case, mesh, fields, nondimensional_time)?;
+        let (mesh_out, fields_out, time_out) = prepare_dimensional_incompressible_output(
+            case,
+            mesh,
+            &diagnostic.corrected_fields,
+            nondimensional_time,
+        )?;
         write_incompressible_cgns(&path, &mesh_out, &fields_out, time_out)?;
         info!(path = %path.display(), "已写出不可压缩流场 CGNS");
+        written.push(path);
+    }
+    Ok(written)
+}
+
+fn write_incompressible_residual_outputs(
+    case: &CaseSpec,
+    diagnostic: &IncompressibleSimplecDiagnostic,
+) -> Result<Vec<PathBuf>> {
+    let Some(output) = &case.output else {
+        return Ok(Vec::new());
+    };
+    let mut written = Vec::new();
+    if let Some(name) = &output.residual_csv {
+        let path = resolve_case_output_path(case.case_dir.as_deref(), &output.dir, name)?;
+        write_incompressible_residual_csv(
+            &path,
+            &diagnostic.step_history,
+            incompressible_physical_time_scale(case),
+        )?;
+        info!(path = %path.display(), "已写出不可压缩残差 CSV");
+        written.push(path.clone());
+        if let Some(plot_name) = &output.residual_plot {
+            let plot_path =
+                resolve_case_output_path(case.case_dir.as_deref(), &output.dir, plot_name)?;
+            if let Err(err) = super::output_3d::plot_residual_csv(&path, &plot_path) {
+                tracing::warn!(error = %err, "不可压缩残差曲线图未生成（需 python3 + matplotlib）");
+            } else {
+                info!(path = %plot_path.display(), "已写出不可压缩残差曲线图");
+                written.push(plot_path);
+            }
+        }
+    }
+    Ok(written)
+}
+
+fn write_interval_snapshots(
+    case: &CaseSpec,
+    mesh: &StructuredMesh3d,
+    snapshots: &[IncompressiblePressureVelocitySnapshot],
+) -> Result<Vec<PathBuf>> {
+    let Some(output) = &case.output else {
+        return Ok(Vec::new());
+    };
+    let Some(base) = output.solution_cgns.as_ref() else {
+        return Ok(Vec::new());
+    };
+    let mut written = Vec::with_capacity(snapshots.len());
+    for snapshot in snapshots {
+        let name = super::output_3d::flow_cgns_name_for_step(base, snapshot.step);
+        let path = resolve_case_output_path(case.case_dir.as_deref(), &output.dir, &name)?;
+        let (mesh_out, fields_out, time_out) = prepare_dimensional_incompressible_output(
+            case,
+            mesh,
+            &snapshot.fields,
+            snapshot.nondimensional_time,
+        )?;
+        write_incompressible_cgns(&path, &mesh_out, &fields_out, time_out)?;
+        info!(
+            path = %path.display(),
+            step = snapshot.step,
+            "已写出不可压缩间隔流场 CGNS"
+        );
         written.push(path);
     }
     Ok(written)

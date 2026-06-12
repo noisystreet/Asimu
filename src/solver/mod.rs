@@ -34,6 +34,7 @@ pub use incompressible::{
     IncompressibleLinearSolverConfig, IncompressiblePressureLinearSolverConfig,
     IncompressiblePressureLinearSolverKind, IncompressiblePressureVelocityAlgorithm,
     IncompressiblePressureVelocityConfig, IncompressiblePressureVelocityDiagnostic,
+    IncompressiblePressureVelocitySnapshot, IncompressiblePressureVelocityStepInfo,
     IncompressibleSimplecConfig, IncompressibleSimplecDiagnostic,
     run_incompressible_pressure_velocity, run_incompressible_simplec,
 };

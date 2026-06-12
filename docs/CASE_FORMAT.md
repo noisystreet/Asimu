@@ -403,7 +403,7 @@ max_iters = 100                   # 可选，默认 100
 tolerance = 1.0e-8                # 可选，默认 1.0e-8
 
 [incompressible.linear.pressure]
-solver = "gmres"                  # 当前仅 gmres
+solver = "pcg"                    # pcg（默认）| gmres
 restart = 64                      # 可选，默认 64
 max_iters = 500                   # 可选，默认 500
 tolerance = 1.0e-10               # 可选，默认 1.0e-10
@@ -434,7 +434,7 @@ solution_vtk = false              # 为 true 时额外写 .vtu/.vts（需 featur
 
 `solution_cgns` / `solution_vtk` 流场含：可压缩输出 `Density`、`VelocityX/Y/Z`、`Pressure`、`MachNumber`、`Temperature`；不可压缩输出 `Pressure`、`VelocityX/Y/Z`（CGNS 为 Vertex 插值，VTK 为单元中心）。多块 3D case 的最终流场与 `solution_every` 间隔快照均写为单个 CGNS 文件、每个 block 一个 Structured Zone。
 
-配置 `residual_csv`（及可选 `residual_plot`）时，每次 `solution_every` 间隔流场快照写出后，会同步覆盖更新残差 CSV 与曲线图；算例结束时仍会再次写出最终版本。
+配置 `residual_csv`（及可选 `residual_plot`）时，算例结束会写出残差 CSV 与曲线图；可压缩多步路径在 `solution_every` 间隔也会同步刷新。不可压缩 SIMPLEC/PISO 会在最终输出时写出逐步 pressure-velocity residual CSV；同时配置 `solution_cgns` 与 `solution_every` 时，还会写出 `flow_step000100.cgns` 形式的间隔快照。
 
 ### 7.2 `[observability]` — Chrome trace
 
