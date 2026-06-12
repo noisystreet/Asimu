@@ -250,6 +250,8 @@ tolerance = 1.0e-4
 [output]
 dir = "out"
 residual_csv = "residual.csv"
+solution_cgns = "flow.cgns"
+solution_every = 2
 "#,
     )
     .expect("write case");
@@ -258,8 +260,20 @@ residual_csv = "residual.csv"
     let metrics = result.incompressible_3d.expect("incompressible metrics");
     assert_eq!(metrics.simplec_iterations, 3);
     let residual = root.join("out/residual.csv");
+    let interval_flow = root.join("out/flow_step000002.cgns");
+    let final_flow = root.join("out/flow.cgns");
     assert!(residual.is_file(), "missing {}", residual.display());
+    #[cfg(feature = "io-cgns")]
+    assert!(
+        interval_flow.is_file(),
+        "missing {}",
+        interval_flow.display()
+    );
+    #[cfg(feature = "io-cgns")]
+    assert!(final_flow.is_file(), "missing {}", final_flow.display());
     assert!(metrics.written.contains(&residual));
+    assert!(metrics.written.contains(&interval_flow));
+    assert!(metrics.written.contains(&final_flow));
     let csv = fs::read_to_string(&residual).expect("read residual");
     assert!(csv.contains("face_flux_divergence"));
     assert!(csv.contains("velocity_delta_interior"));

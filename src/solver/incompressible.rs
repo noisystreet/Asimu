@@ -79,6 +79,11 @@ pub struct IncompressiblePressureVelocitySnapshot {
     pub fields: IncompressibleFields,
 }
 
+pub struct IncompressiblePressureVelocityStepView<'a> {
+    pub info: &'a IncompressiblePressureVelocityStepInfo,
+    pub history: &'a [IncompressiblePressureVelocityStepInfo],
+    pub fields: &'a IncompressibleFields,
+}
 #[derive(Debug, Clone, PartialEq)]
 pub struct IncompressiblePressureVelocityDiagnostic {
     pub algorithm: IncompressiblePressureVelocityAlgorithm,
@@ -121,10 +126,16 @@ pub struct IncompressiblePressureVelocityDiagnostic {
 }
 
 pub type IncompressibleSimplecDiagnostic = IncompressiblePressureVelocityDiagnostic;
-
 pub fn run_incompressible_pressure_velocity(
     initial_fields: &IncompressibleFields,
     config: IncompressiblePressureVelocityConfig<'_>,
+) -> Result<IncompressiblePressureVelocityDiagnostic> {
+    run_incompressible_pressure_velocity_with_observer(initial_fields, config, |_| Ok(()))
+}
+pub fn run_incompressible_pressure_velocity_with_observer(
+    initial_fields: &IncompressibleFields,
+    config: IncompressiblePressureVelocityConfig<'_>,
+    mut observe_step: impl FnMut(IncompressiblePressureVelocityStepView<'_>) -> Result<()>,
 ) -> Result<IncompressiblePressureVelocityDiagnostic> {
     let mut current_fields = initial_fields.clone();
     let max_iterations = config.max_iterations.max(1);
@@ -169,12 +180,13 @@ pub fn run_incompressible_pressure_velocity(
         diagnostic.pressure_corrector_residual_history = corrector_residual_history.clone();
         diagnostic.pressure_corrector_max_correction_history =
             corrector_max_correction_history.clone();
-        step_history.push(incompressible_step_info(
+        let step_info = incompressible_step_info(
             step_no as u64,
             &diagnostic,
             config.pseudo_time_step,
             converged,
-        ));
+        );
+        step_history.push(step_info);
         if snapshot_due(step_no, config.snapshot_interval) {
             snapshots.push(IncompressiblePressureVelocitySnapshot {
                 step: step_no as u64,
@@ -184,6 +196,11 @@ pub fn run_incompressible_pressure_velocity(
         }
         diagnostic.step_history = step_history.clone();
         diagnostic.snapshots = snapshots.clone();
+        observe_step(IncompressiblePressureVelocityStepView {
+            info: step_history.last().expect("step history just pushed"),
+            history: &step_history,
+            fields: &current_fields,
+        })?;
         let is_final = converged || step_no == max_iterations;
         log_simplec_step(SimplecStepLog {
             step: step_no,

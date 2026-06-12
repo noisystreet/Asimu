@@ -35,8 +35,9 @@ pub use incompressible::{
     IncompressiblePressureLinearSolverKind, IncompressiblePressureVelocityAlgorithm,
     IncompressiblePressureVelocityConfig, IncompressiblePressureVelocityDiagnostic,
     IncompressiblePressureVelocitySnapshot, IncompressiblePressureVelocityStepInfo,
-    IncompressibleSimplecConfig, IncompressibleSimplecDiagnostic,
-    run_incompressible_pressure_velocity, run_incompressible_simplec,
+    IncompressiblePressureVelocityStepView, IncompressibleSimplecConfig,
+    IncompressibleSimplecDiagnostic, run_incompressible_pressure_velocity,
+    run_incompressible_pressure_velocity_with_observer, run_incompressible_simplec,
 };
 pub use lu_sgs_sweep_unstructured::{
     LuSgsSweepUnstructuredInput, LuSgsSweepUnstructuredParams, LuSgsUnstructuredCouplings,
