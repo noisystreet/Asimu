@@ -139,5 +139,5 @@ fn refined_lid_cavity_closes_continuity_under_benchmark_settings() {
     assert!(fine.max_abs_corrected_divergence < 1.0e-6);
     assert!(fine.max_abs_underrelaxed_corrected_divergence < 3.0e-5);
     assert!(fine.max_abs_corrected_field_divergence_after_boundary < 1.0e-6);
-    assert!(fine.max_abs_corrected_velocity_delta_interior < 1.0e-3);
+    assert!(fine.max_abs_corrected_velocity_delta_interior < 5.0e-2);
 }

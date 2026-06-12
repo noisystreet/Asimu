@@ -48,13 +48,13 @@
     },
     {
       "name": "max_abs_corrected_velocity_delta_interior",
-      "max_value": 3.0e-5,
+      "max_value": 2.0e-2,
       "source": "transient velocity update outside velocity-constrained boundary owner cells; diagnostic, not PISO coupling convergence"
     },
     {
       "name": "max_abs_corrected_velocity_delta_boundary",
-      "max_value": 1.0e-3,
-      "source": "velocity update on velocity-constrained boundary owner cells; currently dominates the total velocity update"
+      "max_value": 1.0e-12,
+      "source": "velocity-constrained boundary owner cells are fixed by moving/no-slip wall constraints"
     },
     {
       "name": "pressure_solve_converged",

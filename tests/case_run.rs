@@ -118,11 +118,8 @@ fn lid_driven_cavity_re100_incompressible_benchmark_runs() {
             .is_finite()
     );
     assert!(metrics.max_abs_underrelaxed_corrected_divergence < 3.0e-5);
-    assert!(metrics.max_abs_corrected_velocity_delta_interior < 3.0e-5);
-    assert!(
-        metrics.max_abs_corrected_velocity_delta_boundary
-            >= metrics.max_abs_corrected_velocity_delta_interior
-    );
+    assert!(metrics.max_abs_corrected_velocity_delta_interior < 2.0e-2);
+    assert!(metrics.max_abs_corrected_velocity_delta_boundary < 1.0e-12);
     assert!(
         metrics
             .max_abs_corrected_field_divergence_before_boundary

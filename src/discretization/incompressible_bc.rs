@@ -32,8 +32,8 @@ pub fn apply_incompressible_boundary_conditions_3d(
                     zero_normal_velocity(fields, owner, normal_arr);
                     stats.velocity_cells += 1;
                 }
-                BoundaryKind::MovingWall { .. } => {
-                    zero_normal_velocity(fields, owner, normal_arr);
+                BoundaryKind::MovingWall { velocity } => {
+                    set_velocity(fields, owner, tangential_velocity(*velocity, normal_arr));
                     stats.velocity_cells += 1;
                 }
                 BoundaryKind::IncompressibleVelocityInlet { velocity } => {
@@ -230,7 +230,7 @@ mod tests {
     }
 
     #[test]
-    fn moving_wall_only_removes_normal_velocity() {
+    fn moving_wall_sets_tangential_owner_velocity() {
         let mesh = StructuredMesh3d::uniform_box("box", 1, 2, 1, 1.0, 1.0, 1.0).expect("mesh");
         let mut fields =
             IncompressibleFields::uniform(mesh.num_cells(), 0.0, [0.2, 0.3, 0.0]).expect("fields");
@@ -245,7 +245,7 @@ mod tests {
         apply_incompressible_boundary_conditions_3d(&mesh, &mut fields, &boundary).expect("bc");
 
         let lid = mesh.cell_index(0, 1, 0);
-        assert_eq!(fields.velocity_x.values()[lid], 0.2);
+        assert_eq!(fields.velocity_x.values()[lid], 1.0);
         assert_eq!(fields.velocity_y.values()[lid], 0.0);
     }
 }
