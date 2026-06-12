@@ -15,13 +15,16 @@ pub mod gradient_unstructured;
 pub mod hllc;
 pub mod incompressible;
 pub mod incompressible_bc;
+pub mod incompressible_boundary_flux;
 pub mod incompressible_face_boundary;
 pub mod incompressible_face_flux;
 pub mod incompressible_momentum;
 #[cfg(test)]
 mod incompressible_momentum_tests;
+pub mod incompressible_phi;
 pub mod incompressible_pressure;
 pub mod incompressible_rhie_chow;
+pub mod incompressible_velocity_correction;
 pub mod inviscid;
 pub mod reconstruction;
 pub mod reconstruction_unstructured;
@@ -81,9 +84,17 @@ pub use incompressible_momentum::{
     IncompressibleConvectionScheme, IncompressibleMomentumPredictorConfig,
     IncompressibleMomentumPredictorSystem, assemble_incompressible_momentum_predictor_3d,
     assemble_incompressible_momentum_predictor_with_boundary_3d,
+    assemble_incompressible_momentum_predictor_with_boundary_and_flux_3d,
 };
+pub use incompressible_phi::IncompressibleFaceFluxField;
 pub use incompressible_pressure::assemble_incompressible_pressure_correction_3d;
-pub use incompressible_rhie_chow::compute_incompressible_rhie_chow_divergence_3d;
+pub use incompressible_rhie_chow::{
+    PressureCorrectedRhieChowDivergenceConfig, compute_incompressible_rhie_chow_divergence_3d,
+    compute_pressure_corrected_rhie_chow_divergence_3d,
+};
+pub use incompressible_velocity_correction::{
+    RhieChowVelocityCorrectionConfig, corrected_incompressible_fields_rhie_chow_3d,
+};
 pub use inviscid::{InviscidFlux, physical_inviscid_flux};
 pub use reconstruction::{
     InterfacePrimitiveStates, PrimitiveMusclStencil1d, interface_conserved_pair,

@@ -36,7 +36,9 @@ pub fn assemble_incompressible_pressure_correction_3d(
         .iter()
         .map(|value| config.density * value)
         .collect::<Vec<_>>();
-    if !has_correction_dirichlet {
+    if is_closed_pressure_correction_cavity(boundary) {
+        remove_active_pressure_rhs_mean(&mut rhs, &correction_dirichlet);
+    } else if !has_correction_dirichlet {
         remove_closed_domain_rhs_mean(&mut rhs, config.pressure_reference_cell);
     }
     let ctx = PressureCorrectionCtx {
@@ -246,6 +248,22 @@ fn is_pressure_correction_dirichlet_kind(kind: &BoundaryKind) -> bool {
     incompressible_pressure_correction_dirichlet(kind)
 }
 
+fn is_closed_pressure_correction_cavity(boundary: &BoundarySet) -> bool {
+    let has_dirichlet = boundary
+        .patches()
+        .iter()
+        .any(|patch| is_pressure_correction_dirichlet_kind(&patch.kind));
+    if !has_dirichlet {
+        return false;
+    }
+    !boundary.patches().iter().any(|patch| {
+        matches!(
+            patch.kind,
+            BoundaryKind::IncompressiblePressureOutlet { .. } | BoundaryKind::Outlet { .. }
+        )
+    })
+}
+
 fn remove_closed_domain_rhs_mean(rhs: &mut [Real], pressure_reference_cell: usize) {
     if rhs.len() <= 1 {
         return;
@@ -270,6 +288,28 @@ fn remove_closed_domain_rhs_mean(rhs: &mut [Real], pressure_reference_cell: usiz
     }
 }
 
+/// 有 \(p'=0\) 边界 owner 时，对非约束行 RHS 去均值以满足闭域兼容性。
+fn remove_active_pressure_rhs_mean(rhs: &mut [Real], pressure_correction_dirichlet: &[bool]) {
+    let mut sum = 0.0;
+    let mut count = 0usize;
+    for (value, &dirichlet) in rhs.iter().zip(pressure_correction_dirichlet.iter()) {
+        if dirichlet {
+            continue;
+        }
+        sum += *value;
+        count += 1;
+    }
+    if count <= 1 {
+        return;
+    }
+    let mean = sum / count as Real;
+    for (value, &dirichlet) in rhs.iter_mut().zip(pressure_correction_dirichlet.iter()) {
+        if !dirichlet {
+            *value -= mean;
+        }
+    }
+}
+
 fn neighbor_if(
     present: bool,
     index: impl FnOnce() -> (usize, usize, usize),
@@ -280,7 +320,8 @@ fn neighbor_if(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::boundary::BoundarySet;
+    use crate::boundary::WallHeat;
+    use crate::boundary::{BoundaryKind, BoundaryPatch, BoundarySet};
 
     #[test]
     fn closed_domain_pressure_rhs_removes_active_mean() {
@@ -302,5 +343,70 @@ mod tests {
         assert!((system.rhs[1] + 1.0).abs() <= Real::EPSILON);
         assert!(system.rhs[2].abs() <= Real::EPSILON);
         assert!((system.rhs[3] - 1.0).abs() <= Real::EPSILON);
+    }
+
+    #[test]
+    fn walled_cavity_pressure_rhs_removes_active_mean() {
+        let mesh = StructuredMesh3d::uniform_box("box", 5, 5, 1, 1.0, 1.0, 0.1).expect("mesh");
+        let divergence = ScalarField::uniform(mesh.num_cells(), 1.0).expect("divergence");
+        let d = ScalarField::uniform(mesh.num_cells(), 1.0).expect("d");
+        let boundary = BoundarySet::new(vec![
+            BoundaryPatch::new(
+                "i_min",
+                mesh.resolve_logical_boundary("i_min").expect("faces"),
+                BoundaryKind::Wall {
+                    no_slip: true,
+                    heat: WallHeat::Adiabatic,
+                },
+            ),
+            BoundaryPatch::new(
+                "i_max",
+                mesh.resolve_logical_boundary("i_max").expect("faces"),
+                BoundaryKind::Wall {
+                    no_slip: true,
+                    heat: WallHeat::Adiabatic,
+                },
+            ),
+            BoundaryPatch::new(
+                "j_min",
+                mesh.resolve_logical_boundary("j_min").expect("faces"),
+                BoundaryKind::Wall {
+                    no_slip: true,
+                    heat: WallHeat::Adiabatic,
+                },
+            ),
+            BoundaryPatch::new(
+                "j_max",
+                mesh.resolve_logical_boundary("j_max").expect("faces"),
+                BoundaryKind::MovingWall {
+                    velocity: [1.0, 0.0, 0.0],
+                },
+            ),
+        ]);
+        let system = assemble_incompressible_pressure_correction_3d(
+            &mesh,
+            &divergence,
+            &d,
+            &boundary,
+            IncompressiblePressureCorrectionConfig::new(1.0, 0, 0.0).expect("config"),
+        )
+        .expect("system");
+        let active_sum = active_pressure_rhs_sum(&system.matrix, &system.rhs);
+        assert!(active_sum.abs() <= 1.0e-12);
+    }
+
+    fn active_pressure_rhs_sum(matrix: &CsrMatrix, rhs: &[Real]) -> Real {
+        let mut sum = 0.0;
+        for (row, value) in rhs.iter().enumerate() {
+            let mut entries = matrix.row_entries(row);
+            let Some((col, diag)) = entries.next() else {
+                continue;
+            };
+            if entries.next().is_none() && col == row && (diag - 1.0).abs() <= Real::EPSILON {
+                continue;
+            }
+            sum += *value;
+        }
+        sum
     }
 }

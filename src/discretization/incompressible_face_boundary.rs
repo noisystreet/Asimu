@@ -2,6 +2,7 @@
 
 use crate::boundary::{BoundaryKind, BoundarySet};
 use crate::core::Real;
+use crate::core::Vector3;
 use crate::field::IncompressibleFields;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,6 +18,53 @@ pub struct IncompressibleBoundaryFaceState {
     pub pressure: Option<Real>,
     pub pressure_correction_dirichlet: bool,
     pub mass_flux_kind: IncompressibleMassFluxBoundaryKind,
+}
+
+/// 将速度投影到面切平面（去除法向分量）。
+#[must_use]
+pub(crate) fn tangential_velocity(velocity: [Real; 3], normal: [Real; 3]) -> [Real; 3] {
+    let un = velocity[0] * normal[0] + velocity[1] * normal[1] + velocity[2] * normal[2];
+    [
+        velocity[0] - un * normal[0],
+        velocity[1] - un * normal[1],
+        velocity[2] - un * normal[2],
+    ]
+}
+
+#[must_use]
+pub(crate) fn cell_velocity(fields: &IncompressibleFields, cell: usize) -> [Real; 3] {
+    [
+        fields.velocity_x.values()[cell],
+        fields.velocity_y.values()[cell],
+        fields.velocity_z.values()[cell],
+    ]
+}
+
+#[must_use]
+pub(crate) fn is_normal_component(component: usize, normal: [Real; 3]) -> bool {
+    normal[component].abs() > 0.5
+}
+
+/// 边界质量通量（owner 单元净入通量，已含面积）。
+#[must_use]
+pub(crate) fn incompressible_boundary_mass_flux(
+    owner: usize,
+    kind: &BoundaryKind,
+    fields: &IncompressibleFields,
+    normal: Vector3,
+    area: Real,
+) -> Real {
+    let state = incompressible_boundary_face_state(owner, kind, fields);
+    match state.mass_flux_kind {
+        IncompressibleMassFluxBoundaryKind::NoPenetration => 0.0,
+        IncompressibleMassFluxBoundaryKind::PrescribedVelocity
+        | IncompressibleMassFluxBoundaryKind::OwnerExtrapolated => {
+            (state.velocity[0] * normal.x
+                + state.velocity[1] * normal.y
+                + state.velocity[2] * normal.z)
+                * area
+        }
+    }
 }
 
 /// 返回不可压缩边界 face 的速度状态。
@@ -75,9 +123,7 @@ pub fn incompressible_boundary_face_state(
 pub fn incompressible_pressure_correction_dirichlet(kind: &BoundaryKind) -> bool {
     matches!(
         kind,
-        BoundaryKind::Wall { .. }
-            | BoundaryKind::MovingWall { .. }
-            | BoundaryKind::IncompressibleVelocityInlet { .. }
+        BoundaryKind::IncompressibleVelocityInlet { .. }
             | BoundaryKind::IncompressiblePressureOutlet { .. }
             | BoundaryKind::Outlet { .. }
             | BoundaryKind::Inlet { .. }
@@ -117,7 +163,7 @@ mod tests {
         );
 
         assert_eq!(state.velocity, [0.0, 0.0, 0.0]);
-        assert!(state.pressure_correction_dirichlet);
+        assert!(!state.pressure_correction_dirichlet);
         assert_eq!(
             state.mass_flux_kind,
             IncompressibleMassFluxBoundaryKind::NoPenetration

@@ -14,7 +14,7 @@ use crate::error::{AsimuError, Result};
 use crate::field::IncompressibleFields;
 #[cfg(feature = "io-cgns")]
 use crate::field::ScalarField;
-use crate::io::{CaseSpec, resolve_case_output_path};
+use crate::io::{CaseSpec, CaseTimeMode, resolve_case_output_path};
 #[cfg(feature = "io-cgns")]
 use crate::io::{
     StructuredVertexSolution, VertexScalarFieldView, write_structured_vertex_solution_cgns,
@@ -136,6 +136,7 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
             max_iterations: steps as usize,
             min_iterations: case.time.min_steps.unwrap_or(0) as usize,
             tolerance: case.time.tolerance,
+            require_velocity_convergence: case.time.mode == CaseTimeMode::Steady,
             linear_solvers: config.linear_solvers,
         },
     )?;

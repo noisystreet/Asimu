@@ -28,8 +28,7 @@ max_iters = 50
 tolerance = 1.0e-9
 
 [incompressible.linear.pressure]
-solver = "gmres"
-restart = 64
+solver = "pcg"
 max_iters = 500
 tolerance = 1.0e-10
 

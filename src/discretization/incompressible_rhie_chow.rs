@@ -2,7 +2,10 @@
 
 use crate::boundary::{BoundaryKind, BoundarySet};
 use crate::core::Real;
-use crate::discretization::incompressible_face_boundary::incompressible_boundary_face_velocity;
+use crate::discretization::incompressible_boundary_flux::{
+    IncompressibleBoundaryOwnerMap, interior_face_velocity,
+};
+use crate::discretization::incompressible_face_boundary::incompressible_boundary_mass_flux;
 use crate::error::{AsimuError, Result};
 use crate::field::{IncompressibleFields, ScalarField};
 use crate::mesh::{BoundaryMesh, BoundaryMesh3d, StructuredMesh3d};
@@ -26,6 +29,7 @@ pub fn compute_incompressible_rhie_chow_divergence_3d(
         )));
     }
     let spacing = CartesianSpacing::from_mesh(mesh)?;
+    let boundary_map = IncompressibleBoundaryOwnerMap::build(mesh, boundary);
     let mut net = vec![0.0; mesh.num_cells()];
     let periodic_x = boundary.has_periodic_pair("i_min", "i_max");
     add_interior_fluxes(
@@ -34,6 +38,7 @@ pub fn compute_incompressible_rhie_chow_divergence_3d(
         d_coefficient.values(),
         spacing,
         periodic_x,
+        &boundary_map,
         &mut net,
     );
     add_boundary_fluxes(mesh, fields, boundary, &mut net)?;
@@ -42,6 +47,58 @@ pub fn compute_incompressible_rhie_chow_divergence_3d(
         *value /= volume;
     }
     ScalarField::from_values(net)
+}
+
+/// 压力校正后用同一套 Rhie-Chow 面通量计算连续性残差。
+pub fn compute_pressure_corrected_rhie_chow_divergence_3d(
+    config: PressureCorrectedRhieChowDivergenceConfig<'_>,
+) -> Result<ScalarField> {
+    let PressureCorrectedRhieChowDivergenceConfig {
+        mesh,
+        fields,
+        d_coefficient,
+        pressure_correction,
+        correction_scale,
+        boundary,
+    } = config;
+    fields.validate_len(mesh.num_cells())?;
+    if d_coefficient.len() != mesh.num_cells() || pressure_correction.len() != mesh.num_cells() {
+        return Err(AsimuError::Field(
+            "Rhie-Chow 压力校正通量长度与网格单元数不一致".to_string(),
+        ));
+    }
+    let spacing = CartesianSpacing::from_mesh(mesh)?;
+    let boundary_map = IncompressibleBoundaryOwnerMap::build(mesh, boundary);
+    let mut net = vec![0.0; mesh.num_cells()];
+    let periodic_x = boundary.has_periodic_pair("i_min", "i_max");
+    add_pressure_corrected_interior_fluxes(
+        PressureCorrectedInteriorFluxCtx {
+            mesh,
+            fields,
+            d: d_coefficient,
+            pressure_correction,
+            correction_scale,
+            spacing,
+            periodic_x,
+            boundary: &boundary_map,
+        },
+        &mut net,
+    );
+    add_boundary_fluxes(mesh, fields, boundary, &mut net)?;
+    let volume = spacing.volume();
+    for value in &mut net {
+        *value /= volume;
+    }
+    ScalarField::from_values(net)
+}
+
+pub struct PressureCorrectedRhieChowDivergenceConfig<'a> {
+    pub mesh: &'a StructuredMesh3d,
+    pub fields: &'a IncompressibleFields,
+    pub d_coefficient: &'a [Real],
+    pub pressure_correction: &'a [Real],
+    pub correction_scale: Real,
+    pub boundary: &'a BoundarySet,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -79,6 +136,7 @@ fn add_interior_fluxes(
     d: &[Real],
     spacing: CartesianSpacing,
     periodic_x: bool,
+    boundary: &IncompressibleBoundaryOwnerMap,
     net: &mut [Real],
 ) {
     let ax = spacing.dy * spacing.dz;
@@ -89,8 +147,7 @@ fn add_interior_fluxes(
             for i in 0..mesh.nx.saturating_sub(1) {
                 let left = mesh.cell_index(i, j, k);
                 let right = mesh.cell_index(i + 1, j, k);
-                let u_face =
-                    0.5 * (fields.velocity_x.values()[left] + fields.velocity_x.values()[right]);
+                let u_face = interior_face_velocity(fields, left, right, 0, boundary);
                 let d_face = 0.5 * (d[left] + d[right]);
                 let dp = fields.pressure.values()[right] - fields.pressure.values()[left];
                 scatter_pair(net, left, right, (u_face - d_face * dp / spacing.dx) * ax);
@@ -102,8 +159,7 @@ fn add_interior_fluxes(
             for j in 0..mesh.ny {
                 let left = mesh.cell_index(mesh.nx - 1, j, k);
                 let right = mesh.cell_index(0, j, k);
-                let u_face =
-                    0.5 * (fields.velocity_x.values()[left] + fields.velocity_x.values()[right]);
+                let u_face = interior_face_velocity(fields, left, right, 0, boundary);
                 let d_face = 0.5 * (d[left] + d[right]);
                 let dp = fields.pressure.values()[right] - fields.pressure.values()[left];
                 scatter_pair(net, left, right, (u_face - d_face * dp / spacing.dx) * ax);
@@ -115,8 +171,7 @@ fn add_interior_fluxes(
             for i in 0..mesh.nx {
                 let left = mesh.cell_index(i, j, k);
                 let right = mesh.cell_index(i, j + 1, k);
-                let v_face =
-                    0.5 * (fields.velocity_y.values()[left] + fields.velocity_y.values()[right]);
+                let v_face = interior_face_velocity(fields, left, right, 1, boundary);
                 let d_face = 0.5 * (d[left] + d[right]);
                 let dp = fields.pressure.values()[right] - fields.pressure.values()[left];
                 scatter_pair(net, left, right, (v_face - d_face * dp / spacing.dy) * ay);
@@ -128,14 +183,104 @@ fn add_interior_fluxes(
             for i in 0..mesh.nx {
                 let left = mesh.cell_index(i, j, k);
                 let right = mesh.cell_index(i, j, k + 1);
-                let w_face =
-                    0.5 * (fields.velocity_z.values()[left] + fields.velocity_z.values()[right]);
+                let w_face = interior_face_velocity(fields, left, right, 2, boundary);
                 let d_face = 0.5 * (d[left] + d[right]);
                 let dp = fields.pressure.values()[right] - fields.pressure.values()[left];
                 scatter_pair(net, left, right, (w_face - d_face * dp / spacing.dz) * az);
             }
         }
     }
+}
+
+struct PressureCorrectedInteriorFluxCtx<'a> {
+    mesh: &'a StructuredMesh3d,
+    fields: &'a IncompressibleFields,
+    d: &'a [Real],
+    pressure_correction: &'a [Real],
+    correction_scale: Real,
+    spacing: CartesianSpacing,
+    periodic_x: bool,
+    boundary: &'a IncompressibleBoundaryOwnerMap,
+}
+
+fn add_pressure_corrected_interior_fluxes(
+    ctx: PressureCorrectedInteriorFluxCtx<'_>,
+    net: &mut [Real],
+) {
+    let ax = ctx.spacing.dy * ctx.spacing.dz;
+    let ay = ctx.spacing.dx * ctx.spacing.dz;
+    let az = ctx.spacing.dx * ctx.spacing.dy;
+    for k in 0..ctx.mesh.nz {
+        for j in 0..ctx.mesh.ny {
+            for i in 0..ctx.mesh.nx.saturating_sub(1) {
+                let left = ctx.mesh.cell_index(i, j, k);
+                let right = ctx.mesh.cell_index(i + 1, j, k);
+                scatter_pair(
+                    net,
+                    left,
+                    right,
+                    pressure_corrected_face_flux(&ctx, left, right, 0, ctx.spacing.dx) * ax,
+                );
+            }
+        }
+    }
+    if ctx.periodic_x && ctx.mesh.nx > 1 {
+        for k in 0..ctx.mesh.nz {
+            for j in 0..ctx.mesh.ny {
+                let left = ctx.mesh.cell_index(ctx.mesh.nx - 1, j, k);
+                let right = ctx.mesh.cell_index(0, j, k);
+                scatter_pair(
+                    net,
+                    left,
+                    right,
+                    pressure_corrected_face_flux(&ctx, left, right, 0, ctx.spacing.dx) * ax,
+                );
+            }
+        }
+    }
+    for k in 0..ctx.mesh.nz {
+        for j in 0..ctx.mesh.ny.saturating_sub(1) {
+            for i in 0..ctx.mesh.nx {
+                let left = ctx.mesh.cell_index(i, j, k);
+                let right = ctx.mesh.cell_index(i, j + 1, k);
+                scatter_pair(
+                    net,
+                    left,
+                    right,
+                    pressure_corrected_face_flux(&ctx, left, right, 1, ctx.spacing.dy) * ay,
+                );
+            }
+        }
+    }
+    for k in 0..ctx.mesh.nz.saturating_sub(1) {
+        for j in 0..ctx.mesh.ny {
+            for i in 0..ctx.mesh.nx {
+                let left = ctx.mesh.cell_index(i, j, k);
+                let right = ctx.mesh.cell_index(i, j, k + 1);
+                scatter_pair(
+                    net,
+                    left,
+                    right,
+                    pressure_corrected_face_flux(&ctx, left, right, 2, ctx.spacing.dz) * az,
+                );
+            }
+        }
+    }
+}
+
+fn pressure_corrected_face_flux(
+    ctx: &PressureCorrectedInteriorFluxCtx<'_>,
+    left: usize,
+    right: usize,
+    component: usize,
+    spacing: Real,
+) -> Real {
+    let u_face = interior_face_velocity(ctx.fields, left, right, component, ctx.boundary);
+    let d_face = 0.5 * (ctx.d[left] + ctx.d[right]);
+    let p = ctx.fields.pressure.values();
+    let dp = (p[right] - ctx.correction_scale * ctx.pressure_correction[right])
+        - (p[left] - ctx.correction_scale * ctx.pressure_correction[left]);
+    u_face - d_face * dp / spacing
 }
 
 fn scatter_pair(net: &mut [Real], owner: usize, neighbor: usize, flux_owner_to_neighbor: Real) {
@@ -156,11 +301,13 @@ fn add_boundary_fluxes(
         for &face in &patch.face_ids {
             let owner = mesh.face_owner(face)?.index() as usize;
             let geom = mesh.face_geometry_3d(face)?;
-            let velocity = incompressible_boundary_face_velocity(owner, &patch.kind, fields);
-            let flux = (velocity[0] * geom.normal.x
-                + velocity[1] * geom.normal.y
-                + velocity[2] * geom.normal.z)
-                * geom.area;
+            let flux = incompressible_boundary_mass_flux(
+                owner,
+                &patch.kind,
+                fields,
+                geom.normal,
+                geom.area,
+            );
             net[owner] += flux;
         }
     }

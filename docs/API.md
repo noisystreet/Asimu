@@ -98,9 +98,9 @@ let result = solver.run(&mesh)?;
 | `CaseSpec::build_initial_fields()` | 构建 `Fields` |
 | `CaseSpec::initial_scalar(name)` | 单标量；未声明则全零 |
 | `CaseSpec::build_multiblock_conserved_fields(blocks)` | 按 block 顺序构建多块守恒初场 |
-| `Incompressible3dRunMetrics` | I1 runner 指标：pressure-velocity algorithm（`simplec`/`piso`）、pressure corrector 数量、外层迭代/收敛/连续性与动量残差历史、PISO corrector 连续性残差与最大 \(p'\) 历史、初始边界面通量散度、预测 Rhie-Chow 散度、全量压力校正方程质量残差、按 `pressure_under_relaxation` 缩放后的压力校正连续性残差、修正场重施加边界前/后的边界感知 face-flux 散度、压力校正 active RHS 总和、压力校正 CSR 行数/非零数、GMRES 收敛与最大 \(p'\)、动量预测 CSR、三分量 GMRES 收敛、最大 \(d_P\)、总速度变化及非速度约束 owner / 速度约束边界 owner 的速度变化拆分、不可压缩边界应用统计、Poiseuille 解析剖面误差、lid cavity Ghia 中心线误差，以及 lid cavity / Poiseuille benchmark 的中心线剖面诊断 |
-| `run_incompressible_pressure_velocity(config)` / `run_incompressible_simplec(config)` | 不可压缩 pressure-velocity solver 层编排；`time.scheme = "simplec"` 在 case 层强制单 pressure corrector，`time.scheme = "piso"` 使用 `[incompressible].piso_correctors`。流程包括动量预测、Rhie-Chow 连续性 RHS、一次或多次压力校正、\(p,\mathbf{u}\) 欠松弛修正、修正后边界重施加，以及连续性/动量/非速度约束 owner 速度更新量收敛判据；结构化路径支持 `i_min/i_max` 成对周期边界，`time.min_steps` 可防止早停假收敛 |
-| `IncompressibleLinearSolverConfig` | 不可压缩动量/压力线性求解配置；当前映射 `[incompressible.linear.momentum]` 与 `[incompressible.linear.pressure]` 的 GMRES 参数，压力校正默认使用更高迭代预算 |
+| `Incompressible3dRunMetrics` | I1 runner 指标：pressure-velocity algorithm（`simplec`/`piso`）、pressure corrector 数量、外层迭代/收敛/连续性与动量残差历史、PISO corrector 连续性残差与最大 \(p'\) 历史、初始边界面通量散度、预测 Rhie-Chow 散度、显式 `phi` 修正后散度、全量压力校正方程质量残差、修正场重施加边界前/后的边界感知 face-flux 散度、压力校正 active RHS 总和、压力校正 CSR 行数/非零数、PCG/GMRES 收敛与最大 \(p'\)、动量预测 CSR、三分量 GMRES 收敛、最大 \(d_P\)、总速度变化及非速度约束 owner / 速度约束边界 owner 的速度变化拆分、不可压缩边界应用统计、Poiseuille 解析剖面误差、lid cavity Ghia 中心线误差，以及 lid cavity / Poiseuille benchmark 的中心线剖面诊断 |
+| `run_incompressible_pressure_velocity(config)` / `run_incompressible_simplec(config)` | 不可压缩 pressure-velocity solver 层编排；`time.scheme = "simplec"` 在 case 层强制单 pressure corrector，`time.scheme = "piso"` 使用 `[incompressible].piso_correctors`。流程包括动量预测、Rhie-Chow 初始化显式 `phi`、一次或多次压力校正、显式 `phi` 更新、\(p,\mathbf{u}\) 修正、修正后边界重施加，以及按 `time.mode` 区分的收敛判据：`steady` 要求连续性/动量/非速度约束 owner 速度更新量同时收敛，`transient` 只用连续性和动量判断 pressure-velocity coupling，速度更新量作为物理瞬态诊断；结构化路径支持 `i_min/i_max` 成对周期边界，`time.min_steps` 可防止早停假收敛 |
+| `IncompressibleLinearSolverConfig` | 不可压缩动量/压力线性求解配置；当前映射 `[incompressible.linear.momentum]` 的 GMRES 参数与 `[incompressible.linear.pressure]` 的 `pcg` / `gmres` 参数，压力校正默认使用 Jacobi-preconditioned PCG |
 | `IncompressibleConvectionScheme` | 不可压缩动量预测对流格式：`upwind` 默认；`central` 为内部面中心对流入口 |
 | `load_conserved_fields(path)` / `write_conserved_fields(path, fields)` | 单 block restart TOML（version=1） |
 | `load_multiblock_conserved_fields(path, block_names)` / `write_multiblock_conserved_fields(path, blocks)` | 多块 restart TOML（version=2） |
@@ -254,14 +254,14 @@ name=<mesh_name>;cells=<count>
 | `viscous_assembly` | 结构/非结构共用粘性边界面通量（`viscous_flux_at_boundary`）、scatter（`accumulate_viscous_*`）与壁面梯度外推 |
 | `compute_incompressible_divergence_3d` | 结构化 3D 不可压缩 I1 连续性残差 \(\nabla\cdot\mathbf{u}\) |
 | `compute_incompressible_face_flux_divergence_3d` | 结构化 3D 不可压缩边界感知 face-flux 散度诊断，墙面/对称面无穿透、速度入口/动壁使用边界面速度 |
-| `incompressible_boundary_face_state` | 不可压缩边界 face state 统一入口，集中给出 face 速度、可选边界压力、压力校正 Dirichlet 语义与质量通量类型，供 face-flux、Rhie-Chow 与压力校正路径复用 |
+| `incompressible_boundary_face_state` | 不可压缩边界 face state 统一入口，集中给出 face 速度、可选边界压力、压力校正约束语义与质量通量类型，供 face-flux、Rhie-Chow 与压力校正路径复用 |
 | `compute_incompressible_velocity_laplacian_3d` | 结构化 3D 不可压缩 I1 速度三分量 Laplacian skeleton |
 | `apply_incompressible_boundary_conditions_3d` | 结构化 3D 不可压缩 cell-centered 边界应用，支持 wall / moving_wall / velocity_inlet / pressure_outlet / symmetry |
-| `compute_incompressible_rhie_chow_divergence_3d` | 结构化 3D 不可压缩 Rhie-Chow 面质量通量连续性残差 |
-| `assemble_incompressible_pressure_correction_3d` | 结构化 3D 不可压缩压力校正 CSR，使用面插值 \(d_P\)、压力出口 \(p'=0\) 与参考压力策略 |
+| `compute_incompressible_rhie_chow_divergence_3d` / `IncompressibleFaceFluxField` | 结构化 3D 不可压缩 Rhie-Chow 面质量通量连续性残差；显式 `phi` 字段可由 Rhie-Chow 初始化、由 pressure correction 直接更新，并供动量对流项复用 |
+| `assemble_incompressible_pressure_correction_3d` | 结构化 3D 不可压缩压力校正 CSR，使用面插值 \(d_P\)、压力出口 \(p'=0\)、wall/moving wall/symmetry Neumann-like 通量语义与参考压力策略 |
 | `assemble_incompressible_pressure_poisson_3d` | 结构化 3D 不可压缩 I1 压力校正 Poisson CSR 兼容骨架 |
 | `IncompressiblePressureCorrectionConfig` / `IncompressiblePressureCorrectionSystem` | 压力校正装配配置与 `CsrMatrix + rhs` 输出 |
-| `assemble_incompressible_momentum_predictor_3d` / `assemble_incompressible_momentum_predictor_with_boundary_3d` | 结构化 3D 不可压缩伪瞬态动量预测 CSR，含内部扩散、一阶迎风对流、动量边界面贡献、压力梯度、每单位质量体力源项、欠松弛与 \(d_P\) |
+| `assemble_incompressible_momentum_predictor_3d` / `assemble_incompressible_momentum_predictor_with_boundary_3d` / `assemble_incompressible_momentum_predictor_with_boundary_and_flux_3d` | 结构化 3D 不可压缩伪瞬态动量预测 CSR，含内部扩散、一阶迎风对流、可选显式 `phi` 对流通量、动量边界面贡献、压力梯度、每单位质量体力源项、欠松弛与 \(d_P\) |
 | `IncompressibleMomentumPredictorConfig` / `IncompressibleMomentumPredictorSystem` | 动量预测装配配置（含 `body_force`）与三分量共用 `CsrMatrix`、`rhs_x/y/z`、`d_coefficient` |
 | `assemble_diffusion_placeholder` | 尺寸校验 + RHS 清零占位 |
 

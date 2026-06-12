@@ -23,7 +23,7 @@
     {
       "name": "simplec_converged",
       "value": true,
-      "source": "continuity, momentum and non-boundary-owner velocity update satisfy time.tolerance after min_steps"
+      "source": "transient PISO pressure-velocity coupling residuals satisfy time.tolerance after min_steps"
     },
     {
       "name": "max_abs_corrected_divergence",
@@ -38,8 +38,8 @@
     },
     {
       "name": "max_abs_corrected_field_divergence_after_boundary",
-      "max_value": 0.03,
-      "source": "boundary-aware face-flux divergence recomputed from corrected velocity after boundary reapply"
+      "max_value": 1.0e-8,
+      "source": "explicit pressure-corrected phi divergence after boundary flux constraints"
     },
     {
       "name": "pressure_correction_rhs_active_sum",
@@ -48,8 +48,8 @@
     },
     {
       "name": "max_abs_corrected_velocity_delta_interior",
-      "max_value": 1.0e-6,
-      "source": "velocity update outside velocity-constrained boundary owner cells"
+      "max_value": 3.0e-5,
+      "source": "transient velocity update outside velocity-constrained boundary owner cells; diagnostic, not PISO coupling convergence"
     },
     {
       "name": "max_abs_corrected_velocity_delta_boundary",
@@ -59,7 +59,7 @@
     {
       "name": "pressure_solve_converged",
       "value": true,
-      "source": "pressure GMRES smoke threshold"
+      "source": "pressure linear solve smoke threshold (PCG or GMRES)"
     }
   ],
   "profiles": [

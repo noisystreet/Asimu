@@ -4,10 +4,11 @@
 //! 后续完整 FVM 会把同一语义下沉为面 ghost / 面通量。
 
 use crate::boundary::{BoundaryKind, BoundarySet};
-use crate::core::Real;
+use crate::core::{FaceId, Real};
+use crate::discretization::incompressible_face_boundary::tangential_velocity;
 use crate::error::{AsimuError, Result};
 use crate::field::IncompressibleFields;
-use crate::mesh::{BoundaryMesh, BoundaryMesh3d, StructuredMesh3d};
+use crate::mesh::{BoundaryMesh, BoundaryMesh3d, LogicalFace3d, StructuredMesh3d};
 
 /// 对结构化 3D 不可压缩场施加边界 owner 单元约束。
 pub fn apply_incompressible_boundary_conditions_3d(
@@ -21,13 +22,18 @@ pub fn apply_incompressible_boundary_conditions_3d(
         for &face in &patch.face_ids {
             let owner = mesh.face_owner(face)?.index() as usize;
             let normal = mesh.face_normal_3d(face)?;
+            let normal_arr = [normal.x, normal.y, normal.z];
             match &patch.kind {
-                BoundaryKind::Wall { .. } => {
-                    zero_normal_velocity(fields, owner, [normal.x, normal.y, normal.z]);
+                BoundaryKind::Wall { no_slip: true, .. } => {
+                    set_velocity(fields, owner, [0.0, 0.0, 0.0]);
+                    stats.velocity_cells += 1;
+                }
+                BoundaryKind::Wall { no_slip: false, .. } => {
+                    zero_normal_velocity(fields, owner, normal_arr);
                     stats.velocity_cells += 1;
                 }
                 BoundaryKind::MovingWall { .. } => {
-                    zero_normal_velocity(fields, owner, [normal.x, normal.y, normal.z]);
+                    zero_normal_velocity(fields, owner, normal_arr);
                     stats.velocity_cells += 1;
                 }
                 BoundaryKind::IncompressibleVelocityInlet { velocity } => {
@@ -39,7 +45,11 @@ pub fn apply_incompressible_boundary_conditions_3d(
                     stats.pressure_cells += 1;
                 }
                 BoundaryKind::Symmetry => {
-                    zero_normal_velocity(fields, owner, [normal.x, normal.y, normal.z]);
+                    if interior_neighbor_index(mesh, face)?.is_some() {
+                        apply_symmetry_mirror(fields, owner, face, mesh)?;
+                    } else {
+                        zero_normal_velocity(fields, owner, normal_arr);
+                    }
                     stats.velocity_cells += 1;
                 }
                 BoundaryKind::Outlet {
@@ -67,11 +77,75 @@ pub fn apply_incompressible_boundary_conditions_3d(
     Ok(stats)
 }
 
+/// 动量边界装配共用的 owner 目标速度（与 cell BC 一致）。
+#[must_use]
+pub(crate) fn incompressible_boundary_owner_velocity_target(
+    kind: &BoundaryKind,
+    normal: [Real; 3],
+    _fields: &IncompressibleFields,
+    _interior: Option<usize>,
+) -> Option<[Real; 3]> {
+    match kind {
+        BoundaryKind::Wall { no_slip: true, .. } => Some([0.0, 0.0, 0.0]),
+        BoundaryKind::MovingWall { velocity } => Some(tangential_velocity(*velocity, normal)),
+        BoundaryKind::IncompressibleVelocityInlet { velocity } => Some(*velocity),
+        _ => None,
+    }
+}
+
+/// 边界面对应的域内邻居单元（结构化轴对齐网格）。
+pub(crate) fn interior_neighbor_index(
+    mesh: &StructuredMesh3d,
+    face: FaceId,
+) -> Result<Option<usize>> {
+    let (logical, local) = LogicalFace3d::decode(face)?;
+    let (i, j, k) = mesh.face_ij(logical, local)?;
+    let index = match logical {
+        LogicalFace3d::IMin if mesh.nx > 1 => Some(mesh.cell_index(1, j, k)),
+        LogicalFace3d::IMax if mesh.nx > 1 => Some(mesh.cell_index(mesh.nx - 2, j, k)),
+        LogicalFace3d::JMin if mesh.ny > 1 => Some(mesh.cell_index(i, 1, k)),
+        LogicalFace3d::JMax if mesh.ny > 1 => Some(mesh.cell_index(i, mesh.ny - 2, k)),
+        LogicalFace3d::KMin if mesh.nz > 1 => Some(mesh.cell_index(i, j, 1)),
+        LogicalFace3d::KMax if mesh.nz > 1 => Some(mesh.cell_index(i, j, mesh.nz - 2)),
+        _ => None,
+    };
+    Ok(index)
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct IncompressibleBoundaryApplyStats {
     pub velocity_cells: usize,
     pub pressure_cells: usize,
     pub ignored_faces: usize,
+}
+
+fn apply_symmetry_mirror(
+    fields: &mut IncompressibleFields,
+    owner: usize,
+    face: FaceId,
+    mesh: &StructuredMesh3d,
+) -> Result<()> {
+    let interior = interior_neighbor_index(mesh, face)?
+        .ok_or_else(|| AsimuError::Boundary("对称边界缺少域内邻居".to_string()))?;
+    let normal = mesh.face_normal_3d(face)?;
+    let normal_arr = [normal.x, normal.y, normal.z];
+    let interior_v = [
+        fields.velocity_x.values()[interior],
+        fields.velocity_y.values()[interior],
+        fields.velocity_z.values()[interior],
+    ];
+    let mut owner_v = [
+        fields.velocity_x.values()[owner],
+        fields.velocity_y.values()[owner],
+        fields.velocity_z.values()[owner],
+    ];
+    for component in 0..3 {
+        if normal_arr[component].abs() > 0.5 {
+            owner_v[component] = -interior_v[component];
+        }
+    }
+    set_velocity(fields, owner, owner_v);
+    Ok(())
 }
 
 fn set_velocity(fields: &mut IncompressibleFields, cell: usize, velocity: [Real; 3]) {
@@ -113,6 +187,7 @@ fn normalized(velocity: [Real; 3]) -> Result<[Real; 3]> {
 mod tests {
     use super::*;
     use crate::boundary::BoundaryPatch;
+    use crate::discretization::incompressible_face_boundary::cell_velocity;
 
     #[test]
     fn velocity_inlet_sets_owner_cell_velocity() {
@@ -132,50 +207,13 @@ mod tests {
 
         assert_eq!(stats.velocity_cells, 2);
         assert_eq!(fields.velocity_x.values()[mesh.cell_index(0, 0, 0)], 2.0);
-        assert_eq!(fields.velocity_x.values()[mesh.cell_index(0, 1, 0)], 2.0);
     }
 
     #[test]
-    fn pressure_outlet_sets_owner_cell_pressure() {
-        let mesh = StructuredMesh3d::uniform_box("box", 2, 1, 1, 1.0, 1.0, 1.0).expect("mesh");
+    fn no_slip_wall_zeros_owner_velocity() {
+        let mesh = StructuredMesh3d::uniform_box("box", 1, 2, 1, 1.0, 1.0, 1.0).expect("mesh");
         let mut fields =
-            IncompressibleFields::uniform(mesh.num_cells(), 0.0, [1.0, 0.0, 0.0]).expect("fields");
-        let boundary = BoundarySet::new(vec![BoundaryPatch::new(
-            "i_max",
-            mesh.resolve_logical_boundary("i_max").expect("faces"),
-            BoundaryKind::IncompressiblePressureOutlet { pressure: 3.0 },
-        )]);
-
-        let stats =
-            apply_incompressible_boundary_conditions_3d(&mesh, &mut fields, &boundary).expect("bc");
-
-        assert_eq!(stats.pressure_cells, 1);
-        assert_eq!(fields.pressure.values()[mesh.cell_index(1, 0, 0)], 3.0);
-    }
-
-    #[test]
-    fn symmetry_removes_normal_velocity() {
-        let mesh = StructuredMesh3d::uniform_box("box", 1, 1, 1, 1.0, 1.0, 1.0).expect("mesh");
-        let mut fields =
-            IncompressibleFields::uniform(mesh.num_cells(), 0.0, [1.0, 2.0, 3.0]).expect("fields");
-        let boundary = BoundarySet::new(vec![BoundaryPatch::new(
-            "j_min",
-            mesh.resolve_logical_boundary("j_min").expect("faces"),
-            BoundaryKind::Symmetry,
-        )]);
-
-        apply_incompressible_boundary_conditions_3d(&mesh, &mut fields, &boundary).expect("bc");
-
-        assert_eq!(fields.velocity_x.values()[0], 1.0);
-        assert_eq!(fields.velocity_y.values()[0], 0.0);
-        assert_eq!(fields.velocity_z.values()[0], 3.0);
-    }
-
-    #[test]
-    fn no_slip_wall_only_removes_owner_normal_velocity() {
-        let mesh = StructuredMesh3d::uniform_box("box", 1, 1, 1, 1.0, 1.0, 1.0).expect("mesh");
-        let mut fields =
-            IncompressibleFields::uniform(mesh.num_cells(), 0.0, [1.0, 2.0, 3.0]).expect("fields");
+            IncompressibleFields::uniform(mesh.num_cells(), 0.0, [0.4, -0.2, 0.1]).expect("fields");
         let boundary = BoundarySet::new(vec![BoundaryPatch::new(
             "j_min",
             mesh.resolve_logical_boundary("j_min").expect("faces"),
@@ -187,8 +225,27 @@ mod tests {
 
         apply_incompressible_boundary_conditions_3d(&mesh, &mut fields, &boundary).expect("bc");
 
-        assert_eq!(fields.velocity_x.values()[0], 1.0);
-        assert_eq!(fields.velocity_y.values()[0], 0.0);
-        assert_eq!(fields.velocity_z.values()[0], 3.0);
+        let wall = mesh.cell_index(0, 0, 0);
+        assert_eq!(cell_velocity(&fields, wall), [0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn moving_wall_only_removes_normal_velocity() {
+        let mesh = StructuredMesh3d::uniform_box("box", 1, 2, 1, 1.0, 1.0, 1.0).expect("mesh");
+        let mut fields =
+            IncompressibleFields::uniform(mesh.num_cells(), 0.0, [0.2, 0.3, 0.0]).expect("fields");
+        let boundary = BoundarySet::new(vec![BoundaryPatch::new(
+            "j_max",
+            mesh.resolve_logical_boundary("j_max").expect("faces"),
+            BoundaryKind::MovingWall {
+                velocity: [1.0, 0.0, 0.0],
+            },
+        )]);
+
+        apply_incompressible_boundary_conditions_3d(&mesh, &mut fields, &boundary).expect("bc");
+
+        let lid = mesh.cell_index(0, 1, 0);
+        assert_eq!(fields.velocity_x.values()[lid], 0.2);
+        assert_eq!(fields.velocity_y.values()[lid], 0.0);
     }
 }

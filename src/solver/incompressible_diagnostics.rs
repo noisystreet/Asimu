@@ -1,5 +1,9 @@
+use std::time::Instant;
+
+use tracing::info;
+
 use crate::boundary::{BoundaryKind, BoundarySet};
-use crate::core::Real;
+use crate::core::{Real, format_log_fixed4, format_log_sci4, log10_positive};
 use crate::error::{AsimuError, Result};
 use crate::field::IncompressibleFields;
 use crate::mesh::{BoundaryMesh, StructuredMesh3d};
@@ -64,6 +68,78 @@ pub(crate) fn validate_simplec_step(
         )));
     }
     Ok(())
+}
+
+/// SIMPLEC/PISO 外层步各阶段耗时（毫秒）。
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct SimplecStepTiming {
+    pub(crate) divergence_ms: Real,
+    pub(crate) momentum_assemble_ms: Real,
+    pub(crate) momentum_solve_ms: Real,
+    pub(crate) rhie_chow_ms: Real,
+    pub(crate) pressure_ms: Real,
+    pub(crate) correct_ms: Real,
+    pub(crate) step_total_ms: Real,
+}
+
+pub(crate) fn elapsed_ms(start: Instant) -> Real {
+    start.elapsed().as_secs_f64() * 1000.0
+}
+
+/// 压力方程与 face-flux 散度耦合诊断（单步）。
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PressureCouplingLog {
+    pub predicted_divergence: Real,
+    pub pressure_equation_residual: Real,
+    pub face_flux_divergence: Real,
+    pub rhs_active_sum: Real,
+}
+
+/// SIMPLEC/PISO 外层步 info 日志字段。
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SimplecStepLog {
+    pub step: usize,
+    pub algorithm: IncompressiblePressureVelocityAlgorithm,
+    pub continuity: Real,
+    pub momentum: Real,
+    pub velocity_delta: Real,
+    pub pressure_iters: usize,
+    pub momentum_iters: usize,
+    pub pressure_converged: bool,
+    pub momentum_converged: bool,
+    pub coupling: PressureCouplingLog,
+    pub timing: SimplecStepTiming,
+    pub converged: bool,
+    pub is_final: bool,
+}
+
+pub(crate) fn log_simplec_step(log: SimplecStepLog) {
+    info!(
+        step = log.step,
+        algorithm = log.algorithm.label(),
+        continuity = %format_log_sci4(log.continuity),
+        momentum = %format_log_sci4(log.momentum),
+        velocity_delta = %format_log_sci4(log.velocity_delta),
+        log10_continuity = %format_log_fixed4(log10_positive(log.continuity)),
+        pressure_iters = log.pressure_iters,
+        momentum_iters = log.momentum_iters,
+        pressure_converged = log.pressure_converged,
+        momentum_converged = log.momentum_converged,
+        predicted_divergence = %format_log_sci4(log.coupling.predicted_divergence),
+        pressure_equation_residual = %format_log_sci4(log.coupling.pressure_equation_residual),
+        face_flux_divergence = %format_log_sci4(log.coupling.face_flux_divergence),
+        pressure_rhs_active_sum = %format_log_sci4(log.coupling.rhs_active_sum),
+        profile_divergence_ms = %format_log_fixed4(log.timing.divergence_ms),
+        profile_momentum_assemble_ms = %format_log_fixed4(log.timing.momentum_assemble_ms),
+        profile_momentum_solve_ms = %format_log_fixed4(log.timing.momentum_solve_ms),
+        profile_rhie_chow_ms = %format_log_fixed4(log.timing.rhie_chow_ms),
+        profile_pressure_ms = %format_log_fixed4(log.timing.pressure_ms),
+        profile_correct_ms = %format_log_fixed4(log.timing.correct_ms),
+        profile_step_total_ms = %format_log_fixed4(log.timing.step_total_ms),
+        converged = log.converged,
+        is_final = log.is_final,
+        "SIMPLEC 外层步"
+    );
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

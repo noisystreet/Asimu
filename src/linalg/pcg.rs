@@ -112,7 +112,7 @@ impl PcgSolver {
         }
 
         Ok(PcgReport {
-            converged: false,
+            converged: residual <= self.config.tolerance,
             iterations: self.config.max_iters,
             residual_norm: residual,
         })
