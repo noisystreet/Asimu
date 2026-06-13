@@ -37,8 +37,8 @@ fn validate_f32_capabilities(case: &CaseSpec) -> Result<()> {
     } else {
         return Err(f32_unsupported("仅 3D 可压缩 Euler 路径支持 f32"));
     }
-    if case.navier_stokes.is_some() {
-        return Err(f32_unsupported("Navier-Stokes 路径尚未支持 f32"));
+    if case.navier_stokes.is_some() && !matches!(case.mesh, CaseMesh::Unstructured3d(_)) {
+        return Err(f32_unsupported("Navier-Stokes f32 暂仅支持非结构 3D 路径"));
     }
     if case.physics.viscous.is_some() && !matches!(case.mesh, CaseMesh::Unstructured3d(_)) {
         return Err(f32_unsupported("粘性通量 f32 暂仅支持非结构 3D 路径"));
@@ -332,6 +332,21 @@ mod compute_precision_tests {
         case.physics.viscous = Some(crate::physics::ViscousPhysicsConfig::default());
         let err = compute_precision(&case).expect_err("structured viscous f32");
         assert!(err.to_string().contains("非结构"));
+    }
+
+    #[test]
+    fn f32_accepts_unstructured_navier_stokes_case() {
+        let mut case = load_case(Path::new(
+            "tests/benchmarks/unstructured_freestream/case.toml",
+        ))
+        .expect("case");
+        case.numerics = CaseNumericsConfig {
+            compute_precision: ComputePrecision::F32,
+        };
+        attach_single_tet_farfield(&mut case);
+        case.navier_stokes = case.euler.take();
+        case.physics.viscous = Some(crate::physics::ViscousPhysicsConfig::default());
+        compute_precision(&case).expect("unstructured navier_stokes f32");
     }
 
     #[test]

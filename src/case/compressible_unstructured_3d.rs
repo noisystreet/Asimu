@@ -172,7 +172,8 @@ fn run_compressible_unstructured_3d(
 fn run_compressible_unstructured_3d_typed<
     T: crate::core::ComputeFloat
         + crate::field::LusgsDiagonalUpdateBackend
-        + crate::discretization::residual::InviscidTypedScatterBackend,
+        + crate::discretization::residual::InviscidTypedScatterBackend
+        + crate::discretization::residual::ViscousTypedScatterBackend,
 >(
     case: &CaseSpec,
     mesh: &UnstructuredMesh3d,

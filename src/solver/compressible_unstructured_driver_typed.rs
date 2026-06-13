@@ -9,6 +9,7 @@ use crate::core::{
 };
 use crate::discretization::residual::{
     InviscidAssemblyUnstructuredTypedParams, InviscidTypedScatterBackend,
+    ViscousTypedScatterBackend,
 };
 use crate::discretization::{
     BoundaryGhostBuffer, GradientFields, ReconstructionKind, UnstructuredGradientLsqInput,
@@ -66,7 +67,10 @@ struct UnstructuredRunEnvTyped<'a> {
 
 /// typed 非结构同步推进；结束时将场转为 `f64` 供输出。
 pub fn run_unstructured_typed_with_observer<
-    T: ComputeFloat + crate::field::LusgsDiagonalUpdateBackend + InviscidTypedScatterBackend,
+    T: ComputeFloat
+        + crate::field::LusgsDiagonalUpdateBackend
+        + InviscidTypedScatterBackend
+        + ViscousTypedScatterBackend,
 >(
     config: &UnstructuredDriverConfig<'_>,
     fields: &mut ConservedFieldsT<T>,
@@ -154,7 +158,10 @@ pub fn run_unstructured_typed_with_observer<
 }
 
 fn advance_unstructured_step_typed<
-    T: ComputeFloat + crate::field::LusgsDiagonalUpdateBackend + InviscidTypedScatterBackend,
+    T: ComputeFloat
+        + crate::field::LusgsDiagonalUpdateBackend
+        + InviscidTypedScatterBackend
+        + ViscousTypedScatterBackend,
 >(
     env: &mut UnstructuredRunEnvTyped<'_>,
     fields: &mut ConservedFieldsT<T>,
@@ -220,7 +227,10 @@ fn advance_unstructured_step_typed<
 }
 
 fn advance_unstructured_lusgs_typed<
-    T: ComputeFloat + crate::field::LusgsDiagonalUpdateBackend + InviscidTypedScatterBackend,
+    T: ComputeFloat
+        + crate::field::LusgsDiagonalUpdateBackend
+        + InviscidTypedScatterBackend
+        + ViscousTypedScatterBackend,
 >(
     env: &UnstructuredRunEnvTyped<'_>,
     fields: &mut ConservedFieldsT<T>,
@@ -283,7 +293,9 @@ fn advance_unstructured_lusgs_typed<
     Ok(())
 }
 
-fn advance_unstructured_explicit_typed<T: InviscidTypedScatterBackend>(
+fn advance_unstructured_explicit_typed<
+    T: InviscidTypedScatterBackend + ViscousTypedScatterBackend,
+>(
     env: &UnstructuredRunEnvTyped<'_>,
     fields: &mut ConservedFieldsT<T>,
     work: &mut UnstructuredStepWorkTyped<T>,
@@ -336,7 +348,7 @@ fn advance_unstructured_explicit_typed<T: InviscidTypedScatterBackend>(
     }
 }
 
-fn assemble_unstructured_typed_rhs<T: InviscidTypedScatterBackend>(
+fn assemble_unstructured_typed_rhs<T: InviscidTypedScatterBackend + ViscousTypedScatterBackend>(
     env: &UnstructuredRunEnvTyped<'_>,
     work: &mut UnstructuredTypedRhsWork<'_, T>,
     fields: &ConservedFieldsT<T>,

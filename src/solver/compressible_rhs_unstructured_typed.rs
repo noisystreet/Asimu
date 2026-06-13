@@ -4,6 +4,7 @@ use crate::boundary::BoundarySet;
 use crate::core::Real;
 use crate::discretization::residual::InviscidAssemblyUnstructuredTypedParams;
 use crate::discretization::residual::InviscidTypedScatterBackend;
+use crate::discretization::residual::ViscousTypedScatterBackend;
 use crate::discretization::{
     BoundaryGhostBuffer, GradientFields, InviscidFluxConfig, ReconstructionKind,
     UnstructuredGradientLsqInput, UnstructuredSolverMeshCache, ViscousAssemblyUnstructuredScratch,
@@ -22,7 +23,10 @@ use tracing::info_span;
 
 /// typed 非结构单步 RHS 求值上下文（驱动层当前 inline 装配；供 LU-SGS typed 复用）。
 #[allow(dead_code)]
-pub(crate) struct EvaluateRhsUnstructuredTyped<'a, T: InviscidTypedScatterBackend> {
+pub(crate) struct EvaluateRhsUnstructuredTyped<
+    'a,
+    T: InviscidTypedScatterBackend + ViscousTypedScatterBackend,
+> {
     pub mesh: &'a UnstructuredMesh3d,
     pub mesh_cache: &'a UnstructuredSolverMeshCache,
     pub patches: &'a BoundarySet,
@@ -40,7 +44,9 @@ pub(crate) struct EvaluateRhsUnstructuredTyped<'a, T: InviscidTypedScatterBacken
     pub exec: &'a mut crate::exec::ExecutionContext,
 }
 
-impl<T: InviscidTypedScatterBackend> EvaluateRhsUnstructuredTyped<'_, T> {
+impl<T: InviscidTypedScatterBackend + ViscousTypedScatterBackend>
+    EvaluateRhsUnstructuredTyped<'_, T>
+{
     #[allow(dead_code)]
     pub fn run(
         &mut self,

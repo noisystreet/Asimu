@@ -41,7 +41,7 @@ pub use assembly_unstructured_viscous::{
     compute_gradients_and_assemble_viscous_unstructured_with_scratch,
 };
 pub use assembly_unstructured_viscous_typed::{
-    ViscousAssemblyUnstructuredTypedInput,
+    ViscousAssemblyUnstructuredTypedInput, ViscousTypedScatterBackend,
     compute_gradients_and_assemble_viscous_unstructured_typed,
 };
 pub use face_flux_3d::{

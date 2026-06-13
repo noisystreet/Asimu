@@ -1,4 +1,8 @@
-//! 非结构 3D 粘性残差 typed 装配（P3：梯度/通量 `f64`，残差 `f32`/`f64` 串行 scatter）。
+//! 非结构 3D 粘性残差 typed 装配（P3/P5：梯度/通量 `f64`，残差 `f32`/`f64` scatter）。
+
+#[cfg(feature = "parallel-fvm")]
+#[path = "assembly_unstructured_viscous_typed_parallel.rs"]
+mod parallel;
 
 use tracing::info_span;
 
@@ -10,8 +14,15 @@ use crate::discretization::gradient_unstructured::{
     UnstructuredGradientLsqInput, compute_unstructured_gradients_idw_lsq_with_scratch,
 };
 use crate::discretization::unstructured_face_cache::UnstructuredSolverMeshCache;
-use crate::discretization::viscous::scatter_fused_interior_viscous_face_typed;
+use crate::discretization::viscous::{
+    InteriorViscousFaceFlux, InteriorViscousFaceGeom, scatter_fused_interior_viscous_face_typed,
+};
 use crate::error::{AsimuError, Result};
+use crate::exec::ExecutionContext;
+use crate::exec::scatter::{
+    ViscousResidualMut, ViscousResidualMutF32, ViscousScatterOp, ViscousValidSlotScatter,
+    ViscousValidSlotScatterF32, scatter_viscous_valid_slots, scatter_viscous_valid_slots_f32,
+};
 use crate::field::{ConservedResidualT, PrimitiveFields};
 use crate::mesh::UnstructuredMesh3d;
 use crate::physics::{IdealGasEoS, ViscousPhysicsConfig};
@@ -19,8 +30,108 @@ use crate::physics::{IdealGasEoS, ViscousPhysicsConfig};
 use super::assembly_unstructured_viscous::{
     ViscousAssemblyUnstructuredParams, ViscousAssemblyUnstructuredScratch,
     assemble_boundary_faces_typed, fill_face_averaged_viscous_soa_typed,
-    interior_viscous_face_geom_and_flux, prepare_unstructured_viscous_transport,
+    prepare_unstructured_viscous_transport,
 };
+
+#[cfg(all(feature = "simd-fvm", not(feature = "parallel-fvm")))]
+use super::assembly_unstructured_viscous::compute_viscous_batch4_into;
+#[cfg(not(feature = "parallel-fvm"))]
+use super::assembly_unstructured_viscous::interior_viscous_face_geom_and_flux;
+
+/// typed 粘性 scatter dispatch（`ComputeFloat` 密封子集；ADR 0016 P5）。
+pub trait ViscousTypedScatterBackend: ComputeFloat {
+    fn scatter_viscous_valid_slots(
+        residual: &mut ConservedResidualT<Self>,
+        ctx: &ExecutionContext,
+        bucket_len: usize,
+        geoms: &[InteriorViscousFaceGeom],
+        fluxes: &[InteriorViscousFaceFlux],
+        valid: &[bool],
+        extract: impl Fn(&InteriorViscousFaceGeom, &InteriorViscousFaceFlux) -> ViscousScatterOp + Sync,
+    );
+
+    fn scatter_fused_interior_face(
+        residual: &mut ConservedResidualT<Self>,
+        geom: &InteriorViscousFaceGeom,
+        flux: &InteriorViscousFaceFlux,
+    );
+}
+
+#[cfg_attr(feature = "parallel-fvm", allow(dead_code))]
+impl ViscousTypedScatterBackend for f64 {
+    fn scatter_viscous_valid_slots(
+        residual: &mut ConservedResidualT<f64>,
+        ctx: &ExecutionContext,
+        bucket_len: usize,
+        geoms: &[InteriorViscousFaceGeom],
+        fluxes: &[InteriorViscousFaceFlux],
+        valid: &[bool],
+        extract: impl Fn(&InteriorViscousFaceGeom, &InteriorViscousFaceFlux) -> ViscousScatterOp + Sync,
+    ) {
+        scatter_viscous_valid_slots(
+            ViscousValidSlotScatter {
+                ctx,
+                bucket_len,
+                geoms,
+                fluxes,
+                valid,
+                residual: ViscousResidualMut {
+                    mx: residual.momentum_x.values_mut(),
+                    my: residual.momentum_y.values_mut(),
+                    mz: residual.momentum_z.values_mut(),
+                    energy: residual.total_energy.values_mut(),
+                },
+            },
+            extract,
+        );
+    }
+
+    fn scatter_fused_interior_face(
+        residual: &mut ConservedResidualT<f64>,
+        geom: &InteriorViscousFaceGeom,
+        flux: &InteriorViscousFaceFlux,
+    ) {
+        scatter_fused_interior_viscous_face_typed(residual, geom, flux);
+    }
+}
+
+#[cfg_attr(feature = "parallel-fvm", allow(dead_code))]
+impl ViscousTypedScatterBackend for f32 {
+    fn scatter_viscous_valid_slots(
+        residual: &mut ConservedResidualT<f32>,
+        ctx: &ExecutionContext,
+        bucket_len: usize,
+        geoms: &[InteriorViscousFaceGeom],
+        fluxes: &[InteriorViscousFaceFlux],
+        valid: &[bool],
+        extract: impl Fn(&InteriorViscousFaceGeom, &InteriorViscousFaceFlux) -> ViscousScatterOp + Sync,
+    ) {
+        scatter_viscous_valid_slots_f32(
+            ViscousValidSlotScatterF32 {
+                ctx,
+                bucket_len,
+                geoms,
+                fluxes,
+                valid,
+                residual: ViscousResidualMutF32 {
+                    mx: residual.momentum_x.values_mut(),
+                    my: residual.momentum_y.values_mut(),
+                    mz: residual.momentum_z.values_mut(),
+                    energy: residual.total_energy.values_mut(),
+                },
+            },
+            extract,
+        );
+    }
+
+    fn scatter_fused_interior_face(
+        residual: &mut ConservedResidualT<f32>,
+        geom: &InteriorViscousFaceGeom,
+        flux: &InteriorViscousFaceFlux,
+    ) {
+        scatter_fused_interior_viscous_face_typed(residual, geom, flux);
+    }
+}
 
 /// typed 非结构粘性装配输入（原始变量/梯度仍用 `f64`，见 ADR 0016 §4）。
 pub struct ViscousAssemblyUnstructuredTypedInput<'a> {
@@ -33,11 +144,11 @@ pub struct ViscousAssemblyUnstructuredTypedInput<'a> {
     pub primitives: &'a PrimitiveFields,
     pub min_pressure: Real,
     pub gradient_scratch: &'a mut GradientFields,
-    pub exec: &'a mut crate::exec::ExecutionContext,
+    pub exec: &'a mut ExecutionContext,
 }
 
-/// 计算 IDWLS 梯度并在 typed 残差上叠加粘性通量（串行；不经 exec viscous scatter）。
-pub fn compute_gradients_and_assemble_viscous_unstructured_typed<T: ComputeFloat>(
+/// 计算 IDWLS 梯度并在 typed 残差上叠加粘性通量。
+pub fn compute_gradients_and_assemble_viscous_unstructured_typed<T: ViscousTypedScatterBackend>(
     residual: &mut ConservedResidualT<T>,
     input: &mut ViscousAssemblyUnstructuredTypedInput<'_>,
     scratch: &mut ViscousAssemblyUnstructuredScratch,
@@ -74,13 +185,14 @@ pub fn compute_gradients_and_assemble_viscous_unstructured_typed<T: ComputeFloat
         gradients: input.gradient_scratch,
         min_pressure: input.min_pressure,
     };
-    assemble_viscous_residual_unstructured_typed(residual, &params, scratch)
+    assemble_viscous_residual_unstructured_typed(residual, &params, scratch, input.exec)
 }
 
-fn assemble_viscous_residual_unstructured_typed<T: ComputeFloat>(
+fn assemble_viscous_residual_unstructured_typed<T: ViscousTypedScatterBackend>(
     residual: &mut ConservedResidualT<T>,
     params: &ViscousAssemblyUnstructuredParams<'_>,
     scratch: &mut ViscousAssemblyUnstructuredScratch,
+    exec: &mut ExecutionContext,
 ) -> Result<()> {
     let n = params.mesh.num_cells();
     if residual.num_cells() != n || params.primitives.num_cells() != n {
@@ -94,14 +206,15 @@ fn assemble_viscous_residual_unstructured_typed<T: ComputeFloat>(
         Some(params.viscous),
         &mut scratch.gradient.temperatures,
     )?;
-    assemble_interior_faces_typed(residual, params, scratch)?;
+    assemble_interior_faces_typed(residual, params, scratch, exec)?;
     assemble_boundary_faces_typed(residual, params, scratch)
 }
 
-fn assemble_interior_faces_typed<T: ComputeFloat>(
+fn assemble_interior_faces_typed<T: ViscousTypedScatterBackend>(
     residual: &mut ConservedResidualT<T>,
     params: &ViscousAssemblyUnstructuredParams<'_>,
     scratch: &mut ViscousAssemblyUnstructuredScratch,
+    exec: &mut ExecutionContext,
 ) -> Result<()> {
     let num_faces = params.face_topology.interior.len();
     let constant = prepare_unstructured_viscous_transport(params, scratch)?;
@@ -114,7 +227,44 @@ fn assemble_interior_faces_typed<T: ComputeFloat>(
         let _span = info_span!(
             "unstructured_viscous_interior_flux_typed",
             faces = num_faces,
+            colors = params.face_topology.interior_coloring.num_colors,
             precision = T::PRECISION.label(),
+        )
+        .entered();
+        accumulate_interior_faces_typed_fused(residual, params, scratch, constant, exec)?;
+    }
+    Ok(())
+}
+
+fn accumulate_interior_faces_typed_fused<T: ViscousTypedScatterBackend>(
+    residual: &mut ConservedResidualT<T>,
+    params: &ViscousAssemblyUnstructuredParams<'_>,
+    scratch: &ViscousAssemblyUnstructuredScratch,
+    constant: Option<(Real, Real)>,
+    exec: &mut ExecutionContext,
+) -> Result<()> {
+    #[cfg(all(feature = "simd-fvm", not(feature = "parallel-fvm")))]
+    {
+        let _span = info_span!(
+            "unstructured_viscous_interior_flux_typed",
+            path = "simd_batch4",
+            faces = params.face_topology.interior.len(),
+        )
+        .entered();
+        for layout in &params.face_topology.interior_coloring.bucket_batch_layouts {
+            accumulate_viscous_bucket_batch4_typed_serial(
+                residual, layout, params, scratch, constant,
+            )?;
+        }
+        return Ok(());
+    }
+
+    #[cfg(not(feature = "parallel-fvm"))]
+    {
+        let _span = info_span!(
+            "unstructured_viscous_interior_flux_typed",
+            path = "colored_serial",
+            faces = params.face_topology.interior.len(),
         )
         .entered();
         params
@@ -124,9 +274,78 @@ fn assemble_interior_faces_typed<T: ComputeFloat>(
                 if let Some((geom, flux)) =
                     interior_viscous_face_geom_and_flux(i, params, scratch, constant)
                 {
-                    scatter_fused_interior_viscous_face_typed(residual, &geom, &flux);
+                    T::scatter_fused_interior_face(residual, &geom, &flux);
                 }
             });
+    }
+
+    #[cfg(all(feature = "parallel-fvm", feature = "simd-fvm"))]
+    {
+        let _span = info_span!(
+            "unstructured_viscous_interior_flux_typed",
+            path = "simd_batch4",
+            faces = params.face_topology.interior.len(),
+            colors = params.face_topology.interior_coloring.num_colors,
+        )
+        .entered();
+        for layout in &params.face_topology.interior_coloring.bucket_batch_layouts {
+            parallel::accumulate_viscous_bucket_batch4_typed_fused(
+                residual, layout, params, scratch, constant, exec,
+            );
+        }
+    }
+
+    #[cfg(all(feature = "parallel-fvm", not(feature = "simd-fvm")))]
+    {
+        let _span = info_span!(
+            "unstructured_viscous_interior_flux_typed",
+            path = "parallel_bucket",
+            faces = params.face_topology.interior.len(),
+            colors = params.face_topology.interior_coloring.num_colors,
+        )
+        .entered();
+        for bucket in &params.face_topology.interior_coloring.buckets {
+            parallel::accumulate_viscous_color_bucket_typed_fused(
+                residual, bucket, params, scratch, constant, exec,
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(all(feature = "simd-fvm", not(feature = "parallel-fvm")))]
+fn accumulate_viscous_bucket_batch4_typed_serial<T: ViscousTypedScatterBackend>(
+    residual: &mut ConservedResidualT<T>,
+    layout: &crate::discretization::InteriorFaceBucketBatchLayout,
+    params: &ViscousAssemblyUnstructuredParams<'_>,
+    scratch: &ViscousAssemblyUnstructuredScratch,
+    constant: Option<(Real, Real)>,
+) -> Result<()> {
+    let mut geoms = [InteriorViscousFaceGeom::default(); 4];
+    let mut fluxes = [InteriorViscousFaceFlux::default(); 4];
+    for batch in &layout.full_batches {
+        let count =
+            compute_viscous_batch4_into(batch, params, scratch, constant, &mut geoms, &mut fluxes);
+        if count == 0 {
+            for &face_idx in &batch.face_indices {
+                if let Some((geom, flux)) =
+                    interior_viscous_face_geom_and_flux(face_idx, params, scratch, constant)
+                {
+                    T::scatter_fused_interior_face(residual, &geom, &flux);
+                }
+            }
+            continue;
+        }
+        for lane in 0..count as usize {
+            T::scatter_fused_interior_face(residual, &geoms[lane], &fluxes[lane]);
+        }
+    }
+    for &face_idx in &layout.remainder {
+        if let Some((geom, flux)) =
+            interior_viscous_face_geom_and_flux(face_idx, params, scratch, constant)
+        {
+            T::scatter_fused_interior_face(residual, &geom, &flux);
+        }
     }
     Ok(())
 }
@@ -137,7 +356,6 @@ mod tests {
     use crate::boundary::{BoundaryKind, BoundaryPatch, BoundarySet};
     use crate::discretization::BoundaryGhostBuffer;
     use crate::discretization::GhostCellState;
-    use crate::exec::ExecutionContext;
     use crate::field::ConservedFields;
     use crate::mesh::{CellKind, UnstructuredCell, UnstructuredMesh3d};
     use crate::physics::FreestreamParams;

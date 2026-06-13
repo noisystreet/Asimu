@@ -452,7 +452,7 @@ fn viscous_batch_geom_from_static(
 }
 
 #[cfg(feature = "simd-fvm")]
-pub(super) fn compute_viscous_batch4_into(
+pub(crate) fn compute_viscous_batch4_into(
     batch: &crate::exec::ExecFaceBatchStatic4,
     params: &ViscousAssemblyUnstructuredParams<'_>,
     scratch: &ViscousAssemblyUnstructuredScratch,

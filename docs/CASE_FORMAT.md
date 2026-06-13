@@ -173,9 +173,9 @@ compute_precision = "f64"   # f64（默认）| f32
 | 方程 / 网格 | 3D 可压缩 Euler；结构化单块或多块（无 1-to-1 接口）；非结构 |
 | 空间离散 | `reconstruction = first_order`；非结构另支持 `muscl` + `unstructured_limiter` |
 | 时间推进 | `euler`、`rk4`；`lu_sgs`（对角，须 `local_time_step = true`）；结构化另支持 `gmres` |
-| 粘性 / NS | 非结构 3D 可支持（`[physics.viscous]`）；`[navier_stokes]` 不支持 |
+| 粘性 / NS | 非结构 3D：`[physics.viscous]` 与 `[navier_stokes]`（梯度/通量仍为 mixed `f64`） |
 | 隐式限制 | 不支持 `lusgs_sweep = true`；非结构不支持 `gmres` |
-| exec scatter（P5） | 非结构 typed 无粘内面：`parallel-fvm` 下 `f32` 走 `AtomicU32` CAS scatter（与 `f64` 同色桶契约）；无 `parallel-fvm` 时串行回退 |
+| exec scatter（P5） | 非结构 typed 无粘/粘性内面：`parallel-fvm` 下 `f32` 走 `AtomicU32` CAS scatter（与 `f64` 同色桶契约）；无 `parallel-fvm` 时串行回退 |
 | 其它 | 不支持 `residual_smoothing` |
 
 网格几何、谱半径监控、I/O 与 manifest 仍使用 `f64`；`f32` 求解结果在写出前转换为 `f64`。
