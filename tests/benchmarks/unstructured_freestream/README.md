@@ -33,3 +33,28 @@ cargo test runs_single_tet_unstructured -- --nocapture
 | RMS(\(\dot\rho\)) | 0 | \(10^{-9}\)（二阶线性重构） / \(10^{-10}\)（一阶） |
 
 见 `expected.json` 与 `assembly_unstructured` 内 golden 测试。
+
+## f32 计算精度（ADR 0016 P5）
+
+非结构 typed 路径在 `parallel-fvm` 下使用 exec **着色桶 + atomic scatter**；`f32` 残差经 `AtomicU32` CAS 累加（禁止扩成 `f64` residual）。
+
+### 运行对比
+
+在 `case.toml` 增加：
+
+```toml
+[numerics]
+compute_precision = "f32"   # 或 "f64" 基线
+```
+
+集成测试（单四面体，V&V）：
+
+```bash
+cargo test f32_single_tet_uniform_freestream -- --nocapture
+cargo test f32_single_tet_muscl_uniform_freestream -- --nocapture
+cargo test scatter_inviscid_f32_serial_matches_atomic_parallel --features parallel-fvm
+```
+
+### 性能 benchmark（大网格）
+
+与 `dual_ellipsoid` 相同构建（`parallel-fvm` + 可选 `simd-fvm`），对比 `compute_precision = "f32"` 与 `"f64"` 的步末 `profile_time_integration_ms` 与末步残差。回归判据：相对 P5 基线 LU-SGS/RHS 步耗时回归 **< 5%**（见 [dual_ellipsoid/README.md](dual_ellipsoid/README.md) E5 说明）。

@@ -3,18 +3,23 @@
 mod atomic;
 mod contribution;
 mod inviscid;
+mod inviscid_f32;
 mod ptr;
 mod serial;
 mod span;
 mod viscous;
+mod viscous_f32;
 
 pub use contribution::{
-    InviscidPairScatter, InviscidResidualMut, InviscidScatterOp, ViscousRangeScatter,
-    ViscousResidualMut, ViscousScatterOp, ViscousValidSlotScatter,
+    InviscidPairScatter, InviscidPairScatterF32, InviscidResidualMut, InviscidResidualMutF32,
+    InviscidScatterOp, ViscousRangeScatter, ViscousResidualMut, ViscousResidualMutF32,
+    ViscousScatterOp, ViscousValidSlotScatter, ViscousValidSlotScatterF32,
 };
 pub use inviscid::scatter_inviscid_pairs;
+pub use inviscid_f32::scatter_inviscid_pairs_f32;
 pub use serial::run_bucket_scatter;
 pub use viscous::{scatter_viscous_bucket_range, scatter_viscous_valid_slots};
+pub use viscous_f32::scatter_viscous_valid_slots_f32;
 
 #[cfg(test)]
 mod tests {
@@ -23,8 +28,9 @@ mod tests {
     use crate::exec::metrics::MeshExecMetrics;
 
     use super::{
-        InviscidPairScatter, InviscidResidualMut, InviscidScatterOp, ViscousRangeScatter,
-        ViscousResidualMut, ViscousScatterOp, scatter_inviscid_pairs, scatter_viscous_bucket_range,
+        InviscidPairScatter, InviscidPairScatterF32, InviscidResidualMut, InviscidResidualMutF32,
+        InviscidScatterOp, ViscousRangeScatter, ViscousResidualMut, ViscousScatterOp,
+        scatter_inviscid_pairs, scatter_inviscid_pairs_f32, scatter_viscous_bucket_range,
     };
 
     fn atomic_test_context(bucket_len: usize) -> ExecutionContext {
@@ -155,6 +161,105 @@ mod tests {
             assert!(approx_eq(serial_my[i], atomic_my[i], 1.0e-12));
             assert!(approx_eq(serial_mz[i], atomic_mz[i], 1.0e-12));
             assert!(approx_eq(serial_energy[i], atomic_energy[i], 1.0e-12));
+        }
+    }
+
+    #[test]
+    fn scatter_inviscid_f32_serial_matches_atomic_parallel() {
+        if !cfg!(feature = "parallel-fvm") {
+            return;
+        }
+        #[derive(Copy, Clone)]
+        struct Geom {
+            owner: usize,
+            neighbor: usize,
+            owner_scale: Real,
+            neighbor_scale: Real,
+        }
+        #[derive(Copy, Clone)]
+        struct Flux {
+            mass: Real,
+            momentum: [Real; 3],
+            energy: Real,
+        }
+        let pairs = [(
+            Geom {
+                owner: 0,
+                neighbor: 1,
+                owner_scale: 1.0,
+                neighbor_scale: -1.0,
+            },
+            Flux {
+                mass: 0.1,
+                momentum: [1.0, 2.0, 3.0],
+                energy: 4.0,
+            },
+        )];
+        let extract = |g: &Geom, f: &Flux| InviscidScatterOp {
+            owner: g.owner,
+            neighbor: g.neighbor,
+            owner_scale: g.owner_scale,
+            neighbor_scale: g.neighbor_scale,
+            mass: f.mass,
+            momentum: f.momentum,
+            energy: f.energy,
+        };
+
+        let mut serial_density = vec![0.0_f32; 2];
+        let mut serial_mx = vec![0.0_f32; 2];
+        let mut serial_my = vec![0.0_f32; 2];
+        let mut serial_mz = vec![0.0_f32; 2];
+        let mut serial_energy = vec![0.0_f32; 2];
+        let serial_ctx = ExecutionContext::new(
+            ExecConfig {
+                scatter_mode: ScatterMode::Serial,
+                ..ExecConfig::default()
+            },
+            MeshExecMetrics::new(1, 1, 1),
+        );
+        scatter_inviscid_pairs_f32(
+            InviscidPairScatterF32 {
+                ctx: &serial_ctx,
+                bucket_len: 1,
+                pairs: &pairs,
+                residual: InviscidResidualMutF32 {
+                    density: &mut serial_density,
+                    mx: &mut serial_mx,
+                    my: &mut serial_my,
+                    mz: &mut serial_mz,
+                    energy: &mut serial_energy,
+                },
+            },
+            extract,
+        );
+
+        let mut atomic_density = vec![0.0_f32; 2];
+        let mut atomic_mx = vec![0.0_f32; 2];
+        let mut atomic_my = vec![0.0_f32; 2];
+        let mut atomic_mz = vec![0.0_f32; 2];
+        let mut atomic_energy = vec![0.0_f32; 2];
+        scatter_inviscid_pairs_f32(
+            InviscidPairScatterF32 {
+                ctx: &atomic_test_context(1),
+                bucket_len: 1,
+                pairs: &pairs,
+                residual: InviscidResidualMutF32 {
+                    density: &mut atomic_density,
+                    mx: &mut atomic_mx,
+                    my: &mut atomic_my,
+                    mz: &mut atomic_mz,
+                    energy: &mut atomic_energy,
+                },
+            },
+            extract,
+        );
+
+        for i in 0..2 {
+            assert!((serial_density[i] - atomic_density[i]).abs() < 1.0e-6);
+            assert!((serial_mx[i] - atomic_mx[i]).abs() < 1.0e-6);
+            assert!((serial_my[i] - atomic_my[i]).abs() < 1.0e-6);
+            assert!((serial_mz[i] - atomic_mz[i]).abs() < 1.0e-6);
+            assert!((serial_energy[i] - atomic_energy[i]).abs() < 1.0e-6);
         }
     }
 

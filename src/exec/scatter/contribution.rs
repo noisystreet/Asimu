@@ -74,3 +74,38 @@ pub struct InviscidPairScatter<'a, G, F> {
     pub pairs: &'a [(G, F)],
     pub residual: InviscidResidualMut<'a>,
 }
+
+/// `f32` 无粘残差可变切片（ADR 0016 P5）。
+pub struct InviscidResidualMutF32<'a> {
+    pub density: &'a mut [f32],
+    pub mx: &'a mut [f32],
+    pub my: &'a mut [f32],
+    pub mz: &'a mut [f32],
+    pub energy: &'a mut [f32],
+}
+
+/// `f32` 无粘 `(geom, flux)` 对 scatter。
+pub struct InviscidPairScatterF32<'a, G, F> {
+    pub ctx: &'a ExecutionContext,
+    pub bucket_len: usize,
+    pub pairs: &'a [(G, F)],
+    pub residual: InviscidResidualMutF32<'a>,
+}
+
+/// `f32` 粘性残差可变切片。
+pub struct ViscousResidualMutF32<'a> {
+    pub mx: &'a mut [f32],
+    pub my: &'a mut [f32],
+    pub mz: &'a mut [f32],
+    pub energy: &'a mut [f32],
+}
+
+/// `f32` 按 `valid` 掩码 scatter 粘性桶。
+pub struct ViscousValidSlotScatterF32<'a, G, F> {
+    pub ctx: &'a ExecutionContext,
+    pub bucket_len: usize,
+    pub geoms: &'a [G],
+    pub fluxes: &'a [F],
+    pub valid: &'a [bool],
+    pub residual: ViscousResidualMutF32<'a>,
+}

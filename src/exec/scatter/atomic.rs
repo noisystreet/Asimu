@@ -2,12 +2,36 @@
 
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use crate::core::Real;
 
 use super::contribution::{InviscidScatterOp, ViscousScatterOp};
 use super::ptr::SendMutPtr;
+
+#[inline]
+pub(super) fn fetch_add_f32(target: *mut f32, value: f32) {
+    if value == 0.0 {
+        return;
+    }
+    // SAFETY: `target` 来自已验证长度的 `&mut [f32]`；与 `AtomicU32` 同尺寸同对齐。
+    unsafe {
+        let atom = &*(target.cast::<AtomicU32>());
+        let mut current = atom.load(Ordering::Relaxed);
+        loop {
+            let new = f32::from_bits(current) + value;
+            match atom.compare_exchange_weak(
+                current,
+                new.to_bits(),
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return,
+                Err(observed) => current = observed,
+            }
+        }
+    }
+}
 
 #[inline]
 pub(super) fn fetch_add_f64(target: *mut Real, value: Real) {
@@ -53,6 +77,59 @@ impl ViscousResidualPtrs {
             my: SendMutPtr::new(my.as_mut_ptr()),
             mz: SendMutPtr::new(mz.as_mut_ptr()),
             energy: SendMutPtr::new(energy.as_mut_ptr()),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct InviscidResidualPtrsF32 {
+    density: super::ptr::SendMutPtrF32,
+    mx: super::ptr::SendMutPtrF32,
+    my: super::ptr::SendMutPtrF32,
+    mz: super::ptr::SendMutPtrF32,
+    energy: super::ptr::SendMutPtrF32,
+}
+
+impl InviscidResidualPtrsF32 {
+    pub(super) fn from_slices(
+        density: &mut [f32],
+        mx: &mut [f32],
+        my: &mut [f32],
+        mz: &mut [f32],
+        energy: &mut [f32],
+    ) -> Self {
+        use super::ptr::SendMutPtrF32;
+        Self {
+            density: SendMutPtrF32::new(density.as_mut_ptr()),
+            mx: SendMutPtrF32::new(mx.as_mut_ptr()),
+            my: SendMutPtrF32::new(my.as_mut_ptr()),
+            mz: SendMutPtrF32::new(mz.as_mut_ptr()),
+            energy: SendMutPtrF32::new(energy.as_mut_ptr()),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct ViscousResidualPtrsF32 {
+    mx: super::ptr::SendMutPtrF32,
+    my: super::ptr::SendMutPtrF32,
+    mz: super::ptr::SendMutPtrF32,
+    energy: super::ptr::SendMutPtrF32,
+}
+
+impl ViscousResidualPtrsF32 {
+    pub(super) fn from_slices(
+        mx: &mut [f32],
+        my: &mut [f32],
+        mz: &mut [f32],
+        energy: &mut [f32],
+    ) -> Self {
+        use super::ptr::SendMutPtrF32;
+        Self {
+            mx: SendMutPtrF32::new(mx.as_mut_ptr()),
+            my: SendMutPtrF32::new(my.as_mut_ptr()),
+            mz: SendMutPtrF32::new(mz.as_mut_ptr()),
+            energy: SendMutPtrF32::new(energy.as_mut_ptr()),
         }
     }
 }
@@ -112,6 +189,96 @@ pub(super) unsafe fn scatter_viscous_op_atomic(op: ViscousScatterOp, ptrs: Visco
 }
 
 #[inline]
+pub(super) unsafe fn scatter_viscous_op_atomic_f32(
+    op: ViscousScatterOp,
+    ptrs: ViscousResidualPtrsF32,
+) {
+    let owner_scale = op.owner_scale as f32;
+    let neighbor_scale = op.neighbor_scale as f32;
+    fetch_add_f32(
+        ptrs.mx.as_ptr().add(op.owner),
+        owner_scale * op.flux_mx as f32,
+    );
+    fetch_add_f32(
+        ptrs.my.as_ptr().add(op.owner),
+        owner_scale * op.flux_my as f32,
+    );
+    fetch_add_f32(
+        ptrs.mz.as_ptr().add(op.owner),
+        owner_scale * op.flux_mz as f32,
+    );
+    fetch_add_f32(
+        ptrs.energy.as_ptr().add(op.owner),
+        owner_scale * op.flux_energy as f32,
+    );
+    fetch_add_f32(
+        ptrs.mx.as_ptr().add(op.neighbor),
+        neighbor_scale * op.flux_mx as f32,
+    );
+    fetch_add_f32(
+        ptrs.my.as_ptr().add(op.neighbor),
+        neighbor_scale * op.flux_my as f32,
+    );
+    fetch_add_f32(
+        ptrs.mz.as_ptr().add(op.neighbor),
+        neighbor_scale * op.flux_mz as f32,
+    );
+    fetch_add_f32(
+        ptrs.energy.as_ptr().add(op.neighbor),
+        neighbor_scale * op.flux_energy as f32,
+    );
+}
+
+#[inline]
+pub(super) unsafe fn scatter_inviscid_op_atomic_f32(
+    op: InviscidScatterOp,
+    ptrs: InviscidResidualPtrsF32,
+) {
+    let owner_scale = op.owner_scale as f32;
+    let neighbor_scale = op.neighbor_scale as f32;
+    fetch_add_f32(
+        ptrs.density.as_ptr().add(op.owner),
+        owner_scale * op.mass as f32,
+    );
+    fetch_add_f32(
+        ptrs.mx.as_ptr().add(op.owner),
+        owner_scale * op.momentum[0] as f32,
+    );
+    fetch_add_f32(
+        ptrs.my.as_ptr().add(op.owner),
+        owner_scale * op.momentum[1] as f32,
+    );
+    fetch_add_f32(
+        ptrs.mz.as_ptr().add(op.owner),
+        owner_scale * op.momentum[2] as f32,
+    );
+    fetch_add_f32(
+        ptrs.energy.as_ptr().add(op.owner),
+        owner_scale * op.energy as f32,
+    );
+    fetch_add_f32(
+        ptrs.density.as_ptr().add(op.neighbor),
+        neighbor_scale * op.mass as f32,
+    );
+    fetch_add_f32(
+        ptrs.mx.as_ptr().add(op.neighbor),
+        neighbor_scale * op.momentum[0] as f32,
+    );
+    fetch_add_f32(
+        ptrs.my.as_ptr().add(op.neighbor),
+        neighbor_scale * op.momentum[1] as f32,
+    );
+    fetch_add_f32(
+        ptrs.mz.as_ptr().add(op.neighbor),
+        neighbor_scale * op.momentum[2] as f32,
+    );
+    fetch_add_f32(
+        ptrs.energy.as_ptr().add(op.neighbor),
+        neighbor_scale * op.energy as f32,
+    );
+}
+
+#[inline]
 pub(super) unsafe fn scatter_inviscid_op_atomic(op: InviscidScatterOp, ptrs: InviscidResidualPtrs) {
     fetch_add_f64(
         ptrs.density.as_ptr().add(op.owner),
@@ -159,6 +326,16 @@ pub(super) unsafe fn scatter_inviscid_op_atomic(op: InviscidScatterOp, ptrs: Inv
 mod tests {
     use super::*;
     use crate::core::approx_eq;
+
+    #[test]
+    fn fetch_add_f32_matches_serial_add() {
+        let mut values = [1.0_f32, 2.0, 3.0];
+        fetch_add_f32(values.as_mut_ptr(), 0.5);
+        fetch_add_f32(values.as_mut_ptr().wrapping_add(1), -0.25);
+        assert!((values[0] - 1.5).abs() < 1.0e-6);
+        assert!((values[1] - 1.75).abs() < 1.0e-6);
+        assert!((values[2] - 3.0).abs() < 1.0e-6);
+    }
 
     #[test]
     fn fetch_add_f64_matches_serial_add() {

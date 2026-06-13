@@ -166,7 +166,7 @@ compute_precision = "f64"   # f64（默认）| f32
 |------|------|------|
 | `compute_precision` | string | `f64`（默认）或 `f32`。`f32` 在 Validate 阶段校验能力矩阵（ADR 0016）；未覆盖的组合会报错，不会静默回退 `f64` |
 
-**`f32` 当前支持范围（P2–P4）**
+**`f32` 当前支持范围（P2–P5）**
 
 | 项 | 支持 |
 |----|------|
@@ -175,6 +175,7 @@ compute_precision = "f64"   # f64（默认）| f32
 | 时间推进 | `euler`、`rk4`；`lu_sgs`（对角，须 `local_time_step = true`）；结构化另支持 `gmres` |
 | 粘性 / NS | 非结构 3D 可支持（`[physics.viscous]`）；`[navier_stokes]` 不支持 |
 | 隐式限制 | 不支持 `lusgs_sweep = true`；非结构不支持 `gmres` |
+| exec scatter（P5） | 非结构 typed 无粘内面：`parallel-fvm` 下 `f32` 走 `AtomicU32` CAS scatter（与 `f64` 同色桶契约）；无 `parallel-fvm` 时串行回退 |
 | 其它 | 不支持 `residual_smoothing` |
 
 网格几何、谱半径监控、I/O 与 manifest 仍使用 `f64`；`f32` 求解结果在写出前转换为 `f64`。

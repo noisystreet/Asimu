@@ -5,7 +5,7 @@ use tracing::info_span;
 use crate::boundary::BoundarySet;
 use crate::core::{ComputeFloat, Real};
 use crate::discretization::inviscid::{
-    scatter_fused_boundary_inviscid_face_typed, scatter_fused_interior_inviscid_face_typed,
+    InteriorInviscidScatterGeom, scatter_fused_boundary_inviscid_face_typed,
 };
 use crate::discretization::unstructured_face_cache::UnstructuredFaceTopology;
 use crate::discretization::{
@@ -15,6 +15,10 @@ use crate::discretization::{
 };
 use crate::error::{AsimuError, Result};
 use crate::exec::ExecutionContext;
+use crate::exec::scatter::{
+    InviscidPairScatter, InviscidPairScatterF32, InviscidResidualMut, InviscidResidualMutF32,
+    InviscidScatterOp, scatter_inviscid_pairs, scatter_inviscid_pairs_f32,
+};
 use crate::field::{
     ConservedFieldsT, ConservedResidualT, PrimitiveFields, PrimitiveFieldsT,
     primitive_from_conserved_relaxed,
@@ -25,7 +29,169 @@ use crate::physics::IdealGasEoS;
 use super::assembly_unstructured::{
     InviscidAssemblyUnstructuredParams, compute_interior_inviscid_face_contribution,
 };
-use super::{accumulate_boundary_face_typed, accumulate_interior_face_typed, is_degenerate_volume};
+use super::{accumulate_boundary_face_typed, is_degenerate_volume};
+
+/// scatter 精度 dispatch（`ComputeFloat` 密封子集；ADR 0016 P5）。
+pub trait InviscidTypedScatterBackend: ComputeFloat {
+    fn scatter_inviscid_interior_pairs(
+        residual: &mut ConservedResidualT<Self>,
+        ctx: &ExecutionContext,
+        bucket_len: usize,
+        pairs: &[(
+            InteriorInviscidScatterGeom,
+            crate::discretization::InviscidFlux,
+        )],
+    );
+
+    fn scatter_fused_interior_face(
+        residual: &mut ConservedResidualT<Self>,
+        geom: &InteriorInviscidScatterGeom,
+        flux: &crate::discretization::InviscidFlux,
+    );
+}
+
+#[cfg_attr(feature = "parallel-fvm", allow(dead_code))]
+impl InviscidTypedScatterBackend for f64 {
+    fn scatter_inviscid_interior_pairs(
+        residual: &mut ConservedResidualT<f64>,
+        ctx: &ExecutionContext,
+        bucket_len: usize,
+        pairs: &[(
+            InteriorInviscidScatterGeom,
+            crate::discretization::InviscidFlux,
+        )],
+    ) {
+        scatter_inviscid_interior_pairs_f64(residual, ctx, bucket_len, pairs);
+    }
+
+    fn scatter_fused_interior_face(
+        residual: &mut ConservedResidualT<f64>,
+        geom: &InteriorInviscidScatterGeom,
+        flux: &crate::discretization::InviscidFlux,
+    ) {
+        scatter_fused_interior_face_f64(residual, geom, flux);
+    }
+}
+
+#[cfg_attr(feature = "parallel-fvm", allow(dead_code))]
+impl InviscidTypedScatterBackend for f32 {
+    fn scatter_inviscid_interior_pairs(
+        residual: &mut ConservedResidualT<f32>,
+        ctx: &ExecutionContext,
+        bucket_len: usize,
+        pairs: &[(
+            InteriorInviscidScatterGeom,
+            crate::discretization::InviscidFlux,
+        )],
+    ) {
+        scatter_inviscid_interior_pairs_f32(residual, ctx, bucket_len, pairs);
+    }
+
+    fn scatter_fused_interior_face(
+        residual: &mut ConservedResidualT<f32>,
+        geom: &InteriorInviscidScatterGeom,
+        flux: &crate::discretization::InviscidFlux,
+    ) {
+        scatter_fused_interior_face_f32(residual, geom, flux);
+    }
+}
+
+fn scatter_inviscid_interior_pairs_f64(
+    residual: &mut ConservedResidualT<f64>,
+    ctx: &ExecutionContext,
+    bucket_len: usize,
+    pairs: &[(
+        InteriorInviscidScatterGeom,
+        crate::discretization::InviscidFlux,
+    )],
+) {
+    scatter_inviscid_pairs(
+        InviscidPairScatter {
+            ctx,
+            bucket_len,
+            pairs,
+            residual: InviscidResidualMut {
+                density: residual.density.values_mut(),
+                mx: residual.momentum_x.values_mut(),
+                my: residual.momentum_y.values_mut(),
+                mz: residual.momentum_z.values_mut(),
+                energy: residual.total_energy.values_mut(),
+            },
+        },
+        inviscid_scatter_extract,
+    );
+}
+
+fn scatter_inviscid_interior_pairs_f32(
+    residual: &mut ConservedResidualT<f32>,
+    ctx: &ExecutionContext,
+    bucket_len: usize,
+    pairs: &[(
+        InteriorInviscidScatterGeom,
+        crate::discretization::InviscidFlux,
+    )],
+) {
+    scatter_inviscid_pairs_f32(
+        InviscidPairScatterF32 {
+            ctx,
+            bucket_len,
+            pairs,
+            residual: InviscidResidualMutF32 {
+                density: residual.density.values_mut(),
+                mx: residual.momentum_x.values_mut(),
+                my: residual.momentum_y.values_mut(),
+                mz: residual.momentum_z.values_mut(),
+                energy: residual.total_energy.values_mut(),
+            },
+        },
+        inviscid_scatter_extract,
+    );
+}
+
+#[cfg_attr(feature = "parallel-fvm", allow(dead_code))]
+fn scatter_fused_interior_face_f64(
+    residual: &mut ConservedResidualT<f64>,
+    geom: &InteriorInviscidScatterGeom,
+    flux: &crate::discretization::InviscidFlux,
+) {
+    crate::discretization::inviscid::scatter_fused_interior_inviscid_face(
+        &mut crate::discretization::inviscid::InteriorInviscidResidualMut {
+            density: residual.density.values_mut(),
+            mx: residual.momentum_x.values_mut(),
+            my: residual.momentum_y.values_mut(),
+            mz: residual.momentum_z.values_mut(),
+            energy: residual.total_energy.values_mut(),
+        },
+        geom,
+        flux,
+    );
+}
+
+#[cfg_attr(feature = "parallel-fvm", allow(dead_code))]
+fn scatter_fused_interior_face_f32(
+    residual: &mut ConservedResidualT<f32>,
+    geom: &InteriorInviscidScatterGeom,
+    flux: &crate::discretization::InviscidFlux,
+) {
+    crate::discretization::inviscid::scatter_fused_interior_inviscid_face_typed(
+        residual, geom, flux,
+    );
+}
+
+fn inviscid_scatter_extract(
+    g: &InteriorInviscidScatterGeom,
+    f: &crate::discretization::InviscidFlux,
+) -> InviscidScatterOp {
+    InviscidScatterOp {
+        owner: g.owner,
+        neighbor: g.neighbor,
+        owner_scale: g.owner_scale,
+        neighbor_scale: g.neighbor_scale,
+        mass: f.mass,
+        momentum: f.momentum,
+        energy: f.energy,
+    }
+}
 
 /// typed 非结构无粘残差装配上下文。
 pub struct InviscidAssemblyUnstructuredTypedParams<'a, T: ComputeFloat> {
@@ -44,7 +210,7 @@ pub struct InviscidAssemblyUnstructuredTypedParams<'a, T: ComputeFloat> {
 }
 
 /// 装配非结构 3D 无粘 Euler 残差（`T=f32`/`f64`）。
-pub fn assemble_inviscid_residual_unstructured_typed<T: ComputeFloat>(
+pub fn assemble_inviscid_residual_unstructured_typed<T: InviscidTypedScatterBackend>(
     fields: &ConservedFieldsT<T>,
     residual: &mut ConservedResidualT<T>,
     params: &InviscidAssemblyUnstructuredTypedParams<'_, T>,
@@ -73,7 +239,7 @@ pub fn assemble_inviscid_residual_unstructured_typed<T: ComputeFloat>(
     Ok(())
 }
 
-fn assemble_first_order_typed<T: ComputeFloat>(
+fn assemble_first_order_typed<T: InviscidTypedScatterBackend>(
     residual: &mut ConservedResidualT<T>,
     params: &InviscidAssemblyUnstructuredTypedParams<'_, T>,
     topology: &UnstructuredFaceTopology,
@@ -99,7 +265,7 @@ fn assemble_first_order_typed<T: ComputeFloat>(
     Ok(())
 }
 
-fn assemble_muscl_typed<T: ComputeFloat>(
+fn assemble_muscl_typed<T: InviscidTypedScatterBackend>(
     residual: &mut ConservedResidualT<T>,
     params: &InviscidAssemblyUnstructuredTypedParams<'_, T>,
     topology: &UnstructuredFaceTopology,
@@ -113,15 +279,7 @@ fn assemble_muscl_typed<T: ComputeFloat>(
             precision = T::PRECISION.label(),
         )
         .entered();
-        for bucket in &topology.interior_coloring.buckets {
-            for &face_idx in bucket {
-                if let Some((geom, flux)) =
-                    compute_interior_inviscid_face_contribution(face_idx, &f64_params, topology)?
-                {
-                    scatter_fused_interior_inviscid_face_typed(residual, &geom, &flux);
-                }
-            }
-        }
+        assemble_interior_faces_colored_typed(residual, &f64_params, topology)?;
     }
     {
         let _span = info_span!(
@@ -132,6 +290,57 @@ fn assemble_muscl_typed<T: ComputeFloat>(
         )
         .entered();
         assemble_boundary_faces_muscl_typed(residual, &f64_params, topology)?;
+    }
+    Ok(())
+}
+
+fn spectral_f64_params<'a, T: ComputeFloat>(
+    params: &'a InviscidAssemblyUnstructuredTypedParams<'a, T>,
+) -> InviscidAssemblyUnstructuredParams<'a> {
+    InviscidAssemblyUnstructuredParams {
+        mesh: params.mesh,
+        eos: params.eos,
+        config: params.config,
+        boundaries: params.boundaries,
+        ghosts: params.ghosts,
+        primitives: params.spectral_primitives,
+        face_topology: Some(&params.mesh_cache.face_topology),
+        mesh_cache: Some(params.mesh_cache),
+        gradients: params.gradients,
+        min_pressure: params.min_pressure,
+        exec: params.exec,
+    }
+}
+
+fn assemble_interior_faces_colored_typed<T: InviscidTypedScatterBackend>(
+    residual: &mut ConservedResidualT<T>,
+    f64_params: &InviscidAssemblyUnstructuredParams<'_>,
+    topology: &UnstructuredFaceTopology,
+) -> Result<()> {
+    #[cfg(not(feature = "parallel-fvm"))]
+    {
+        for bucket in &topology.interior_coloring.buckets {
+            for &face_idx in bucket {
+                if let Some((geom, flux)) =
+                    compute_interior_inviscid_face_contribution(face_idx, f64_params, topology)?
+                {
+                    T::scatter_fused_interior_face(residual, &geom, &flux);
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    #[cfg(feature = "parallel-fvm")]
+    {
+        for bucket in &topology.interior_coloring.buckets {
+            let contributions =
+                crate::exec::parallel::par_try_map_face_indices(bucket, 1024, |face_idx| {
+                    compute_interior_inviscid_face_contribution(face_idx, f64_params, topology)
+                })?;
+            let pairs: Vec<_> = contributions.into_iter().flatten().collect();
+            T::scatter_inviscid_interior_pairs(residual, f64_params.exec, bucket.len(), &pairs);
+        }
     }
     Ok(())
 }
@@ -205,6 +414,7 @@ fn assemble_boundary_faces_muscl_typed<T: ComputeFloat>(
     Ok(())
 }
 
+#[cfg(not(feature = "parallel-fvm"))]
 fn first_order_interior_flux<T: ComputeFloat>(
     primitives: &PrimitiveFieldsT<T>,
     owner: usize,
@@ -223,37 +433,47 @@ fn first_order_interior_flux<T: ComputeFloat>(
     )
 }
 
-fn assemble_interior_faces_first_order_typed<T: ComputeFloat>(
+fn assemble_interior_faces_first_order_typed<T: InviscidTypedScatterBackend>(
     residual: &mut ConservedResidualT<T>,
     params: &InviscidAssemblyUnstructuredTypedParams<'_, T>,
     topology: &UnstructuredFaceTopology,
 ) -> Result<()> {
-    for face in &topology.interior {
-        if face.owner_rhs_scale == 0.0 && face.neighbor_rhs_scale == 0.0 {
-            continue;
-        }
-        if is_degenerate_volume(face.owner_volume) || is_degenerate_volume(face.neighbor_volume) {
-            continue;
-        }
-        let flux = first_order_interior_flux(
-            params.primitives,
-            face.owner,
-            face.neighbor,
-            face.normal,
-            params.eos,
-            params.config,
-        )?;
-        accumulate_interior_face_typed(
-            residual,
-            face.owner,
-            face.neighbor,
-            &flux,
-            face.area,
-            face.owner_volume,
-            face.neighbor_volume,
-        )?;
+    #[cfg(feature = "parallel-fvm")]
+    {
+        let f64_params = spectral_f64_params(params);
+        assemble_interior_faces_colored_typed(residual, &f64_params, topology)
     }
-    Ok(())
+
+    #[cfg(not(feature = "parallel-fvm"))]
+    {
+        for face in &topology.interior {
+            if face.owner_rhs_scale == 0.0 && face.neighbor_rhs_scale == 0.0 {
+                continue;
+            }
+            if is_degenerate_volume(face.owner_volume) || is_degenerate_volume(face.neighbor_volume)
+            {
+                continue;
+            }
+            let flux = first_order_interior_flux(
+                params.primitives,
+                face.owner,
+                face.neighbor,
+                face.normal,
+                params.eos,
+                params.config,
+            )?;
+            super::accumulate_interior_face_typed(
+                residual,
+                face.owner,
+                face.neighbor,
+                &flux,
+                face.area,
+                face.owner_volume,
+                face.neighbor_volume,
+            )?;
+        }
+        Ok(())
+    }
 }
 
 fn assemble_boundary_faces_first_order_typed<T: ComputeFloat>(

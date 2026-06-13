@@ -7,7 +7,9 @@ use tracing::{info, info_span};
 use crate::core::{
     ComputeFloat, Real, elapsed_ms, format_log_fixed4, format_log_sci4, log10_positive,
 };
-use crate::discretization::residual::InviscidAssemblyUnstructuredTypedParams;
+use crate::discretization::residual::{
+    InviscidAssemblyUnstructuredTypedParams, InviscidTypedScatterBackend,
+};
 use crate::discretization::{
     BoundaryGhostBuffer, GradientFields, ReconstructionKind, UnstructuredGradientLsqInput,
     UnstructuredSolverMeshCache, ViscousAssemblyUnstructuredScratch,
@@ -64,7 +66,7 @@ struct UnstructuredRunEnvTyped<'a> {
 
 /// typed 非结构同步推进；结束时将场转为 `f64` 供输出。
 pub fn run_unstructured_typed_with_observer<
-    T: ComputeFloat + crate::field::LusgsDiagonalUpdateBackend,
+    T: ComputeFloat + crate::field::LusgsDiagonalUpdateBackend + InviscidTypedScatterBackend,
 >(
     config: &UnstructuredDriverConfig<'_>,
     fields: &mut ConservedFieldsT<T>,
@@ -151,7 +153,9 @@ pub fn run_unstructured_typed_with_observer<
     Ok((history, fields.cast_real()?))
 }
 
-fn advance_unstructured_step_typed<T: ComputeFloat + crate::field::LusgsDiagonalUpdateBackend>(
+fn advance_unstructured_step_typed<
+    T: ComputeFloat + crate::field::LusgsDiagonalUpdateBackend + InviscidTypedScatterBackend,
+>(
     env: &mut UnstructuredRunEnvTyped<'_>,
     fields: &mut ConservedFieldsT<T>,
     work: &mut UnstructuredStepWorkTyped<T>,
@@ -215,7 +219,9 @@ fn advance_unstructured_step_typed<T: ComputeFloat + crate::field::LusgsDiagonal
     })
 }
 
-fn advance_unstructured_lusgs_typed<T: ComputeFloat + crate::field::LusgsDiagonalUpdateBackend>(
+fn advance_unstructured_lusgs_typed<
+    T: ComputeFloat + crate::field::LusgsDiagonalUpdateBackend + InviscidTypedScatterBackend,
+>(
     env: &UnstructuredRunEnvTyped<'_>,
     fields: &mut ConservedFieldsT<T>,
     work: &mut UnstructuredStepWorkTyped<T>,
@@ -277,7 +283,7 @@ fn advance_unstructured_lusgs_typed<T: ComputeFloat + crate::field::LusgsDiagona
     Ok(())
 }
 
-fn advance_unstructured_explicit_typed<T: ComputeFloat>(
+fn advance_unstructured_explicit_typed<T: InviscidTypedScatterBackend>(
     env: &UnstructuredRunEnvTyped<'_>,
     fields: &mut ConservedFieldsT<T>,
     work: &mut UnstructuredStepWorkTyped<T>,
@@ -330,7 +336,7 @@ fn advance_unstructured_explicit_typed<T: ComputeFloat>(
     }
 }
 
-fn assemble_unstructured_typed_rhs<T: ComputeFloat>(
+fn assemble_unstructured_typed_rhs<T: InviscidTypedScatterBackend>(
     env: &UnstructuredRunEnvTyped<'_>,
     work: &mut UnstructuredTypedRhsWork<'_, T>,
     fields: &ConservedFieldsT<T>,

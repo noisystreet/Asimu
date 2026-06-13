@@ -1,9 +1,9 @@
 //! 非结构 3D 可压缩 Euler typed 右端项。
 
 use crate::boundary::BoundarySet;
-use crate::core::ComputeFloat;
 use crate::core::Real;
 use crate::discretization::residual::InviscidAssemblyUnstructuredTypedParams;
+use crate::discretization::residual::InviscidTypedScatterBackend;
 use crate::discretization::{
     BoundaryGhostBuffer, GradientFields, InviscidFluxConfig, ReconstructionKind,
     UnstructuredGradientLsqInput, UnstructuredSolverMeshCache, ViscousAssemblyUnstructuredScratch,
@@ -22,7 +22,7 @@ use tracing::info_span;
 
 /// typed 非结构单步 RHS 求值上下文（驱动层当前 inline 装配；供 LU-SGS typed 复用）。
 #[allow(dead_code)]
-pub(crate) struct EvaluateRhsUnstructuredTyped<'a, T: ComputeFloat> {
+pub(crate) struct EvaluateRhsUnstructuredTyped<'a, T: InviscidTypedScatterBackend> {
     pub mesh: &'a UnstructuredMesh3d,
     pub mesh_cache: &'a UnstructuredSolverMeshCache,
     pub patches: &'a BoundarySet,
@@ -40,7 +40,7 @@ pub(crate) struct EvaluateRhsUnstructuredTyped<'a, T: ComputeFloat> {
     pub exec: &'a mut crate::exec::ExecutionContext,
 }
 
-impl<T: ComputeFloat> EvaluateRhsUnstructuredTyped<'_, T> {
+impl<T: InviscidTypedScatterBackend> EvaluateRhsUnstructuredTyped<'_, T> {
     #[allow(dead_code)]
     pub fn run(
         &mut self,

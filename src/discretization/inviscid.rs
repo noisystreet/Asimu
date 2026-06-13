@@ -26,7 +26,7 @@ pub(crate) struct InteriorInviscidResidualMut<'a> {
 
 /// scatter 阶段内面几何（预存 RHS 缩放，避免热路径除法）。
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct InteriorInviscidScatterGeom {
+pub struct InteriorInviscidScatterGeom {
     pub owner: usize,
     pub neighbor: usize,
     pub owner_scale: Real,
@@ -72,6 +72,7 @@ pub(crate) fn scatter_fused_interior_inviscid_face(
 
 /// 将内面无粘通量 scatter 到 typed 残差（通量/scale 仍为 `f64`）。
 #[inline(always)]
+#[cfg_attr(feature = "parallel-fvm", allow(dead_code))]
 pub(crate) fn scatter_fused_interior_inviscid_face_typed<T: ComputeFloat>(
     residual: &mut ConservedResidualT<T>,
     geom: &InteriorInviscidScatterGeom,

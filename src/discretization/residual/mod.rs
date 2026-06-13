@@ -31,7 +31,8 @@ pub use assembly_unstructured::{
     InviscidAssemblyUnstructuredParams, assemble_inviscid_residual_unstructured,
 };
 pub use assembly_unstructured_typed::{
-    InviscidAssemblyUnstructuredTypedParams, assemble_inviscid_residual_unstructured_typed,
+    InviscidAssemblyUnstructuredTypedParams, InviscidTypedScatterBackend,
+    assemble_inviscid_residual_unstructured_typed,
 };
 pub use assembly_unstructured_viscous::{
     ViscousAssemblyUnstructuredInput, ViscousAssemblyUnstructuredParams,
