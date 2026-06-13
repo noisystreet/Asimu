@@ -64,7 +64,7 @@ impl GmresImplicitTiming {
 }
 
 impl GmresImplicitDiagnostics {
-    fn new(preconditioner: GmresPreconditionerKind) -> Self {
+    pub(super) fn new(preconditioner: GmresPreconditionerKind) -> Self {
         Self {
             preconditioner,
             perturbation_evals: 0,
@@ -308,7 +308,7 @@ impl CompressibleEulerSolver {
     }
 }
 
-enum GmresImplicitPreconditioner {
+pub(super) enum GmresImplicitPreconditioner {
     Scalar(LusgsDiagonalPreconditioner),
     CellBlock(CellBlockDiagonalPreconditioner),
 }
@@ -329,18 +329,18 @@ impl Preconditioner for GmresImplicitPreconditioner {
     }
 }
 
-struct GmresPreconditionerBuild<'a, 'ctx> {
-    solver: &'a CompressibleEulerSolver,
-    ctx: &'a mut CompressibleAdvanceContext3d<'ctx>,
-    fields: &'a ConservedFields,
-    inviscid: &'a InviscidFluxConfig,
-    dt: &'a [Real],
-    sigma: &'a [Real],
-    p_floor: Real,
-    config: GmresImplicitConfig,
+pub(super) struct GmresPreconditionerBuild<'a, 'ctx> {
+    pub(super) solver: &'a CompressibleEulerSolver,
+    pub(super) ctx: &'a mut CompressibleAdvanceContext3d<'ctx>,
+    pub(super) fields: &'a ConservedFields,
+    pub(super) inviscid: &'a InviscidFluxConfig,
+    pub(super) dt: &'a [Real],
+    pub(super) sigma: &'a [Real],
+    pub(super) p_floor: Real,
+    pub(super) config: GmresImplicitConfig,
 }
 
-fn build_gmres_preconditioner(
+pub(super) fn build_gmres_preconditioner(
     params: GmresPreconditionerBuild<'_, '_>,
 ) -> Result<GmresImplicitPreconditioner> {
     match params.config.preconditioner {
@@ -424,7 +424,7 @@ impl MatrixFreeResidualOperator3d<'_, '_> {
     }
 }
 
-fn validate_gmres_inputs(
+pub(super) fn validate_gmres_inputs(
     num_cells: usize,
     dt: &[Real],
     sigma: &[Real],
@@ -653,7 +653,7 @@ fn write_cell_state(
     fields.total_energy.values_mut()[cell] = state.total_energy;
 }
 
-fn residual_to_vector(residual: &ConservedResidual) -> Vec<Real> {
+pub(super) fn residual_to_vector(residual: &ConservedResidual) -> Vec<Real> {
     let n = residual.num_cells();
     let mut out = vec![0.0; n * CONSERVED_COMPONENTS_3D];
     for cell in 0..n {

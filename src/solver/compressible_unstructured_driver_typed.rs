@@ -68,10 +68,7 @@ pub fn run_unstructured_typed_with_observer<T: ComputeFloat>(
     fields: &mut ConservedFieldsT<T>,
     mut observe_step: impl FnMut(CompressibleUnstructuredStepView<'_>) -> Result<()>,
 ) -> Result<(Vec<CompressibleStepInfo>, ConservedFields)> {
-    if matches!(
-        config.time_scheme,
-        TimeIntegrationScheme::LuSgs | TimeIntegrationScheme::Gmres
-    ) {
+    if matches!(config.time_scheme, TimeIntegrationScheme::Gmres) {
         return Err(AsimuError::Config(format!(
             "compute_precision = \"{}\" 的非结构 typed 路径暂不支持 {}",
             T::PRECISION.label(),
@@ -164,7 +161,7 @@ fn advance_unstructured_step_typed<T: ComputeFloat>(
         .at_step(work.state.time_step.saturating_add(1), env.config.max_steps);
     let p_floor = crate::field::positivity_pressure_floor(env.config.freestream.pressure);
     let compute_dt_start = Instant::now();
-    let (cell_dts, _sigma) = prepare_unstructured_timestep_typed(env, fields, work, cfl, p_floor)?;
+    let (cell_dts, sigma) = prepare_unstructured_timestep_typed(env, fields, work, cfl, p_floor)?;
     let compute_dt_ms = elapsed_ms(compute_dt_start);
     let dt = min_positive_dt(&cell_dts);
     work.integrator.config.dt = dt;
@@ -176,7 +173,20 @@ fn advance_unstructured_step_typed<T: ComputeFloat>(
             precision = T::PRECISION.label(),
         )
         .entered();
-        advance_unstructured_explicit_typed(env, fields, work, dt, &cell_dts, p_floor)?;
+        match env.config.time_scheme {
+            TimeIntegrationScheme::LuSgs => {
+                advance_unstructured_lusgs_typed(env, fields, work, &cell_dts, &sigma, p_floor)?;
+            }
+            TimeIntegrationScheme::Euler | TimeIntegrationScheme::Rk4 => {
+                advance_unstructured_explicit_typed(env, fields, work, dt, &cell_dts, p_floor)?;
+            }
+            scheme => {
+                return Err(AsimuError::Config(format!(
+                    "非结构 typed 路径暂不支持 time.scheme = \"{}\"",
+                    scheme.label()
+                )));
+            }
+        }
     }
     let time_integration_ms = elapsed_ms(time_integration_start);
     fields.enforce_positivity(env.config.eos, p_floor);
@@ -201,6 +211,68 @@ fn advance_unstructured_step_typed<T: ComputeFloat>(
         is_final: time_info.is_final,
         converged: false,
     })
+}
+
+fn advance_unstructured_lusgs_typed<T: ComputeFloat>(
+    env: &UnstructuredRunEnvTyped<'_>,
+    fields: &mut ConservedFieldsT<T>,
+    work: &mut UnstructuredStepWorkTyped<T>,
+    cell_dts: &[Real],
+    sigma: &[Real],
+    p_floor: Real,
+) -> Result<()> {
+    if !env.config.local_time_step {
+        return Err(AsimuError::Config(
+            "非结构 time.scheme = \"lu_sgs\" 须配合 local_time_step = true".to_string(),
+        ));
+    }
+    if env.config.lu_sgs.sweep {
+        return Err(AsimuError::Config(
+            "compute_precision f32 非结构 typed 路径暂不支持 lusgs_sweep = true".to_string(),
+        ));
+    }
+    let lu_sgs = env.config.lu_sgs;
+    {
+        let _span = info_span!("unstructured_lusgs_copy_base_typed").entered();
+        work.storage.u0.copy_from(fields)?;
+    }
+    {
+        let _span = info_span!("unstructured_lusgs_rhs_typed").entered();
+        let mut rhs_work = UnstructuredTypedRhsWork {
+            ghosts: &mut work.ghosts,
+            primitives: &mut work.primitives,
+            spectral_primitives: &mut work.spectral_primitives,
+            gradients: &mut work.gradients,
+            viscous_scratch: &mut work.viscous_scratch,
+            mesh_cache: &work.mesh_cache,
+            exec: &mut work.exec,
+        };
+        assemble_unstructured_typed_rhs(
+            env,
+            &mut rhs_work,
+            &work.storage.u0,
+            &mut work.storage.k1,
+            true,
+            p_floor,
+        )?;
+    }
+    {
+        let _span = info_span!("unstructured_lusgs_diagonal_update_typed").entered();
+        work.storage.stage.assign_lusgs_diagonal_update(
+            &work.storage.u0,
+            &work.storage.k1,
+            sigma,
+            cell_dts,
+            lu_sgs.omega,
+            env.config.eos.gamma,
+            p_floor,
+        )?;
+    }
+    {
+        let _span = info_span!("unstructured_lusgs_copy_stage_typed").entered();
+        fields.copy_from(&work.storage.stage)?;
+    }
+    Ok(())
 }
 
 fn advance_unstructured_explicit_typed<T: ComputeFloat>(

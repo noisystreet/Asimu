@@ -50,6 +50,25 @@ pub struct CompressibleAdvanceContext3dTyped<'a, T: crate::core::ComputeFloat> {
     pub viscous: Option<&'a ViscousPhysicsConfig>,
 }
 
+impl<'a, T: crate::core::ComputeFloat> CompressibleAdvanceContext3dTyped<'a, T> {
+    /// 构造 f64 预条件器装配上下文（复用 ghost / 谱半径原始变量缓冲）。
+    pub fn f64_preconditioner_context(&mut self) -> CompressibleAdvanceContext3d<'_> {
+        CompressibleAdvanceContext3d {
+            mesh: self.mesh,
+            structured: self.structured,
+            patches: self.patches,
+            ghosts: self.ghosts,
+            eos: self.eos,
+            freestream: self.freestream,
+            reference: self.reference,
+            primitive_scratch: self.spectral_primitives.clone(),
+            gradient_scratch: self.gradient_scratch.clone(),
+            viscous: self.viscous,
+            residual_correction: None,
+        }
+    }
+}
+
 /// 1D 多步推进上下文。
 pub struct CompressibleAdvanceContext1d<'a> {
     pub mesh: &'a StructuredMesh1d,

@@ -3,8 +3,7 @@
 use crate::core::{ComputeFloat, Real};
 use crate::error::{AsimuError, Result};
 
-use super::{ConservedFields, ConservedFieldsT, ConservedResidual, ConservedResidualT};
-use crate::physics::ConservedState;
+use super::{ConservedFieldsT, ConservedResidualT};
 
 impl<T: ComputeFloat> ConservedFieldsT<T> {
     /// `self ← src`。
@@ -150,14 +149,12 @@ impl<T: ComputeFloat> ConservedFieldsT<T> {
         );
         Ok(())
     }
-}
 
-impl ConservedFields {
-    /// 对角 LU-SGS：`self ← self + ω·Δt·R / (1 + Δt·σ)`（全局 Δt；\(\sigma\) 为 \((|u|+a)/h\)）。
+    /// 对角 LU-SGS：`self ← self + ω·Δt·R / (1 + Δt·σ)`（scale 在 `f64` 中计算）。
     #[allow(clippy::too_many_arguments)]
     pub fn assign_lusgs_diagonal_increment(
         &mut self,
-        residual: &ConservedResidual,
+        residual: &ConservedResidualT<T>,
         sigma: &[Real],
         volumes: &[Real],
         dt: Real,
@@ -181,7 +178,7 @@ impl ConservedFields {
         for (i, &sig) in sigma.iter().enumerate().take(n) {
             let denom = 1.0 + dt * sig;
             let scale = omega * dt / denom;
-            apply_lusgs_component_update(self, i, residual, scale, gamma, min_pressure);
+            apply_lusgs_component_update_typed(self, i, residual, scale, gamma, min_pressure);
         }
         Ok(())
     }
@@ -191,7 +188,7 @@ impl ConservedFields {
     pub fn assign_lusgs_diagonal_update(
         &mut self,
         base: &Self,
-        residual: &ConservedResidual,
+        residual: &ConservedResidualT<T>,
         sigma: &[Real],
         dt: &[Real],
         omega: Real,
@@ -215,34 +212,19 @@ impl ConservedFields {
                 return Err(AsimuError::Field(format!("lu_sgs: 单元 {i} 的 Δt 须为正")));
             }
         }
-        let mut scale = vec![0.0; n];
         for (i, &dt_i) in dt.iter().enumerate().take(n) {
-            scale[i] = omega * dt_i / (1.0 + dt_i * sigma[i]);
+            let scale = omega * dt_i / (1.0 + dt_i * sigma[i]);
+            self.density.values_mut()[i] =
+                base.density.values()[i].add_mul_real(residual.density.values()[i], scale);
+            self.momentum_x.values_mut()[i] =
+                base.momentum_x.values()[i].add_mul_real(residual.momentum_x.values()[i], scale);
+            self.momentum_y.values_mut()[i] =
+                base.momentum_y.values()[i].add_mul_real(residual.momentum_y.values()[i], scale);
+            self.momentum_z.values_mut()[i] =
+                base.momentum_z.values()[i].add_mul_real(residual.momentum_z.values()[i], scale);
+            self.total_energy.values_mut()[i] = base.total_energy.values()[i]
+                .add_mul_real(residual.total_energy.values()[i], scale);
         }
-        crate::exec::cpu::assign_lusgs_diagonal_update(crate::exec::cpu::LusgsDiagonalUpdate {
-            out: crate::exec::cpu::ConservedSoAMut {
-                rho: self.density.values_mut(),
-                mx: self.momentum_x.values_mut(),
-                my: self.momentum_y.values_mut(),
-                mz: self.momentum_z.values_mut(),
-                energy: self.total_energy.values_mut(),
-            },
-            base: crate::exec::cpu::ConservedSoA {
-                rho: base.density.values(),
-                mx: base.momentum_x.values(),
-                my: base.momentum_y.values(),
-                mz: base.momentum_z.values(),
-                energy: base.total_energy.values(),
-            },
-            residual: crate::exec::cpu::ConservedSoA {
-                rho: residual.density.values(),
-                mx: residual.momentum_x.values(),
-                my: residual.momentum_y.values(),
-                mz: residual.momentum_z.values(),
-                energy: residual.total_energy.values(),
-            },
-            scale: &scale,
-        });
         let _ = (gamma, min_pressure);
         Ok(())
     }
@@ -433,39 +415,24 @@ fn scale_component<T: ComputeFloat>(dst: &mut [T], src: &[T], scale: Real) {
     }
 }
 
-fn apply_lusgs_component_update(
-    fields: &mut ConservedFields,
+fn apply_lusgs_component_update_typed<T: ComputeFloat>(
+    fields: &mut ConservedFieldsT<T>,
     i: usize,
-    residual: &ConservedResidual,
-    scale: Real,
-    gamma: Real,
-    min_pressure: Real,
-) {
-    let state = lusgs_updated_state(fields, residual, i, scale, gamma, min_pressure);
-    fields.density.values_mut()[i] = state.density;
-    fields.momentum_x.values_mut()[i] = state.momentum[0];
-    fields.momentum_y.values_mut()[i] = state.momentum[1];
-    fields.momentum_z.values_mut()[i] = state.momentum[2];
-    fields.total_energy.values_mut()[i] = state.total_energy;
-}
-
-fn lusgs_updated_state(
-    base: &ConservedFields,
-    residual: &ConservedResidual,
-    i: usize,
+    residual: &ConservedResidualT<T>,
     scale: Real,
     _gamma: Real,
     _min_pressure: Real,
-) -> ConservedState {
-    ConservedState {
-        density: base.density.values()[i] + scale * residual.density.values()[i],
-        momentum: [
-            base.momentum_x.values()[i] + scale * residual.momentum_x.values()[i],
-            base.momentum_y.values()[i] + scale * residual.momentum_y.values()[i],
-            base.momentum_z.values()[i] + scale * residual.momentum_z.values()[i],
-        ],
-        total_energy: base.total_energy.values()[i] + scale * residual.total_energy.values()[i],
-    }
+) {
+    fields.density.values_mut()[i] =
+        fields.density.values()[i].add_mul_real(residual.density.values()[i], scale);
+    fields.momentum_x.values_mut()[i] =
+        fields.momentum_x.values()[i].add_mul_real(residual.momentum_x.values()[i], scale);
+    fields.momentum_y.values_mut()[i] =
+        fields.momentum_y.values()[i].add_mul_real(residual.momentum_y.values()[i], scale);
+    fields.momentum_z.values_mut()[i] =
+        fields.momentum_z.values()[i].add_mul_real(residual.momentum_z.values()[i], scale);
+    fields.total_energy.values_mut()[i] =
+        fields.total_energy.values()[i].add_mul_real(residual.total_energy.values()[i], scale);
 }
 
 fn combine_rk4_component<T: ComputeFloat>(dst: &mut [T], k1: &[T], k2: &[T], k3: &[T], k4: &[T]) {
@@ -482,7 +449,9 @@ fn combine_rk4_component<T: ComputeFloat>(dst: &mut [T], k1: &[T], k2: &[T], k3:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::{ConservedFieldsT, ConservedResidualT};
     use crate::core::approx_eq;
+    use crate::field::{ConservedFields, ConservedResidual};
 
     #[test]
     fn rms_norm_scales_with_cell_count() {

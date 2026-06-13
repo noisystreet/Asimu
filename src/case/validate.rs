@@ -43,9 +43,23 @@ fn validate_f32_capabilities(case: &CaseSpec) -> Result<()> {
     if case.physics.viscous.is_some() && !matches!(case.mesh, CaseMesh::Unstructured3d(_)) {
         return Err(f32_unsupported("粘性通量 f32 暂仅支持非结构 3D 路径"));
     }
+    validate_f32_discretization(case)?;
+    validate_f32_time_scheme(case)?;
+    if case.time.residual_smoothing_config().enabled {
+        return Err(f32_unsupported("f32 暂不支持 residual_smoothing"));
+    }
+    if let CaseMesh::MultiBlockStructured3d(mesh) = &case.mesh {
+        if !mesh.interfaces().is_empty() {
+            return Err(f32_unsupported("f32 暂不支持多块 1-to-1 接口通量"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_f32_discretization(case: &CaseSpec) -> Result<()> {
     let disc = case.compressible_discretization()?;
     match disc.inviscid().reconstruction {
-        ReconstructionKind::FirstOrder => {}
+        ReconstructionKind::FirstOrder => Ok(()),
         ReconstructionKind::Muscl => {
             if !matches!(case.mesh, CaseMesh::Unstructured3d(_)) {
                 return Err(f32_unsupported("f32 二阶 MUSCL 暂仅支持非结构 3D 路径"));
@@ -55,24 +69,43 @@ fn validate_f32_capabilities(case: &CaseSpec) -> Result<()> {
                     "f32 非结构 MUSCL 须设置 unstructured_limiter = barth_jespersen | venkatakrishnan",
                 ));
             }
+            Ok(())
         }
     }
+}
+
+fn validate_f32_time_scheme(case: &CaseSpec) -> Result<()> {
     match case.time.resolved_time_scheme() {
-        TimeIntegrationScheme::Rk4 | TimeIntegrationScheme::Euler => {}
-        scheme => {
-            return Err(f32_unsupported(&format!(
-                "f32 暂不支持 time.scheme = \"{}\"",
-                scheme.label()
-            )));
-        }
+        TimeIntegrationScheme::Rk4 | TimeIntegrationScheme::Euler => Ok(()),
+        TimeIntegrationScheme::LuSgs => validate_f32_lusgs_time(case),
+        TimeIntegrationScheme::Gmres => validate_f32_gmres_time(case),
+        scheme => Err(f32_unsupported(&format!(
+            "f32 暂不支持 time.scheme = \"{}\"",
+            scheme.label()
+        ))),
     }
-    if case.time.residual_smoothing_config().enabled {
-        return Err(f32_unsupported("f32 暂不支持 residual_smoothing"));
+}
+
+fn validate_f32_lusgs_time(case: &CaseSpec) -> Result<()> {
+    if !case.time.uses_local_time_step() {
+        return Err(f32_unsupported("f32 lu_sgs 须配合 local_time_step = true"));
     }
-    if let CaseMesh::MultiBlockStructured3d(mesh) = &case.mesh {
-        if !mesh.interfaces().is_empty() {
-            return Err(f32_unsupported("f32 暂不支持多块 1-to-1 接口通量"));
-        }
+    let lu_sgs = case.time.resolved_lusgs_config()?;
+    if lu_sgs.sweep {
+        return Err(f32_unsupported("f32 暂不支持 lusgs_sweep = true"));
+    }
+    Ok(())
+}
+
+fn validate_f32_gmres_time(case: &CaseSpec) -> Result<()> {
+    if !case.time.uses_local_time_step() {
+        return Err(f32_unsupported("f32 gmres 须配合 local_time_step = true"));
+    }
+    if matches!(case.mesh, CaseMesh::Unstructured3d(_)) {
+        return Err(f32_unsupported("f32 gmres 暂仅支持结构化 3D 路径"));
+    }
+    if case.physics.viscous.is_some() {
+        return Err(f32_unsupported("f32 gmres 暂不支持粘性通量"));
     }
     Ok(())
 }
@@ -299,5 +332,24 @@ mod compute_precision_tests {
         case.physics.viscous = Some(crate::physics::ViscousPhysicsConfig::default());
         let err = compute_precision(&case).expect_err("structured viscous f32");
         assert!(err.to_string().contains("非结构"));
+    }
+
+    #[test]
+    fn f32_accepts_structured_lusgs_case() {
+        let mut case = load_case(Path::new(
+            "tests/benchmarks/unstructured_freestream/case.toml",
+        ))
+        .expect("case");
+        case.numerics = CaseNumericsConfig {
+            compute_precision: ComputePrecision::F32,
+        };
+        let block_mesh = crate::mesh::StructuredMesh3d::uniform_box("box", 2, 2, 2, 1.0, 1.0, 1.0)
+            .expect("mesh");
+        case.mesh = CaseMesh::MultiBlockStructured3d(
+            crate::mesh::MultiBlockStructuredMesh3d::from_single_mesh(block_mesh).expect("mb"),
+        );
+        case.time.scheme = Some(TimeIntegrationScheme::LuSgs);
+        case.time.local_time_step = true;
+        compute_precision(&case).expect("structured lusgs f32");
     }
 }
