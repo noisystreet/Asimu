@@ -13,7 +13,8 @@ mod vertex_field;
 
 pub use case::{
     CaseMesh, CaseObservabilityConfig, CaseOutputConfig, CaseSpec, CaseTimeConfig, CaseTimeMode,
-    SodCaseConfig, load_case, parse_case_str, resolve_case_output_path,
+    IncompressibleCaseConfig, IncompressibleReferenceConfig, SodCaseConfig, load_case,
+    parse_case_str, resolve_case_output_path,
 };
 pub use residual::{write_incompressible_residual_csv, write_residual_csv};
 pub use restart::{

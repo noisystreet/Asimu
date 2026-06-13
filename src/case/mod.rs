@@ -8,6 +8,7 @@ mod compressible_unstructured_3d;
 mod compressible_unstructured_3d_tests;
 mod diffusion;
 mod incompressible_3d;
+mod incompressible_profiles;
 mod output_3d;
 mod sod;
 

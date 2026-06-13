@@ -187,7 +187,6 @@ fn normalized(velocity: [Real; 3]) -> Result<[Real; 3]> {
 mod tests {
     use super::*;
     use crate::boundary::BoundaryPatch;
-    use crate::discretization::incompressible_face_boundary::cell_velocity;
 
     #[test]
     fn velocity_inlet_sets_owner_cell_velocity() {
@@ -223,10 +222,14 @@ mod tests {
             },
         )]);
 
-        apply_incompressible_boundary_conditions_3d(&mesh, &mut fields, &boundary).expect("bc");
+        let stats =
+            apply_incompressible_boundary_conditions_3d(&mesh, &mut fields, &boundary).expect("bc");
 
         let wall = mesh.cell_index(0, 0, 0);
-        assert_eq!(cell_velocity(&fields, wall), [0.0, 0.0, 0.0]);
+        assert_eq!(stats.velocity_cells, 1);
+        assert_eq!(fields.velocity_x.values()[wall], 0.0);
+        assert_eq!(fields.velocity_y.values()[wall], 0.0);
+        assert_eq!(fields.velocity_z.values()[wall], 0.0);
     }
 
     #[test]
@@ -242,9 +245,11 @@ mod tests {
             },
         )]);
 
-        apply_incompressible_boundary_conditions_3d(&mesh, &mut fields, &boundary).expect("bc");
+        let stats =
+            apply_incompressible_boundary_conditions_3d(&mesh, &mut fields, &boundary).expect("bc");
 
         let lid = mesh.cell_index(0, 1, 0);
+        assert_eq!(stats.velocity_cells, 1);
         assert_eq!(fields.velocity_x.values()[lid], 1.0);
         assert_eq!(fields.velocity_y.values()[lid], 0.0);
     }

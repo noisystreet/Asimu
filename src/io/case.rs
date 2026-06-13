@@ -12,7 +12,7 @@ mod mesh_load;
 pub use case_compressible::{
     CaseObservabilityConfig, CaseOutputConfig, EulerCaseConfig, resolve_case_output_path,
 };
-pub use case_incompressible::IncompressibleCaseConfig;
+pub use case_incompressible::{IncompressibleCaseConfig, IncompressibleReferenceConfig};
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

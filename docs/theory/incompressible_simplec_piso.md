@@ -264,16 +264,17 @@ a_{nb}=-\rho\frac{d_f}{\Delta n_f^2}
 ### 5.4 修正
 
 \[
-p \leftarrow p + \alpha_p p' \tag{12}
+p \leftarrow p - \alpha_p p' \tag{12}
 \]
 
-`[incompressible].pressure_under_relaxation` 给出 \(\alpha_p\in(0,1]\)，默认 1。
+`[incompressible].pressure_under_relaxation` 给出 \(\alpha_p\in(0,1]\)，默认 1。实现中的 \(p'\) 与显式 face flux 修正
+\(\phi_f \leftarrow \phi_f + d_f\nabla_f p'\cdot S_f\) 同号；因此 cell-centered 物理压力使用相反号更新，保证下一轮动量方程中的 \(-\nabla p\) 与 face-flux 校正方向一致。
 
 \[
 \mathbf{u}^{n+1} \leftarrow \mathbf{u}^* \tag{13}
 \]
 
-连续性收敛以显式 \(\phi_f\) 的散度为准。当前实现中，压力校正直接更新守恒 face flux 与欠松弛压力场；cell-centered 速度保留动量预测解，下一轮动量方程再通过更新后的压力梯度响应 \(p'\)。这样避免封闭腔体中很大的 Neumann-like \(p'\) 被直接反投影成过大的 cell velocity。
+连续性收敛以显式 \(\phi_f\) 的散度为准。当前实现中，压力校正直接更新守恒 face flux 与欠松弛压力场；cell-centered 速度保留动量预测解，下一轮动量方程再通过更新后的压力梯度响应更新压力。这样避免封闭腔体中很大的 Neumann-like \(p'\) 被直接反投影成过大的 cell velocity。
 
 ## 6. 边界条件
 
@@ -306,7 +307,7 @@ Ghost 单元距 owner 中心法向距离 \(d_f\)。
 单步：
 
 1. 解 (14) 得 \(\mathbf{u}^*\)，并由 Rhie-Chow 构造 \(\phi^{H/A}\)；
-2. 重复 \(k=1,\ldots,N\)：由 \(\nabla\cdot\phi^k\) 解 (11)，按 (11c) 显式更新 \(\phi^{k+1}\)，并用累计 \(p'\) 执行压力更新 (12)；
+2. 重复 \(k=1,\ldots,N\)：由 \(\nabla\cdot\phi^k\) 解 (11)，按 (11c) 显式更新 \(\phi^{k+1}\)，并用累计 \(p'\) 按相反号执行压力更新 (12)；
 3. 若 \(\nabla\cdot\phi^k\) 已低于 `time.tolerance`，该 pressure corrector 返回零校正并标记为已满足 coupling 目标；
 4. \(t \leftarrow t + \Delta t\)。
 

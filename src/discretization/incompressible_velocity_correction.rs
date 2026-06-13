@@ -1,7 +1,7 @@
 //! 压力校正后的不可压缩场更新。
 //!
 //! 显式 face flux `phi` 是 pressure-velocity coupling 的守恒状态。压力校正阶段直接
-//! 修正 `phi` 并欠松弛更新 cell-centered 压力；cell-centered 速度保留动量预测解，
+//! 修正 `phi` 并以相反号欠松弛更新 cell-centered 压力；cell-centered 速度保留动量预测解，
 //! 下一轮动量方程再通过更新后的压力梯度响应压力校正，避免把封闭腔体的大 \(p'\)
 //! 直接反投影成过大的 cell 速度。
 
@@ -64,7 +64,7 @@ fn build_updated_pressure(
         .values()
         .iter()
         .zip(pressure_correction.iter())
-        .map(|(value, correction)| value + pressure_under_relaxation * correction)
+        .map(|(value, correction)| value - pressure_under_relaxation * correction)
         .collect::<Vec<_>>();
     ScalarField::from_values(values)
 }
@@ -128,5 +128,6 @@ mod tests {
 
         assert!(approx_eq(corrected.velocity_x.values()[1], 1.0, 1.0e-12));
         assert!(approx_eq(corrected.velocity_y.values()[1], 0.0, 1.0e-12));
+        assert!(approx_eq(corrected.pressure.values()[2], -1.0, 1.0e-12));
     }
 }

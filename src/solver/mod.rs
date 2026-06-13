@@ -5,6 +5,7 @@ pub mod compressible_helpers;
 pub mod incompressible;
 mod incompressible_diagnostics;
 mod incompressible_linear;
+mod incompressible_pressure_reference;
 pub mod lu_sgs_common;
 pub mod lu_sgs_sweep_unstructured;
 pub mod sod;

@@ -1,5 +1,3 @@
-//! 不可压缩 SIMPLEC 求解编排。
-
 use crate::boundary::BoundarySet;
 use crate::core::Real;
 use crate::discretization::{
@@ -24,6 +22,7 @@ use crate::solver::incompressible_linear::{
     MomentumPredictorSolveDiagnostic, PressureCorrectionSolveDiagnostic, solve_momentum_predictor,
     solve_pressure_correction,
 };
+use crate::solver::incompressible_pressure_reference::volume_weighted_pressure_mean;
 use std::time::Instant;
 use tracing::debug;
 
@@ -604,7 +603,7 @@ fn normalize_closed_pressure_reference(
     if has_pressure_correction_dirichlet(config.boundary) || pressure_correction.is_empty() {
         return;
     }
-    let reference = pressure_correction[0];
+    let reference = volume_weighted_pressure_mean(pressure_correction, config.mesh);
     for value in pressure_correction {
         *value -= reference;
     }

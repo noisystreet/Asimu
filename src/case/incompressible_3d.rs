@@ -27,6 +27,9 @@ use crate::solver::{
     run_incompressible_pressure_velocity_with_observer,
 };
 
+use super::incompressible_profiles::{
+    incompressible_centerline_profiles, lid_cavity_profile_error, poiseuille_profile_error,
+};
 use super::{CaseRunKind, CaseRunResult};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -48,6 +51,8 @@ pub struct Incompressible3dRunMetrics {
     pub pressure_solve_iterations: usize,
     pub pressure_solve_residual: Real,
     pub max_abs_pressure_correction: Real,
+    pub max_abs_pressure: Real,
+    pub max_abs_velocity: Real,
     pub momentum_system_rows: usize,
     pub momentum_system_nnz: usize,
     pub max_momentum_d_coefficient: Real,
@@ -297,6 +302,8 @@ fn build_run_metrics(
     boundary_stats: IncompressibleBoundaryApplyStats,
     benchmark: BenchmarkDiagnostics,
 ) -> Incompressible3dRunMetrics {
+    let max_abs_pressure = max_abs_slice(diagnostic.corrected_fields.pressure.values());
+    let max_abs_velocity = max_abs_incompressible_velocity(&diagnostic.corrected_fields);
     Incompressible3dRunMetrics {
         algorithm: diagnostic.algorithm.label().to_string(),
         pressure_correctors: diagnostic.pressure_correctors,
@@ -318,6 +325,8 @@ fn build_run_metrics(
         pressure_solve_iterations: diagnostic.pressure_solve_iterations,
         pressure_solve_residual: diagnostic.pressure_solve_residual,
         max_abs_pressure_correction: diagnostic.max_abs_pressure_correction,
+        max_abs_pressure,
+        max_abs_velocity,
         momentum_system_rows: diagnostic.momentum_system_rows,
         momentum_system_nnz: diagnostic.momentum_system_nnz,
         max_momentum_d_coefficient: diagnostic.max_momentum_d_coefficient,
@@ -350,231 +359,16 @@ fn build_run_metrics(
     }
 }
 
-fn incompressible_centerline_profiles(
-    case: &CaseSpec,
-    mesh: &StructuredMesh3d,
-    kinematic_viscosity: Real,
-    body_force: [Real; 3],
-    fields: &IncompressibleFields,
-) -> Option<IncompressibleCenterlineProfiles> {
-    match case.benchmark_id.as_deref() {
-        Some(id) if id.starts_with("lid_driven_cavity_re100") => {
-            Some(lid_cavity_centerline_profiles(mesh, fields))
-        }
-        Some("channel_poiseuille") if kinematic_viscosity > 0.0 && body_force[0].abs() > 0.0 => {
-            Some(channel_poiseuille_centerline_profiles(mesh, fields))
-        }
-        _ => None,
-    }
+fn max_abs_incompressible_velocity(fields: &IncompressibleFields) -> Real {
+    max_abs_slice(fields.velocity_x.values())
+        .max(max_abs_slice(fields.velocity_y.values()))
+        .max(max_abs_slice(fields.velocity_z.values()))
 }
 
-fn lid_cavity_centerline_profiles(
-    mesh: &StructuredMesh3d,
-    fields: &IncompressibleFields,
-) -> IncompressibleCenterlineProfiles {
-    let i_mid = mesh.nx / 2;
-    let j_mid = mesh.ny / 2;
-    let k_mid = mesh.nz / 2;
-    let mut vertical_u = Vec::with_capacity(mesh.ny);
-    for j in 0..mesh.ny {
-        let cell = mesh.cell_index(i_mid, j, k_mid);
-        vertical_u.push(IncompressibleLineSample {
-            coordinate: cell_center_y(mesh, i_mid, j, k_mid),
-            velocity_x: fields.velocity_x.values()[cell],
-            velocity_y: fields.velocity_y.values()[cell],
-            velocity_z: fields.velocity_z.values()[cell],
-        });
-    }
-    let mut horizontal_v = Vec::with_capacity(mesh.nx);
-    for i in 0..mesh.nx {
-        let cell = mesh.cell_index(i, j_mid, k_mid);
-        horizontal_v.push(IncompressibleLineSample {
-            coordinate: cell_center_x(mesh, i, j_mid, k_mid),
-            velocity_x: fields.velocity_x.values()[cell],
-            velocity_y: fields.velocity_y.values()[cell],
-            velocity_z: fields.velocity_z.values()[cell],
-        });
-    }
-    IncompressibleCenterlineProfiles {
-        vertical_u,
-        horizontal_v,
-    }
-}
-
-fn channel_poiseuille_centerline_profiles(
-    mesh: &StructuredMesh3d,
-    fields: &IncompressibleFields,
-) -> IncompressibleCenterlineProfiles {
-    let i_mid = mesh.nx / 2;
-    let k_mid = mesh.nz / 2;
-    let mut vertical_u = Vec::with_capacity(mesh.ny);
-    for j in 0..mesh.ny {
-        let cell = mesh.cell_index(i_mid, j, k_mid);
-        vertical_u.push(IncompressibleLineSample {
-            coordinate: cell_center_y(mesh, i_mid, j, k_mid),
-            velocity_x: fields.velocity_x.values()[cell],
-            velocity_y: fields.velocity_y.values()[cell],
-            velocity_z: fields.velocity_z.values()[cell],
-        });
-    }
-    IncompressibleCenterlineProfiles {
-        vertical_u,
-        horizontal_v: Vec::new(),
-    }
-}
-
-fn poiseuille_profile_error(
-    case: &CaseSpec,
-    mesh: &StructuredMesh3d,
-    kinematic_viscosity: Real,
-    body_force: [Real; 3],
-    fields: &IncompressibleFields,
-) -> Option<IncompressibleProfileError> {
-    if case.benchmark_id.as_deref() != Some("channel_poiseuille")
-        || kinematic_viscosity <= 0.0
-        || body_force[0].abs() <= Real::EPSILON
-    {
-        return None;
-    }
-    let y_min = mesh.node_y(0, 0, 0);
-    let y_max = mesh.node_y(0, mesh.ny, 0);
-    let height = y_max - y_min;
-    if height <= 0.0 {
-        return None;
-    }
-    let i_mid = mesh.nx / 2;
-    let k_mid = mesh.nz / 2;
-    let mut max_abs: Real = 0.0;
-    let mut sum_sq: Real = 0.0;
-    if mesh.ny <= 2 {
-        return None;
-    }
-    for j in 1..(mesh.ny - 1) {
-        let y = cell_center_y(mesh, i_mid, j, k_mid) - y_min;
-        let expected = body_force[0] * y * (height - y) / (2.0 * kinematic_viscosity);
-        let cell = mesh.cell_index(i_mid, j, k_mid);
-        let error = fields.velocity_x.values()[cell] - expected;
-        max_abs = max_abs.max(error.abs());
-        sum_sq += error * error;
-    }
-    Some(IncompressibleProfileError {
-        max_abs,
-        l2: (sum_sq / (mesh.ny - 2) as Real).sqrt(),
-    })
-}
-
-fn lid_cavity_profile_error(
-    case: &CaseSpec,
-    profiles: Option<&IncompressibleCenterlineProfiles>,
-) -> Option<IncompressibleCenterlineProfileError> {
-    if !case
-        .benchmark_id
-        .as_deref()
-        .is_some_and(|id| id.starts_with("lid_driven_cavity_re100"))
-    {
-        return None;
-    }
-    let profiles = profiles?;
-    Some(IncompressibleCenterlineProfileError {
-        vertical_u: profile_error_against_reference(
-            &profiles.vertical_u,
-            &GHIA_RE100_VERTICAL_U,
-            |sample| sample.velocity_x,
-        )?,
-        horizontal_v: profile_error_against_reference(
-            &profiles.horizontal_v,
-            &GHIA_RE100_HORIZONTAL_V,
-            |sample| sample.velocity_y,
-        )?,
-    })
-}
-
-fn profile_error_against_reference(
-    samples: &[IncompressibleLineSample],
-    reference: &[(Real, Real)],
-    value: impl Fn(&IncompressibleLineSample) -> Real,
-) -> Option<IncompressibleProfileError> {
-    if samples.is_empty() || reference.len() < 2 {
-        return None;
-    }
-    let mut max_abs: Real = 0.0;
-    let mut sum_sq: Real = 0.0;
-    for sample in samples {
-        let expected = interpolate_reference(reference, sample.coordinate)?;
-        let error = value(sample) - expected;
-        max_abs = max_abs.max(error.abs());
-        sum_sq += error * error;
-    }
-    Some(IncompressibleProfileError {
-        max_abs,
-        l2: (sum_sq / samples.len() as Real).sqrt(),
-    })
-}
-
-fn interpolate_reference(reference: &[(Real, Real)], coordinate: Real) -> Option<Real> {
-    let mut sorted = reference.to_vec();
-    sorted.sort_by(|a, b| a.0.total_cmp(&b.0));
-    for pair in sorted.windows(2) {
-        let (x0, y0) = pair[0];
-        let (x1, y1) = pair[1];
-        if coordinate >= x0 && coordinate <= x1 {
-            let t = if (x1 - x0).abs() <= Real::EPSILON {
-                0.0
-            } else {
-                (coordinate - x0) / (x1 - x0)
-            };
-            return Some(y0 + t * (y1 - y0));
-        }
-    }
-    None
-}
-
-const GHIA_RE100_VERTICAL_U: [(Real, Real); 17] = [
-    (1.0, 1.0),
-    (0.9766, 0.84123),
-    (0.9688, 0.78871),
-    (0.9609, 0.73722),
-    (0.9531, 0.68717),
-    (0.8516, 0.23151),
-    (0.7344, 0.00332),
-    (0.6172, -0.13641),
-    (0.5, -0.20581),
-    (0.4531, -0.2109),
-    (0.2813, -0.15662),
-    (0.1719, -0.1015),
-    (0.1016, -0.06434),
-    (0.0703, -0.04775),
-    (0.0625, -0.04192),
-    (0.0547, -0.03717),
-    (0.0, 0.0),
-];
-
-const GHIA_RE100_HORIZONTAL_V: [(Real, Real); 17] = [
-    (1.0, 0.0),
-    (0.9688, -0.05906),
-    (0.9609, -0.07391),
-    (0.9531, -0.08864),
-    (0.9453, -0.10313),
-    (0.9063, -0.16914),
-    (0.8594, -0.22445),
-    (0.8047, -0.24533),
-    (0.5, 0.05454),
-    (0.2344, 0.17527),
-    (0.2266, 0.17507),
-    (0.1563, 0.16077),
-    (0.0938, 0.12317),
-    (0.0781, 0.1089),
-    (0.0703, 0.10091),
-    (0.0625, 0.09233),
-    (0.0, 0.0),
-];
-
-fn cell_center_x(mesh: &StructuredMesh3d, i: usize, j: usize, k: usize) -> Real {
-    0.5 * (mesh.node_x(i, j, k) + mesh.node_x(i + 1, j, k))
-}
-
-fn cell_center_y(mesh: &StructuredMesh3d, i: usize, j: usize, k: usize) -> Real {
-    0.5 * (mesh.node_y(i, j, k) + mesh.node_y(i, j + 1, k))
+fn max_abs_slice(values: &[Real]) -> Real {
+    values
+        .iter()
+        .fold(0.0, |max_value: Real, value| max_value.max(value.abs()))
 }
 
 fn write_outputs(
