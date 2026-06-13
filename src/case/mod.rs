@@ -17,7 +17,7 @@ mod validate;
 
 use std::path::Path;
 
-use tracing::{info, info_span, instrument};
+use tracing::{debug_span, info, instrument};
 
 use crate::config::init_tracing;
 use crate::error::{AsimuError, Result};
@@ -73,27 +73,23 @@ pub fn run_case_path_logged(
 }
 
 /// 运行已解析算例（含 run manifest 写出）。
-#[instrument(skip(case), fields(name = %case.name))]
+#[instrument(skip(case), fields(name = %case.name), level = "debug")]
 pub fn run_case(case: &CaseSpec) -> Result<CaseRunResult> {
     manifest::run_case_with_manifest(case)
 }
 
 fn dispatch_case(case: &CaseSpec) -> Result<CaseRunResult> {
-    let kind = {
-        let _span = info_span!("detect_run_kind").entered();
-        detect_run_kind(case)?
-    };
+    let kind = detect_run_kind(case)?;
     info!(name = %case.name, ?kind, "开始算例编排");
     validate::compute_precision(case)?;
     {
-        let _span = info_span!(
+        let _span = debug_span!(
             "log_boundary_patches",
             patches = case.boundary.patches().len()
         )
         .entered();
         case.boundary.log_patches();
     }
-    let _span = info_span!("dispatch_case_run", ?kind).entered();
     match kind {
         CaseRunKind::Diffusion1dSteady => diffusion::run(case),
         CaseRunKind::Sod1dTransient => sod::run(case),

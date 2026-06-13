@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use tracing::info_span;
+use tracing::debug_span;
 
 use crate::error::Result;
 use crate::io::CaseSpec;
@@ -23,7 +23,7 @@ pub fn maybe_write_compressible_structured_interval(
     if !interval_output_due(case, step.info.step) {
         return Ok(Vec::new());
     }
-    let _span = info_span!(
+    let _span = debug_span!(
         "maybe_write_compressible_structured_interval",
         step = step.info.step,
         blocks = step.fields.len()
@@ -48,7 +48,7 @@ pub fn maybe_write_compressible_unstructured_interval(
     if !interval_output_due(case, step.info.step) {
         return Ok(Vec::new());
     }
-    let _span = info_span!(
+    let _span = debug_span!(
         "maybe_write_compressible_unstructured_interval",
         step = step.info.step,
         cells = mesh.num_cells()
@@ -84,7 +84,7 @@ pub fn maybe_write_incompressible_interval(
     if !interval_output_due(case, step.info.step) {
         return Ok(Vec::new());
     }
-    let _span = info_span!("maybe_write_incompressible_interval", step = step.info.step).entered();
+    let _span = debug_span!("maybe_write_incompressible_interval", step = step.info.step).entered();
     let mut written =
         super::incompressible_3d::write_incompressible_residual_outputs(case, step.history)?;
     let Some(output) = &case.output else {

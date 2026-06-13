@@ -2,7 +2,7 @@
 
 use std::time::Instant;
 
-use tracing::{info, info_span};
+use tracing::{debug, info_span};
 
 use crate::core::{Real, elapsed_ms, format_log_fixed4, format_log_sci4, log10_positive};
 use crate::discretization::InviscidFluxConfig;
@@ -127,7 +127,7 @@ pub fn run_unstructured_with_observer(
         let step = advance_unstructured_step(&mut env, fields, &mut work)?;
         let mut step = step;
         let stop = control.finalize_step(&mut step);
-        info!(
+        debug!(
             step = step.step,
             dt = %format_log_sci4(step.dt),
             t = %format_log_sci4(step.physical_time),
@@ -227,7 +227,7 @@ fn advance_unstructured_step(
     };
     let advance_clock_ms = elapsed_ms(advance_clock_start);
     let step_total_ms = elapsed_ms(step_start);
-    info!(
+    debug!(
         step = work.state.time_step,
         scheme = scheme.label(),
         cells = env.config.mesh.num_cells(),

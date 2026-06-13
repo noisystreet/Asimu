@@ -1,6 +1,6 @@
 //! 3D 可压缩 Euler / Navier-Stokes 算例编排（`[euler]` / `[navier_stokes]` + CGNS/结构化 3D 网格）。
 
-use tracing::{info, info_span, warn};
+use tracing::{debug_span, info, warn};
 
 use crate::case::{CaseRunKind, CaseRunResult};
 use crate::core::{ComputePrecision, Real, format_log_fixed4, format_log_sci4, log10_positive};
@@ -37,15 +37,8 @@ fn run_compressible_3d(
     case: &CaseSpec,
     mesh: &MultiBlockStructuredMesh3d,
 ) -> Result<CaseRunResult> {
-    let _span = info_span!(
-        "run_compressible_3d",
-        blocks = mesh.num_blocks(),
-        interfaces = mesh.interfaces().len(),
-        cells = mesh.num_cells()
-    )
-    .entered();
     let (eos, freestream, solver, scheme, limiter, time_mode, local_time_step) = {
-        let _span = info_span!("prepare_compressible_solver").entered();
+        let _span = debug_span!("prepare_compressible_solver").entered();
         case.validate_multiblock_compressible()?;
         let disc = case.compressible_discretization()?;
         let eos = case.physics.eos()?;
@@ -77,7 +70,7 @@ fn run_compressible_3d(
         );
     }
     let initial_fields = {
-        let _span = info_span!(
+        let _span = debug_span!(
             "load_block_initial_fields",
             blocks = mesh.num_blocks(),
             restart = case.restart.is_some()
@@ -85,30 +78,36 @@ fn run_compressible_3d(
         .entered();
         case.build_multiblock_conserved_fields(mesh.blocks())?
     };
+    log_run_start(
+        mesh,
+        &scheme,
+        &limiter,
+        time_mode,
+        local_time_step,
+        case.resolved_max_steps(),
+        None,
+    );
     let mut snapshot_paths = Vec::new();
-    let (history, fields) = {
-        let _span = info_span!("advance_block_history").entered();
-        run_multiblock_structured_with_observer(
-            MultiblockStructuredDriverInput {
-                solver: &solver,
-                eos: &eos,
-                freestream: &freestream,
-                mesh,
-                global_boundary: &case.boundary,
-                reference: case.reference.as_ref(),
-                residual_tolerance: super::validate::residual_tolerance(case),
-                initial_fields,
-            },
-            |step| {
-                snapshot_paths.extend(
-                    super::output_interval::maybe_write_compressible_structured_interval(
-                        case, mesh, step,
-                    )?,
-                );
-                Ok(())
-            },
-        )?
-    };
+    let (history, fields) = run_multiblock_structured_with_observer(
+        MultiblockStructuredDriverInput {
+            solver: &solver,
+            eos: &eos,
+            freestream: &freestream,
+            mesh,
+            global_boundary: &case.boundary,
+            reference: case.reference.as_ref(),
+            residual_tolerance: super::validate::residual_tolerance(case),
+            initial_fields,
+        },
+        |step| {
+            snapshot_paths.extend(
+                super::output_interval::maybe_write_compressible_structured_interval(
+                    case, mesh, step,
+                )?,
+            );
+            Ok(())
+        },
+    )?;
 
     let last = history
         .last()
@@ -123,7 +122,7 @@ fn run_compressible_3d(
         mesh.num_cells(),
     );
     let output_paths = {
-        let _span = info_span!("write_compressible_outputs").entered();
+        let _span = debug_span!("write_compressible_outputs").entered();
         super::output_3d::write_compressible_3d_outputs(case, mesh, &fields, &history)?
     };
     log_written_paths(&snapshot_paths, &output_paths);
@@ -144,15 +143,8 @@ fn run_compressible_3d_typed<
     case: &CaseSpec,
     mesh: &MultiBlockStructuredMesh3d,
 ) -> Result<CaseRunResult> {
-    let _span = info_span!(
-        "run_compressible_3d_typed",
-        precision = T::PRECISION.label(),
-        blocks = mesh.num_blocks(),
-        cells = mesh.num_cells()
-    )
-    .entered();
     let (eos, freestream, solver, scheme, limiter, time_mode, local_time_step) = {
-        let _span = info_span!("prepare_compressible_solver").entered();
+        let _span = debug_span!("prepare_compressible_solver").entered();
         case.validate_multiblock_compressible()?;
         let disc = case.compressible_discretization()?;
         let eos = case.physics.eos()?;
@@ -177,7 +169,7 @@ fn run_compressible_3d_typed<
         )
     };
     let initial_fields = {
-        let _span = info_span!(
+        let _span = debug_span!(
             "load_block_initial_fields",
             blocks = mesh.num_blocks(),
             restart = case.restart.is_some()
@@ -185,30 +177,36 @@ fn run_compressible_3d_typed<
         .entered();
         case.build_multiblock_conserved_fields(mesh.blocks())?
     };
+    log_run_start(
+        mesh,
+        &scheme,
+        &limiter,
+        time_mode,
+        local_time_step,
+        case.resolved_max_steps(),
+        Some(T::PRECISION.label()),
+    );
     let mut snapshot_paths = Vec::new();
-    let (history, fields) = {
-        let _span = info_span!("advance_block_history_typed").entered();
-        run_multiblock_structured_typed_with_observer::<T>(
-            MultiblockStructuredDriverInput {
-                solver: &solver,
-                eos: &eos,
-                freestream: &freestream,
-                mesh,
-                global_boundary: &case.boundary,
-                reference: case.reference.as_ref(),
-                residual_tolerance: super::validate::residual_tolerance(case),
-                initial_fields,
-            },
-            |step| {
-                snapshot_paths.extend(
-                    super::output_interval::maybe_write_compressible_structured_interval(
-                        case, mesh, step,
-                    )?,
-                );
-                Ok(())
-            },
-        )?
-    };
+    let (history, fields) = run_multiblock_structured_typed_with_observer::<T>(
+        MultiblockStructuredDriverInput {
+            solver: &solver,
+            eos: &eos,
+            freestream: &freestream,
+            mesh,
+            global_boundary: &case.boundary,
+            reference: case.reference.as_ref(),
+            residual_tolerance: super::validate::residual_tolerance(case),
+            initial_fields,
+        },
+        |step| {
+            snapshot_paths.extend(
+                super::output_interval::maybe_write_compressible_structured_interval(
+                    case, mesh, step,
+                )?,
+            );
+            Ok(())
+        },
+    )?;
     let last = history
         .last()
         .ok_or_else(|| AsimuError::Solver("3D 可压缩 typed 推进未产生任何时间步".to_string()))?;
@@ -222,7 +220,7 @@ fn run_compressible_3d_typed<
         mesh.num_cells(),
     );
     let output_paths = {
-        let _span = info_span!("write_compressible_outputs").entered();
+        let _span = debug_span!("write_compressible_outputs").entered();
         super::output_3d::write_compressible_3d_outputs(case, mesh, &fields, &history)?
     };
     log_written_paths(&snapshot_paths, &output_paths);
@@ -235,6 +233,42 @@ fn run_compressible_3d_typed<
         time_mode,
         local_time_step,
     ))
+}
+
+fn log_run_start(
+    mesh: &MultiBlockStructuredMesh3d,
+    scheme: &str,
+    limiter: &str,
+    time_mode: CompressibleTimeMode,
+    local_time_step: bool,
+    max_steps: u64,
+    precision: Option<&str>,
+) {
+    match precision {
+        Some(precision) => info!(
+            blocks = mesh.num_blocks(),
+            interfaces = mesh.interfaces().len(),
+            cells = mesh.num_cells(),
+            max_steps,
+            scheme,
+            limiter,
+            local_time_step,
+            precision,
+            "开始 3D 可压缩 {}求解",
+            time_mode_label(time_mode),
+        ),
+        None => info!(
+            blocks = mesh.num_blocks(),
+            interfaces = mesh.interfaces().len(),
+            cells = mesh.num_cells(),
+            max_steps,
+            scheme,
+            limiter,
+            local_time_step,
+            "开始 3D 可压缩 {}求解",
+            time_mode_label(time_mode),
+        ),
+    }
 }
 
 fn log_written_paths(snapshot_paths: &[std::path::PathBuf], output_paths: &[std::path::PathBuf]) {

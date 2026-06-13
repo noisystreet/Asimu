@@ -2,7 +2,7 @@
 
 use std::time::Instant;
 
-use tracing::{info, info_span};
+use tracing::{debug, info, info_span};
 
 use crate::core::{
     ComputeFloat, Real, elapsed_ms, format_log_fixed4, format_log_sci4, log10_positive,
@@ -133,7 +133,7 @@ pub fn run_unstructured_typed_with_observer<
         let step = advance_unstructured_step_typed(&mut env, fields, &mut work)?;
         let mut step = step;
         let stop = control.finalize_step(&mut step);
-        info!(
+        debug!(
             step = step.step,
             dt = %format_log_sci4(step.dt),
             t = %format_log_sci4(step.physical_time),
@@ -206,7 +206,7 @@ fn advance_unstructured_step_typed<
     let residual = work.storage.k1.density_rms_norm();
     let time_info = work.integrator.advance(&mut work.state)?;
     let step_total_ms = elapsed_ms(step_start);
-    info!(
+    debug!(
         step = work.state.time_step,
         profile_compute_dt_ms = %format_log_fixed4(compute_dt_ms),
         profile_time_integration_ms = %format_log_fixed4(time_integration_ms),

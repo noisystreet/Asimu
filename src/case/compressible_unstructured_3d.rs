@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use tracing::{info, info_span};
+use tracing::{debug_span, info};
 
 use crate::case::{CaseRunKind, CaseRunResult, validate};
 use crate::core::{ComputePrecision, Real, format_log_fixed4, format_log_sci4, log10_positive};
@@ -82,14 +82,8 @@ fn run_compressible_unstructured_3d(
     case: &CaseSpec,
     mesh: &UnstructuredMesh3d,
 ) -> Result<CaseRunResult> {
-    let _span = info_span!(
-        "run_compressible_unstructured_3d",
-        cells = mesh.num_cells(),
-        faces = mesh.num_faces(),
-    )
-    .entered();
     let prepared = {
-        let _span = info_span!("prepare_unstructured_solver").entered();
+        let _span = debug_span!("prepare_unstructured_solver").entered();
         prepare_unstructured_run(case, mesh)?
     };
     let UnstructuredPreparedRun {
@@ -100,6 +94,8 @@ fn run_compressible_unstructured_3d(
         fields,
         driver_time,
     } = prepared;
+    let equation_label = unstructured_equation_label(case);
+    log_unstructured_start(mesh, &inviscid, &driver_time, equation_label, None);
     let driver = UnstructuredDriverConfig {
         solver: &solver,
         mesh,
@@ -119,17 +115,14 @@ fn run_compressible_unstructured_3d(
     };
     let mut fields = fields;
     let mut interval_paths = Vec::new();
-    let history = {
-        let _span = info_span!("advance_unstructured_history").entered();
-        run_unstructured_with_observer(&driver, &mut fields, |step| {
-            interval_paths.extend(
-                super::output_interval::maybe_write_compressible_unstructured_interval(
-                    case, mesh, step,
-                )?,
-            );
-            Ok(())
-        })?
-    };
+    let history = run_unstructured_with_observer(&driver, &mut fields, |step| {
+        interval_paths.extend(
+            super::output_interval::maybe_write_compressible_unstructured_interval(
+                case, mesh, step,
+            )?,
+        );
+        Ok(())
+    })?;
     let last = history
         .last()
         .ok_or_else(|| AsimuError::Solver("非结构 3D 推进未产生任何时间步".to_string()))?;
@@ -142,7 +135,6 @@ fn run_compressible_unstructured_3d(
         limiter: inviscid.limiter_label().to_string(),
         converged: last.converged,
     };
-    let equation_label = unstructured_equation_label(case);
     log_unstructured_complete(
         &metrics,
         inviscid.short_label(),
@@ -151,7 +143,7 @@ fn run_compressible_unstructured_3d(
         equation_label,
     );
     let output_paths = {
-        let _span = info_span!("write_unstructured_outputs").entered();
+        let _span = debug_span!("write_unstructured_outputs").entered();
         write_unstructured_outputs(case, mesh, &fields, &history)?
     };
     for path in &interval_paths {
@@ -178,14 +170,10 @@ fn run_compressible_unstructured_3d_typed<
     case: &CaseSpec,
     mesh: &UnstructuredMesh3d,
 ) -> Result<CaseRunResult> {
-    let _span = info_span!(
-        "run_compressible_unstructured_3d_typed",
-        precision = T::PRECISION.label(),
-        cells = mesh.num_cells(),
-        faces = mesh.num_faces(),
-    )
-    .entered();
-    let prepared = prepare_unstructured_run(case, mesh)?;
+    let prepared = {
+        let _span = debug_span!("prepare_unstructured_solver").entered();
+        prepare_unstructured_run(case, mesh)?
+    };
     let UnstructuredPreparedRun {
         inviscid,
         solver,
@@ -194,6 +182,14 @@ fn run_compressible_unstructured_3d_typed<
         fields,
         driver_time,
     } = prepared;
+    let equation_label = unstructured_equation_label(case);
+    log_unstructured_start(
+        mesh,
+        &inviscid,
+        &driver_time,
+        equation_label,
+        Some(T::PRECISION.label()),
+    );
     let driver = UnstructuredDriverConfig {
         solver: &solver,
         mesh,
@@ -234,7 +230,6 @@ fn run_compressible_unstructured_3d_typed<
         limiter: inviscid.limiter_label().to_string(),
         converged: last.converged,
     };
-    let equation_label = unstructured_equation_label(case);
     log_unstructured_complete(
         &metrics,
         inviscid.short_label(),
@@ -308,6 +303,38 @@ pub(crate) fn build_compressible_solver(
         gmres: case.time.resolved_gmres_config(),
         residual_smoothing: case.time.residual_smoothing_config(),
     }))
+}
+
+fn log_unstructured_start(
+    mesh: &UnstructuredMesh3d,
+    inviscid: &crate::discretization::InviscidFluxConfig,
+    driver_time: &UnstructuredDriverTimeConfig,
+    equation_label: &str,
+    precision: Option<&str>,
+) {
+    match precision {
+        Some(precision) => info!(
+            cells = mesh.num_cells(),
+            faces = mesh.num_faces(),
+            max_steps = driver_time.max_steps,
+            scheme = inviscid.short_label(),
+            limiter = inviscid.limiter_label(),
+            time_scheme = driver_time.time_scheme.label(),
+            equation = equation_label,
+            precision,
+            "开始非结构 3D 可压缩求解"
+        ),
+        None => info!(
+            cells = mesh.num_cells(),
+            faces = mesh.num_faces(),
+            max_steps = driver_time.max_steps,
+            scheme = inviscid.short_label(),
+            limiter = inviscid.limiter_label(),
+            time_scheme = driver_time.time_scheme.label(),
+            equation = equation_label,
+            "开始非结构 3D 可压缩求解"
+        ),
+    }
 }
 
 fn log_unstructured_complete(
