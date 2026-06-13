@@ -21,7 +21,7 @@ pub fn initial_scalar(case: &CaseSpec, name: &str) -> Result<ScalarField> {
 /// 单域 3D 守恒初场；`[restart]` 优先。
 pub fn conserved_fields(case: &CaseSpec) -> Result<ConservedFields> {
     if let Some(path) = &case.restart {
-        return restart::load_conserved_fields(path);
+        return restart::load_conserved_fields_checked(path, case.numerics.compute_precision);
     }
     restart::initial_freestream_conserved_fields(
         case.mesh.num_cells(),
@@ -44,5 +44,6 @@ pub fn multiblock_conserved_fields(
         case.reference.as_ref(),
         case.physics.viscous.as_ref(),
         case.freestream.or(case.fluid_initial.freestream),
+        case.numerics.compute_precision,
     )
 }

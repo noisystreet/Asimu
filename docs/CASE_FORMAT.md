@@ -405,8 +405,10 @@ path = "restart.toml"
 
 | 版本 | 适用 | 格式 |
 |------|------|------|
-| `version = 1` | 单 block 3D / 1D | 顶层 `num_cells` + `density` / `momentum_*` / `total_energy` |
-| `version = 2` | 多块 3D | `[[blocks]]` 数组，每项含 `name`（须与 mesh block 名一致）及守恒量数组 |
+| `version = 1` | 单 block 3D / 1D | 顶层 `num_cells` + `density` / `momentum_*` / `total_energy`；可选 `compute_precision = "f32"`（缺省 `f64`） |
+| `version = 2` | 多块 3D | `[[blocks]]` 数组，每项含 `name`（须与 mesh block 名一致）及守恒量数组；顶层可选 `compute_precision` |
+
+`compute_precision` 须与 case `[numerics].compute_precision` 一致；跨精度 restart（`f32` 文件 + `f64` case 或反向）**暂不支持**，加载时报错。旧版无 `compute_precision` 字段的 restart 视为 `f64`。
 
 多块 restart 仍须配置 `[freestream]` 以驱动边界 ghost；初场守恒量来自 restart 文件。API：`CaseSpec::build_multiblock_conserved_fields()`、`io::load_multiblock_conserved_fields()`、`io::write_multiblock_conserved_fields()`。
 

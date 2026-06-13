@@ -19,8 +19,11 @@ pub use case::{
 };
 pub use residual::{write_incompressible_residual_csv, write_residual_csv};
 pub use restart::{
-    initial_multiblock_conserved_fields, load_conserved_fields, load_multiblock_conserved_fields,
-    write_conserved_fields, write_multiblock_conserved_fields,
+    RestartPrecision, initial_multiblock_conserved_fields, load_conserved_fields,
+    load_conserved_fields_checked, load_conserved_fields_typed, load_multiblock_conserved_fields,
+    load_multiblock_conserved_fields_checked, read_restart_precision, write_conserved_fields,
+    write_conserved_fields_typed, write_conserved_fields_with_precision,
+    write_multiblock_conserved_fields, write_multiblock_conserved_fields_with_precision,
 };
 
 #[cfg(feature = "io-cgns")]

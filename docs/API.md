@@ -104,8 +104,12 @@ let result = solver.run(&mesh)?;
 | `run_incompressible_pressure_velocity(config)` / `run_incompressible_pressure_velocity_with_observer(config, observer)` / `run_incompressible_simplec(config)` | 不可压缩 pressure-velocity solver 层编排；`time.scheme = "simplec"` 在 case 层强制单 pressure corrector，`time.scheme = "piso"` 使用 `[incompressible].piso_correctors`。流程包括动量预测、Rhie-Chow 初始化显式 `phi`、一次或多次压力校正、显式 `phi` 更新、\(p,\mathbf{u}\) 修正、修正后边界重施加，以及按 `time.mode` 区分的收敛判据：`steady` 要求连续性/动量/非速度约束 owner 速度更新量同时收敛，`transient` 只用连续性和动量判断 pressure-velocity coupling，速度更新量作为物理瞬态诊断；结构化路径支持 `i_min/i_max` 成对周期边界，`time.min_steps` 可防止早停假收敛。`with_observer` 在每个外层步提供当前 step、历史残差与修正场只读视图，case 层用它按 `solution_every` 即时刷新不可压缩残差与间隔流场输出 |
 | `IncompressibleLinearSolverConfig` | 不可压缩动量/压力线性求解配置；当前映射 `[incompressible.linear.momentum]` 的 GMRES 参数与 `[incompressible.linear.pressure]` 的 `pcg` / `gmres` 参数，压力校正默认使用 Jacobi-preconditioned PCG |
 | `IncompressibleConvectionScheme` | 不可压缩动量预测对流格式：`upwind` 默认；`central` 为内部面中心对流入口 |
-| `load_conserved_fields(path)` / `write_conserved_fields(path, fields)` | 单 block restart TOML（version=1） |
+| `load_conserved_fields(path)` / `write_conserved_fields(path, fields)` | 单 block restart TOML（version=1；默认 `f64`） |
+| `load_conserved_fields_checked(path, expected)` / `write_conserved_fields_with_precision(path, fields, precision)` | 单 block restart，校验/写入 `compute_precision` |
+| `load_conserved_fields_typed::<T>(path)` / `write_conserved_fields_typed(path, fields)` | typed 单 block restart（ADR 0016 §6） |
+| `read_restart_precision(path) -> RestartPrecision` | 读取 restart 文件标注精度（缺省 `f64`） |
 | `load_multiblock_conserved_fields(path, block_names)` / `write_multiblock_conserved_fields(path, blocks)` | 多块 restart TOML（version=2） |
+| `load_multiblock_conserved_fields_checked` / `write_multiblock_conserved_fields_with_precision` | 多块 restart，校验/写入 `compute_precision` |
 | `load_mesh_from_case(&Path) -> Result<Mesh>` | 从占位 case 文件加载网格 |
 
 #### 非结构 FVM 内面并行（feature `parallel-fvm`，**默认启用**）
