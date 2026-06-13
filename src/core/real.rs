@@ -27,6 +27,12 @@ pub fn format_log_fixed4(v: Real) -> String {
     format!("{:.4}", v)
 }
 
+/// 日志：CFL 等（固定小数点，小数点后 5 位）。
+#[must_use]
+pub fn format_log_fixed5(v: Real) -> String {
+    format!("{:.5}", v)
+}
+
 /// \(\log_{10}(x)\)；\(x \le 0\) 时返回 \(-\infty\)（仅用于残差日志）。
 #[must_use]
 pub fn log10_positive(x: Real) -> Real {
@@ -74,6 +80,11 @@ mod tests {
     #[test]
     fn format_log_fixed4_uses_four_decimals() {
         assert_eq!(format_log_fixed4(6.441_857_557_058_491), "6.4419");
+    }
+
+    #[test]
+    fn format_log_fixed5_uses_five_decimals() {
+        assert_eq!(format_log_fixed5(0.001_23), "0.00123");
     }
 
     #[test]

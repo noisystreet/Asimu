@@ -5,7 +5,8 @@ use std::time::Instant;
 use tracing::{debug, info, info_span};
 
 use crate::core::{
-    ComputeFloat, Real, elapsed_ms, format_log_fixed4, format_log_sci4, log10_positive,
+    ComputeFloat, Real, elapsed_ms, format_log_fixed4, format_log_fixed5, format_log_sci4,
+    log10_positive,
 };
 use crate::discretization::residual::{
     InviscidAssemblyUnstructuredTypedParams, InviscidTypedScatterBackend,
@@ -133,15 +134,12 @@ pub fn run_unstructured_typed_with_observer<
         let step = advance_unstructured_step_typed(&mut env, fields, &mut work)?;
         let mut step = step;
         let stop = control.finalize_step(&mut step);
-        debug!(
+        info!(
             step = step.step,
             dt = %format_log_sci4(step.dt),
             t = %format_log_sci4(step.physical_time),
             log10_residual = %format_log_fixed4(step.residual_log10),
-            cfl = step.cfl,
-            stop,
-            precision = T::PRECISION.label(),
-            "非结构 3D typed 时间步"
+            cfl = %format_log_fixed5(step.cfl),
         );
         history.push(step);
         let fields_real = fields.cast_real()?;
