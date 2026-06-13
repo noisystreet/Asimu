@@ -230,24 +230,12 @@ fn parse_gmres_config(
         max_iters: raw.max_iters.unwrap_or(defaults.max_iters),
         tolerance: raw.tolerance.unwrap_or(defaults.tolerance),
     };
-    GmresSolverConfigValidator::validate(config, name)
-}
-
-struct GmresSolverConfigValidator;
-
-impl GmresSolverConfigValidator {
-    fn validate(config: GmresConfig, name: &str) -> Result<GmresConfig> {
-        if config.restart == 0
-            || config.max_iters == 0
-            || !config.tolerance.is_finite()
-            || config.tolerance <= 0.0
-        {
-            return Err(AsimuError::Config(format!(
-                "[incompressible.linear.{name}] GMRES restart/max_iters/tolerance 参数无效"
-            )));
-        }
-        Ok(config)
-    }
+    config.validate().map_err(|_| {
+        AsimuError::Config(format!(
+            "[incompressible.linear.{name}] GMRES restart/max_iters/tolerance 参数无效"
+        ))
+    })?;
+    Ok(config)
 }
 
 fn parse_incompressible_reference(

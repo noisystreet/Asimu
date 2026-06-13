@@ -21,6 +21,22 @@ impl Default for GmresConfig {
     }
 }
 
+impl GmresConfig {
+    /// 校验 GMRES 参数；失败时返回 `AsimuError::Linalg`。
+    pub fn validate(&self) -> Result<()> {
+        if self.restart == 0
+            || self.max_iters == 0
+            || !self.tolerance.is_finite()
+            || self.tolerance <= 0.0
+        {
+            return Err(AsimuError::Linalg(
+                "GMRES restart/max_iters/tolerance 参数无效".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// GMRES 收敛报告。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GmresReport {
@@ -35,15 +51,7 @@ pub struct GmresSolver {
 
 impl GmresSolver {
     pub fn new(config: GmresConfig) -> Result<Self> {
-        if config.restart == 0
-            || config.max_iters == 0
-            || !config.tolerance.is_finite()
-            || config.tolerance <= 0.0
-        {
-            return Err(AsimuError::Linalg(
-                "GMRES restart/max_iters/tolerance 参数无效".to_string(),
-            ));
-        }
+        config.validate()?;
         Ok(Self { config })
     }
 
@@ -282,6 +290,18 @@ fn update_solution(x: &mut [Real], work: &GmresWork, used: usize) {
 mod tests {
     use super::*;
     use crate::linalg::{CsrMatrix, IdentityPreconditioner, Ilu0Preconditioner};
+
+    #[test]
+    fn gmres_rejects_invalid_config() {
+        let err = GmresConfig {
+            restart: 0,
+            max_iters: 10,
+            tolerance: 1.0e-8,
+        }
+        .validate()
+        .expect_err("invalid restart");
+        assert!(matches!(err, AsimuError::Linalg(_)));
+    }
 
     #[test]
     fn gmres_solves_small_csr_system() {

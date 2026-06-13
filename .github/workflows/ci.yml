@@ -32,11 +32,14 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
 
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libcgns-dev
+
       - name: Check formatting
         run: cargo fmt --check
 
       - name: Clippy
-        run: cargo clippy --all-targets --features io-vtk,parallel-fvm -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Install Python tools
         run: pip install -r scripts/requirements.txt
@@ -47,10 +50,10 @@ jobs:
           python3 scripts/test_complexity_check.py
 
       - name: Run tests
-        run: cargo test --features io-vtk,parallel-fvm --verbose
+        run: cargo test --verbose
 
-  cgns:
-    name: CGNS I/O (libcgns)
+  cgns-slow:
+    name: CGNS slow tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -60,15 +63,9 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          components: clippy
 
-      - name: Clippy (io-cgns-vts)
-        run: cargo clippy --all-targets --features io-cgns-vts,parallel-fvm -- -D warnings
-
-      - name: Run CGNS tests
-        run: cargo test --features io-cgns-vts,parallel-fvm --verbose
+      - name: Run CGNS slow tests
+        run: cargo test --features slow-tests --verbose
 
   audit:
     name: Dependency audit

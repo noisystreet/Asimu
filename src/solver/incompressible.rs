@@ -1,5 +1,5 @@
 use crate::boundary::BoundarySet;
-use crate::core::Real;
+use crate::core::{Real, elapsed_ms};
 use crate::discretization::{
     IncompressibleFaceFluxField, IncompressibleMomentumPredictorConfig,
     IncompressiblePressureCorrectionConfig, RhieChowVelocityCorrectionConfig,
@@ -14,7 +14,7 @@ use crate::linalg::CsrMatrix;
 use crate::mesh::StructuredMesh3d;
 pub use crate::solver::incompressible_diagnostics::IncompressiblePressureVelocityAlgorithm;
 use crate::solver::incompressible_diagnostics::{
-    PressureCouplingLog, SimplecConvergenceCheck, SimplecStepLog, SimplecStepTiming, elapsed_ms,
+    PressureCouplingLog, SimplecConvergenceCheck, SimplecStepLog, SimplecStepTiming,
     log_simplec_step, max_velocity_delta_by_region, pressure_velocity_algorithm, simplec_converged,
     validate_simplec_step,
 };

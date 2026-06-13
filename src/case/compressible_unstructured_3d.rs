@@ -6,7 +6,9 @@ use std::time::Instant;
 
 use tracing::{info, info_span, warn};
 
-use crate::core::{Real, format_log_fixed4, format_log_sci4, log10_positive, residual_converged};
+use crate::core::{
+    Real, elapsed_ms, format_log_fixed4, format_log_sci4, log10_positive, residual_converged,
+};
 use crate::discretization::{BoundaryGhostBuffer, GradientFields, ReconstructionKind};
 use crate::error::{AsimuError, Result};
 use crate::exec::{ExecConfig, ExecutionContext, MeshExecMetrics};
@@ -669,10 +671,6 @@ fn unstructured_equation_label(case: &CaseSpec) -> &'static str {
     } else {
         "Euler"
     }
-}
-
-fn elapsed_ms(start: Instant) -> Real {
-    start.elapsed().as_secs_f64() * 1000.0
 }
 
 fn maybe_write_unstructured_interval(

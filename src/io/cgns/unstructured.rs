@@ -450,12 +450,7 @@ fn append_mixed_section_elements(
     let mut parsed_cells = 0usize;
     let mut pos = 0usize;
     while pos < elements.len() {
-        let elem_type = i32::try_from(elements[pos]).map_err(|_| {
-            AsimuError::Mesh(format!(
-                "section {} MIXED ElementType 无效: {}",
-                info.name, elements[pos]
-            ))
-        })?;
+        let elem_type = elements[pos];
         pos += 1;
         let Some(npe) = cgns_element_node_count(elem_type) else {
             return Err(AsimuError::Mesh(format!(

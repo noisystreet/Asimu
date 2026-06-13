@@ -27,7 +27,8 @@ rayon = { version = "1", optional = true }
 wide = { version = "0.7", optional = true, default-features = false }
 
 [features]
-default = ["parallel-fvm"]
+# io-cgns-vts = io-cgns + io-vtk；默认启用 I/O 与非结构 FVM 并行（需系统 libcgns-dev）。
+default = ["io-cgns-vts", "parallel-fvm"]
 io-vtk = ["dep:quick-xml", "dep:base64", "dep:flate2"]
 io-cgns = []
 io-cgns-vts = ["io-cgns", "io-vtk"]

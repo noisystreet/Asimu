@@ -1,5 +1,3 @@
-use std::time::Instant;
-
 use tracing::info;
 
 use crate::boundary::{BoundaryKind, BoundarySet};
@@ -100,10 +98,6 @@ pub(crate) struct SimplecStepTiming {
     pub(crate) pressure_ms: Real,
     pub(crate) correct_ms: Real,
     pub(crate) step_total_ms: Real,
-}
-
-pub(crate) fn elapsed_ms(start: Instant) -> Real {
-    start.elapsed().as_secs_f64() * 1000.0
 }
 
 /// 压力方程与 face-flux 散度耦合诊断（单步）。

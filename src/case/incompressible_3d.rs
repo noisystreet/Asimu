@@ -113,7 +113,7 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         .incompressible
         .as_ref()
         .ok_or_else(|| AsimuError::Config("不可压缩算例须包含 [incompressible] 段".to_string()))?;
-    let steps = case.time.max_steps.unwrap_or(1);
+    let steps = case.resolved_max_steps();
     let dt = case.time.dt.unwrap_or(0.0);
     let mut fields =
         IncompressibleFields::uniform(mesh.num_cells(), config.pressure, config.velocity)?;

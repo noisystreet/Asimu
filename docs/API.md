@@ -98,6 +98,7 @@ let result = solver.run(&mesh)?;
 | `CaseSpec::build_initial_fields()` | 构建 `Fields` |
 | `CaseSpec::initial_scalar(name)` | 单标量；未声明则全零 |
 | `CaseSpec::build_multiblock_conserved_fields(blocks)` | 按 block 顺序构建多块守恒初场 |
+| `CaseSpec::resolved_max_steps()` | 时间推进步数上限：`[time].max_steps`，其次 `[euler].max_steps`，默认 100（可压/不可压共用） |
 | `Incompressible3dRunMetrics` | I1 runner 指标：pressure-velocity algorithm（`simplec`/`piso`）、pressure corrector 数量、外层迭代/收敛/连续性与动量残差历史、PISO corrector 连续性残差与最大 \(p'\) 历史、初始边界面通量散度、预测 Rhie-Chow 散度、显式 `phi` 修正后散度、全量压力校正方程质量残差、修正场重施加边界前/后的边界感知 face-flux 散度、压力校正 active RHS 总和、压力校正 CSR 行数/非零数、PCG/GMRES 收敛与最大 \(p'\)、动量预测 CSR、三分量 GMRES 收敛、最大 \(d_P\)、总速度变化及非速度约束 owner / 速度约束边界 owner 的速度变化拆分、不可压缩边界应用统计、Poiseuille 解析剖面误差、lid cavity Ghia 中心线误差，以及 lid cavity / Poiseuille benchmark 的中心线剖面诊断 |
 | `run_incompressible_pressure_velocity(config)` / `run_incompressible_pressure_velocity_with_observer(config, observer)` / `run_incompressible_simplec(config)` | 不可压缩 pressure-velocity solver 层编排；`time.scheme = "simplec"` 在 case 层强制单 pressure corrector，`time.scheme = "piso"` 使用 `[incompressible].piso_correctors`。流程包括动量预测、Rhie-Chow 初始化显式 `phi`、一次或多次压力校正、显式 `phi` 更新、\(p,\mathbf{u}\) 修正、修正后边界重施加，以及按 `time.mode` 区分的收敛判据：`steady` 要求连续性/动量/非速度约束 owner 速度更新量同时收敛，`transient` 只用连续性和动量判断 pressure-velocity coupling，速度更新量作为物理瞬态诊断；结构化路径支持 `i_min/i_max` 成对周期边界，`time.min_steps` 可防止早停假收敛。`with_observer` 在每个外层步提供当前 step、历史残差与修正场只读视图，case 层用它按 `solution_every` 即时刷新不可压缩残差与间隔流场输出 |
 | `IncompressibleLinearSolverConfig` | 不可压缩动量/压力线性求解配置；当前映射 `[incompressible.linear.momentum]` 的 GMRES 参数与 `[incompressible.linear.pressure]` 的 `pcg` / `gmres` 参数，压力校正默认使用 Jacobi-preconditioned PCG |
@@ -113,13 +114,15 @@ let result = solver.run(&mesh)?;
 | 项 | 说明 |
 |----|------|
 | `parallel-fvm` | 依赖 `rayon`；着色桶内 flux compute 并行、scatter 串行（[ADR 0011](adr/0011-parallel-fvm-face-coloring.md)） |
-| `simd-fvm` | 与 `parallel-fvm` 正交；`make test-simd-fvm` = `io-vtk,parallel-fvm,simd-fvm` |
-| 关闭并行 | `cargo build --no-default-features --features io-vtk` |
-| CI 默认 | `io-vtk,parallel-fvm`（**不含** `simd-fvm`，合并前建议本地跑 `make test-simd-fvm`） |
+| `io-vtk` / `io-cgns` / `io-cgns-vts` | **默认启用** `io-cgns-vts` + `parallel-fvm`（`io-cgns-vts` = CGNS + VTS/VTU；需系统 `libcgns-dev`） |
+| `simd-fvm` | 与 `parallel-fvm` 正交；`make test-simd-fvm` = `--features simd-fvm` |
+| 关闭并行 | `cargo build --no-default-features --features io-cgns-vts` |
+| 串行 FVM | `cargo build --no-default-features --features io-cgns-vts` 并禁用 `parallel-fvm`（见 `Makefile` `CARGO_SCALAR_FLAGS`） |
+| CI 默认 | 默认 features（含 `io-cgns-vts`、`parallel-fvm`）；合并前建议本地跑 `make test-simd-fvm` |
 
 #### VTK VTS / VTU 读入（feature `io-vtk`）
 
-启用：`cargo build --features io-vtk`（`make check` 默认已启用）。
+启用：`cargo build`（默认已含 `io-vtk`）。
 
 | 函数 / 类型 | 说明 |
 |-------------|------|
@@ -220,6 +223,12 @@ name=<mesh_name>;cells=<count>
 | `InitialSet` | 命名初始条件集合 |
 | `Fields` | 命名标量场 map；`from_initial_set` 构建 |
 
+### `asimu::core`
+
+| 函数 | 说明 |
+|------|------|
+| `elapsed_ms` | 自 `Instant` 起经过的 wall time（毫秒），solver/case 诊断日志复用 |
+
 ### `asimu::linalg`
 
 | 类型 | 说明 |
@@ -229,7 +238,7 @@ name=<mesh_name>;cells=<count>
 | `LinearSystem::solve_tridiagonal()` | Thomas 算法求解 |
 | `LinearOperator` | 矩阵无关线性算子接口 `y = A x` |
 | `Preconditioner` | 左预条件器接口 `z = M^{-1}r` |
-| `GmresSolver` / `GmresConfig` | restarted GMRES Krylov 求解器 |
+| `GmresSolver` / `GmresConfig` | restarted GMRES Krylov 求解器；`GmresConfig::validate` 校验 restart/max_iters/tolerance |
 | `CsrMatrix` | CSR 显式稀疏矩阵，同时实现 `LinearOperator` |
 | `Ilu0Preconditioner` | CSR 矩阵的 ILU(0) 预条件器 |
 | `LusgsDiagonalPreconditioner` | 由 `dt` / `sigma` 构造的 LU-SGS 对角预条件器 |

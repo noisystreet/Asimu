@@ -2,8 +2,10 @@
 
 CARGO := cargo
 PYTHON := python3
-CARGO_FLAGS := --features io-vtk,parallel-fvm
-CARGO_SIMD_FLAGS := --features io-vtk,parallel-fvm,simd-fvm
+# Cargo default features 已含 io-cgns-vts（io-cgns + io-vtk）与 parallel-fvm。
+CARGO_FLAGS :=
+CARGO_SIMD_FLAGS := --features simd-fvm
+CARGO_SCALAR_FLAGS := --no-default-features --features io-vtk
 
 .PHONY: help build run test test-parallel-fvm lint fmt complexity check check-parallel-fvm clean setup audit doc
 
@@ -24,7 +26,7 @@ test:
 	$(CARGO) test $(CARGO_FLAGS)
 
 test-parallel-fvm:
-	$(CARGO) test $(CARGO_FLAGS),parallel-fvm
+	$(CARGO) test $(CARGO_FLAGS)
 
 test-simd-fvm:
 	$(CARGO) test $(CARGO_SIMD_FLAGS)
@@ -74,11 +76,9 @@ probe-vts:
 	@test -n "$(FILE)" || { echo "用法: make probe-vts FILE=/path/to/mesh.vts"; exit 1; }
 	$(CARGO) run --example probe_vts $(CARGO_FLAGS) -- $(FILE)
 
-CGNS_FLAGS := --features io-cgns-vts
-
 cgns-to-vts:
 	@test -n "$(IN)" && test -n "$(OUT)" || { echo "用法: make cgns-to-vts IN=mesh.cgns OUT=out.vts [ZONE=1]"; exit 1; }
-	$(CARGO) run --example cgns_to_vts $(CGNS_FLAGS) -- $(IN) $(OUT) $(if $(ZONE),--zone $(ZONE),)
+	$(CARGO) run --example cgns_to_vts $(CARGO_FLAGS) -- $(IN) $(OUT) $(if $(ZONE),--zone $(ZONE),)
 
 sod-export:
 	@test -n "$(OUT)" || { echo "用法: make sod-export OUT=sod_profile.txt [CELLS=100]"; exit 1; }
@@ -89,8 +89,7 @@ sod-plot:
 	$(PYTHON) scripts/plot_sod_benchmark.py $(FILE) $(if $(PNG),-o $(PNG),)
 
 test-cgns:
-	$(CARGO) test $(CGNS_FLAGS)
+	$(CARGO) test $(CARGO_FLAGS)
 
 check-cgns: lint
-	$(CARGO) clippy --all-targets $(CGNS_FLAGS) -- -D warnings
-	$(CARGO) test $(CGNS_FLAGS)
+	$(CARGO) test $(CARGO_FLAGS)

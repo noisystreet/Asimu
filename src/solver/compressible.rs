@@ -30,7 +30,7 @@ use gmres_implicit_3d::{
 };
 use lu_sgs_sweep_3d::{LuSgsSweep3dParams, lu_sgs_sweep_3d};
 
-use crate::core::{Real, format_log_fixed4, format_log_sci4, log10_positive};
+use crate::core::{Real, elapsed_ms, format_log_fixed4, format_log_sci4, log10_positive};
 use crate::discretization::assemble_inviscid_residual_1d;
 use crate::error::Result;
 use crate::field::{ConservedFields, ConservedResidual};
@@ -762,10 +762,6 @@ impl CompressibleEulerSolver {
 
 fn positive_fixed_dt(dt: Real) -> Option<Real> {
     if dt > 0.0 { Some(dt) } else { None }
-}
-
-fn elapsed_ms(start: Instant) -> Real {
-    start.elapsed().as_secs_f64() * 1000.0
 }
 
 #[cfg(test)]

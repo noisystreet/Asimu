@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use tracing::info;
 
-use crate::core::{Real, format_log_fixed4, format_log_sci4, log10_positive};
+use crate::core::{Real, elapsed_ms, format_log_fixed4, format_log_sci4, log10_positive};
 use crate::discretization::InviscidFluxConfig;
 use crate::error::{AsimuError, Result};
 use crate::field::{
@@ -701,10 +701,6 @@ fn zero_conserved_fields(num_cells: usize) -> Result<ConservedFields> {
             total_energy: 0.0,
         },
     )
-}
-
-fn elapsed_ms(start: Instant) -> Real {
-    start.elapsed().as_secs_f64() * 1000.0
 }
 
 #[cfg(test)]
