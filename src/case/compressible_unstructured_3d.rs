@@ -7,6 +7,7 @@ use tracing::{debug_span, info};
 use crate::case::{CaseRunKind, CaseRunResult, validate};
 use crate::core::{ComputePrecision, Real, format_log_fixed4, format_log_sci4, log10_positive};
 use crate::error::{AsimuError, Result};
+use crate::exec::ExecConfig;
 use crate::field::ConservedFields;
 use crate::io::{CaseSpec, resolve_case_output_path};
 use crate::mesh::UnstructuredMesh3d;
@@ -112,6 +113,7 @@ fn run_compressible_unstructured_3d(
         cfl_schedule: driver_time.cfl_schedule,
         max_steps: driver_time.max_steps,
         residual_tolerance: driver_time.residual_tolerance,
+        exec_config: ExecConfig::from_numerics(&case.numerics),
     };
     let mut fields = fields;
     let mut interval_paths = Vec::new();
@@ -206,6 +208,7 @@ fn run_compressible_unstructured_3d_typed<
         cfl_schedule: driver_time.cfl_schedule,
         max_steps: driver_time.max_steps,
         residual_tolerance: driver_time.residual_tolerance,
+        exec_config: ExecConfig::from_numerics(&case.numerics),
     };
     let mut fields_t = crate::field::ConservedFieldsT::<T>::from_real_fields(&fields)?;
     let mut interval_paths = Vec::new();

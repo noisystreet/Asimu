@@ -55,6 +55,7 @@ pub struct UnstructuredDriverConfig<'a> {
     pub cfl_schedule: CflSchedule,
     pub max_steps: u64,
     pub residual_tolerance: Option<Real>,
+    pub exec_config: ExecConfig,
 }
 
 struct UnstructuredRunEnv<'a> {
@@ -103,9 +104,9 @@ pub fn run_unstructured_with_observer(
             .interior_coloring
             .max_bucket_faces();
         let exec = ExecutionContext::new(
-            ExecConfig::default(),
+            env.config.exec_config.clone(),
             MeshExecMetrics::new(n, interior_faces, max_bucket_faces),
-        );
+        )?;
         UnstructuredStepWork {
             storage: Rk4Storage::new(n)?,
             state: SolverState::default(),

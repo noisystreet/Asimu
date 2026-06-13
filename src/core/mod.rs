@@ -3,6 +3,7 @@
 //! 理论参考：[`docs/theory/`](../../docs/theory/README.md)
 
 pub mod convergence;
+pub mod exec_device;
 pub mod id;
 pub mod precision;
 pub mod real;
@@ -11,6 +12,10 @@ pub mod timing;
 pub use convergence::{
     compressible_log10_tolerance_met, incompressible_steady_convergence_window,
     log10_residual_converged,
+};
+pub use exec_device::{
+    ExecBackend, ExecCpuPolicy, ExecDevice, cpu_policy_for_device, default_cpu_policy,
+    exec_backend_view, legacy_backend_to_parts, parse_exec_backend,
 };
 pub use id::{CellId, FaceId, NodeId};
 pub use precision::{ComputeFloat, ComputePrecision, parse_compute_precision};

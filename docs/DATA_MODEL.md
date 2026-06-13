@@ -267,7 +267,7 @@ pub struct NumericsConfig {
 pub enum ExecBackendKind {
     Cpu,
     GpuWgpu,   // feature gpu-wgpu
-    GpuCuda,   // feature gpu-cuda
+    GpuCuda,   // feature cuda
 }
 ```
 
@@ -276,7 +276,7 @@ TOML 预留：
 ```toml
 [numerics]
 precision = "f64"      # f64 | f32 | mixed
-backend = "cpu"        # cpu | gpu-wgpu | gpu-cuda
+backend = "cpu"        # cpu | gpu-wgpu | cuda
 ```
 
 ### 8.2 占位 case 文件格式（v0.1，遗留）

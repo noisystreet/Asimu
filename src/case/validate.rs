@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use tracing::warn;
 
 use crate::boundary::BoundarySet;
-use crate::core::{ComputePrecision, FaceId, Real};
+use crate::core::{ComputePrecision, ExecDevice, FaceId, Real};
 use crate::discretization::ReconstructionKind;
 use crate::error::{AsimuError, Result};
 use crate::io::{CaseMesh, CaseSpec};
@@ -18,6 +18,67 @@ pub fn compute_precision(case: &CaseSpec) -> Result<()> {
         return Ok(());
     }
     validate_f32_capabilities(case)
+}
+
+/// `[numerics].backend` 与编译 feature / 求解器能力是否匹配（ADR 0017 G0）。
+pub fn exec_backend(case: &CaseSpec) -> Result<()> {
+    match case.numerics.exec_device {
+        ExecDevice::Cpu => Ok(()),
+        ExecDevice::GpuCuda => validate_gpu_cuda_backend(case),
+    }
+}
+
+fn validate_gpu_cuda_backend(case: &CaseSpec) -> Result<()> {
+    #[cfg(not(feature = "cuda"))]
+    {
+        let _ = case;
+        Err(AsimuError::Config(
+            "backend = \"cuda\" 需要以 Cargo feature cuda 编译 asimu".to_string(),
+        ))
+    }
+    #[cfg(feature = "cuda")]
+    {
+        validate_gpu_cuda_backend_enabled(case)
+    }
+}
+
+#[cfg(feature = "cuda")]
+fn validate_gpu_cuda_backend_enabled(case: &CaseSpec) -> Result<()> {
+    if case.numerics.compute_precision != ComputePrecision::F32 {
+        return Err(gpu_cuda_unsupported(
+            "cuda 首版仅支持 compute_precision = \"f32\"",
+        ));
+    }
+    if !matches!(case.mesh, CaseMesh::Unstructured3d(_)) {
+        return Err(gpu_cuda_unsupported("cuda 首版仅支持非结构 3D 可压缩路径"));
+    }
+    if !case.is_compressible() {
+        return Err(gpu_cuda_unsupported("cuda 仅支持可压缩求解路径"));
+    }
+    let disc = case.compressible_discretization()?;
+    if disc.inviscid().reconstruction != ReconstructionKind::FirstOrder {
+        return Err(gpu_cuda_unsupported(
+            "cuda 首版（G1）仅支持 reconstruction = first_order",
+        ));
+    }
+    if case.physics.viscous.is_some() || case.navier_stokes.is_some() {
+        return Err(gpu_cuda_unsupported("cuda 首版不支持粘性 / Navier-Stokes"));
+    }
+    match case.time.resolved_time_scheme() {
+        TimeIntegrationScheme::Rk4 | TimeIntegrationScheme::Euler => {}
+        scheme => {
+            return Err(gpu_cuda_unsupported(&format!(
+                "cuda 首版不支持 time.scheme = \"{}\"",
+                scheme.label()
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "cuda")]
+fn gpu_cuda_unsupported(detail: &str) -> AsimuError {
+    AsimuError::Config(format!("backend = \"cuda\"：{detail}"))
 }
 
 fn validate_f32_capabilities(case: &CaseSpec) -> Result<()> {
@@ -259,6 +320,7 @@ mod compute_precision_tests {
         .expect("case");
         case.numerics = CaseNumericsConfig {
             compute_precision: ComputePrecision::F32,
+            ..CaseNumericsConfig::default()
         };
         let err = compute_precision(&case).expect_err("f32 diffusion");
         assert!(err.to_string().contains("f32"));
@@ -272,6 +334,7 @@ mod compute_precision_tests {
         .expect("case");
         case.numerics = CaseNumericsConfig {
             compute_precision: ComputePrecision::F32,
+            ..CaseNumericsConfig::default()
         };
         compute_precision(&case).expect("unstructured freestream f32");
     }
@@ -284,6 +347,7 @@ mod compute_precision_tests {
         .expect("case");
         case.numerics = CaseNumericsConfig {
             compute_precision: ComputePrecision::F32,
+            ..CaseNumericsConfig::default()
         };
         attach_single_tet_farfield(&mut case);
         if let Some(euler) = case.euler.as_mut() {
@@ -301,6 +365,7 @@ mod compute_precision_tests {
         .expect("case");
         case.numerics = CaseNumericsConfig {
             compute_precision: ComputePrecision::F32,
+            ..CaseNumericsConfig::default()
         };
         let block_mesh = crate::mesh::StructuredMesh3d::uniform_box("box", 2, 2, 2, 1.0, 1.0, 1.0)
             .expect("mesh");
@@ -323,6 +388,7 @@ mod compute_precision_tests {
         .expect("case");
         case.numerics = CaseNumericsConfig {
             compute_precision: ComputePrecision::F32,
+            ..CaseNumericsConfig::default()
         };
         let block_mesh = crate::mesh::StructuredMesh3d::uniform_box("box", 2, 2, 2, 1.0, 1.0, 1.0)
             .expect("mesh");
@@ -342,6 +408,7 @@ mod compute_precision_tests {
         .expect("case");
         case.numerics = CaseNumericsConfig {
             compute_precision: ComputePrecision::F32,
+            ..CaseNumericsConfig::default()
         };
         attach_single_tet_farfield(&mut case);
         case.navier_stokes = case.euler.take();
@@ -357,6 +424,7 @@ mod compute_precision_tests {
         .expect("case");
         case.numerics = CaseNumericsConfig {
             compute_precision: ComputePrecision::F32,
+            ..CaseNumericsConfig::default()
         };
         let block_mesh = crate::mesh::StructuredMesh3d::uniform_box("box", 2, 2, 2, 1.0, 1.0, 1.0)
             .expect("mesh");
@@ -366,5 +434,61 @@ mod compute_precision_tests {
         case.time.scheme = Some(TimeIntegrationScheme::LuSgs);
         case.time.local_time_step = true;
         compute_precision(&case).expect("structured lusgs f32");
+    }
+}
+
+#[cfg(test)]
+mod exec_backend_tests {
+    use super::*;
+    use std::path::Path;
+
+    use crate::core::{ComputePrecision, ExecDevice};
+    use crate::io::{CaseNumericsConfig, load_case};
+
+    #[test]
+    fn cpu_backend_always_valid() {
+        let case = load_case(Path::new(
+            "tests/benchmarks/1d_diffusion_analytical/case.toml",
+        ))
+        .expect("case");
+        exec_backend(&case).expect("cpu default");
+    }
+
+    #[test]
+    fn gpu_cuda_rejected_without_feature() {
+        let mut case = load_case(Path::new(
+            "tests/benchmarks/unstructured_freestream/case.toml",
+        ))
+        .expect("case");
+        case.numerics = CaseNumericsConfig {
+            compute_precision: ComputePrecision::F32,
+            exec_device: ExecDevice::GpuCuda,
+        };
+        #[cfg(not(feature = "cuda"))]
+        {
+            let err = exec_backend(&case).expect_err("no feature");
+            assert!(err.to_string().contains("cuda"));
+        }
+        #[cfg(feature = "cuda")]
+        {
+            exec_backend(&case).expect("cuda feature enabled");
+        }
+    }
+
+    #[test]
+    fn gpu_cuda_rejects_f64_precision() {
+        let mut case = load_case(Path::new(
+            "tests/benchmarks/unstructured_freestream/case.toml",
+        ))
+        .expect("case");
+        case.numerics = CaseNumericsConfig {
+            compute_precision: ComputePrecision::F64,
+            exec_device: ExecDevice::GpuCuda,
+        };
+        #[cfg(feature = "cuda")]
+        {
+            let err = exec_backend(&case).expect_err("f64");
+            assert!(err.to_string().contains("f32"));
+        }
     }
 }

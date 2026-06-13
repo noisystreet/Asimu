@@ -42,6 +42,7 @@ mod tests {
             },
             MeshExecMetrics::new(bucket_len, bucket_len, bucket_len),
         )
+        .expect("atomic test ctx")
     }
 
     #[test]
@@ -112,7 +113,8 @@ mod tests {
                 ..ExecConfig::default()
             },
             MeshExecMetrics::new(2, 2, 2),
-        );
+        )
+        .expect("serial ctx");
         scatter_viscous_bucket_range(
             ViscousRangeScatter {
                 ctx: &serial_ctx,
@@ -216,7 +218,8 @@ mod tests {
                 ..ExecConfig::default()
             },
             MeshExecMetrics::new(1, 1, 1),
-        );
+        )
+        .expect("serial ctx");
         scatter_inviscid_pairs_f32(
             InviscidPairScatterF32 {
                 ctx: &serial_ctx,
@@ -324,7 +327,8 @@ mod tests {
                 ..ExecConfig::default()
             },
             MeshExecMetrics::new(1, 1, 1),
-        );
+        )
+        .expect("serial ctx");
         scatter_inviscid_pairs(
             InviscidPairScatter {
                 ctx: &serial_ctx,

@@ -62,6 +62,7 @@ max_steps = 2
         cfl_schedule: case.cfl_schedule().expect("cfl"),
         max_steps: case.resolved_max_steps(),
         residual_tolerance: None,
+        exec_config: crate::exec::ExecConfig::default(),
     };
     let history =
         run_unstructured_with_observer(&driver, &mut fields, |_| Ok(())).expect("history");

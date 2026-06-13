@@ -20,7 +20,7 @@ use crate::discretization::{
     compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq,
 };
 use crate::error::{AsimuError, Result};
-use crate::exec::{ExecConfig, ExecutionContext, MeshExecMetrics};
+use crate::exec::{ExecutionContext, MeshExecMetrics};
 use crate::field::{
     ConservedFields, ConservedFieldsT, ConservedResidualT, PrimitiveFields, PrimitiveFieldsT,
 };
@@ -100,15 +100,15 @@ pub fn run_unstructured_typed_with_observer<
             .face_topology
             .interior_coloring
             .max_bucket_faces();
+        let mut exec_config = env.config.exec_config.clone();
+        exec_config.compute_precision = T::PRECISION;
         let exec = ExecutionContext::new(
-            ExecConfig {
-                compute_precision: T::PRECISION,
-                ..ExecConfig::default()
-            },
+            exec_config,
             MeshExecMetrics::new(n, interior_faces, max_bucket_faces),
-        );
+        )?;
         info!(
             compute_precision = ?exec.compute_precision(),
+            exec_device = exec.device().label(),
             "unstructured_typed_exec_context"
         );
         UnstructuredStepWorkTyped {
@@ -475,6 +475,7 @@ mod tests {
     use crate::boundary::{BoundaryKind, BoundaryPatch, BoundarySet};
     use crate::discretization::InviscidFluxConfig;
     use crate::discretization::freestream_pair::FreestreamPairFixture;
+    use crate::exec::ExecConfig;
     use crate::field::ConservedFields;
     use crate::mesh::{CellKind, UnstructuredCell, UnstructuredMesh3d};
     use crate::physics::{FreestreamParams, IdealGasEoS, ReferenceScales};
@@ -555,6 +556,7 @@ mod tests {
             cfl_schedule: CflSchedule::constant(0.4),
             max_steps: 1,
             residual_tolerance: None,
+            exec_config: ExecConfig::default(),
         };
         let base = ConservedFields::from_freestream_context(mesh.num_cells(), &side.ctx, side.fs)
             .expect("base fields");

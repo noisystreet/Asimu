@@ -160,11 +160,13 @@ diffusivity = 1.0     # 分子扩散系数 D
 ```toml
 [numerics]
 compute_precision = "f64"   # f64（默认）| f32
+backend = "cpu"           # cpu（默认）| cuda（feature cuda；ADR 0017）
 ```
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `compute_precision` | string | `f64`（默认）或 `f32`。`f32` 在 Validate 阶段校验能力矩阵（ADR 0016）；未覆盖的组合会报错，不会静默回退 `f64` |
+| `backend` | string | `cpu`（默认）或 `cuda`。`cuda` 须以 `--features cuda` 编译，并在 Validate 阶段校验能力矩阵（ADR 0017）；首版（G0–G1）仅非结构 f32 一阶无粘 Euler/RK4 |
 
 **`f32` 当前支持范围（P2–P5）**
 

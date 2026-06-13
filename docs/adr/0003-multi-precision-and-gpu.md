@@ -6,7 +6,7 @@
 
 > **2026-06-09 修订**：本 ADR 的 GPU / `exec` 后端方向仍有效；“编译期 `precision-f32` 切换全局 `Real`”路线由 [ADR 0016](0016-runtime-compute-precision.md) 修订为：仅核心计算模块支持运行时选择 `f32` / `f64`，并在 solver / case 边界做一次 typed 分发。
 >
-> **2026-06-13 修订**：`gpu-cuda` 依赖与多 Backend 模型由 [ADR 0017](0017-gpu-cuda-cudarc-multi-backend.md) 定案（`cudarc`、`ExecDevice`、build 时 `nvcc`）；wgpu 仍为远期可选，生产 GPU 路径优先 CUDA。
+> **2026-06-13 修订**：`cuda` 依赖与多 Backend 模型由 [ADR 0017](0017-gpu-cuda-cudarc-multi-backend.md) 定案（`cudarc`、`ExecDevice`、build 时 `nvcc`）；wgpu 仍为远期可选，生产 GPU 路径优先 CUDA。
 
 ## 背景
 
@@ -45,7 +45,7 @@ discretization / linalg
         ↓  （trait 调用）
       exec  ←  ExecutionContext { backend: Cpu | Gpu }
         ↓
-   cpu / gpu-wgpu / gpu-cuda（可选 feature）
+   cpu / gpu-wgpu / cuda（可选 feature）
 ```
 
 | 组件 | CPU（默认） | GPU（可选） |
@@ -64,7 +64,7 @@ discretization / linalg
 | （默认） | 仅 CPU + `f64` |
 | `precision-f32` | 编译期 `Real = f32` |
 | `gpu-wgpu` | wgpu compute 后端（跨平台优先评估） |
-| `gpu-cuda` | NVIDIA CUDA 后端（Linux 服务器，ADR 单独评估依赖） |
+| `cuda` | NVIDIA CUDA 后端（Linux 服务器，ADR 单独评估依赖） |
 
 - 主 crate 保持 `unsafe_code = forbid`
 - GPU 底层封装在 **`asimu-exec-gpu`**（规划 crate）或 `src/exec/gpu/` 中，经 ADR 批准可在隔离模块使用 `unsafe`

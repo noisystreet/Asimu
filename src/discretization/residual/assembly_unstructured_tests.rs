@@ -396,12 +396,10 @@ fn exec_context_cpu_scalar_matches_legacy_path() {
     let config = InviscidFluxConfig::roe_first_order();
     let unit_exec = ExecutionContext::for_unit_test();
     let scalar_exec = ExecutionContext::new(
-        crate::exec::ExecConfig {
-            backend: crate::exec::ExecBackend::CpuScalar,
-            ..crate::exec::ExecConfig::default()
-        },
+        crate::exec::ExecConfig::for_test_backend(crate::exec::ExecBackend::CpuScalar),
         crate::exec::MeshExecMetrics::new(mesh.num_cells(), mesh.num_faces(), 4),
-    );
+    )
+    .expect("scalar exec");
     let params_unit = InviscidAssemblyUnstructuredParams {
         mesh: &mesh,
         eos: &eos,

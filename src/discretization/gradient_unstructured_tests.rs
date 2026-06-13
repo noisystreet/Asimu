@@ -196,13 +196,12 @@ fn parallel_idw_lsq_accumulate_matches_face_serial() {
     let n = mesh.num_cells();
     let metrics = MeshExecMetrics::new(n, mesh_cache.face_topology.interior.len(), n);
     let mut exec_serial = ExecutionContext::new(
-        ExecConfig {
-            backend: ExecBackend::CpuScalar,
-            ..ExecConfig::default()
-        },
+        ExecConfig::for_test_backend(ExecBackend::CpuScalar),
         metrics,
-    );
-    let mut exec_parallel = ExecutionContext::new(ExecConfig::default(), metrics);
+    )
+    .expect("serial exec");
+    let mut exec_parallel =
+        ExecutionContext::new(ExecConfig::default(), metrics).expect("parallel");
     let mut scratch_serial = UnstructuredGradientScratch::new(n);
     let mut scratch_parallel = UnstructuredGradientScratch::new(n);
     scratch_serial.prepare_temperatures(n);
@@ -272,13 +271,12 @@ fn parallel_inviscid_idw_lsq_accumulate_matches_face_serial() {
     let n = mesh.num_cells();
     let metrics = MeshExecMetrics::new(n, mesh_cache.face_topology.interior.len(), n);
     let mut exec_serial = ExecutionContext::new(
-        ExecConfig {
-            backend: ExecBackend::CpuScalar,
-            ..ExecConfig::default()
-        },
+        ExecConfig::for_test_backend(ExecBackend::CpuScalar),
         metrics,
-    );
-    let mut exec_parallel = ExecutionContext::new(ExecConfig::default(), metrics);
+    )
+    .expect("serial exec");
+    let mut exec_parallel =
+        ExecutionContext::new(ExecConfig::default(), metrics).expect("parallel");
     exec_serial.idwls_prepare_inviscid(n);
     exec_parallel.idwls_prepare_inviscid(n);
 

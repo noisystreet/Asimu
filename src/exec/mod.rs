@@ -1,4 +1,4 @@
-//! CPU/GPU 执行后端（ADR 0003 / ADR 0013）。
+//! CPU/GPU 执行后端（ADR 0003 / ADR 0013 / ADR 0017）。
 //!
 //! v0.x：`cpu` 子模块提供可选 SIMD 热算子（feature `simd-fvm`）；
 //! `ExecutionContext` 统一 scatter 调度（E0 串行回退；E1 `ParallelUnsafeAtomics` + rayon）。
@@ -10,7 +10,11 @@
 pub mod batch;
 pub mod cpu;
 
+mod backend_state;
 mod context;
+mod device;
+#[cfg(feature = "cuda")]
+mod gpu;
 mod metrics;
 mod scratch;
 
@@ -24,8 +28,11 @@ mod spmv;
 
 pub use batch::ExecFaceBatchStatic4;
 pub use context::{
-    EXEC_SCATTER_PARALLEL_MIN_FACES, ExecBackend, ExecConfig, ExecutionContext,
-    ResolvedScatterMode, ScatterMode,
+    EXEC_SCATTER_PARALLEL_MIN_FACES, ExecConfig, ExecutionContext, ResolvedScatterMode, ScatterMode,
+};
+pub use device::{
+    ExecBackend, ExecCpuPolicy, ExecDevice, cpu_policy_for_device, default_cpu_policy,
+    exec_backend_view, legacy_backend_to_parts, parse_exec_backend,
 };
 pub use metrics::MeshExecMetrics;
 #[cfg(feature = "parallel-fvm")]

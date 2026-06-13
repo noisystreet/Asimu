@@ -25,6 +25,7 @@ base64 = { version = "0.22", optional = true }
 flate2 = { version = "1", optional = true }
 rayon = { version = "1", optional = true }
 wide = { version = "0.7", optional = true, default-features = false }
+cudarc = { version = "0.19", optional = true, default-features = false, features = ["driver", "dynamic-loading", "cuda-version-from-build-system", "fallback-latest"] }
 
 [features]
 # 默认启用 io-cgns + io-vtk + parallel-fvm + simd-fvm（需系统 libcgns-dev）。
@@ -38,6 +39,8 @@ simd-fvm = ["dep:wide"]
 # 圆柱 CGNS 多步时间推进、端到端算例、DLR 全 zone 导出等（读 case_cylinder/cylinder.cgns）。
 # 默认关闭；本地/CI 长跑：cargo test --features io-cgns,slow-tests
 slow-tests = []
+# NVIDIA CUDA 执行后端（cudarc；ADR 0017）。默认关闭：cargo build --features cuda
+cuda = ["dep:cudarc"]
 
 [build-dependencies]
 cc = "1"

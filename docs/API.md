@@ -289,12 +289,13 @@ name=<mesh_name>;cells=<count>
 
 ### `asimu::exec`
 
-ADR 0013：CPU/GPU 执行后端与 scatter 调度。E0 串行 scatter + `Auto` 解析；E1 并行 atomic scatter；E2 `exec::parallel` 统一 rayon、`ExecScratch` 着色桶缓冲。
+ADR 0013：CPU/GPU 执行后端与 scatter 调度。E0 串行 scatter + `Auto` 解析；E1 并行 atomic scatter；E2 `exec::parallel` 统一 rayon、`ExecScratch` 着色桶缓冲。ADR 0017 G0：`ExecDevice` / `ExecCpuPolicy`、可选 feature `cuda`（`cudarc` 占位初始化）。
 
 | 类型 / 函数 | 说明 |
 |-------------|------|
-| `ExecutionContext` | 算例级 exec 上下文（backend、已解析 scatter 模式、步间 `ExecScratch`） |
-| `ExecConfig` | `backend`、`scatter_mode`、`parallel_min_len`、`scatter_parallel_min_faces` |
+| `ExecutionContext` | 算例级 exec 上下文（设备、scatter 模式、步间 `ExecScratch`；`new` 返回 `Result`） |
+| `ExecConfig` | `device`、`cpu_policy`、`compute_precision`、`scatter_mode`、…；`from_numerics` / `for_test_backend` |
+| `ExecDevice` / `ExecCpuPolicy` / `ExecBackend` | 多 backend 配置（ADR 0017）；`parse_exec_backend` 解析 TOML |
 | `MeshExecMetrics` | `num_cells`、`interior_faces`、`max_bucket_faces`（init-time 一次） |
 | `ExecScratch::with_metrics` | 按网格规模预分配 `IdwlsRhsBuffer` 与 `ColoredViscousFaceBuffer`（`parallel-fvm`） |
 | `ExecFaceBatchStatic4` | 四内面静态几何 SoA（init-time；discretization 类型别名 `InteriorFaceBatchStatic4`） |

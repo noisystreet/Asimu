@@ -3,7 +3,8 @@
 use crate::core::Vector3;
 use crate::error::Result;
 
-use super::context::{ExecBackend, ExecutionContext};
+use super::context::ExecutionContext;
+use super::device::{ExecCpuPolicy, ExecDevice};
 use super::scratch::IdwlsRhsBuffer;
 
 impl ExecutionContext {
@@ -58,6 +59,8 @@ impl ExecutionContext {
 
     #[must_use]
     pub fn uses_parallel_cell_loops(&self) -> bool {
-        cfg!(feature = "parallel-fvm") && self.backend() == ExecBackend::CpuParallel
+        cfg!(feature = "parallel-fvm")
+            && self.device() == ExecDevice::Cpu
+            && self.cpu_policy() == ExecCpuPolicy::Parallel
     }
 }

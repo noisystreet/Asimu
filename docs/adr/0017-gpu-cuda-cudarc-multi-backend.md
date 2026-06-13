@@ -10,7 +10,7 @@
 
 在 NVIDIA 服务器场景下，非结构可压缩 **f32** 热路径（着色桶面通量、device scatter、CSR SpMV）优先采用 **CUDA**，而非 wgpu。公开基准与 asimu 面循环 workload 均表明：深度优化的 CUDA 路径在峰值吞吐上通常领先跨平台 compute shader 一个数量级量级（见项目讨论与 [TUM 多面几何对比](https://mediatum.ub.tum.de/doc/1781596/oe6dqmi581t5aormklgwj6hge.pdf)）。
 
-[ADR 0003](0003-multi-precision-and-gpu.md) 已规划 `gpu-cuda` feature，但尚未批准具体 Rust 绑定与目录结构。本 ADR 定案：
+[ADR 0003](0003-multi-precision-and-gpu.md) 已规划 `cuda` feature，但尚未批准具体 Rust 绑定与目录结构。本 ADR 定案：
 
 - 宿主侧 CUDA 绑定：**`cudarc`**（crates.io，MIT/Apache-2.0）
 - 设备 kernel 源语言：**CUDA C++**（`.cu`），经 **build 时 `nvcc` 预编译** 为 PTX/CUBIN
@@ -43,7 +43,7 @@
 | 项 | 决策 |
 |----|------|
 | Crate | **`cudarc`**（版本在实现期 pin 至当前 stable，如 `0.19.x`） |
-| Feature 名 | **`gpu-cuda`**（与 ADR 0003 / `config/default.toml` 注释一致） |
+| Feature 名 | **`cuda`**（与 ADR 0003 / `config/default.toml` 注释一致） |
 | `cudarc` features | `driver`、`nvrtc`（可选 dev）、`cusparse`；CUDA 版本用 `cuda-version-from-build-system` 或显式 `cuda-12080` 等 |
 | 引入位置 | **仅** `src/exec/gpu/cuda/`（及可选 `kernels/*.cu`、`build.rs` 片段）；主 crate `Cargo.toml` 以 `optional = true` 声明 |
 | 许可证 | MIT/Apache-2.0，与 asimu 兼容；**不**引入 GPL 系 CUDA 封装 |
@@ -64,7 +64,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecDevice {
     Cpu,
-    #[cfg(feature = "gpu-cuda")]
+    #[cfg(feature = "cuda")]
     Cuda,
     // 远期，本 ADR 不实现：
     // #[cfg(feature = "gpu-wgpu")]
@@ -103,13 +103,13 @@ pub struct ExecConfig {
 ```toml
 [numerics]
 compute_precision = "f32"   # f64 | f32（ADR 0016）
-backend = "gpu-cuda"        # cpu | gpu-cuda（首版）；gpu-wgpu 远期
+backend = "cuda"            # cpu | cuda（首版）；gpu-wgpu 远期
 ```
 
 | `backend` | 要求 |
 |-----------|------|
 | `cpu`（默认） | 无额外 feature；`cpu_policy` 由 `parallel-fvm` 默认 `Parallel`，否则 `Scalar` |
-| `gpu-cuda` | 编译启用 `gpu-cuda`；运行期检测到 NVIDIA 设备；Validate 校验精度/求解器组合 |
+| `cuda` | 编译启用 `cuda` feature；运行期检测到 NVIDIA 设备；Validate 校验精度/求解器组合 |
 
 解析入口：`io::case_numerics` 扩展 `CaseNumericsConfig { backend: ExecDeviceKind }`；`case::validate::exec_backend` 校验 feature 与求解器能力矩阵。
 
@@ -117,10 +117,10 @@ backend = "gpu-cuda"        # cpu | gpu-cuda（首版）；gpu-wgpu 远期
 
 | 组合 | 结果 |
 |------|------|
-| `backend = gpu-cuda`，未编译 `gpu-cuda` | `AsimuError::Config` |
-| `backend = gpu-cuda`，`compute_precision = f64` | 首版 **报错**（G1 仅 f32）；G2+ 可扩展 |
-| `backend = gpu-cuda`，非结构 + GMRES | 报错（与 ADR 0016 typed 路径一致） |
-| `backend = gpu-cuda`，无可用 CUDA 设备 | 启动时 `AsimuError::Exec`（或 Config，实现期定案） |
+| `backend = cuda`，未编译 `cuda` feature | `AsimuError::Config` |
+| `backend = cuda`，`compute_precision = f64` | 首版 **报错**（G1 仅 f32）；G2+ 可扩展 |
+| `backend = cuda`，非结构 + GMRES | 报错（与 ADR 0016 typed 路径一致） |
+| `backend = cuda`，无可用 CUDA 设备 | 启动时 `AsimuError::Exec`（或 Config，实现期定案） |
 | `backend = cpu` | 行为与当前一致 |
 
 ### 3. `ExecutionContext` 多 Backend 内部结构
@@ -148,7 +148,7 @@ ExecutionContext
 /// exec 自有场缓冲；算法层不持有 cudarc 类型。
 pub enum ExecFieldBuffer<T> {
     Host(Vec<T>),
-    #[cfg(feature = "gpu-cuda")]
+    #[cfg(feature = "cuda")]
     Device(CudaSlice<T>),   // 封装 cudarc 设备分配
 }
 
@@ -177,7 +177,7 @@ kernels/cuda/              # CUDA C++ 源（真源）
   inviscid_flux_f32.cu
   inviscid_scatter_f32.cu
 src/exec/gpu/
-  mod.rs                   # #[cfg(feature = "gpu-cuda")]
+  mod.rs                   # #[cfg(feature = "cuda")]
   cuda/
     mod.rs                 # CudaBackendState、ExecutionContext 扩展
     module.rs              # 加载 PTX/CUBIN（cudarc::driver）
@@ -189,7 +189,7 @@ src/exec/gpu/
 | 路径 | 用途 |
 |------|------|
 | **build.rs + `nvcc`** | **生产默认**：`OUT_DIR/*.ptx` 或 fatbin，`include_str!` / `env!("OUT_DIR")` 加载 |
-| **`cudarc::nvrtc`** | **仅** `gpu-cuda` + `cuda-nvrtc-dev`（可选 feature）或 `#[cfg(debug_assertions)]`：快速改 `.cu` 无需重编 crate |
+| **`cudarc::nvrtc`** | **仅** `cuda` + `cuda-nvrtc-dev`（可选 feature）或 `#[cfg(debug_assertions)]`：快速改 `.cu` 无需重编 crate |
 
 NVRTC 输入为 **CUDA C++ 字符串**，不是 Rust。禁止首版仅依赖 NVRTC（启动延迟、复现性差）。
 
@@ -242,7 +242,7 @@ let module = ctx.load_module(ptx)?;
 pub fn uses_parallel_cell_loops(&self) -> bool {
     match self.device() {
         ExecDevice::Cpu => matches!(self.cpu_policy(), ExecCpuPolicy::Parallel),
-        #[cfg(feature = "gpu-cuda")]
+        #[cfg(feature = "cuda")]
         ExecDevice::Cuda => false, // 单元环在 GPU kernel 内并行，不经 rayon
     }
 }
@@ -258,7 +258,7 @@ exec::gpu::cuda → cudarc（可选）
 exec ↛ discretization / solver / io
 ```
 
-`discretization` 继续通过 `InviscidTypedScatterBackend`、`ExecutionContext` 与 `exec::scatter::*` 交互；**不得**新增 `#[cfg(feature = "gpu-cuda")]` 分支于面循环内。
+`discretization` 继续通过 `InviscidTypedScatterBackend`、`ExecutionContext` 与 `exec::scatter::*` 交互；**不得**新增 `#[cfg(feature = "cuda")]` 分支于面循环内。
 
 ### 7. 验证与 CI
 
@@ -266,8 +266,8 @@ exec ↛ discretization / solver / io
 |------|------|
 | `cpu_f32_matches_cuda_f32_inviscid_single_tet` | 相对误差 < ADR 0016 f32 tol |
 | `cuda_matches_cpu_dual_ellipsoid_smoke` | `#[ignore = "gpu"]`；守恒 / 残差趋势一致 |
-| 无 GPU CI | 默认 `cargo test` 跳过；可选 self-hosted job `make test-gpu-cuda` |
-| 构建矩阵 | `make check` 不启用 `gpu-cuda`；CI 增加 `check-gpu-cuda`（仅编译，可无设备） |
+| 无 GPU CI | 默认 `cargo test` 跳过；可选 self-hosted job `make test-cuda` |
+| 构建矩阵 | `make check` 不启用 `cuda`；CI 增加 `check-cuda`（仅编译，可无设备） |
 
 Manifest 记录：`exec_device`、`cuda_device_name`、`kernel_ptx_arch`（Run Manifest 扩展，实现期同步 [DATA_MODEL.md](../DATA_MODEL.md)）。
 
@@ -278,7 +278,7 @@ Manifest 记录：`exec_device`、`cuda_device_name`、`kernel_ptx_arch`（Run M
 - CUDA 路径与 ADR 0013 `ExecutionContext` 自然延伸，CPU 行为不变。
 - `ExecDevice` + `ExecCpuPolicy` 为远期 wgpu 留出槽位，无需再改 case schema。
 - `cudarc` 生态成熟（driver、nvrtc、cusparse），SpMV 可复用 cuSPARSE。
-- f32 非结构生产算例可在同一 binary 用 `backend = "gpu-cuda"` 切换。
+- f32 非结构生产算例可在同一 binary 用 `backend = "cuda"` 切换。
 
 ### 负面
 
@@ -303,8 +303,8 @@ Manifest 记录：`exec_device`、`cuda_device_name`、`kernel_ptx_arch`（Run M
 
 ### ADR 0003
 
-- §2 执行后端：`gpu-cuda` 定案为 **`cudarc` + `exec::gpu::cuda`**；wgpu 仍为远期可选项，**不**与 CUDA 互斥于同一 binary（可同时编译两 feature，算例每次仅选其一）。
-- §3 Feature：`gpu-cuda` 依赖 **已批准**（本 ADR）。
+- §2 执行后端：`cuda` 定案为 **`cudarc` + `exec::gpu::cuda`**；wgpu 仍为远期可选项，**不**与 CUDA 互斥于同一 binary（可同时编译两 feature，算例每次仅选其一）。
+- §3 Feature：`cuda` 依赖 **已批准**（本 ADR）。
 
 ### ADR 0013
 
@@ -313,14 +313,14 @@ Manifest 记录：`exec_device`、`cuda_device_name`、`kernel_ptx_arch`（Run M
 
 ### ADR 0016
 
-- f32 typed 路径为 CUDA 首版精度；`compute_precision = f64` + `gpu-cuda` 首版 Validate 拒绝。
+- f32 typed 路径为 CUDA 首版精度；`compute_precision = f64` + `backend = cuda` 首版 Validate 拒绝。
 - 归约 / 几何 / BC 策略不变（§4）。
 
 ## 实现里程碑
 
 | 阶段 | 交付 | 验证 |
 |------|------|------|
-| **G0** | `gpu-cuda` feature、`cudarc` 依赖、`ExecDevice`/`backend` 解析与 Validate、空 `CudaBackendState` 占位 | config 单测；无设备时友好报错 |
+| **G0** | `cuda` feature、`cudarc` 依赖、`ExecDevice`/`backend` 解析与 Validate、空 `CudaBackendState` 占位 | config 单测；无设备时友好报错 |
 | **G1** | `nvcc` 编译一阶无粘 f32 kernel；着色桶 flux + device scatter；`sync_*` 骨架 | single tet CPU≈CUDA |
 | **G2** | 粘性内面 + dual_ellipsoid f32 smoke | benchmark manifest |
 | **G3** | `cusparse` SpMV 经 `ExecutionContext::csr_spmv` | implicit 路径预研 |
@@ -342,7 +342,7 @@ Manifest 记录：`exec_device`、`cuda_device_name`、`kernel_ptx_arch`（Run M
 | 项 | 状态 |
 |----|------|
 | ADR 0017 文本 | **已接受（规划）** |
-| **G0** feature + 配置 + 多 Backend 类型 | 规划 |
+| **G0** feature + 配置 + 多 Backend 类型 | **2026-06-13 已实现** |
 | **G1** 一阶无粘 CUDA kernel | 规划 |
 | **G2** dual_ellipsoid GPU smoke | 规划 |
 | **G3** cuSPARSE SpMV | 规划 |

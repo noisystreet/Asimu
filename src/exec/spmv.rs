@@ -102,7 +102,8 @@ mod tests {
         };
         let x = [1.0, 2.0, 3.0];
         let mut y = [0.0; 3];
-        let ctx = ExecutionContext::new(ExecConfig::default(), MeshExecMetrics::new(3, 0, 0));
+        let ctx = ExecutionContext::new(ExecConfig::default(), MeshExecMetrics::new(3, 0, 0))
+            .expect("ctx");
         ctx.csr_spmv(&matrix, &x, &mut y).expect("spmv");
         assert!((y[0] - 0.0).abs() < 1.0e-12);
         assert!((y[1] - 5.0).abs() < 1.0e-12);
@@ -126,13 +127,12 @@ mod tests {
         let mut y_serial = [0.0; 3];
         let mut y_parallel = [0.0; 3];
         let serial = ExecutionContext::new(
-            ExecConfig {
-                backend: crate::exec::ExecBackend::CpuScalar,
-                ..ExecConfig::default()
-            },
+            ExecConfig::for_test_backend(crate::exec::ExecBackend::CpuScalar),
             MeshExecMetrics::new(3, 0, 0),
-        );
-        let parallel = ExecutionContext::new(ExecConfig::default(), MeshExecMetrics::new(3, 0, 0));
+        )
+        .expect("serial ctx");
+        let parallel = ExecutionContext::new(ExecConfig::default(), MeshExecMetrics::new(3, 0, 0))
+            .expect("parallel ctx");
         serial.csr_spmv(&matrix, &x, &mut y_serial).expect("serial");
         parallel
             .csr_spmv(&matrix, &x, &mut y_parallel)
