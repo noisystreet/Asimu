@@ -1,8 +1,7 @@
-use super::*;
 use crate::boundary::{BoundaryKind, BoundaryPatch, BoundarySet};
-use crate::exec::{ExecConfig, ExecutionContext, MeshExecMetrics};
 use crate::io::{CaseMesh, parse_case_str};
 use crate::mesh::{CellKind, UnstructuredCell, UnstructuredMesh3d};
+use crate::solver::{UnstructuredDriverConfig, run_unstructured_with_observer};
 
 /// 回归：非结构对角 LU-SGS 以推进时 `k1 = RHS(u0)` 的 RMS 为监控量；场演化时相邻步应可区分。
 #[test]
@@ -42,46 +41,33 @@ max_steps = 2
     let eos = case.physics.eos().expect("eos");
     let freestream = case.freestream.expect("freestream");
     let inviscid = case.compressible_discretization().expect("disc").inviscid();
-    let mut env = UnstructuredRunEnv {
-        case: &case,
+    let solver =
+        crate::case::compressible_unstructured_3d::build_compressible_solver(&case, &inviscid)
+            .expect("solver");
+    let mut fields = case.build_conserved_fields().expect("fields");
+    fields.density.values_mut()[0] *= 1.1;
+    let driver = UnstructuredDriverConfig {
+        solver: &solver,
         mesh,
         eos: &eos,
         freestream: &freestream,
-        inviscid,
+        inviscid: &inviscid,
+        patches: &case.boundary,
+        reference: case.reference.as_ref(),
+        viscous: case.physics.viscous.as_ref(),
+        fixed_dt: case.time.dt,
+        local_time_step: case.time.uses_local_time_step(),
+        time_scheme: case.time.resolved_time_scheme(),
+        lu_sgs: case.time.resolved_lusgs_config().expect("lu_sgs"),
+        cfl_schedule: case.cfl_schedule().expect("cfl"),
+        max_steps: case.resolved_max_steps(),
+        residual_tolerance: None,
     };
-    let mut fields = case.build_conserved_fields().expect("fields");
-    fields.density.values_mut()[0] *= 1.1;
-    let n = mesh.num_cells();
-    let mesh_cache =
-        crate::discretization::UnstructuredSolverMeshCache::from_mesh(mesh, &case.boundary)
-            .expect("cache");
-    let interior_faces = mesh_cache.face_topology.interior.len();
-    let max_bucket_faces = mesh_cache
-        .face_topology
-        .interior_coloring
-        .max_bucket_faces();
-    let exec = ExecutionContext::new(
-        ExecConfig::default(),
-        MeshExecMetrics::new(n, interior_faces, max_bucket_faces),
-    );
-    let mut work = UnstructuredStepWork {
-        storage: Rk4Storage::new(n).expect("storage"),
-        state: SolverState::default(),
-        integrator: RungeKutta4Integrator::new(RungeKutta4Config {
-            dt: case.time.dt.unwrap_or(0.0),
-            max_steps: case.resolved_max_steps(),
-        }),
-        ghosts: BoundaryGhostBuffer::with_face_capacity(mesh.num_faces()),
-        primitives: PrimitiveFields::zeros(n).expect("prim"),
-        gradients: GradientFields::zeros(n).expect("grad"),
-        viscous_scratch: crate::discretization::ViscousAssemblyUnstructuredScratch::new(n),
-        mesh_cache,
-        exec,
-        volumes: mesh.cell_volumes(),
-        lusgs_couplings: LuSgsUnstructuredCouplings::from_mesh(mesh).expect("couplings"),
-    };
-    let step1 = advance_unstructured_step(&mut env, &mut fields, &mut work).expect("step1");
-    let step2 = advance_unstructured_step(&mut env, &mut fields, &mut work).expect("step2");
+    let history =
+        run_unstructured_with_observer(&driver, &mut fields, |_| Ok(())).expect("history");
+    assert_eq!(history.len(), 2);
+    let step1 = &history[0];
+    let step2 = &history[1];
     assert!(
         (step1.residual_rms - step2.residual_rms).abs() > 1.0e-12,
         "两步 ‖RHS(u0)‖ 监控残差应不同: r1={} r2={}",

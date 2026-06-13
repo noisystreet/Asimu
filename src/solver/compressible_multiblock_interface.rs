@@ -2,7 +2,6 @@
 
 use tracing::info_span;
 
-use super::SharedInterfaceFace;
 use crate::core::Real;
 use crate::discretization::residual::inviscid_boundary_face_flux_with_normal;
 use crate::discretization::{BoundaryInviscidFluxInput, InviscidFlux};
@@ -10,24 +9,25 @@ use crate::error::Result;
 use crate::field::{ConservedFields, ConservedResidual, PrimitiveFields};
 use crate::mesh::StructuredBlock3d;
 use crate::physics::{FreestreamParams, IdealGasEoS};
+use crate::solver::compressible_multiblock::SharedInterfaceFace;
 
 #[derive(Debug, Clone)]
-pub(super) struct InterfaceResidualContribution {
-    pub(super) cell: usize,
+pub(crate) struct InterfaceResidualContribution {
+    pub(crate) cell: usize,
     flux: InviscidFlux,
     scale: Real,
 }
 
-pub(super) struct SharedInterfaceResidualParams<'a> {
-    pub(super) blocks: &'a [StructuredBlock3d],
-    pub(super) shared_faces: &'a [SharedInterfaceFace],
-    pub(super) snapshots: &'a [ConservedFields],
-    pub(super) eos: &'a IdealGasEoS,
-    pub(super) freestream: &'a FreestreamParams,
-    pub(super) inviscid: &'a crate::discretization::InviscidFluxConfig,
+pub(crate) struct SharedInterfaceResidualParams<'a> {
+    pub(crate) blocks: &'a [StructuredBlock3d],
+    pub(crate) shared_faces: &'a [SharedInterfaceFace],
+    pub(crate) snapshots: &'a [ConservedFields],
+    pub(crate) eos: &'a IdealGasEoS,
+    pub(crate) freestream: &'a FreestreamParams,
+    pub(crate) inviscid: &'a crate::discretization::InviscidFluxConfig,
 }
 
-pub(super) fn compute_shared_interface_residuals(
+pub(crate) fn compute_shared_interface_residuals(
     params: &SharedInterfaceResidualParams<'_>,
 ) -> Result<Vec<Vec<InterfaceResidualContribution>>> {
     let mut primitives = Vec::with_capacity(params.blocks.len());
@@ -105,7 +105,7 @@ fn add_shared_interface_face(
     Ok(())
 }
 
-pub(super) fn apply_interface_residuals(
+pub(crate) fn apply_interface_residuals(
     residual: &mut ConservedResidual,
     contributions: &[InterfaceResidualContribution],
 ) -> Result<()> {

@@ -2,10 +2,14 @@
 
 #[path = "case_boundary.rs"]
 mod case_boundary;
+#[path = "case_build.rs"]
+mod case_build;
 #[path = "case_compressible.rs"]
 mod case_compressible;
 #[path = "case_incompressible.rs"]
 mod case_incompressible;
+#[path = "case_validate.rs"]
+mod case_validate;
 #[path = "mesh_load.rs"]
 mod mesh_load;
 
@@ -261,26 +265,15 @@ impl SodCaseConfig {
 
 impl CaseSpec {
     pub fn build_initial_fields(&self) -> Result<Fields> {
-        let mesh_1d = self.mesh.as_1d()?;
-        Fields::from_initial_set(mesh_1d, &self.initial)
+        case_build::initial_fields(self)
     }
 
     pub fn initial_scalar(&self, name: &str) -> Result<ScalarField> {
-        let mesh_1d = self.mesh.as_1d()?;
-        self.initial.build_scalar_or_zero(name, mesh_1d)
+        case_build::initial_scalar(self, name)
     }
 
     pub fn build_conserved_fields(&self) -> Result<crate::field::ConservedFields> {
-        if let Some(path) = &self.restart {
-            return super::restart::load_conserved_fields(path);
-        }
-        super::restart::initial_freestream_conserved_fields(
-            self.mesh.num_cells(),
-            &self.physics.eos()?,
-            self.reference.as_ref(),
-            self.physics.viscous.as_ref(),
-            self.freestream.or(self.fluid_initial.freestream),
-        )
+        case_build::conserved_fields(self)
     }
 
     /// 按 block 顺序构建多块守恒初场；`[restart]` 使用 version=2 多块 TOML。
@@ -288,14 +281,7 @@ impl CaseSpec {
         &self,
         blocks: &[crate::mesh::StructuredBlock3d],
     ) -> Result<Vec<crate::field::ConservedFields>> {
-        super::restart::initial_multiblock_conserved_fields(
-            self.restart.as_deref(),
-            blocks,
-            &self.physics.eos()?,
-            self.reference.as_ref(),
-            self.physics.viscous.as_ref(),
-            self.freestream.or(self.fluid_initial.freestream),
-        )
+        case_build::multiblock_conserved_fields(self, blocks)
     }
 
     pub fn is_compressible(&self) -> bool {
@@ -304,26 +290,7 @@ impl CaseSpec {
 
     /// 有 1-to-1 接口的多块可压缩算例须满足 LU-SGS 对角隐式约束。
     pub fn validate_multiblock_compressible(&self) -> Result<()> {
-        if !self.is_compressible() || (self.euler.is_none() && self.navier_stokes.is_none()) {
-            return Ok(());
-        }
-        let CaseMesh::MultiBlockStructured3d(mesh) = &self.mesh else {
-            return Ok(());
-        };
-        if mesh.interfaces().is_empty() {
-            return Ok(());
-        }
-        if self.time.resolved_time_scheme() != crate::solver::TimeIntegrationScheme::LuSgs {
-            return Err(AsimuError::Config(
-                "有 1-to-1 接口的多块 3D 可压缩算例当前仅支持 time.scheme = \"lu_sgs\"".to_string(),
-            ));
-        }
-        if self.time.resolved_lusgs_config()?.sweep {
-            return Err(AsimuError::Config(
-                "有 1-to-1 接口的多块 3D 可压缩算例暂不支持 lusgs_sweep = true".to_string(),
-            ));
-        }
-        Ok(())
+        case_validate::multiblock_compressible(self)
     }
 
     /// 3D 可压缩离散段：`[navier_stokes]` 优先，否则 `[euler]`。

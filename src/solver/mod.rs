@@ -2,6 +2,10 @@
 
 pub mod compressible;
 pub mod compressible_helpers;
+mod compressible_multiblock;
+mod compressible_multiblock_driver;
+mod compressible_multiblock_interface;
+mod compressible_unstructured_driver;
 pub mod incompressible;
 mod incompressible_diagnostics;
 mod incompressible_linear;
@@ -30,6 +34,13 @@ pub use compressible::{
 pub use compressible_helpers::{
     EvaluateRhsUnstructured, RefreshCompressibleStateInput, finalize_cell_dts_from_sigma,
     refresh_compressible_ghosts_and_primitives,
+};
+pub use compressible_multiblock_driver::{
+    CompressibleMultiblockStepView, MultiblockStructuredDriverInput,
+    run_multiblock_structured_with_observer,
+};
+pub use compressible_unstructured_driver::{
+    CompressibleUnstructuredStepView, UnstructuredDriverConfig, run_unstructured_with_observer,
 };
 pub use incompressible::{
     IncompressibleLinearSolverConfig, IncompressiblePressureLinearSolverConfig,

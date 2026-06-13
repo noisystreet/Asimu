@@ -11,32 +11,32 @@ use crate::mesh::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct BlockInterfaceLink {
-    pub(super) face: FaceId,
-    pub(super) owner_cell: usize,
-    pub(super) donor_block_index: usize,
-    pub(super) donor_cell: usize,
+pub(crate) struct BlockInterfaceLink {
+    pub(crate) face: FaceId,
+    pub(crate) owner_cell: usize,
+    pub(crate) donor_block_index: usize,
+    pub(crate) donor_cell: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(super) struct SharedInterfaceFace {
-    pub(super) owner_block_index: usize,
-    pub(super) owner_cell: usize,
-    pub(super) donor_block_index: usize,
-    pub(super) donor_cell: usize,
-    pub(super) face: FaceId,
-    pub(super) normal: Vector3,
-    pub(super) owner_scale: Real,
-    pub(super) donor_scale: Real,
+pub(crate) struct SharedInterfaceFace {
+    pub(crate) owner_block_index: usize,
+    pub(crate) owner_cell: usize,
+    pub(crate) donor_block_index: usize,
+    pub(crate) donor_cell: usize,
+    pub(crate) face: FaceId,
+    pub(crate) normal: Vector3,
+    pub(crate) owner_scale: Real,
+    pub(crate) donor_scale: Real,
 }
 
-pub(super) struct MultiblockInterfaceMetadata {
-    pub(super) links: Vec<Vec<BlockInterfaceLink>>,
-    pub(super) patches: Vec<Vec<BoundaryPatch>>,
-    pub(super) shared_faces: Vec<SharedInterfaceFace>,
+pub(crate) struct MultiblockInterfaceMetadata {
+    pub(crate) links: Vec<Vec<BlockInterfaceLink>>,
+    pub(crate) patches: Vec<Vec<BoundaryPatch>>,
+    pub(crate) shared_faces: Vec<SharedInterfaceFace>,
 }
 
-pub(super) fn build_multiblock_interface_metadata(
+pub(crate) fn build_multiblock_interface_metadata(
     mesh: &MultiBlockStructuredMesh3d,
 ) -> Result<MultiblockInterfaceMetadata> {
     let mut metadata = MultiblockInterfaceMetadata {

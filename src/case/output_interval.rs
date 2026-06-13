@@ -5,34 +5,20 @@ use std::path::PathBuf;
 use tracing::info_span;
 
 use crate::error::Result;
-use crate::field::ConservedFields;
 use crate::io::CaseSpec;
 use crate::mesh::{MultiBlockStructuredMesh3d, StructuredMesh3d, UnstructuredMesh3d};
-use crate::solver::{CompressibleStepInfo, IncompressiblePressureVelocityStepView};
+use crate::solver::{
+    CompressibleMultiblockStepView, CompressibleUnstructuredStepView,
+    IncompressiblePressureVelocityStepView,
+};
 
 pub use super::output_3d::interval_output_due;
-
-/// 多块结构化可压缩外层步只读视图（case observer 回调参数）。
-#[derive(Debug, Clone, Copy)]
-pub struct CompressibleStructuredStepView<'a> {
-    pub info: &'a CompressibleStepInfo,
-    pub history: &'a [CompressibleStepInfo],
-    pub fields: &'a [ConservedFields],
-}
-
-/// 非结构可压缩外层步只读视图（case observer 回调参数）。
-#[derive(Debug, Clone, Copy)]
-pub struct CompressibleUnstructuredStepView<'a> {
-    pub info: &'a CompressibleStepInfo,
-    pub history: &'a [CompressibleStepInfo],
-    pub fields: &'a ConservedFields,
-}
 
 /// 多块结构化可压缩：间隔残差 + 流场 CGNS。
 pub fn maybe_write_compressible_structured_interval(
     case: &CaseSpec,
     mesh: &MultiBlockStructuredMesh3d,
-    step: CompressibleStructuredStepView<'_>,
+    step: CompressibleMultiblockStepView<'_>,
 ) -> Result<Vec<PathBuf>> {
     if !interval_output_due(case, step.info.step) {
         return Ok(Vec::new());

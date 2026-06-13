@@ -12,6 +12,7 @@ mod incompressible_profiles;
 mod output_3d;
 mod output_interval;
 mod sod;
+mod validate;
 
 use std::path::Path;
 
