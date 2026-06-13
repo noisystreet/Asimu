@@ -4,24 +4,25 @@
 
 use tracing::info_span;
 
-use crate::core::Real;
+use crate::core::{ComputeFloat, Real};
 use crate::error::Result;
-use crate::field::{ConservedFields, ConservedResidual};
+use crate::field::{ConservedFieldsT, ConservedResidualT};
 
 use super::common::maybe_enforce_positivity;
-use super::rk4::Rk4Storage;
+use super::rk4::Rk4StorageT;
 
 /// 单步前向 Euler（全局 \(\Delta t\)）。
-pub fn euler_step<F>(
-    fields: &mut ConservedFields,
-    storage: &mut Rk4Storage,
+pub fn euler_step<T, F>(
+    fields: &mut ConservedFieldsT<T>,
+    storage: &mut Rk4StorageT<T>,
     dt: Real,
     mut evaluate_rhs: F,
     eos: Option<&crate::physics::IdealGasEoS>,
     min_pressure: Real,
 ) -> Result<()>
 where
-    F: FnMut(&ConservedFields, &mut ConservedResidual) -> Result<()>,
+    T: ComputeFloat,
+    F: FnMut(&ConservedFieldsT<T>, &mut ConservedResidualT<T>) -> Result<()>,
 {
     let n = fields.num_cells();
     storage.ensure_capacity(n)?;
@@ -39,16 +40,17 @@ where
 }
 
 /// 逐单元 \(\Delta t_i\) 的前向 Euler（稳态当地时间步）。
-pub fn euler_step_local<F>(
-    fields: &mut ConservedFields,
-    storage: &mut Rk4Storage,
+pub fn euler_step_local<T, F>(
+    fields: &mut ConservedFieldsT<T>,
+    storage: &mut Rk4StorageT<T>,
     dt: &[Real],
     mut evaluate_rhs: F,
     eos: Option<&crate::physics::IdealGasEoS>,
     min_pressure: Real,
 ) -> Result<()>
 where
-    F: FnMut(&ConservedFields, &mut ConservedResidual) -> Result<()>,
+    T: ComputeFloat,
+    F: FnMut(&ConservedFieldsT<T>, &mut ConservedResidualT<T>) -> Result<()>,
 {
     let n = fields.num_cells();
     storage.ensure_capacity(n)?;
@@ -80,7 +82,9 @@ where
 mod tests {
     use super::*;
     use crate::core::approx_eq;
+    use crate::field::{ConservedFields, ConservedResidual};
     use crate::physics::ConservedState;
+    use crate::solver::time::Rk4Storage;
 
     #[test]
     fn euler_integrates_linear_decay() {

@@ -40,7 +40,9 @@ pub use control::TransientStepControl;
 pub use euler::{euler_step, euler_step_local};
 pub use lu_sgs::{LuSgsConfig, lu_sgs_step, lu_sgs_step_local, lu_sgs_step_sweep_local};
 pub use residual_smoothing::{ResidualSmoothingConfig, smooth_residual_3d_limited};
-pub use rk4::{Rk4Storage, RungeKutta4Config, RungeKutta4Integrator, rk4_step, rk4_step_local};
+pub use rk4::{
+    Rk4Storage, Rk4StorageT, RungeKutta4Config, RungeKutta4Integrator, rk4_step, rk4_step_local,
+};
 pub use scheme::TimeIntegrationScheme;
 
 /// CFL 调度：在指定步数区间内从 `initial` 线性增至 `max`，之后保持 `max`。

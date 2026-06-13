@@ -8,18 +8,61 @@ use crate::boundary::BoundarySet;
 use crate::core::{ComputePrecision, FaceId, Real};
 use crate::discretization::ReconstructionKind;
 use crate::error::{AsimuError, Result};
-use crate::io::CaseSpec;
+use crate::io::{CaseMesh, CaseSpec};
 use crate::mesh::UnstructuredMesh3d;
 use crate::solver::TimeIntegrationScheme;
 
-/// 核心计算精度与当前 solver 能力是否匹配（ADR 0016 P0）。
+/// 核心计算精度与当前 solver 能力是否匹配（ADR 0016 P2）。
 pub fn compute_precision(case: &CaseSpec) -> Result<()> {
-    if case.numerics.compute_precision == ComputePrecision::F32 {
-        return Err(AsimuError::Config(
-            "compute_precision = \"f32\" 尚未实现；当前仅支持 f64（ADR 0016 P0）".to_string(),
-        ));
+    if case.numerics.compute_precision == ComputePrecision::F64 {
+        return Ok(());
+    }
+    validate_f32_capabilities(case)
+}
+
+fn validate_f32_capabilities(case: &CaseSpec) -> Result<()> {
+    if case.numerics.compute_precision != ComputePrecision::F32 {
+        return Ok(());
+    }
+    if case.is_compressible() {
+        let is_structured_3d = matches!(case.mesh, CaseMesh::MultiBlockStructured3d(_));
+        if !is_structured_3d {
+            return Err(f32_unsupported(
+                "非结构可压缩路径尚未支持 f32（ADR 0016 P3）",
+            ));
+        }
+    } else {
+        return Err(f32_unsupported("仅结构化 3D 可压缩 Euler 路径支持 f32"));
+    }
+    if case.navier_stokes.is_some() || case.physics.viscous.is_some() {
+        return Err(f32_unsupported("Navier-Stokes / 粘性通量尚未支持 f32"));
+    }
+    let disc = case.compressible_discretization()?;
+    if disc.inviscid().reconstruction != ReconstructionKind::FirstOrder {
+        return Err(f32_unsupported("f32 暂仅支持 reconstruction = first_order"));
+    }
+    match case.time.resolved_time_scheme() {
+        TimeIntegrationScheme::Rk4 | TimeIntegrationScheme::Euler => {}
+        scheme => {
+            return Err(f32_unsupported(&format!(
+                "f32 暂不支持 time.scheme = \"{}\"",
+                scheme.label()
+            )));
+        }
+    }
+    if case.time.residual_smoothing_config().enabled {
+        return Err(f32_unsupported("f32 暂不支持 residual_smoothing"));
+    }
+    if let CaseMesh::MultiBlockStructured3d(mesh) = &case.mesh {
+        if !mesh.interfaces().is_empty() {
+            return Err(f32_unsupported("f32 暂不支持多块 1-to-1 接口通量"));
+        }
     }
     Ok(())
+}
+
+fn f32_unsupported(detail: &str) -> AsimuError {
+    AsimuError::Config(format!("compute_precision = \"f32\"：{detail}"))
 }
 
 /// 非结构可压缩离散与时间格式约束。
@@ -128,7 +171,7 @@ mod compute_precision_tests {
     }
 
     #[test]
-    fn f32_rejected_at_validate() {
+    fn f32_rejected_for_unsupported_paths() {
         let mut case = load_case(Path::new(
             "tests/benchmarks/1d_diffusion_analytical/case.toml",
         ))
@@ -136,8 +179,19 @@ mod compute_precision_tests {
         case.numerics = CaseNumericsConfig {
             compute_precision: ComputePrecision::F32,
         };
-        let err = compute_precision(&case).expect_err("f32");
+        let err = compute_precision(&case).expect_err("f32 diffusion");
         assert!(err.to_string().contains("f32"));
-        assert!(err.to_string().contains("尚未实现"));
+    }
+
+    #[test]
+    fn f32_accepts_structured_freestream_case() {
+        let mut case = load_case(Path::new(
+            "tests/benchmarks/unstructured_freestream/case.toml",
+        ))
+        .expect("case");
+        case.numerics = CaseNumericsConfig {
+            compute_precision: ComputePrecision::F32,
+        };
+        compute_precision(&case).expect("structured freestream f32");
     }
 }

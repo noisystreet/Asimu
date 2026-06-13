@@ -3,13 +3,14 @@
 use tracing::{info, info_span, warn};
 
 use crate::case::{CaseRunKind, CaseRunResult};
-use crate::core::{Real, format_log_fixed4, format_log_sci4, log10_positive};
+use crate::core::{ComputePrecision, Real, format_log_fixed4, format_log_sci4, log10_positive};
 use crate::error::{AsimuError, Result};
 use crate::io::{CaseSpec, CaseTimeMode};
 use crate::mesh::MultiBlockStructuredMesh3d;
 use crate::solver::{
     CompressibleEulerConfig, CompressibleEulerSolver, CompressibleStepInfo, CompressibleTimeMode,
-    MultiblockStructuredDriverInput, RungeKutta4Config, run_multiblock_structured_with_observer,
+    MultiblockStructuredDriverInput, RungeKutta4Config,
+    run_multiblock_structured_typed_with_observer, run_multiblock_structured_with_observer,
 };
 
 /// 3D 可压缩 Euler 运行指标。
@@ -26,7 +27,10 @@ pub struct Compressible3dRunMetrics {
 
 pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
     let mesh = case.mesh.as_multiblock_3d()?;
-    run_compressible_3d(case, mesh)
+    match case.numerics.compute_precision {
+        ComputePrecision::F64 => run_compressible_3d(case, mesh),
+        ComputePrecision::F32 => run_compressible_3d_typed::<f32>(case, mesh),
+    }
 }
 
 fn run_compressible_3d(
@@ -109,6 +113,103 @@ fn run_compressible_3d(
     let last = history
         .last()
         .ok_or_else(|| AsimuError::Solver("3D 可压缩推进未产生任何时间步".to_string()))?;
+    let metrics = build_run_metrics(last, &scheme, &limiter);
+    log_run_complete(
+        &metrics,
+        &scheme,
+        &limiter,
+        time_mode,
+        local_time_step,
+        mesh.num_cells(),
+    );
+    let output_paths = {
+        let _span = info_span!("write_compressible_outputs").entered();
+        super::output_3d::write_compressible_3d_outputs(case, mesh, &fields, &history)?
+    };
+    log_written_paths(&snapshot_paths, &output_paths);
+    Ok(build_case_run_result(
+        case,
+        mesh.num_cells(),
+        &metrics,
+        &scheme,
+        &limiter,
+        time_mode,
+        local_time_step,
+    ))
+}
+
+fn run_compressible_3d_typed<T: crate::core::ComputeFloat>(
+    case: &CaseSpec,
+    mesh: &MultiBlockStructuredMesh3d,
+) -> Result<CaseRunResult> {
+    let _span = info_span!(
+        "run_compressible_3d_typed",
+        precision = T::PRECISION.label(),
+        blocks = mesh.num_blocks(),
+        cells = mesh.num_cells()
+    )
+    .entered();
+    let (eos, freestream, solver, scheme, limiter, time_mode, local_time_step) = {
+        let _span = info_span!("prepare_compressible_solver").entered();
+        case.validate_multiblock_compressible()?;
+        let disc = case.compressible_discretization()?;
+        let eos = case.physics.eos()?;
+        let freestream = case
+            .freestream
+            .or(case.fluid_initial.freestream)
+            .ok_or_else(|| AsimuError::Field("3D 可压缩算例须指定 [freestream]".to_string()))?;
+        let inviscid = disc.inviscid();
+        let solver = build_compressible_solver(case, &inviscid)?;
+        let scheme = inviscid.short_label().to_string();
+        let limiter = inviscid.limiter_label().to_string();
+        let time_mode = solver_time_mode(case.time.mode);
+        let local_time_step = case.time.uses_local_time_step();
+        (
+            eos,
+            freestream,
+            solver,
+            scheme,
+            limiter,
+            time_mode,
+            local_time_step,
+        )
+    };
+    let initial_fields = {
+        let _span = info_span!(
+            "load_block_initial_fields",
+            blocks = mesh.num_blocks(),
+            restart = case.restart.is_some()
+        )
+        .entered();
+        case.build_multiblock_conserved_fields(mesh.blocks())?
+    };
+    let mut snapshot_paths = Vec::new();
+    let (history, fields) = {
+        let _span = info_span!("advance_block_history_typed").entered();
+        run_multiblock_structured_typed_with_observer::<T>(
+            MultiblockStructuredDriverInput {
+                solver: &solver,
+                eos: &eos,
+                freestream: &freestream,
+                mesh,
+                global_boundary: &case.boundary,
+                reference: case.reference.as_ref(),
+                residual_tolerance: super::validate::residual_tolerance(case),
+                initial_fields,
+            },
+            |step| {
+                snapshot_paths.extend(
+                    super::output_interval::maybe_write_compressible_structured_interval(
+                        case, mesh, step,
+                    )?,
+                );
+                Ok(())
+            },
+        )?
+    };
+    let last = history
+        .last()
+        .ok_or_else(|| AsimuError::Solver("3D 可压缩 typed 推进未产生任何时间步".to_string()))?;
     let metrics = build_run_metrics(last, &scheme, &limiter);
     log_run_complete(
         &metrics,

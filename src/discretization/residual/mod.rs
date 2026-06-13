@@ -4,21 +4,23 @@
 
 mod assembly_1d;
 mod assembly_3d;
+mod assembly_3d_typed;
 mod assembly_3d_viscous;
 mod assembly_unstructured;
 mod assembly_unstructured_viscous;
 mod face_flux_3d;
 mod muscl_stencil_3d;
 
-use crate::core::Real;
+use crate::core::{ComputeFloat, Real};
 use crate::discretization::InviscidFlux;
 use crate::error::Result;
-use crate::field::ConservedResidual;
+use crate::field::{ConservedResidual, ConservedResidualT};
 
 pub use assembly_1d::{
     BoundaryGhosts1d, InviscidBoundary1d, assemble_inviscid_residual_1d, zero_gradient_ghosts_1d,
 };
 pub use assembly_3d::{InviscidAssembly3dParams, assemble_inviscid_residual_3d};
+pub use assembly_3d_typed::{InviscidAssembly3dTypedParams, assemble_inviscid_residual_3d_typed};
 pub use assembly_3d_viscous::{
     ViscousAssembly3dInput, ViscousAssembly3dParams, assemble_viscous_residual_3d,
     compute_gradients_and_assemble_viscous_3d,
@@ -45,13 +47,42 @@ pub(crate) fn is_degenerate_volume(volume: Real) -> bool {
     volume <= DEGENERATE_VOLUME
 }
 
-fn add_inviscid_flux(
-    residual: &mut ConservedResidual,
+fn add_inviscid_flux<T: ComputeFloat>(
+    residual: &mut ConservedResidualT<T>,
     cell: usize,
     flux: &InviscidFlux,
     scale: Real,
 ) -> Result<()> {
     residual.add_flux_to_cell(cell, flux.mass, flux.momentum, flux.energy, scale)
+}
+
+/// 将面通量写入 owner / neighbor 控制体右手项（typed 残差）。
+pub fn accumulate_interior_face_typed<T: ComputeFloat>(
+    residual: &mut ConservedResidualT<T>,
+    owner: usize,
+    neighbor: usize,
+    flux: &InviscidFlux,
+    area: Real,
+    owner_volume: Real,
+    neighbor_volume: Real,
+) -> Result<()> {
+    let owner_scale = -area / owner_volume;
+    let neighbor_scale = area / neighbor_volume;
+    add_inviscid_flux(residual, owner, flux, owner_scale)?;
+    add_inviscid_flux(residual, neighbor, flux, neighbor_scale)?;
+    Ok(())
+}
+
+/// 边界面：仅 owner 单元贡献（typed 残差）。
+pub fn accumulate_boundary_face_typed<T: ComputeFloat>(
+    residual: &mut ConservedResidualT<T>,
+    owner: usize,
+    flux: &InviscidFlux,
+    area: Real,
+    owner_volume: Real,
+) -> Result<()> {
+    let owner_scale = -area / owner_volume;
+    add_inviscid_flux(residual, owner, flux, owner_scale)
 }
 
 /// 将面通量写入 owner / neighbor 控制体右手项。

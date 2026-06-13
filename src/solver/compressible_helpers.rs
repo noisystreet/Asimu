@@ -35,6 +35,21 @@ pub struct RefreshCompressibleStateInput<'a> {
     pub primitives: &'a mut PrimitiveFields,
 }
 
+/// typed 场 BC + 原始变量刷新（BC/谱半径仍经 `cast_real` 走 f64 路径）。
+pub struct RefreshCompressibleStateTypedInput<'a, T: crate::core::ComputeFloat> {
+    pub boundary_mesh: &'a dyn BoundaryMesh3d,
+    pub patches: &'a BoundarySet,
+    pub fields: &'a crate::field::ConservedFieldsT<T>,
+    pub ghosts: &'a mut BoundaryGhostBuffer,
+    pub eos: &'a IdealGasEoS,
+    pub freestream: &'a FreestreamParams,
+    pub reference: Option<&'a ReferenceScales>,
+    pub viscous: Option<&'a ViscousPhysicsConfig>,
+    pub min_pressure: Real,
+    pub primitives: &'a mut crate::field::PrimitiveFieldsT<T>,
+    pub spectral_primitives: &'a mut PrimitiveFields,
+}
+
 /// 刷新 BC ghost 与原始变量（结构/非结构共用）。
 pub fn refresh_compressible_ghosts_and_primitives(
     input: RefreshCompressibleStateInput<'_>,
@@ -49,6 +64,28 @@ pub fn refresh_compressible_ghosts_and_primitives(
         input.freestream,
         input.viscous,
     )?;
+    input
+        .primitives
+        .fill_from_conserved(input.fields, input.eos, input.min_pressure)
+}
+
+/// typed 守恒场：ghost 经 f64 BC 施加，计算 primitive 仍用 typed 场。
+pub fn refresh_compressible_ghosts_and_primitives_typed<T: crate::core::ComputeFloat>(
+    input: RefreshCompressibleStateTypedInput<'_, T>,
+) -> Result<()> {
+    let fields_real = input.fields.cast_real()?;
+    refresh_compressible_ghosts_and_primitives(RefreshCompressibleStateInput {
+        boundary_mesh: input.boundary_mesh,
+        patches: input.patches,
+        fields: &fields_real,
+        ghosts: input.ghosts,
+        eos: input.eos,
+        freestream: input.freestream,
+        reference: input.reference,
+        viscous: input.viscous,
+        min_pressure: input.min_pressure,
+        primitives: input.spectral_primitives,
+    })?;
     input
         .primitives
         .fill_from_conserved(input.fields, input.eos, input.min_pressure)

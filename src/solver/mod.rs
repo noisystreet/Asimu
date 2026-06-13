@@ -4,6 +4,7 @@ pub mod compressible;
 pub mod compressible_helpers;
 mod compressible_multiblock;
 mod compressible_multiblock_driver;
+mod compressible_multiblock_driver_typed;
 mod compressible_multiblock_interface;
 mod compressible_unstructured_driver;
 pub mod incompressible;
@@ -27,9 +28,9 @@ use crate::error::Result;
 use crate::mesh::Mesh;
 
 pub use compressible::{
-    CompressibleAdvanceContext1d, CompressibleAdvanceContext3d, CompressibleEulerConfig,
-    CompressibleEulerSolver, CompressibleStepInfo, CompressibleTimeMode, GmresImplicitConfig,
-    GmresImplicitDelta, GmresPreconditionerKind,
+    CompressibleAdvanceContext1d, CompressibleAdvanceContext3d, CompressibleAdvanceContext3dTyped,
+    CompressibleEulerConfig, CompressibleEulerSolver, CompressibleStepInfo, CompressibleTimeMode,
+    GmresImplicitConfig, GmresImplicitDelta, GmresPreconditionerKind,
 };
 pub use compressible_helpers::{
     EvaluateRhsUnstructured, RefreshCompressibleStateInput, finalize_cell_dts_from_sigma,
@@ -39,6 +40,7 @@ pub use compressible_multiblock_driver::{
     CompressibleMultiblockStepView, MultiblockStructuredDriverInput,
     run_multiblock_structured_with_observer,
 };
+pub use compressible_multiblock_driver_typed::run_multiblock_structured_typed_with_observer;
 pub use compressible_unstructured_driver::{
     CompressibleUnstructuredStepView, UnstructuredDriverConfig, run_unstructured_with_observer,
 };
@@ -68,7 +70,7 @@ pub use spectral_radius_unstructured::{
 };
 pub use state::SolverState;
 pub use time::{
-    CflSchedule, LuSgsConfig, Rk4Storage, RungeKutta4Config, RungeKutta4Integrator,
+    CflSchedule, LuSgsConfig, Rk4Storage, Rk4StorageT, RungeKutta4Config, RungeKutta4Integrator,
     SteadyStateIntegrator, TimeIntegrationScheme, TimeIntegrator, TimeMode, TimeStepInfo,
     TransientStepControl, euler_step, euler_step_local, local_dt_cfl, lu_sgs_step,
     lu_sgs_step_local, min_positive_dt, rk4_step, rk4_step_local,

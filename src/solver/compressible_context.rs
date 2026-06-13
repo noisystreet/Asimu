@@ -5,7 +5,7 @@ use std::{cell::RefCell, rc::Rc};
 use crate::boundary::BoundarySet;
 use crate::discretization::{BoundaryGhostBuffer, GradientFields};
 use crate::error::Result;
-use crate::field::{ConservedResidual, PrimitiveFields};
+use crate::field::{ConservedResidual, PrimitiveFields, PrimitiveFieldsT};
 use crate::mesh::{BoundaryMesh3d, StructuredMesh1d, StructuredMesh3d};
 use crate::physics::{FreestreamParams, IdealGasEoS, ReferenceScales, ViscousPhysicsConfig};
 
@@ -32,6 +32,22 @@ pub struct CompressibleAdvanceContext3d<'a> {
     pub viscous: Option<&'a ViscousPhysicsConfig>,
     /// RHS 后处理修正（多块共享接口通量等）；单块路径保持 `None`。
     pub residual_correction: Option<ResidualCorrection3dHandle>,
+}
+
+/// typed 3D 单步推进上下文（P2：结构化显式 rk4/euler + 一阶无粘）。
+pub struct CompressibleAdvanceContext3dTyped<'a, T: crate::core::ComputeFloat> {
+    pub mesh: &'a dyn BoundaryMesh3d,
+    pub structured: &'a StructuredMesh3d,
+    pub patches: &'a BoundarySet,
+    pub ghosts: &'a mut BoundaryGhostBuffer,
+    pub eos: &'a IdealGasEoS,
+    pub freestream: &'a FreestreamParams,
+    pub reference: Option<&'a ReferenceScales>,
+    pub primitive_scratch: PrimitiveFieldsT<T>,
+    /// 谱半径 / BC 刷新用的 f64 原始变量缓冲。
+    pub spectral_primitives: PrimitiveFields,
+    pub gradient_scratch: GradientFields,
+    pub viscous: Option<&'a ViscousPhysicsConfig>,
 }
 
 /// 1D 多步推进上下文。

@@ -119,6 +119,17 @@ impl<T: ComputeFloat> ConservedFieldsT<T> {
         })
     }
 
+    /// 从 `Real` 守恒场构造 typed 场。
+    pub fn from_real_fields(fields: &ConservedFields) -> Result<Self> {
+        Ok(Self {
+            density: ScalarFieldT::from_real_values(fields.density.to_real_values())?,
+            momentum_x: ScalarFieldT::from_real_values(fields.momentum_x.to_real_values())?,
+            momentum_y: ScalarFieldT::from_real_values(fields.momentum_y.to_real_values())?,
+            momentum_z: ScalarFieldT::from_real_values(fields.momentum_z.to_real_values())?,
+            total_energy: ScalarFieldT::from_real_values(fields.total_energy.to_real_values())?,
+        })
+    }
+
     #[allow(dead_code)]
     fn write_cell_state(&mut self, index: usize, state: &ConservedState) {
         self.density.values_mut()[index] = T::from_real(state.density);
@@ -133,6 +144,11 @@ impl ConservedFields {
     /// 从 typed 场构造 `Real` 守恒场。
     pub fn from_typed<T: ComputeFloat>(fields: &ConservedFieldsT<T>) -> Result<Self> {
         fields.cast_real()
+    }
+
+    /// 从 `Real` 守恒场构造 typed 场（`T=f64` 时为拷贝）。
+    pub fn to_typed<T: ComputeFloat>(fields: &ConservedFields) -> Result<ConservedFieldsT<T>> {
+        ConservedFieldsT::from_real_fields(fields)
     }
 
     /// 将无量纲守恒量还原为有量纲 SI（输出 VTK/CGNS 用）。

@@ -9,12 +9,18 @@ use std::time::Instant;
 mod compressible_context;
 #[path = "compressible_rhs.rs"]
 mod compressible_rhs;
+#[path = "compressible_rhs_typed.rs"]
+mod compressible_rhs_typed;
+#[path = "compressible_typed.rs"]
+mod compressible_typed;
 #[path = "gmres_block_preconditioner_3d.rs"]
 mod gmres_block_preconditioner_3d;
 #[path = "gmres_implicit_3d.rs"]
 mod gmres_implicit_3d;
 #[path = "lu_sgs_sweep_3d.rs"]
 mod lu_sgs_sweep_3d;
+
+pub use compressible_context::CompressibleAdvanceContext3dTyped;
 
 use crate::solver::spectral_radius::{
     SpectralRadius3dParams, cell_local_dt_spectral, cell_spectral_radius_3d,
@@ -599,14 +605,14 @@ impl CompressibleEulerSolver {
         Ok(history)
     }
 
-    fn cfl_for_step(&self, state: &SolverState) -> Real {
+    pub(crate) fn cfl_for_step(&self, state: &SolverState) -> Real {
         let next_step = state.time_step.saturating_add(1);
         self.config
             .cfl_schedule
             .at_step(next_step, self.config.time.max_steps)
     }
 
-    fn positivity_pressure_floor(freestream: &FreestreamParams) -> Real {
+    pub(crate) fn positivity_pressure_floor(freestream: &FreestreamParams) -> Real {
         crate::field::positivity_pressure_floor(freestream.pressure)
     }
 
@@ -760,7 +766,7 @@ impl CompressibleEulerSolver {
     }
 }
 
-fn positive_fixed_dt(dt: Real) -> Option<Real> {
+pub(crate) fn positive_fixed_dt(dt: Real) -> Option<Real> {
     if dt > 0.0 { Some(dt) } else { None }
 }
 
