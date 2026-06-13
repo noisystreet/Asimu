@@ -25,7 +25,7 @@ base64 = { version = "0.22", optional = true }
 flate2 = { version = "1", optional = true }
 rayon = { version = "1", optional = true }
 wide = { version = "0.7", optional = true, default-features = false }
-cudarc = { version = "0.19", optional = true, default-features = false, features = ["driver", "dynamic-loading", "cuda-version-from-build-system", "fallback-latest"] }
+cudarc = { version = "0.19", optional = true, default-features = false, features = ["driver", "nvrtc", "dynamic-loading", "cuda-version-from-build-system", "fallback-latest"] }
 
 [features]
 # 默认启用 io-cgns + io-vtk + parallel-fvm + simd-fvm（需系统 libcgns-dev）。

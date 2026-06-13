@@ -146,7 +146,7 @@ impl ExecutionContext {
             "exec_scatter_mode_resolved"
         );
         if config.device == ExecDevice::GpuCuda {
-            info!("cuda_backend_g0_placeholder: 通量装配仍走 CPU 路径，G1 起启用 device kernel");
+            info!("cuda_backend_g1: 一阶无粘内面走 device kernel（边界仍 CPU）");
         }
         Ok(Self {
             device: config.device,
@@ -171,6 +171,21 @@ impl ExecutionContext {
     /// GPU 路径：BC 更新后写回 device；CPU 为零开销。
     pub fn sync_to_device(&mut self) -> Result<()> {
         self.backend_state.sync_to_device()
+    }
+
+    /// CUDA G1：一阶无粘内面着色桶 flux + scatter（Roe / HVL）。
+    #[cfg(feature = "cuda")]
+    pub fn cuda_assemble_first_order_inviscid_interior(
+        &mut self,
+        residual: &mut crate::field::ConservedResidualT<f32>,
+        primitives: &crate::field::PrimitiveFieldsT<f32>,
+        topo: &crate::exec::gpu::cuda::ExecInteriorFaceTopology,
+        topo_key: usize,
+        params: crate::exec::gpu::cuda::CudaFirstOrderInviscidParams,
+    ) -> Result<()> {
+        self.backend_state
+            .cuda_mut()?
+            .assemble_first_order_inviscid_interior(residual, primitives, topo, topo_key, params)
     }
 
     /// 单元测试：重置本 context 的 scatter 调用计数。

@@ -102,7 +102,7 @@ impl<T: InviscidTypedScatterBackend + ViscousTypedScatterBackend>
             ReconstructionKind::Muscl => Some(&*self.gradient_scratch),
             ReconstructionKind::FirstOrder => None,
         };
-        let assembly = InviscidAssemblyUnstructuredTypedParams {
+        let mut assembly = InviscidAssemblyUnstructuredTypedParams {
             mesh: self.mesh,
             eos: self.eos,
             config: self.inviscid,
@@ -117,7 +117,7 @@ impl<T: InviscidTypedScatterBackend + ViscousTypedScatterBackend>
         };
         {
             let _span = info_span!("assemble_unstructured_inviscid_residual_typed").entered();
-            assemble_inviscid_residual_unstructured_typed(fields, residual, &assembly)?;
+            assemble_inviscid_residual_unstructured_typed(fields, residual, &mut assembly)?;
         }
         if let Some(viscous) = self.viscous {
             let mut input = ViscousAssemblyUnstructuredTypedInput {

@@ -386,7 +386,7 @@ fn assemble_unstructured_typed_rhs<T: InviscidTypedScatterBackend + ViscousTyped
             work.exec,
         )?;
     }
-    let assembly = InviscidAssemblyUnstructuredTypedParams {
+    let mut assembly = InviscidAssemblyUnstructuredTypedParams {
         mesh: env.config.mesh,
         eos: env.config.eos,
         config: env.config.inviscid,
@@ -402,7 +402,7 @@ fn assemble_unstructured_typed_rhs<T: InviscidTypedScatterBackend + ViscousTyped
         min_pressure: p_floor,
         exec: work.exec,
     };
-    assemble_inviscid_residual_unstructured_typed(fields, residual, &assembly)?;
+    assemble_inviscid_residual_unstructured_typed(fields, residual, &mut assembly)?;
     if let Some(viscous) = env.config.viscous {
         let mut input = ViscousAssemblyUnstructuredTypedInput {
             mesh: env.config.mesh,

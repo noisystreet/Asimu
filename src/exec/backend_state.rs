@@ -1,8 +1,6 @@
 //! [`ExecutionContext`](super::context::ExecutionContext) 设备状态（ADR 0017 G0）。
 
-#[cfg(not(feature = "cuda"))]
-use crate::error::AsimuError;
-use crate::error::Result;
+use crate::error::{AsimuError, Result};
 
 use super::context::ExecConfig;
 use super::device::ExecDevice;
@@ -11,7 +9,7 @@ use super::device::ExecDevice;
 pub(crate) enum BackendState {
     Cpu,
     #[cfg(feature = "cuda")]
-    Cuda(super::gpu::cuda::CudaBackendState),
+    Cuda(Box<super::gpu::cuda::CudaBackendState>),
 }
 
 impl BackendState {
@@ -25,7 +23,9 @@ impl BackendState {
     fn try_new_cuda() -> Result<Self> {
         #[cfg(feature = "cuda")]
         {
-            Ok(Self::Cuda(super::gpu::cuda::CudaBackendState::try_new()?))
+            Ok(Self::Cuda(Box::new(
+                super::gpu::cuda::CudaBackendState::try_new()?,
+            )))
         }
         #[cfg(not(feature = "cuda"))]
         {
@@ -39,10 +39,7 @@ impl BackendState {
         match self {
             Self::Cpu => Ok(()),
             #[cfg(feature = "cuda")]
-            Self::Cuda(state) => {
-                let _ = state.context();
-                Ok(())
-            }
+            Self::Cuda(state) => state.sync_to_host(),
         }
     }
 
@@ -50,10 +47,15 @@ impl BackendState {
         match self {
             Self::Cpu => Ok(()),
             #[cfg(feature = "cuda")]
-            Self::Cuda(state) => {
-                let _ = state.context();
-                Ok(())
-            }
+            Self::Cuda(state) => state.sync_to_device(),
+        }
+    }
+
+    #[cfg(feature = "cuda")]
+    pub(crate) fn cuda_mut(&mut self) -> Result<&mut super::gpu::cuda::CudaBackendState> {
+        match self {
+            Self::Cuda(state) => Ok(state.as_mut()),
+            Self::Cpu => Err(AsimuError::Exec("CUDA 装配需要 backend = cuda".to_string())),
         }
     }
 }

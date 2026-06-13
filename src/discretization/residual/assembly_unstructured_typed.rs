@@ -1,5 +1,9 @@
 //! 非结构 3D 网格无粘残差装配（typed 场；一阶用 typed primitive，二阶 MUSCL 经 f64 重构）。
 
+#[cfg(feature = "cuda")]
+#[path = "assembly_unstructured_typed_cuda.rs"]
+mod assembly_unstructured_typed_cuda;
+
 use tracing::info_span;
 
 use crate::boundary::BoundarySet;
@@ -48,6 +52,15 @@ pub trait InviscidTypedScatterBackend: ComputeFloat {
         geom: &InteriorInviscidScatterGeom,
         flux: &crate::discretization::InviscidFlux,
     );
+
+    /// CUDA 一阶内面装配（默认 `false`；`f32` + feature `cuda` 可返回 `true`）。
+    fn try_cuda_first_order_interior(
+        _residual: &mut ConservedResidualT<Self>,
+        _params: &mut InviscidAssemblyUnstructuredTypedParams<'_, Self>,
+        _topology: &UnstructuredFaceTopology,
+    ) -> Result<bool> {
+        Ok(false)
+    }
 }
 
 #[cfg_attr(feature = "parallel-fvm", allow(dead_code))]
@@ -93,6 +106,24 @@ impl InviscidTypedScatterBackend for f32 {
         flux: &crate::discretization::InviscidFlux,
     ) {
         scatter_fused_interior_face_f32(residual, geom, flux);
+    }
+
+    fn try_cuda_first_order_interior(
+        residual: &mut ConservedResidualT<f32>,
+        params: &mut InviscidAssemblyUnstructuredTypedParams<'_, f32>,
+        topology: &UnstructuredFaceTopology,
+    ) -> Result<bool> {
+        #[cfg(feature = "cuda")]
+        {
+            assembly_unstructured_typed_cuda::cuda_first_order_f32_interior(
+                residual, params, topology,
+            )
+        }
+        #[cfg(not(feature = "cuda"))]
+        {
+            let _ = (residual, params, topology);
+            Ok(false)
+        }
     }
 }
 
@@ -206,14 +237,14 @@ pub struct InviscidAssemblyUnstructuredTypedParams<'a, T: ComputeFloat> {
     pub mesh_cache: &'a UnstructuredSolverMeshCache,
     pub gradients: Option<&'a GradientFields>,
     pub min_pressure: Real,
-    pub exec: &'a ExecutionContext,
+    pub exec: &'a mut ExecutionContext,
 }
 
 /// 装配非结构 3D 无粘 Euler 残差（`T=f32`/`f64`）。
 pub fn assemble_inviscid_residual_unstructured_typed<T: InviscidTypedScatterBackend>(
     fields: &ConservedFieldsT<T>,
     residual: &mut ConservedResidualT<T>,
-    params: &InviscidAssemblyUnstructuredTypedParams<'_, T>,
+    params: &mut InviscidAssemblyUnstructuredTypedParams<'_, T>,
 ) -> Result<()> {
     let n = params.mesh.num_cells();
     if fields.num_cells() != n || residual.num_cells() != n || params.primitives.num_cells() != n {
@@ -241,7 +272,7 @@ pub fn assemble_inviscid_residual_unstructured_typed<T: InviscidTypedScatterBack
 
 fn assemble_first_order_typed<T: InviscidTypedScatterBackend>(
     residual: &mut ConservedResidualT<T>,
-    params: &InviscidAssemblyUnstructuredTypedParams<'_, T>,
+    params: &mut InviscidAssemblyUnstructuredTypedParams<'_, T>,
     topology: &UnstructuredFaceTopology,
 ) -> Result<()> {
     {
@@ -251,7 +282,10 @@ fn assemble_first_order_typed<T: InviscidTypedScatterBackend>(
             precision = T::PRECISION.label(),
         )
         .entered();
-        assemble_interior_faces_first_order_typed(residual, params, topology)?;
+        let interior_on_cuda = T::try_cuda_first_order_interior(residual, params, topology)?;
+        if !interior_on_cuda {
+            assemble_interior_faces_first_order_typed(residual, params, topology)?;
+        }
     }
     {
         let _span = info_span!(
@@ -267,7 +301,7 @@ fn assemble_first_order_typed<T: InviscidTypedScatterBackend>(
 
 fn assemble_muscl_typed<T: InviscidTypedScatterBackend>(
     residual: &mut ConservedResidualT<T>,
-    params: &InviscidAssemblyUnstructuredTypedParams<'_, T>,
+    params: &mut InviscidAssemblyUnstructuredTypedParams<'_, T>,
     topology: &UnstructuredFaceTopology,
 ) -> Result<()> {
     let f64_params = muscl_f64_params(params)?;
@@ -610,8 +644,8 @@ mod tests {
             single_tet_fixture(&side);
         let mut rhs = ConservedResidualT::<f32>::zeros(mesh.num_cells()).expect("rhs");
         let config = InviscidFluxConfig::default();
-        let exec = ExecutionContext::for_unit_test();
-        let params = InviscidAssemblyUnstructuredTypedParams {
+        let mut exec = ExecutionContext::for_unit_test();
+        let mut params = InviscidAssemblyUnstructuredTypedParams {
             mesh: &mesh,
             eos: side.eos,
             config: &config,
@@ -622,9 +656,9 @@ mod tests {
             mesh_cache: &mesh_cache,
             gradients: None,
             min_pressure: side.min_pressure,
-            exec: &exec,
+            exec: &mut exec,
         };
-        assemble_inviscid_residual_unstructured_typed(&fields, &mut rhs, &params)
+        assemble_inviscid_residual_unstructured_typed(&fields, &mut rhs, &mut params)
             .expect("assemble");
         assert!(
             rhs.density
@@ -664,7 +698,7 @@ mod tests {
             &mut exec,
         )
         .expect("gradients");
-        let params = InviscidAssemblyUnstructuredTypedParams {
+        let mut params = InviscidAssemblyUnstructuredTypedParams {
             mesh: &mesh,
             eos: side.eos,
             config: &config,
@@ -675,9 +709,9 @@ mod tests {
             mesh_cache: &mesh_cache,
             gradients: Some(&gradients),
             min_pressure: side.min_pressure,
-            exec: &exec,
+            exec: &mut exec,
         };
-        assemble_inviscid_residual_unstructured_typed(&fields, &mut rhs, &params)
+        assemble_inviscid_residual_unstructured_typed(&fields, &mut rhs, &mut params)
             .expect("assemble");
         assert!(
             rhs.density

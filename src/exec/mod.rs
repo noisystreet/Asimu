@@ -14,7 +14,7 @@ mod backend_state;
 mod context;
 mod device;
 #[cfg(feature = "cuda")]
-mod gpu;
+pub mod gpu;
 mod metrics;
 mod scratch;
 
@@ -24,6 +24,8 @@ pub mod parallel;
 pub mod scatter;
 
 mod idwls;
+#[cfg(feature = "cuda")]
+pub mod inviscid;
 mod spmv;
 
 pub use batch::ExecFaceBatchStatic4;
