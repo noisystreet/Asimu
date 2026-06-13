@@ -22,8 +22,8 @@ use crate::io::{
 };
 use crate::mesh::StructuredMesh3d;
 use crate::solver::{
-    IncompressiblePressureVelocityStepInfo, IncompressiblePressureVelocityStepView,
-    IncompressibleSimplecConfig, IncompressibleSimplecDiagnostic, TimeIntegrationScheme,
+    IncompressiblePressureVelocityStepInfo, IncompressibleSimplecConfig,
+    IncompressibleSimplecDiagnostic, TimeIntegrationScheme,
     run_incompressible_pressure_velocity_with_observer,
 };
 
@@ -144,7 +144,9 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
             linear_solvers: config.linear_solvers,
         },
         |step| {
-            written.extend(maybe_write_interval_outputs(case, mesh, step)?);
+            written.extend(super::output_interval::maybe_write_incompressible_interval(
+                case, mesh, step,
+            )?);
             Ok(())
         },
     )?;
@@ -409,7 +411,7 @@ fn write_outputs(
     Ok(written)
 }
 
-fn write_incompressible_residual_outputs(
+pub(crate) fn write_incompressible_residual_outputs(
     case: &CaseSpec,
     history: &[IncompressiblePressureVelocityStepInfo],
 ) -> Result<Vec<PathBuf>> {
@@ -440,37 +442,21 @@ fn write_incompressible_residual_outputs(
     Ok(written)
 }
 
-fn maybe_write_interval_outputs(
+pub(crate) fn write_incompressible_interval_flow_cgns(
     case: &CaseSpec,
     mesh: &StructuredMesh3d,
-    step: IncompressiblePressureVelocityStepView<'_>,
-) -> Result<Vec<PathBuf>> {
-    let Some(output) = &case.output else {
-        return Ok(Vec::new());
-    };
-    if !output.interval_output_due(step.info.step) {
-        return Ok(Vec::new());
-    }
-    let Some(base) = output.solution_cgns.as_ref() else {
-        return Ok(Vec::new());
-    };
-    let mut written = write_incompressible_residual_outputs(case, step.history)?;
-    let name = super::output_3d::flow_cgns_name_for_step(base, step.info.step);
-    let path = resolve_case_output_path(case.case_dir.as_deref(), &output.dir, &name)?;
-    let (mesh_out, fields_out, time_out) = prepare_dimensional_incompressible_output(
-        case,
-        mesh,
-        step.fields,
-        step.info.nondimensional_time,
-    )?;
-    write_incompressible_cgns(&path, &mesh_out, &fields_out, time_out)?;
+    fields: &IncompressibleFields,
+    nondimensional_time: f64,
+    path: &std::path::Path,
+) -> Result<()> {
+    let (mesh_out, fields_out, time_out) =
+        prepare_dimensional_incompressible_output(case, mesh, fields, nondimensional_time)?;
+    write_incompressible_cgns(path, &mesh_out, &fields_out, time_out)?;
     info!(
         path = %path.display(),
-        step = step.info.step,
         "已写出不可压缩间隔流场 CGNS"
     );
-    written.push(path);
-    Ok(written)
+    Ok(())
 }
 
 fn prepare_dimensional_incompressible_output(

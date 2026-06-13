@@ -113,7 +113,14 @@ fn run_compressible_3d(
     };
     let history = {
         let _span = info_span!("advance_block_history").entered();
-        advance_block_history(&advance, &mut states, &mut snapshot_paths)?
+        advance_block_history(&advance, &mut states, |step| {
+            snapshot_paths.extend(
+                super::output_interval::maybe_write_compressible_structured_interval(
+                    case, mesh, step,
+                )?,
+            );
+            Ok(())
+        })?
     };
 
     let last = history
@@ -298,7 +305,9 @@ fn build_block_run_states(
 fn advance_block_history(
     env: &BlockAdvanceEnv<'_>,
     states: &mut [BlockRunState],
-    snapshot_paths: &mut Vec<std::path::PathBuf>,
+    mut observe_step: impl FnMut(
+        super::output_interval::CompressibleStructuredStepView<'_>,
+    ) -> Result<()>,
 ) -> Result<Vec<CompressibleStepInfo>> {
     let mut history = Vec::new();
     loop {
@@ -306,44 +315,20 @@ fn advance_block_history(
         let stop = aggregate.is_final || aggregate.converged;
         log_block_step(env.mesh.num_blocks(), &aggregate, stop, aggregate.converged);
         history.push(aggregate);
-        maybe_write_interval_snapshot(
-            env.case,
-            env.mesh,
-            states,
-            history.last().expect("history"),
-            &history,
-            snapshot_paths,
-        )?;
+        let fields: Vec<ConservedFields> = {
+            let _span = info_span!("collect_observer_fields", blocks = states.len()).entered();
+            states.iter().map(|state| state.fields.clone()).collect()
+        };
+        observe_step(super::output_interval::CompressibleStructuredStepView {
+            info: history.last().expect("history"),
+            history: &history,
+            fields: &fields,
+        })?;
         if stop {
             break;
         }
     }
     Ok(history)
-}
-
-fn maybe_write_interval_snapshot(
-    case: &CaseSpec,
-    mesh: &MultiBlockStructuredMesh3d,
-    states: &[BlockRunState],
-    step: &CompressibleStepInfo,
-    history: &[CompressibleStepInfo],
-    paths: &mut Vec<std::path::PathBuf>,
-) -> Result<()> {
-    let _span = info_span!("maybe_write_interval_snapshot", step = step.step).entered();
-    if !super::output_3d::interval_output_due(case, step.step) {
-        return Ok(());
-    }
-    let fields: Vec<ConservedFields> = {
-        let _span = info_span!("collect_snapshot_fields", blocks = states.len()).entered();
-        states.iter().map(|state| state.fields.clone()).collect()
-    };
-    if let Some(path) =
-        super::output_3d::maybe_write_interval_flow_snapshot(case, mesh, &fields, step)?
-    {
-        paths.push(path);
-    }
-    let _ = super::output_3d::maybe_write_residual_outputs(case, history, step)?;
-    Ok(())
 }
 
 fn advance_block_step(

@@ -83,9 +83,17 @@ fn run_compressible_unstructured_3d(
         .entered();
         case.build_conserved_fields()?
     };
+    let mut interval_paths = Vec::new();
     let history = {
         let _span = info_span!("advance_unstructured_history").entered();
-        advance_unstructured_history(&mut env, &mut fields)?
+        advance_unstructured_history(&mut env, &mut fields, |step| {
+            interval_paths.extend(
+                super::output_interval::maybe_write_compressible_unstructured_interval(
+                    case, mesh, step,
+                )?,
+            );
+            Ok(())
+        })?
     };
     let last = history
         .last()
@@ -111,6 +119,9 @@ fn run_compressible_unstructured_3d(
         let _span = info_span!("write_unstructured_outputs").entered();
         write_unstructured_outputs(case, mesh, &fields, &history)?
     };
+    for path in &interval_paths {
+        info!(path = %path.display(), "算例间隔流场输出");
+    }
     for path in output_paths {
         info!(path = %path.display(), "非结构算例输出");
     }
@@ -169,6 +180,9 @@ struct UnstructuredRhsWork<'a> {
 fn advance_unstructured_history(
     env: &mut UnstructuredRunEnv<'_>,
     fields: &mut ConservedFields,
+    mut observe_step: impl FnMut(
+        super::output_interval::CompressibleUnstructuredStepView<'_>,
+    ) -> Result<()>,
 ) -> Result<Vec<CompressibleStepInfo>> {
     let n = env.mesh.num_cells();
     let mut work = {
@@ -223,13 +237,11 @@ fn advance_unstructured_history(
             "非结构 3D 时间步"
         );
         history.push(step);
-        maybe_write_unstructured_interval(
-            env.case,
-            env.mesh,
+        observe_step(super::output_interval::CompressibleUnstructuredStepView {
+            info: history.last().expect("history"),
+            history: &history,
             fields,
-            history.last().unwrap(),
-            &history,
-        )?;
+        })?;
         if stop {
             break;
         }
@@ -673,33 +685,14 @@ fn unstructured_equation_label(case: &CaseSpec) -> &'static str {
     }
 }
 
-fn maybe_write_unstructured_interval(
+pub(crate) fn write_unstructured_interval_vtu(
     case: &CaseSpec,
     mesh: &UnstructuredMesh3d,
     fields: &ConservedFields,
-    step: &CompressibleStepInfo,
-    history: &[CompressibleStepInfo],
+    physical_time: Real,
+    path: PathBuf,
 ) -> Result<()> {
-    let Some(output) = &case.output else {
-        return Ok(());
-    };
-    if !output.interval_output_due(step.step) {
-        return Ok(());
-    }
-    let _ = super::output_3d::write_residual_outputs(case, history)?;
-    let Some(base) = output.solution_cgns.as_ref() else {
-        return Ok(());
-    };
-    let name = super::output_3d::flow_cgns_name_for_step(base, step.step);
-    let cgns_path = resolve_case_output_path(case.case_dir.as_deref(), &output.dir, &name)?;
-    write_unstructured_vtu(
-        case,
-        mesh,
-        fields,
-        step.physical_time,
-        cgns_path.with_extension("vtu"),
-    )?;
-    Ok(())
+    write_unstructured_flow_vtu(case, mesh, fields, physical_time, path)
 }
 
 fn write_unstructured_outputs(
@@ -718,7 +711,7 @@ fn write_unstructured_outputs(
     let cgns_path = resolve_case_output_path(case.case_dir.as_deref(), &output.dir, name)?;
     let vtu_path = cgns_path.with_extension("vtu");
     let physical_time = history.last().map(|s| s.physical_time).unwrap_or(0.0);
-    write_unstructured_vtu(case, mesh, fields, physical_time, vtu_path.clone())?;
+    write_unstructured_flow_vtu(case, mesh, fields, physical_time, vtu_path.clone())?;
     warn!(
         requested = %cgns_path.display(),
         written = %vtu_path.display(),
@@ -728,7 +721,7 @@ fn write_unstructured_outputs(
     Ok(written)
 }
 
-fn write_unstructured_vtu(
+fn write_unstructured_flow_vtu(
     case: &CaseSpec,
     mesh: &UnstructuredMesh3d,
     fields: &ConservedFields,

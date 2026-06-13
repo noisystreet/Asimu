@@ -10,6 +10,7 @@ mod diffusion;
 mod incompressible_3d;
 mod incompressible_profiles;
 mod output_3d;
+mod output_interval;
 mod sod;
 
 use std::path::Path;
