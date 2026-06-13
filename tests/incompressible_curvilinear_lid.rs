@@ -1,7 +1,7 @@
 //! 非均匀、非正交结构网格上的不可压 lid cavity 验证。
 
 use asimu::boundary::{BoundaryKind, BoundaryPatch, BoundarySet, WallHeat};
-use asimu::case::{CaseRunKind, IncompressibleLineSample, run_case};
+use asimu::case::{CaseRunKind, run_case};
 use asimu::field::{FluidInitialConfig, InitialSet};
 use asimu::io::{CaseMesh, CaseSpec, CaseTimeConfig, CaseTimeMode, IncompressibleCaseConfig};
 use asimu::linalg::GmresConfig;
@@ -59,7 +59,7 @@ fn curvilinear_lid_cavity_regresses_ghia_profile_error() {
     let mesh = curvilinear_unit_cavity_mesh(24, 24);
     assert_unit_cavity_boundary(&mesh);
 
-    let case = curvilinear_lid_case(mesh, 1000, 0.005, 0.001, 2.0e-5, 0.02);
+    let case = curvilinear_lid_case(mesh, 3000, 0.005, 0.001, 2.0e-5, 0.1);
     let result = run_case(&case).expect("run curvilinear lid cavity Ghia V&V");
     let metrics = result.incompressible_3d.expect("metrics");
     assert!(metrics.pressure_solve_converged);
@@ -77,66 +77,52 @@ fn curvilinear_lid_cavity_regresses_ghia_profile_error() {
         error.horizontal_v.l2
     );
     assert!(
-        error.vertical_u.max_abs < 0.60,
+        error.vertical_u.max_abs < 0.27,
         "vertical u max_abs={}",
         error.vertical_u.max_abs
     );
     assert!(
-        error.vertical_u.l2 < 0.30,
+        error.vertical_u.l2 < 0.15,
         "vertical u l2={}",
         error.vertical_u.l2
     );
     assert!(
-        error.horizontal_v.max_abs < 0.25,
+        error.horizontal_v.max_abs < 0.22,
         "horizontal v max_abs={}",
         error.horizontal_v.max_abs
     );
     assert!(
-        error.horizontal_v.l2 < 0.17,
+        error.horizontal_v.l2 < 0.12,
         "horizontal v l2={}",
         error.horizontal_v.l2
     );
 }
 
 #[test]
-#[ignore = "diagnostic parameter scan; run explicitly with --ignored --nocapture"]
-fn scan_curvilinear_lid_time_window() {
+#[ignore = "diagnostic pseudo-time acceleration scan; run explicitly with --ignored --nocapture"]
+fn scan_curvilinear_lid_dt_acceleration() {
     println!(
         "grid,steps,dt,vel_urf,p_urf,cont,field_cont,vel_delta,max_p,max_u,pressure_conv,momentum_conv,u_max,u_l2,v_max,v_l2"
     );
     for case in [
         ScanCase {
             grid: "skew24",
-            steps: 100,
-            dt: 0.0005,
-            velocity_under_relaxation: 0.005,
-            pressure_under_relaxation: 0.001,
-        },
-        ScanCase {
-            grid: "skew24",
-            steps: 300,
-            dt: 0.0005,
-            velocity_under_relaxation: 0.005,
-            pressure_under_relaxation: 0.001,
-        },
-        ScanCase {
-            grid: "skew24",
-            steps: 1000,
-            dt: 0.0005,
-            velocity_under_relaxation: 0.005,
-            pressure_under_relaxation: 0.001,
-        },
-        ScanCase {
-            grid: "skew24",
-            steps: 1000,
-            dt: 0.005,
-            velocity_under_relaxation: 0.005,
-            pressure_under_relaxation: 0.001,
-        },
-        ScanCase {
-            grid: "skew24",
-            steps: 1000,
+            steps: 3000,
             dt: 0.02,
+            velocity_under_relaxation: 0.005,
+            pressure_under_relaxation: 0.001,
+        },
+        ScanCase {
+            grid: "skew24",
+            steps: 3000,
+            dt: 0.05,
+            velocity_under_relaxation: 0.005,
+            pressure_under_relaxation: 0.001,
+        },
+        ScanCase {
+            grid: "skew24",
+            steps: 3000,
+            dt: 0.1,
             velocity_under_relaxation: 0.005,
             pressure_under_relaxation: 0.001,
         },
@@ -146,180 +132,43 @@ fn scan_curvilinear_lid_time_window() {
 }
 
 #[test]
-#[ignore = "diagnostic drift onset scan; run explicitly with --ignored --nocapture"]
-fn scan_curvilinear_lid_drift_onset() {
+#[ignore = "diagnostic convection scheme scan; run explicitly with --ignored --nocapture"]
+fn scan_lid_convection_scheme_window() {
     println!(
-        "grid,steps,dt,vel_urf,p_urf,cont,field_cont,vel_delta,max_p,max_u,pressure_conv,momentum_conv,u_max,u_l2,v_max,v_l2"
+        "scheme,grid,steps,dt,vel_urf,p_urf,cont,field_cont,vel_delta,max_p,max_u,pressure_conv,momentum_conv,u_max,u_l2,v_max,v_l2"
     );
-    for case in [
-        ScanCase {
-            grid: "skew24",
-            steps: 1000,
-            dt: 0.02,
-            velocity_under_relaxation: 0.005,
-            pressure_under_relaxation: 0.001,
-        },
-        ScanCase {
-            grid: "skew24",
-            steps: 1500,
-            dt: 0.02,
-            velocity_under_relaxation: 0.005,
-            pressure_under_relaxation: 0.001,
-        },
-        ScanCase {
-            grid: "skew24",
-            steps: 2000,
-            dt: 0.02,
-            velocity_under_relaxation: 0.005,
-            pressure_under_relaxation: 0.001,
-        },
+    for (scheme_name, scheme) in [
+        (
+            "upwind",
+            asimu::discretization::IncompressibleConvectionScheme::Upwind,
+        ),
+        (
+            "central",
+            asimu::discretization::IncompressibleConvectionScheme::Central,
+        ),
     ] {
-        print_scan_metrics(case, run_scan_case(case));
-    }
-}
-
-#[test]
-#[ignore = "diagnostic relaxation scan; run explicitly with --ignored --nocapture"]
-fn scan_curvilinear_lid_pressure_relaxation() {
-    println!(
-        "grid,steps,dt,vel_urf,p_urf,cont,field_cont,vel_delta,max_p,max_u,pressure_conv,momentum_conv,u_max,u_l2,v_max,v_l2"
-    );
-    for case in [
-        ScanCase {
-            grid: "skew24",
-            steps: 2000,
-            dt: 0.005,
-            velocity_under_relaxation: 0.005,
-            pressure_under_relaxation: 0.001,
-        },
-        ScanCase {
-            grid: "skew24",
-            steps: 2000,
-            dt: 0.005,
-            velocity_under_relaxation: 0.005,
-            pressure_under_relaxation: 0.0005,
-        },
-        ScanCase {
-            grid: "skew24",
-            steps: 2000,
-            dt: 0.02,
-            velocity_under_relaxation: 0.005,
-            pressure_under_relaxation: 0.001,
-        },
-        ScanCase {
-            grid: "skew24",
-            steps: 2000,
-            dt: 0.02,
-            velocity_under_relaxation: 0.005,
-            pressure_under_relaxation: 0.0005,
-        },
-    ] {
-        print_scan_metrics(case, run_scan_case(case));
-    }
-}
-
-#[test]
-#[ignore = "diagnostic resolution scan; run explicitly with --ignored --nocapture"]
-fn scan_lid_uniform_resolution_window() {
-    println!(
-        "grid,steps,dt,vel_urf,p_urf,cont,field_cont,vel_delta,max_p,max_u,pressure_conv,momentum_conv,u_max,u_l2,v_max,v_l2"
-    );
-    for case in [
-        ScanCase {
-            grid: "uniform24",
-            steps: 1000,
-            dt: 0.02,
-            velocity_under_relaxation: 0.005,
-            pressure_under_relaxation: 0.001,
-        },
-        ScanCase {
-            grid: "uniform32",
-            steps: 1000,
-            dt: 0.02,
-            velocity_under_relaxation: 0.005,
-            pressure_under_relaxation: 0.001,
-        },
-        ScanCase {
-            grid: "uniform48",
-            steps: 1000,
-            dt: 0.02,
-            velocity_under_relaxation: 0.005,
-            pressure_under_relaxation: 0.001,
-        },
-    ] {
-        print_scan_metrics(case, run_scan_case(case));
-    }
-}
-
-#[test]
-#[ignore = "diagnostic profile point errors; run explicitly with --ignored --nocapture"]
-fn scan_lid_profile_point_errors() {
-    println!("profile,grid,coordinate,expected,actual,error");
-    for case in [
-        ScanCase {
-            grid: "uniform24",
-            steps: 1000,
-            dt: 0.02,
-            velocity_under_relaxation: 0.005,
-            pressure_under_relaxation: 0.001,
-        },
-        ScanCase {
-            grid: "skew24",
-            steps: 1000,
-            dt: 0.02,
-            velocity_under_relaxation: 0.005,
-            pressure_under_relaxation: 0.001,
-        },
-    ] {
-        let metrics = run_scan_case(case);
-        let profiles = metrics.centerline_profiles.expect("centerline profiles");
-        print_profile_point_errors(
-            "u",
-            case.grid,
-            &profiles.vertical_u,
-            &GHIA_RE100_VERTICAL_U,
-            |sample| sample.velocity_x,
-        );
-        print_profile_point_errors(
-            "v",
-            case.grid,
-            &profiles.horizontal_v,
-            &GHIA_RE100_HORIZONTAL_V,
-            |sample| sample.velocity_y,
-        );
-    }
-}
-
-#[test]
-#[ignore = "diagnostic grid-factor scan; run explicitly with --ignored --nocapture"]
-fn scan_lid_grid_factor_window() {
-    println!(
-        "grid,steps,dt,vel_urf,p_urf,cont,field_cont,vel_delta,max_p,max_u,pressure_conv,momentum_conv,u_max,u_l2,v_max,v_l2"
-    );
-    for case in [
-        ScanCase {
-            grid: "uniform24",
-            steps: 1000,
-            dt: 0.02,
-            velocity_under_relaxation: 0.005,
-            pressure_under_relaxation: 0.001,
-        },
-        ScanCase {
-            grid: "stretch24",
-            steps: 1000,
-            dt: 0.02,
-            velocity_under_relaxation: 0.005,
-            pressure_under_relaxation: 0.001,
-        },
-        ScanCase {
-            grid: "skew24",
-            steps: 1000,
-            dt: 0.02,
-            velocity_under_relaxation: 0.005,
-            pressure_under_relaxation: 0.001,
-        },
-    ] {
-        print_scan_metrics(case, run_scan_case(case));
+        for case in [
+            ScanCase {
+                grid: "uniform24",
+                steps: 1000,
+                dt: 0.02,
+                velocity_under_relaxation: 0.005,
+                pressure_under_relaxation: 0.001,
+            },
+            ScanCase {
+                grid: "skew24",
+                steps: 1000,
+                dt: 0.02,
+                velocity_under_relaxation: 0.005,
+                pressure_under_relaxation: 0.001,
+            },
+        ] {
+            print_scan_metrics_with_prefix(
+                scheme_name,
+                case,
+                run_scan_case_with_convection(case, scheme),
+            );
+        }
     }
 }
 
@@ -333,15 +182,22 @@ struct ScanCase {
 }
 
 fn run_scan_case(case: ScanCase) -> asimu::case::Incompressible3dRunMetrics {
+    run_scan_case_with_convection(
+        case,
+        asimu::discretization::IncompressibleConvectionScheme::Upwind,
+    )
+}
+
+fn run_scan_case_with_convection(
+    case: ScanCase,
+    scheme: asimu::discretization::IncompressibleConvectionScheme,
+) -> asimu::case::Incompressible3dRunMetrics {
     let mesh = match case.grid {
         "uniform24" => unit_cavity_mesh(24, 24, CoordinateMap::Uniform, 0.0),
-        "uniform32" => unit_cavity_mesh(32, 32, CoordinateMap::Uniform, 0.0),
-        "uniform48" => unit_cavity_mesh(48, 48, CoordinateMap::Uniform, 0.0),
-        "stretch24" => unit_cavity_mesh(24, 24, CoordinateMap::Stretched, 0.0),
         "skew24" => curvilinear_unit_cavity_mesh(24, 24),
         _ => unreachable!("unknown scan grid"),
     };
-    let case = curvilinear_lid_case(
+    let mut case = curvilinear_lid_case(
         mesh,
         case.steps,
         case.velocity_under_relaxation,
@@ -349,15 +205,27 @@ fn run_scan_case(case: ScanCase) -> asimu::case::Incompressible3dRunMetrics {
         2.0e-5,
         case.dt,
     );
+    case.incompressible
+        .as_mut()
+        .expect("incompressible config")
+        .convection_scheme = scheme;
     let result = run_case(&case).expect("run scan case");
     result.incompressible_3d.expect("metrics")
 }
 
 fn print_scan_metrics(case: ScanCase, metrics: asimu::case::Incompressible3dRunMetrics) {
+    print_scan_metrics_with_prefix("", case, metrics);
+}
+
+fn print_scan_metrics_with_prefix(
+    prefix: &str,
+    case: ScanCase,
+    metrics: asimu::case::Incompressible3dRunMetrics,
+) {
     let error = metrics
         .lid_cavity_profile_error
         .expect("lid cavity profile error");
-    println!(
+    let row = format!(
         "{},{},{},{},{},{:.6e},{:.6e},{:.6e},{:.6e},{:.6e},{},{},{:.6e},{:.6e},{:.6e},{:.6e}",
         case.grid,
         case.steps,
@@ -376,94 +244,12 @@ fn print_scan_metrics(case: ScanCase, metrics: asimu::case::Incompressible3dRunM
         error.horizontal_v.max_abs,
         error.horizontal_v.l2
     );
-}
-
-fn print_profile_point_errors(
-    profile: &str,
-    grid: &str,
-    samples: &[IncompressibleLineSample],
-    reference: &[(f64, f64)],
-    value: impl Fn(&IncompressibleLineSample) -> f64,
-) {
-    for &(coordinate, expected) in reference {
-        if let Some(actual) = interpolate_profile_value(samples, coordinate, &value) {
-            println!(
-                "{},{},{:.6},{:.6e},{:.6e},{:.6e}",
-                profile,
-                grid,
-                coordinate,
-                expected,
-                actual,
-                actual - expected
-            );
-        }
+    if prefix.is_empty() {
+        println!("{row}");
+    } else {
+        println!("{prefix},{row}");
     }
 }
-
-fn interpolate_profile_value(
-    samples: &[IncompressibleLineSample],
-    coordinate: f64,
-    value: &impl Fn(&IncompressibleLineSample) -> f64,
-) -> Option<f64> {
-    let mut sorted = samples
-        .iter()
-        .map(|sample| (sample.coordinate, value(sample)))
-        .collect::<Vec<_>>();
-    sorted.sort_by(|a, b| a.0.total_cmp(&b.0));
-    for pair in sorted.windows(2) {
-        let (x0, y0) = pair[0];
-        let (x1, y1) = pair[1];
-        if coordinate >= x0 && coordinate <= x1 {
-            let t = if (x1 - x0).abs() <= f64::EPSILON {
-                0.0
-            } else {
-                (coordinate - x0) / (x1 - x0)
-            };
-            return Some(y0 + t * (y1 - y0));
-        }
-    }
-    None
-}
-
-const GHIA_RE100_VERTICAL_U: [(f64, f64); 17] = [
-    (1.0, 1.0),
-    (0.9766, 0.84123),
-    (0.9688, 0.78871),
-    (0.9609, 0.73722),
-    (0.9531, 0.68717),
-    (0.8516, 0.23151),
-    (0.7344, 0.00332),
-    (0.6172, -0.13641),
-    (0.5, -0.20581),
-    (0.4531, -0.2109),
-    (0.2813, -0.15662),
-    (0.1719, -0.1015),
-    (0.1016, -0.06434),
-    (0.0703, -0.04775),
-    (0.0625, -0.04192),
-    (0.0547, -0.03717),
-    (0.0, 0.0),
-];
-
-const GHIA_RE100_HORIZONTAL_V: [(f64, f64); 17] = [
-    (1.0, 0.0),
-    (0.9688, -0.05906),
-    (0.9609, -0.07391),
-    (0.9531, -0.08864),
-    (0.9453, -0.10313),
-    (0.9063, -0.16914),
-    (0.8594, -0.22445),
-    (0.8047, -0.24533),
-    (0.5, 0.05454),
-    (0.2344, 0.17527),
-    (0.2266, 0.17507),
-    (0.1563, 0.16077),
-    (0.0938, 0.12317),
-    (0.0781, 0.1089),
-    (0.0703, 0.10091),
-    (0.0625, 0.09233),
-    (0.0, 0.0),
-];
 
 fn curvilinear_unit_cavity_mesh(nx: usize, ny: usize) -> StructuredMesh3d {
     unit_cavity_mesh(nx, ny, CoordinateMap::Stretched, 1.0)
