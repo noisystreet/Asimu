@@ -115,7 +115,7 @@ lz = 0.25
 | 支持 | `[boundary]` 可按 `block_name/patch` 绑定到单个 block；1-to-1 接口通量可在 LU-SGS 多块路径中守恒装配；`[restart]` 支持 version=2 多块 TOML 初场 |
 | 暂不支持 | 非 1-to-1 / overset / sliding 接口、合并 VTK 输出 |
 
-### 3.5 外部 CGNS（feature `io-cgns-vts`）
+### 3.5 外部 CGNS（features `io-cgns` + `io-vtk`）
 
 ```toml
 [mesh]

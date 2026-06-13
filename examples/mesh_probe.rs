@@ -2,15 +2,15 @@
 //!
 //! 完整预检请使用独立工具 `mesh_check`：
 //! ```bash
-//! cargo run --bin mesh_check --features io-cgns-vts -- case_cylinder/case.toml
+//! cargo run --bin mesh_check -- case_cylinder/case.toml
 //! ```
 //!
 //! ```bash
-//! cargo run --example mesh_probe --features io-cgns-vts -- cylinder.cgns
-//! cargo run --example mesh_probe --features io-cgns-vts -- mesh.vts
-//! cargo run --example mesh_probe --features io-cgns-vts -- case.toml
-//! cargo run --example mesh_probe --features io-cgns-vts -- mesh.cgns --zone 2
-//! cargo run --example mesh_probe --features io-cgns-vts -- mesh.cgns --list-zones
+//! cargo run --example mesh_probe -- cylinder.cgns
+//! cargo run --example mesh_probe -- mesh.vts
+//! cargo run --example mesh_probe -- case.toml
+//! cargo run --example mesh_probe -- mesh.cgns --zone 2
+//! cargo run --example mesh_probe -- mesh.cgns --list-zones
 //! ```
 
 use std::path::{Path, PathBuf};

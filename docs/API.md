@@ -119,11 +119,11 @@ let result = solver.run(&mesh)?;
 | 项 | 说明 |
 |----|------|
 | `parallel-fvm` | 依赖 `rayon`；着色桶内 flux compute 并行、scatter 串行（[ADR 0011](adr/0011-parallel-fvm-face-coloring.md)） |
-| `io-vtk` / `io-cgns` / `io-cgns-vts` | **默认启用** `io-cgns-vts` + `parallel-fvm`（`io-cgns-vts` = CGNS + VTS/VTU；需系统 `libcgns-dev`） |
-| `simd-fvm` | 与 `parallel-fvm` 正交；`make test-simd-fvm` = `--features simd-fvm` |
-| 关闭并行 | `cargo build --no-default-features --features io-cgns-vts` |
-| 串行 FVM | `cargo build --no-default-features --features io-cgns-vts` 并禁用 `parallel-fvm`（见 `Makefile` `CARGO_SCALAR_FLAGS`） |
-| CI 默认 | 默认 features（含 `io-cgns-vts`、`parallel-fvm`）；合并前建议本地跑 `make test-simd-fvm` |
+| `io-vtk` / `io-cgns` | **默认启用** `io-cgns` + `io-vtk` + `parallel-fvm` + `simd-fvm`（需系统 `libcgns-dev`） |
+| `simd-fvm` | 与 `parallel-fvm` 正交；**默认启用**；`make test-no-simd-fvm` 测无 SIMD 路径 |
+| 关闭并行 | `cargo build --no-default-features --features io-cgns,io-vtk` |
+| 串行 FVM | `cargo build --no-default-features --features io-cgns,io-vtk`（见 `Makefile` `CARGO_SCALAR_FLAGS`） |
+| CI 默认 | 默认 features（含 `io-cgns`、`io-vtk`、`parallel-fvm`、`simd-fvm`） |
 
 #### VTK VTS / VTU 读入（feature `io-vtk`）
 
@@ -147,7 +147,7 @@ let result = solver.run(&mesh)?;
 
 **不支持**：ASCII VTS、非 zlib 压缩器、VTU appended / compressed DataArray。结构化 VTS 见 [adr/0007-vts-binary-io.md](adr/0007-vts-binary-io.md)。
 
-#### CGNS 读入与 VTS 导出（feature `io-cgns-vts`）
+#### CGNS 读入与 VTS 导出（features `io-cgns` + `io-vtk`）
 
 需系统安装 `libcgns-dev`。
 
@@ -174,7 +174,7 @@ let result = solver.run(&mesh)?;
 | `check_unstructured_mesh3d(&UnstructuredMesh3d, Option<&BoundarySet>, source)` | 非结构网格几何/拓扑/边界预检：体积、面面积/法向、owner/neighbor、单元类型统计、patch face 引用与覆盖率 |
 | `report_structured_mesh` / `report_cgns_zone` / `report_vts` / `report_case_mesh` | 由网格或读入结果生成报告 |
 
-CLI 示例：`cargo run --example mesh_probe --features io-cgns-vts -- mesh.cgns`
+CLI 示例：`cargo run --example mesh_probe -- mesh.cgns`（默认 features 已含 `io-cgns`、`io-vtk`）
 
 #### Case 文件格式（临时）
 

@@ -62,7 +62,7 @@ pub mod prelude {
     #[cfg(feature = "io-vtk")]
     pub use crate::io::{VtmBlock, VtsLoadResult, load_vts, write_vtm, write_vts};
 
-    #[cfg(feature = "io-cgns-vts")]
+    #[cfg(all(feature = "io-cgns", feature = "io-vtk"))]
     pub use crate::io::export_cgns_to_vtm;
     #[cfg(feature = "io-cgns")]
     pub use crate::io::{

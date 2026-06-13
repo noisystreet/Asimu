@@ -551,7 +551,7 @@ pub fn export_cgns_to_vts(_input: &Path, _output: &Path) -> Result<CgnsMultiLoad
     )))
 }
 
-/// 将 CGNS zone 导出为 VTS（需 feature `io-cgns-vts`）。
+/// 将 CGNS zone 导出为 VTS（需 features `io-cgns` + `io-vtk`）。
 #[cfg(feature = "io-vtk")]
 pub fn export_cgns_zone_to_vts(
     input: &Path,

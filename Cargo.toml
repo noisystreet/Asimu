@@ -27,11 +27,10 @@ rayon = { version = "1", optional = true }
 wide = { version = "0.7", optional = true, default-features = false }
 
 [features]
-# io-cgns-vts = io-cgns + io-vtk；默认启用 I/O 与非结构 FVM 并行（需系统 libcgns-dev）。
-default = ["io-cgns-vts", "parallel-fvm"]
+# 默认启用 io-cgns + io-vtk + parallel-fvm + simd-fvm（需系统 libcgns-dev）。
+default = ["io-cgns", "io-vtk", "parallel-fvm", "simd-fvm"]
 io-vtk = ["dep:quick-xml", "dep:base64", "dep:flate2"]
 io-cgns = []
-io-cgns-vts = ["io-cgns", "io-vtk"]
 # 非结构 FVM 内面着色桶并行（rayon；桶内 compute 并行 + scatter 串行）。
 parallel-fvm = ["dep:rayon"]
 # 非结构 FVM 热算子 SIMD（`wide` f64x4；标量回退始终可用）。
@@ -50,11 +49,11 @@ predicates = "3"
 [[bin]]
 name = "mesh_check"
 path = "src/bin/mesh_check.rs"
-required-features = ["io-cgns-vts"]
+required-features = ["io-cgns", "io-vtk"]
 
 [[example]]
 name = "cgns_to_vts"
-required-features = ["io-cgns-vts"]
+required-features = ["io-cgns", "io-vtk"]
 
 [[example]]
 name = "probe_vts"
@@ -62,7 +61,7 @@ required-features = ["io-vtk"]
 
 [[example]]
 name = "mesh_probe"
-required-features = ["io-cgns-vts"]
+required-features = ["io-cgns", "io-vtk"]
 
 [profile.release]
 lto = true

@@ -2,12 +2,12 @@
 
 CARGO := cargo
 PYTHON := python3
-# Cargo default features 已含 io-cgns-vts（io-cgns + io-vtk）与 parallel-fvm。
+# Cargo default features：io-cgns、io-vtk、parallel-fvm、simd-fvm。
 CARGO_FLAGS :=
-CARGO_SIMD_FLAGS := --features simd-fvm
-CARGO_SCALAR_FLAGS := --no-default-features --features io-vtk
+CARGO_NO_SIMD_FLAGS := --no-default-features --features io-cgns,io-vtk,parallel-fvm
+CARGO_SCALAR_FLAGS := --no-default-features --features io-cgns,io-vtk
 
-.PHONY: help build run test test-parallel-fvm lint fmt complexity check check-parallel-fvm clean setup audit doc
+.PHONY: help build run test test-parallel-fvm test-simd-fvm test-no-simd-fvm lint fmt complexity check check-parallel-fvm clean setup audit doc
 
 help:
 	@echo "Targets: build run test lint complexity fmt check clean setup audit doc"
@@ -29,7 +29,7 @@ test-parallel-fvm:
 	$(CARGO) test $(CARGO_FLAGS)
 
 test-simd-fvm:
-	$(CARGO) test $(CARGO_SIMD_FLAGS)
+	$(CARGO) test $(CARGO_FLAGS)
 
 lint:
 	$(CARGO) fmt --check
@@ -50,8 +50,11 @@ check-exec-parallel-scatter:
 		discretization::residual::assembly_unstructured_viscous_tests::viscous_interior_one_scatter_invocation_per_color_bucket
 
 check-exec-parallel-scatter-simd:
-	$(CARGO) test $(CARGO_SIMD_FLAGS) exec::scatter::tests \
+	$(CARGO) test $(CARGO_FLAGS) exec::scatter::tests \
 		discretization::residual::assembly_unstructured_viscous_tests::viscous_interior_one_scatter_invocation_per_color_bucket
+
+test-no-simd-fvm:
+	$(CARGO) test $(CARGO_NO_SIMD_FLAGS)
 
 check: lint test
 

@@ -1,10 +1,10 @@
 //! 独立网格预检工具（计算前几何 / 度量 / 边界检查）。
 //!
 //! ```bash
-//! cargo run --bin mesh_check --features io-cgns-vts -- case_cylinder/case.toml
-//! cargo run --bin mesh_check --features io-cgns-vts -- cylinder.cgns --zone 1
-//! cargo run --bin mesh_check --features io-cgns-vts -- cylinder.cgns --list-zones
-//! cargo run --bin mesh_check --features io-cgns-vts -- case.toml --strict
+//! cargo run --bin mesh_check -- case_cylinder/case.toml
+//! cargo run --bin mesh_check -- cylinder.cgns --zone 1
+//! cargo run --bin mesh_check -- cylinder.cgns --list-zones
+//! cargo run --bin mesh_check -- case.toml --strict
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -169,7 +169,7 @@ fn check_vtu(path: &Path, opts: MeshCheckOptions) -> Result<()> {
 fn check_vtu(path: &Path, _opts: MeshCheckOptions) -> Result<()> {
     let _ = path;
     Err(asimu::error::AsimuError::Config(
-        "VTU 读入须启用 feature io-vtk（建议使用 --features io-cgns-vts）".to_string(),
+        "VTU 读入须启用 feature io-vtk（建议 `--features io-cgns,io-vtk`）".to_string(),
     ))
 }
 
@@ -195,7 +195,7 @@ fn check_vts(path: &Path, opts: MeshCheckOptions) -> Result<()> {
 fn check_vts(path: &Path, _opts: MeshCheckOptions) -> Result<()> {
     let _ = path;
     Err(asimu::error::AsimuError::Config(
-        "VTS 读入须启用 feature io-vtk（建议使用 --features io-cgns-vts）".to_string(),
+        "VTS 读入须启用 feature io-vtk（建议 `--features io-cgns,io-vtk`）".to_string(),
     ))
 }
 

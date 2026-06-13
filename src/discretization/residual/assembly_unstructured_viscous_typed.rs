@@ -27,10 +27,11 @@ use crate::field::{ConservedResidualT, PrimitiveFields};
 use crate::mesh::UnstructuredMesh3d;
 use crate::physics::{IdealGasEoS, ViscousPhysicsConfig};
 
+#[cfg(not(feature = "simd-fvm"))]
+use super::assembly_unstructured_viscous::fill_face_averaged_viscous_soa_typed;
 use super::assembly_unstructured_viscous::{
     ViscousAssemblyUnstructuredParams, ViscousAssemblyUnstructuredScratch,
-    assemble_boundary_faces_typed, fill_face_averaged_viscous_soa_typed,
-    prepare_unstructured_viscous_transport,
+    assemble_boundary_faces_typed, prepare_unstructured_viscous_transport,
 };
 
 #[cfg(all(feature = "simd-fvm", not(feature = "parallel-fvm")))]

@@ -2,15 +2,15 @@
 //!
 //! ```bash
 //! # 全部 zone → .vtm + 子 VTS（ParaView 打开 .vtm）
-//! cargo run --example cgns_to_vts --features io-cgns-vts -- \
+//! cargo run --example cgns_to_vts -- \
 //!   /path/to/mesh.cgns /path/to/out.vts
 //!
 //! # 单 zone → 单个 .vts
-//! cargo run --example cgns_to_vts --features io-cgns-vts -- \
+//! cargo run --example cgns_to_vts -- \
 //!   /path/to/mesh.cgns /path/to/out.vts --zone 1
 //!
 //! # 每 zone 一个 .vts（输出目录，无 .vtm）
-//! cargo run --example cgns_to_vts --features io-cgns-vts -- \
+//! cargo run --example cgns_to_vts -- \
 //!   /path/to/mesh.cgns /path/to/out_dir/
 //! ```
 

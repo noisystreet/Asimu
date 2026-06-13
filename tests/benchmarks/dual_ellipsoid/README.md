@@ -8,7 +8,7 @@
 
 - CGNS 网格 `mix.cgns`（不在仓库内）
 - 默认路径：`output/case_dualellipsoid/mix.cgns`，或通过环境变量 `ASIMU_MIX_CGNS_PATH` 指定
-- 构建：`cargo build --release --features io-cgns,parallel-fvm,simd-fvm`
+- 构建：`cargo build --release`（默认 features 含 `io-cgns`、`io-vtk`、`parallel-fvm`、`simd-fvm`）
 
 ## 运行
 
