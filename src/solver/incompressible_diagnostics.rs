@@ -37,18 +37,38 @@ pub(crate) fn pressure_velocity_algorithm(
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SimplecConvergenceCheck<'a> {
+    pub(crate) tolerance: Option<Real>,
+    pub(crate) min_iterations: usize,
+    pub(crate) iterations: usize,
+    pub(crate) residual_history: &'a [Real],
+    pub(crate) momentum_history: &'a [Real],
+    pub(crate) velocity_history: &'a [Real],
+    pub(crate) convergence_window: usize,
+    pub(crate) linear_solvers_converged: bool,
+}
+
 #[must_use]
-pub(crate) fn simplec_converged(
-    tolerance: Option<Real>,
-    min_iterations: usize,
-    iterations: usize,
-    residual: Real,
-    momentum_residual: Real,
-    velocity_delta: Real,
-) -> bool {
-    iterations >= min_iterations
-        && tolerance
-            .is_some_and(|tol| residual <= tol && momentum_residual <= tol && velocity_delta <= tol)
+pub(crate) fn simplec_converged(check: SimplecConvergenceCheck<'_>) -> bool {
+    if check.iterations < check.min_iterations || !check.linear_solvers_converged {
+        return false;
+    }
+    let Some(tol) = check.tolerance else {
+        return false;
+    };
+    let required_window = check.convergence_window.max(1);
+    if check.residual_history.len() < required_window
+        || check.momentum_history.len() < required_window
+        || check.velocity_history.len() < required_window
+    {
+        return false;
+    }
+    check.residual_history[check.residual_history.len() - required_window..]
+        .iter()
+        .chain(&check.momentum_history[check.momentum_history.len() - required_window..])
+        .chain(&check.velocity_history[check.velocity_history.len() - required_window..])
+        .all(|value| *value <= tol)
 }
 
 pub(crate) fn validate_simplec_step(
@@ -196,4 +216,55 @@ fn is_velocity_constrained_kind(kind: &BoundaryKind) -> bool {
             | BoundaryKind::IncompressibleVelocityInlet { .. }
             | BoundaryKind::Inlet { .. }
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SimplecConvergenceCheck, simplec_converged};
+
+    #[test]
+    fn simplec_convergence_requires_full_recent_window_below_tolerance() {
+        let residual = [2.0e-5, 9.0e-6, 8.0e-6];
+        let momentum = [1.0e-9, 1.0e-9, 1.0e-9];
+        let velocity = [9.0e-6, 8.0e-6, 7.0e-6];
+
+        assert!(!simplec_converged(SimplecConvergenceCheck {
+            tolerance: Some(1.0e-5),
+            min_iterations: 1,
+            iterations: residual.len(),
+            residual_history: &residual,
+            momentum_history: &momentum,
+            velocity_history: &velocity,
+            convergence_window: 3,
+            linear_solvers_converged: true,
+        }));
+        assert!(simplec_converged(SimplecConvergenceCheck {
+            tolerance: Some(1.0e-5),
+            min_iterations: 1,
+            iterations: residual.len(),
+            residual_history: &residual,
+            momentum_history: &momentum,
+            velocity_history: &velocity,
+            convergence_window: 2,
+            linear_solvers_converged: true,
+        }));
+    }
+
+    #[test]
+    fn simplec_convergence_requires_linear_solvers_to_converge() {
+        let residual = [8.0e-6, 7.0e-6];
+        let momentum = [1.0e-9, 1.0e-9];
+        let velocity = [6.0e-6, 5.0e-6];
+
+        assert!(!simplec_converged(SimplecConvergenceCheck {
+            tolerance: Some(1.0e-5),
+            min_iterations: 1,
+            iterations: residual.len(),
+            residual_history: &residual,
+            momentum_history: &momentum,
+            velocity_history: &velocity,
+            convergence_window: 2,
+            linear_solvers_converged: false,
+        }));
+    }
 }

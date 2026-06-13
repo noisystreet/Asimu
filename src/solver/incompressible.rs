@@ -14,8 +14,8 @@ use crate::linalg::CsrMatrix;
 use crate::mesh::StructuredMesh3d;
 pub use crate::solver::incompressible_diagnostics::IncompressiblePressureVelocityAlgorithm;
 use crate::solver::incompressible_diagnostics::{
-    PressureCouplingLog, SimplecStepLog, SimplecStepTiming, elapsed_ms, log_simplec_step,
-    max_velocity_delta_by_region, pressure_velocity_algorithm, simplec_converged,
+    PressureCouplingLog, SimplecConvergenceCheck, SimplecStepLog, SimplecStepTiming, elapsed_ms,
+    log_simplec_step, max_velocity_delta_by_region, pressure_velocity_algorithm, simplec_converged,
     validate_simplec_step,
 };
 use crate::solver::incompressible_linear::{
@@ -47,6 +47,7 @@ pub struct IncompressiblePressureVelocityConfig<'a> {
     pub min_iterations: usize,
     pub tolerance: Option<Real>,
     pub require_velocity_convergence: bool,
+    pub convergence_window: usize,
     pub snapshot_interval: Option<usize>,
     pub linear_solvers: IncompressibleLinearSolverConfig,
 }
@@ -140,6 +141,7 @@ pub fn run_incompressible_pressure_velocity_with_observer(
     let max_iterations = config.max_iterations.max(1);
     let mut history = Vec::with_capacity(max_iterations);
     let mut momentum_history = Vec::with_capacity(max_iterations);
+    let mut velocity_history = Vec::with_capacity(max_iterations);
     let mut corrector_residual_history = Vec::new();
     let mut corrector_max_correction_history = Vec::new();
     let mut step_history = Vec::with_capacity(max_iterations);
@@ -156,20 +158,28 @@ pub fn run_incompressible_pressure_velocity_with_observer(
         validate_simplec_step(residual, momentum_residual, velocity_delta)?;
         history.push(residual);
         momentum_history.push(momentum_residual);
+        velocity_history.push(if config.require_velocity_convergence {
+            velocity_delta
+        } else {
+            0.0
+        });
         corrector_residual_history
             .extend_from_slice(&diagnostic.pressure_corrector_residual_history);
         corrector_max_correction_history
             .extend_from_slice(&diagnostic.pressure_corrector_max_correction_history);
         current_fields = diagnostic.corrected_fields.clone();
         current_face_flux = Some(next_face_flux);
-        let converged = simplec_converged(
-            config.tolerance,
-            config.min_iterations,
-            history.len(),
-            residual,
-            momentum_residual,
-            velocity_convergence_metric(velocity_delta, config.require_velocity_convergence),
-        );
+        let converged = simplec_converged(SimplecConvergenceCheck {
+            tolerance: config.tolerance,
+            min_iterations: config.min_iterations,
+            iterations: history.len(),
+            residual_history: &history,
+            momentum_history: &momentum_history,
+            velocity_history: &velocity_history,
+            convergence_window: config.convergence_window,
+            linear_solvers_converged: diagnostic.pressure_solve_converged
+                && diagnostic.momentum_solve_converged,
+        });
         diagnostic.simplec_iterations = history.len();
         diagnostic.simplec_converged = converged;
         diagnostic.simplec_final_residual = residual;
@@ -186,7 +196,10 @@ pub fn run_incompressible_pressure_velocity_with_observer(
             converged,
         );
         step_history.push(step_info);
-        if snapshot_due(step_no, config.snapshot_interval) {
+        if config
+            .snapshot_interval
+            .is_some_and(|value| value > 0 && step_no % value == 0)
+        {
             snapshots.push(IncompressiblePressureVelocitySnapshot {
                 step: step_no as u64,
                 nondimensional_time: step_no as Real * config.pseudo_time_step,
@@ -228,17 +241,17 @@ pub fn run_incompressible_pressure_velocity_with_observer(
     }
     let mut diagnostic =
         last.ok_or_else(|| AsimuError::Solver("SIMPLEC 至少需要一次外层迭代".to_string()))?;
-    diagnostic.simplec_converged = simplec_converged(
-        config.tolerance,
-        config.min_iterations,
-        diagnostic.simplec_iterations,
-        diagnostic.simplec_final_residual,
-        diagnostic.simplec_final_momentum_residual,
-        velocity_convergence_metric(
-            diagnostic.max_abs_corrected_velocity_delta_interior,
-            config.require_velocity_convergence,
-        ),
-    );
+    diagnostic.simplec_converged = simplec_converged(SimplecConvergenceCheck {
+        tolerance: config.tolerance,
+        min_iterations: config.min_iterations,
+        iterations: diagnostic.simplec_iterations,
+        residual_history: &history,
+        momentum_history: &momentum_history,
+        velocity_history: &velocity_history,
+        convergence_window: config.convergence_window,
+        linear_solvers_converged: diagnostic.pressure_solve_converged
+            && diagnostic.momentum_solve_converged,
+    });
     diagnostic.pressure_corrector_residual_history = corrector_residual_history;
     diagnostic.pressure_corrector_max_correction_history = corrector_max_correction_history;
     diagnostic.step_history = step_history;
@@ -268,14 +281,6 @@ fn incompressible_step_info(
         momentum_solve_residual: diagnostic.momentum_solve_residual,
         converged,
     }
-}
-
-fn snapshot_due(step: usize, interval: Option<usize>) -> bool {
-    interval.is_some_and(|value| value > 0 && step % value == 0)
-}
-
-fn velocity_convergence_metric(velocity_delta: Real, required: bool) -> Real {
-    if required { velocity_delta } else { 0.0 }
 }
 
 pub fn run_incompressible_simplec(
@@ -590,7 +595,12 @@ fn zero_pressure_correction_solution(
     PressureCorrectionSolveDiagnostic {
         converged: true,
         iterations: 0,
-        residual_norm: l2_norm(&system.rhs),
+        residual_norm: system
+            .rhs
+            .iter()
+            .map(|value| value * value)
+            .sum::<Real>()
+            .sqrt(),
         max_abs_correction: 0.0,
         correction: vec![0.0; system.matrix.nrows()],
     }
@@ -777,21 +787,10 @@ fn max_abs_field_divergence(
 }
 
 fn max_abs_scalar_field(field: &ScalarField) -> Real {
-    max_abs_slice(field.values())
-}
-
-fn max_abs_slice(values: &[Real]) -> Real {
-    values
+    field
+        .values()
         .iter()
         .fold(0.0, |acc: Real, value| acc.max(value.abs()))
-}
-
-fn l2_norm(values: &[Real]) -> Real {
-    values
-        .iter()
-        .map(|value| value * value)
-        .sum::<Real>()
-        .sqrt()
 }
 
 #[cfg(test)]

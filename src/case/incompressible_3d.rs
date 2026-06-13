@@ -15,7 +15,7 @@ use crate::field::IncompressibleFields;
 #[cfg(feature = "io-cgns")]
 use crate::field::ScalarField;
 use crate::io::write_incompressible_residual_csv;
-use crate::io::{CaseSpec, CaseTimeMode, resolve_case_output_path};
+use crate::io::{CaseSpec, CaseTimeConfig, CaseTimeMode, resolve_case_output_path};
 #[cfg(feature = "io-cgns")]
 use crate::io::{
     StructuredVertexSolution, VertexScalarFieldView, write_structured_vertex_solution_cgns,
@@ -139,6 +139,7 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
             min_iterations: case.time.min_steps.unwrap_or(0) as usize,
             tolerance: case.time.tolerance,
             require_velocity_convergence: case.time.mode == CaseTimeMode::Steady,
+            convergence_window: incompressible_convergence_window(&case.time),
             snapshot_interval: None,
             linear_solvers: config.linear_solvers,
         },
@@ -229,6 +230,14 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
             },
         )),
     })
+}
+
+fn incompressible_convergence_window(time: &CaseTimeConfig) -> usize {
+    if time.mode == CaseTimeMode::Steady {
+        (time.min_steps.unwrap_or(0) as usize).clamp(1, 32)
+    } else {
+        1
+    }
 }
 
 fn incompressible_pressure_correctors(case: &CaseSpec, configured: usize) -> usize {

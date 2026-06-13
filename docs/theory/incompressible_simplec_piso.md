@@ -339,7 +339,8 @@ Ghost 单元距 owner 中心法向距离 \(d_f\)。
 预测残差仍来自 Rhie-Chow 面通量；`max_abs_corrected_divergence` 保留全量压力
 校正方程线性残差 \(\max|b_p-A_p p'|\)，用于判断线性系统是否解好。设置
 `time.tolerance` 时，`steady` 模式要求连续性残差、动量残差与非速度约束 owner 的
-\(\max|\Delta\mathbf{u}|\) 速度更新量同时满足阈值才标记收敛；`transient` 模式下速度步间变化表示物理时间推进，只作为诊断输出，不参与 pressure-velocity coupling 收敛判定。未设置时仅执行固定
+\(\max|\Delta\mathbf{u}|\) 速度更新量在最近收敛窗口内持续满足阈值，且最后一步 pressure/momentum 线性求解均收敛，才标记收敛。该窗口由 case 层根据 `time.min_steps`
+保守设置，避免小速度欠松弛下单步 \(\Delta\mathbf{u}\) 过早变小而误判稳态；`transient` 模式下速度步间变化表示物理时间推进，只作为诊断输出，不参与 pressure-velocity coupling 收敛判定。未设置时仅执行固定
 `max_steps`，`simplec_converged=false` 表示没有收敛判据。若残差或速度更新量出现非有限值，或任一监控量超过发散保护上限，runner 立即返回求解器错误；输出字段使用最后一次重施加边界后的修正场。
 
 为排查封闭腔体收敛，runner 额外记录多类诊断：`max_abs_corrected_divergence`
