@@ -8,7 +8,11 @@ use crate::core::{
     ComputeFloat, Real, elapsed_ms, format_log_fixed4, format_log_sci4, log10_positive,
 };
 use crate::discretization::residual::InviscidAssemblyUnstructuredTypedParams;
-use crate::discretization::{BoundaryGhostBuffer, GradientFields};
+use crate::discretization::{
+    BoundaryGhostBuffer, GradientFields, ViscousAssemblyUnstructuredScratch,
+    ViscousAssemblyUnstructuredTypedInput,
+    compute_gradients_and_assemble_viscous_unstructured_typed,
+};
 use crate::discretization::{
     UnstructuredSolverMeshCache, assemble_inviscid_residual_unstructured_typed,
 };
@@ -31,6 +35,16 @@ use crate::solver::{
     refresh_compressible_ghosts_and_primitives_typed,
 };
 
+struct UnstructuredTypedRhsWork<'a, T: ComputeFloat> {
+    ghosts: &'a mut BoundaryGhostBuffer,
+    primitives: &'a mut PrimitiveFieldsT<T>,
+    spectral_primitives: &'a mut PrimitiveFields,
+    gradients: &'a mut GradientFields,
+    viscous_scratch: &'a mut ViscousAssemblyUnstructuredScratch,
+    mesh_cache: &'a UnstructuredSolverMeshCache,
+    exec: &'a mut ExecutionContext,
+}
+
 struct UnstructuredStepWorkTyped<T: ComputeFloat> {
     storage: Rk4StorageT<T>,
     state: SolverState,
@@ -38,10 +52,9 @@ struct UnstructuredStepWorkTyped<T: ComputeFloat> {
     ghosts: BoundaryGhostBuffer,
     primitives: PrimitiveFieldsT<T>,
     spectral_primitives: PrimitiveFields,
-    #[allow(dead_code)]
     gradients: GradientFields,
+    viscous_scratch: ViscousAssemblyUnstructuredScratch,
     mesh_cache: UnstructuredSolverMeshCache,
-    #[allow(dead_code)] // P3 typed 路径暂不经 exec scatter；P5 接入 f32 kernel
     exec: ExecutionContext,
     volumes: Vec<Real>,
 }
@@ -56,12 +69,6 @@ pub fn run_unstructured_typed_with_observer<T: ComputeFloat>(
     fields: &mut ConservedFieldsT<T>,
     mut observe_step: impl FnMut(CompressibleUnstructuredStepView<'_>) -> Result<()>,
 ) -> Result<(Vec<CompressibleStepInfo>, ConservedFields)> {
-    if config.viscous.is_some() {
-        return Err(AsimuError::Config(format!(
-            "compute_precision = \"{}\" 的非结构 typed 路径暂不支持粘性通量",
-            T::PRECISION.label()
-        )));
-    }
     if matches!(
         config.time_scheme,
         TimeIntegrationScheme::LuSgs | TimeIntegrationScheme::Gmres
@@ -110,6 +117,7 @@ pub fn run_unstructured_typed_with_observer<T: ComputeFloat>(
             primitives: PrimitiveFieldsT::zeros(n)?,
             spectral_primitives: PrimitiveFields::zeros(n)?,
             gradients: GradientFields::zeros(n)?,
+            viscous_scratch: ViscousAssemblyUnstructuredScratch::new(n),
             mesh_cache,
             exec,
             volumes: env.config.mesh.cell_volumes(),
@@ -208,45 +216,19 @@ fn advance_unstructured_explicit_typed<T: ComputeFloat>(
     let scheme = env.config.time_scheme;
     let eos = env.config.eos;
     let mut reuse_current_state = true;
+    let mut rhs_work = UnstructuredTypedRhsWork {
+        ghosts: &mut work.ghosts,
+        primitives: &mut work.primitives,
+        spectral_primitives: &mut work.spectral_primitives,
+        gradients: &mut work.gradients,
+        viscous_scratch: &mut work.viscous_scratch,
+        mesh_cache: &work.mesh_cache,
+        exec: &mut work.exec,
+    };
     let evaluate = |u: &ConservedFieldsT<T>, r: &mut ConservedResidualT<T>| {
-        if reuse_current_state {
-            reuse_current_state = false;
-            let assembly = InviscidAssemblyUnstructuredTypedParams {
-                mesh: env.config.mesh,
-                eos: env.config.eos,
-                config: env.config.inviscid,
-                boundaries: env.config.patches,
-                ghosts: &work.ghosts,
-                primitives: &work.primitives,
-                mesh_cache: &work.mesh_cache,
-                min_pressure: p_floor,
-            };
-            return assemble_inviscid_residual_unstructured_typed(u, r, &assembly);
-        }
-        refresh_compressible_ghosts_and_primitives_typed(RefreshCompressibleStateTypedInput {
-            boundary_mesh: env.config.mesh,
-            patches: env.config.patches,
-            fields: u,
-            ghosts: &mut work.ghosts,
-            eos: env.config.eos,
-            freestream: env.config.freestream,
-            reference: env.config.reference,
-            viscous: env.config.viscous,
-            min_pressure: p_floor,
-            primitives: &mut work.primitives,
-            spectral_primitives: &mut work.spectral_primitives,
-        })?;
-        let assembly = InviscidAssemblyUnstructuredTypedParams {
-            mesh: env.config.mesh,
-            eos: env.config.eos,
-            config: env.config.inviscid,
-            boundaries: env.config.patches,
-            ghosts: &work.ghosts,
-            primitives: &work.primitives,
-            mesh_cache: &work.mesh_cache,
-            min_pressure: p_floor,
-        };
-        assemble_inviscid_residual_unstructured_typed(u, r, &assembly)
+        let refresh = !reuse_current_state;
+        reuse_current_state = false;
+        assemble_unstructured_typed_rhs(env, &mut rhs_work, u, r, refresh, p_floor)
     };
     match (scheme, local) {
         (TimeIntegrationScheme::Rk4, true) => rk4_step_local(
@@ -273,6 +255,62 @@ fn advance_unstructured_explicit_typed<T: ComputeFloat>(
             "非结构 typed 显式推进收到不支持的时间格式".to_string(),
         )),
     }
+}
+
+fn assemble_unstructured_typed_rhs<T: ComputeFloat>(
+    env: &UnstructuredRunEnvTyped<'_>,
+    work: &mut UnstructuredTypedRhsWork<'_, T>,
+    fields: &ConservedFieldsT<T>,
+    residual: &mut ConservedResidualT<T>,
+    refresh_state: bool,
+    p_floor: Real,
+) -> Result<()> {
+    if refresh_state {
+        refresh_compressible_ghosts_and_primitives_typed(RefreshCompressibleStateTypedInput {
+            boundary_mesh: env.config.mesh,
+            patches: env.config.patches,
+            fields,
+            ghosts: work.ghosts,
+            eos: env.config.eos,
+            freestream: env.config.freestream,
+            reference: env.config.reference,
+            viscous: env.config.viscous,
+            min_pressure: p_floor,
+            primitives: work.primitives,
+            spectral_primitives: work.spectral_primitives,
+        })?;
+    }
+    let assembly = InviscidAssemblyUnstructuredTypedParams {
+        mesh: env.config.mesh,
+        eos: env.config.eos,
+        config: env.config.inviscid,
+        boundaries: env.config.patches,
+        ghosts: work.ghosts,
+        primitives: work.primitives,
+        mesh_cache: work.mesh_cache,
+        min_pressure: p_floor,
+    };
+    assemble_inviscid_residual_unstructured_typed(fields, residual, &assembly)?;
+    if let Some(viscous) = env.config.viscous {
+        let mut input = ViscousAssemblyUnstructuredTypedInput {
+            mesh: env.config.mesh,
+            mesh_cache: work.mesh_cache,
+            eos: env.config.eos,
+            viscous,
+            boundaries: env.config.patches,
+            ghosts: work.ghosts,
+            primitives: work.spectral_primitives,
+            min_pressure: p_floor,
+            gradient_scratch: work.gradients,
+            exec: work.exec,
+        };
+        compute_gradients_and_assemble_viscous_unstructured_typed(
+            residual,
+            &mut input,
+            work.viscous_scratch,
+        )?;
+    }
+    Ok(())
 }
 
 fn prepare_unstructured_timestep_typed<T: ComputeFloat>(

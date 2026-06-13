@@ -1,8 +1,9 @@
 //! 可压缩 Navier-Stokes 粘性通量（Newtonian + Fourier 热传导）。
 
-use crate::core::{Real, Vector3};
+use crate::core::{ComputeFloat, Real, Vector3};
 use crate::discretization::InviscidFlux;
 use crate::discretization::gradient::{GradientFields, VelocityGradient, VelocityGradientSlices};
+use crate::field::ConservedResidualT;
 use crate::field::PrimitiveFields;
 use crate::physics::{IdealGasEoS, PrimitiveState, ViscousPhysicsConfig};
 
@@ -246,6 +247,35 @@ pub(crate) fn scatter_fused_interior_viscous_face(
     residual.my[neighbor] += neighbor_scale * flux.my;
     residual.mz[neighbor] += neighbor_scale * flux.mz;
     residual.energy[neighbor] += neighbor_scale * flux.energy;
+}
+
+/// 将内面粘性通量 scatter 到 typed 残差（通量/几何仍为 `f64`，ADR 0016 §4）。
+#[inline(always)]
+pub(crate) fn scatter_fused_interior_viscous_face_typed<T: ComputeFloat>(
+    residual: &mut ConservedResidualT<T>,
+    geom: &InteriorViscousFaceGeom,
+    flux: &InteriorViscousFaceFlux,
+) {
+    let owner = geom.owner;
+    let neighbor = geom.neighbor;
+    let owner_scale = geom.owner_scale;
+    let neighbor_scale = geom.neighbor_scale;
+    residual.momentum_x.values_mut()[owner] =
+        residual.momentum_x.values()[owner].add_mul_real(T::from_real(flux.mx), owner_scale);
+    residual.momentum_y.values_mut()[owner] =
+        residual.momentum_y.values()[owner].add_mul_real(T::from_real(flux.my), owner_scale);
+    residual.momentum_z.values_mut()[owner] =
+        residual.momentum_z.values()[owner].add_mul_real(T::from_real(flux.mz), owner_scale);
+    residual.total_energy.values_mut()[owner] =
+        residual.total_energy.values()[owner].add_mul_real(T::from_real(flux.energy), owner_scale);
+    residual.momentum_x.values_mut()[neighbor] =
+        residual.momentum_x.values()[neighbor].add_mul_real(T::from_real(flux.mx), neighbor_scale);
+    residual.momentum_y.values_mut()[neighbor] =
+        residual.momentum_y.values()[neighbor].add_mul_real(T::from_real(flux.my), neighbor_scale);
+    residual.momentum_z.values_mut()[neighbor] =
+        residual.momentum_z.values()[neighbor].add_mul_real(T::from_real(flux.mz), neighbor_scale);
+    residual.total_energy.values_mut()[neighbor] = residual.total_energy.values()[neighbor]
+        .add_mul_real(T::from_real(flux.energy), neighbor_scale);
 }
 
 /// 内面粘性通量 + 残差 scatter 融合路径（无中间 `ViscousFlux`）。

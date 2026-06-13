@@ -112,11 +112,13 @@ pub use residual::{
     BoundaryGhosts1d, BoundaryInviscidFluxInput, InviscidAssemblyUnstructuredParams,
     InviscidBoundary1d, ViscousAssembly3dInput, ViscousAssembly3dParams,
     ViscousAssemblyUnstructuredInput, ViscousAssemblyUnstructuredParams,
-    ViscousAssemblyUnstructuredScratch, accumulate_boundary_face, accumulate_interior_face,
-    assemble_inviscid_residual_1d, assemble_inviscid_residual_3d,
-    assemble_inviscid_residual_3d_typed, assemble_inviscid_residual_unstructured,
-    assemble_inviscid_residual_unstructured_typed, assemble_viscous_residual_3d,
-    assemble_viscous_residual_unstructured, compute_gradients_and_assemble_viscous_3d,
+    ViscousAssemblyUnstructuredScratch, ViscousAssemblyUnstructuredTypedInput,
+    accumulate_boundary_face, accumulate_interior_face, assemble_inviscid_residual_1d,
+    assemble_inviscid_residual_3d, assemble_inviscid_residual_3d_typed,
+    assemble_inviscid_residual_unstructured, assemble_inviscid_residual_unstructured_typed,
+    assemble_viscous_residual_3d, assemble_viscous_residual_unstructured,
+    compute_gradients_and_assemble_viscous_3d,
+    compute_gradients_and_assemble_viscous_unstructured_typed,
     compute_gradients_and_assemble_viscous_unstructured_with_scratch, zero_gradient_ghosts_1d,
 };
 pub use roe::{RoeFluxConfig, roe_flux};

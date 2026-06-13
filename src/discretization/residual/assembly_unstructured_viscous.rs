@@ -256,7 +256,7 @@ fn assemble_interior_faces(
     Ok(())
 }
 
-fn fill_face_transport_coefficients(
+pub(crate) fn fill_face_transport_coefficients(
     params: &ViscousAssemblyUnstructuredParams<'_>,
     scratch: &mut ViscousAssemblyUnstructuredScratch,
 ) -> Result<()> {
@@ -609,9 +609,24 @@ fn accumulate_one_interior_face(
     scratch: &ViscousAssemblyUnstructuredScratch,
     constant: Option<(Real, Real)>,
 ) {
+    if let Some((geom, flux)) = interior_viscous_face_geom_and_flux(i, params, scratch, constant) {
+        scatter_fused_interior_viscous_face(residual_mut, &geom, &flux);
+    }
+}
+
+/// 单内面粘性几何与通量（供 typed 串行 scatter 复用）。
+pub(crate) fn interior_viscous_face_geom_and_flux(
+    i: usize,
+    params: &ViscousAssemblyUnstructuredParams<'_>,
+    scratch: &ViscousAssemblyUnstructuredScratch,
+    constant: Option<(Real, Real)>,
+) -> Option<(
+    InteriorViscousFaceGeom,
+    crate::discretization::viscous::InteriorViscousFaceFlux,
+)> {
     let face = &params.face_topology.interior[i];
     if face.owner_rhs_scale == 0.0 && face.neighbor_rhs_scale == 0.0 {
-        return;
+        return None;
     }
     let (mu, lambda) = transport_at_face(i, scratch, constant);
     let normal = face.normal;
@@ -635,10 +650,10 @@ fn accumulate_one_interior_face(
         geom.mu,
         geom.lambda,
     );
-    scatter_fused_interior_viscous_face(residual_mut, &geom, &flux);
+    Some((geom, flux))
 }
 
-fn fill_cell_transport_coefficients(
+pub(crate) fn fill_cell_transport_coefficients(
     params: &ViscousAssemblyUnstructuredParams<'_>,
     scratch: &mut ViscousAssemblyUnstructuredScratch,
 ) -> Result<()> {
@@ -667,6 +682,36 @@ fn fill_cell_transport_coefficients(
     }
     Ok(())
 }
+
+#[cfg(not(feature = "simd-fvm"))]
+pub(crate) fn fill_face_averaged_viscous_soa_typed(
+    params: &ViscousAssemblyUnstructuredParams<'_>,
+    scratch: &mut ViscousAssemblyUnstructuredScratch,
+) {
+    face_avg::fill_face_averaged_viscous_soa(params, scratch);
+}
+
+pub(crate) fn prepare_unstructured_viscous_transport(
+    params: &ViscousAssemblyUnstructuredParams<'_>,
+    scratch: &mut ViscousAssemblyUnstructuredScratch,
+) -> Result<Option<(Real, Real)>> {
+    let num_faces = params.face_topology.interior.len();
+    scratch.ensure_face_transport(num_faces);
+    if matches!(params.viscous.model, ViscosityModel::Constant { .. }) {
+        let constant = face_transport_coefficients(1.0, 1.0, params.viscous, params.eos)?;
+        scratch.constant_transport = Some(constant);
+        Ok(Some(constant))
+    } else {
+        scratch.constant_transport = None;
+        let num_cells = params.mesh.num_cells();
+        scratch.ensure_cell_transport(num_cells);
+        fill_cell_transport_coefficients(params, scratch)?;
+        fill_face_transport_coefficients(params, scratch)?;
+        Ok(None)
+    }
+}
+
+pub(crate) use boundary::assemble_boundary_faces_typed;
 
 #[cfg(test)]
 #[path = "assembly_unstructured_viscous_tests.rs"]

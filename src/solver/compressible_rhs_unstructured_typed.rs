@@ -6,7 +6,9 @@ use crate::core::Real;
 use crate::discretization::residual::InviscidAssemblyUnstructuredTypedParams;
 use crate::discretization::{
     BoundaryGhostBuffer, GradientFields, InviscidFluxConfig, UnstructuredSolverMeshCache,
+    ViscousAssemblyUnstructuredScratch, ViscousAssemblyUnstructuredTypedInput,
     assemble_inviscid_residual_unstructured_typed,
+    compute_gradients_and_assemble_viscous_unstructured_typed,
 };
 use crate::error::Result;
 use crate::field::{ConservedFieldsT, ConservedResidualT, PrimitiveFields, PrimitiveFieldsT};
@@ -17,7 +19,7 @@ use crate::solver::compressible_helpers::{
 };
 use tracing::info_span;
 
-/// typed 非结构单步 RHS 求值上下文（供非闭包路径复用；驱动层暂 inline 以避免泛型闭包借用）。
+/// typed 非结构单步 RHS 求值上下文（驱动层当前 inline 装配；供 LU-SGS typed 复用）。
 #[allow(dead_code)]
 pub(crate) struct EvaluateRhsUnstructuredTyped<'a, T: ComputeFloat> {
     pub mesh: &'a UnstructuredMesh3d,
@@ -33,6 +35,8 @@ pub(crate) struct EvaluateRhsUnstructuredTyped<'a, T: ComputeFloat> {
     pub primitives: &'a mut PrimitiveFieldsT<T>,
     pub spectral_primitives: &'a mut PrimitiveFields,
     pub gradient_scratch: &'a mut GradientFields,
+    pub viscous_scratch: &'a mut ViscousAssemblyUnstructuredScratch,
+    pub exec: &'a mut crate::exec::ExecutionContext,
 }
 
 impl<T: ComputeFloat> EvaluateRhsUnstructuredTyped<'_, T> {
@@ -47,12 +51,6 @@ impl<T: ComputeFloat> EvaluateRhsUnstructuredTyped<'_, T> {
             precision = T::PRECISION.label()
         )
         .entered();
-        if self.viscous.is_some() {
-            return Err(crate::error::AsimuError::Config(format!(
-                "compute_precision = \"{}\" 的非结构 typed 路径暂不支持粘性通量",
-                T::PRECISION.label()
-            )));
-        }
         refresh_compressible_ghosts_and_primitives_typed(RefreshCompressibleStateTypedInput {
             boundary_mesh: self.mesh,
             patches: self.patches,
@@ -66,22 +64,10 @@ impl<T: ComputeFloat> EvaluateRhsUnstructuredTyped<'_, T> {
             primitives: self.primitives,
             spectral_primitives: self.spectral_primitives,
         })?;
-        let assembly = InviscidAssemblyUnstructuredTypedParams {
-            mesh: self.mesh,
-            eos: self.eos,
-            config: self.inviscid,
-            boundaries: self.patches,
-            ghosts: self.ghosts,
-            primitives: self.primitives,
-            mesh_cache: self.mesh_cache,
-            min_pressure: self.min_pressure,
-        };
-        assemble_inviscid_residual_unstructured_typed(fields, residual, &assembly)?;
-        let _ = self.gradient_scratch;
-        Ok(())
+        self.assemble_from_current_state(fields, residual)
     }
 
-    /// ghost/primitive 已由调用方刷新时，仅装配无粘残差。
+    /// ghost/primitive 已由调用方刷新时，装配无粘 + 粘性残差。
     #[allow(dead_code)]
     pub fn assemble_from_current_state(
         &mut self,
@@ -101,6 +87,25 @@ impl<T: ComputeFloat> EvaluateRhsUnstructuredTyped<'_, T> {
         {
             let _span = info_span!("assemble_unstructured_inviscid_residual_typed").entered();
             assemble_inviscid_residual_unstructured_typed(fields, residual, &assembly)?;
+        }
+        if let Some(viscous) = self.viscous {
+            let mut input = ViscousAssemblyUnstructuredTypedInput {
+                mesh: self.mesh,
+                mesh_cache: self.mesh_cache,
+                eos: self.eos,
+                viscous,
+                boundaries: self.patches,
+                ghosts: self.ghosts,
+                primitives: self.spectral_primitives,
+                min_pressure: self.min_pressure,
+                gradient_scratch: self.gradient_scratch,
+                exec: self.exec,
+            };
+            compute_gradients_and_assemble_viscous_unstructured_typed(
+                residual,
+                &mut input,
+                self.viscous_scratch,
+            )?;
         }
         Ok(())
     }

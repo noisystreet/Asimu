@@ -37,8 +37,11 @@ fn validate_f32_capabilities(case: &CaseSpec) -> Result<()> {
     } else {
         return Err(f32_unsupported("仅 3D 可压缩 Euler 路径支持 f32"));
     }
-    if case.navier_stokes.is_some() || case.physics.viscous.is_some() {
-        return Err(f32_unsupported("Navier-Stokes / 粘性通量尚未支持 f32"));
+    if case.navier_stokes.is_some() {
+        return Err(f32_unsupported("Navier-Stokes 路径尚未支持 f32"));
+    }
+    if case.physics.viscous.is_some() && !matches!(case.mesh, CaseMesh::Unstructured3d(_)) {
+        return Err(f32_unsupported("粘性通量 f32 暂仅支持非结构 3D 路径"));
     }
     let disc = case.compressible_discretization()?;
     if disc.inviscid().reconstruction != ReconstructionKind::FirstOrder {
@@ -195,6 +198,25 @@ mod compute_precision_tests {
         case.numerics = CaseNumericsConfig {
             compute_precision: ComputePrecision::F32,
         };
-        compute_precision(&case).expect("structured freestream f32");
+        compute_precision(&case).expect("unstructured freestream f32");
+    }
+
+    #[test]
+    fn f32_rejects_structured_viscous_case() {
+        let mut case = load_case(Path::new(
+            "tests/benchmarks/unstructured_freestream/case.toml",
+        ))
+        .expect("case");
+        case.numerics = CaseNumericsConfig {
+            compute_precision: ComputePrecision::F32,
+        };
+        let block_mesh = crate::mesh::StructuredMesh3d::uniform_box("box", 2, 2, 2, 1.0, 1.0, 1.0)
+            .expect("mesh");
+        case.mesh = CaseMesh::MultiBlockStructured3d(
+            crate::mesh::MultiBlockStructuredMesh3d::from_single_mesh(block_mesh).expect("mb"),
+        );
+        case.physics.viscous = Some(crate::physics::ViscousPhysicsConfig::default());
+        let err = compute_precision(&case).expect_err("structured viscous f32");
+        assert!(err.to_string().contains("非结构"));
     }
 }

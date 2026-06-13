@@ -1,16 +1,18 @@
 //! 结构/非结构粘性残差装配共用逻辑（壁面通量、scatter 符号约定）。
 
 use crate::boundary::WallHeat;
-use crate::core::{Real, Vector3};
+use crate::core::{ComputeFloat, Real, Vector3};
 use crate::discretization::InviscidFlux;
 use crate::discretization::gradient::{GradientFields, VelocityGradient};
-use crate::discretization::residual::{accumulate_boundary_face, accumulate_interior_face};
+use crate::discretization::residual::{
+    accumulate_boundary_face, accumulate_boundary_face_typed, accumulate_interior_face,
+};
 use crate::discretization::viscous::{
     ViscousFlux, average_gradient_for_wall, face_transport_coefficients, viscous_face_flux,
 };
 use crate::discretization::wall_thermal::wall_heat_flux_into_fluid;
 use crate::error::Result;
-use crate::field::{ConservedResidual, PrimitiveFields};
+use crate::field::{ConservedResidual, ConservedResidualT, PrimitiveFields};
 use crate::physics::{IdealGasEoS, PrimitiveState, ViscousPhysicsConfig};
 
 /// 粘性边界面 BC 语义（结构/非结构统一）。
@@ -164,6 +166,18 @@ pub fn accumulate_viscous_boundary(
 ) -> Result<()> {
     let inv = viscous_flux_for_accumulation(flux);
     accumulate_boundary_face(residual, owner, &inv, area, owner_volume)
+}
+
+/// typed 边界面粘性通量 scatter（通量仍为 `f64`）。
+pub fn accumulate_viscous_boundary_typed<T: ComputeFloat>(
+    residual: &mut ConservedResidualT<T>,
+    owner: usize,
+    flux: &ViscousFlux,
+    area: Real,
+    owner_volume: Real,
+) -> Result<()> {
+    let inv = viscous_flux_for_accumulation(flux);
+    accumulate_boundary_face_typed(residual, owner, &inv, area, owner_volume)
 }
 
 #[cfg(test)]

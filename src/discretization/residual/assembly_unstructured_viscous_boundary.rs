@@ -1,11 +1,12 @@
 //! 非结构粘性边界面装配。
 
+use crate::core::ComputeFloat;
 use crate::discretization::viscous_assembly::{
     ViscousBoundaryFaceKind, ViscousBoundaryFluxParams, accumulate_viscous_boundary,
-    viscous_flux_at_boundary,
+    accumulate_viscous_boundary_typed, viscous_flux_at_boundary,
 };
 use crate::error::{AsimuError, Result};
-use crate::field::{ConservedResidual, primitive_from_conserved_relaxed};
+use crate::field::{ConservedResidual, ConservedResidualT, primitive_from_conserved_relaxed};
 
 use super::{ViscousAssemblyUnstructuredParams, ViscousAssemblyUnstructuredScratch};
 
@@ -28,6 +29,34 @@ pub(super) fn assemble_boundary_faces(
         &scratch.gradient.temperatures,
     )?;
     apply_viscous_boundary_contributions(residual, &contributions)
+}
+
+pub(crate) fn assemble_boundary_faces_typed<T: ComputeFloat>(
+    residual: &mut ConservedResidualT<T>,
+    params: &ViscousAssemblyUnstructuredParams<'_>,
+    scratch: &ViscousAssemblyUnstructuredScratch,
+) -> Result<()> {
+    let boundary_params = ViscousBoundaryFluxParams {
+        eos: params.eos,
+        viscous: params.viscous,
+        primitives: params.primitives,
+        gradients: params.gradients,
+    };
+    let contributions = collect_viscous_boundary_contributions(
+        params,
+        &boundary_params,
+        &scratch.gradient.temperatures,
+    )?;
+    for contrib in &contributions {
+        accumulate_viscous_boundary_typed(
+            residual,
+            contrib.owner,
+            &contrib.flux,
+            contrib.area,
+            contrib.owner_volume,
+        )?;
+    }
+    Ok(())
 }
 
 fn collect_viscous_boundary_contributions(

@@ -9,6 +9,7 @@ mod assembly_3d_viscous;
 mod assembly_unstructured;
 mod assembly_unstructured_typed;
 mod assembly_unstructured_viscous;
+mod assembly_unstructured_viscous_typed;
 mod face_flux_3d;
 mod muscl_stencil_3d;
 
@@ -37,6 +38,10 @@ pub use assembly_unstructured_viscous::{
     ViscousAssemblyUnstructuredScratch, assemble_viscous_residual_unstructured,
     compute_gradients_and_assemble_viscous_unstructured,
     compute_gradients_and_assemble_viscous_unstructured_with_scratch,
+};
+pub use assembly_unstructured_viscous_typed::{
+    ViscousAssemblyUnstructuredTypedInput,
+    compute_gradients_and_assemble_viscous_unstructured_typed,
 };
 pub use face_flux_3d::{
     BoundaryInviscidFluxInput, inviscid_boundary_face_flux,
