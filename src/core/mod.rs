@@ -2,10 +2,15 @@
 //!
 //! 理论参考：[`docs/theory/`](../../docs/theory/README.md)
 
+pub mod convergence;
 pub mod id;
 pub mod real;
 pub mod timing;
 
+pub use convergence::{
+    compressible_log10_tolerance_met, incompressible_steady_convergence_window,
+    log10_residual_converged,
+};
 pub use id::{CellId, FaceId, NodeId};
 pub use real::{
     Real, RealOps, approx_eq, format_log_fixed4, format_log_sci4, log10_positive,

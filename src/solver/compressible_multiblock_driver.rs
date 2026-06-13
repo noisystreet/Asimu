@@ -5,7 +5,7 @@ use std::{cell::RefCell, rc::Rc};
 use tracing::{info, info_span};
 
 use crate::boundary::{BoundaryPatch, BoundarySet};
-use crate::core::{Real, format_log_fixed4, format_log_sci4, log10_positive, residual_converged};
+use crate::core::{Real, format_log_fixed4, format_log_sci4, log10_positive};
 use crate::discretization::{BoundaryGhostBuffer, GhostCellState, GradientFields};
 use crate::error::{AsimuError, Result};
 use crate::field::{ConservedFields, PrimitiveFields};
@@ -19,6 +19,7 @@ use crate::solver::compressible_multiblock_interface::{
     InterfaceResidualContribution, SharedInterfaceResidualParams, apply_interface_residuals,
     compute_shared_interface_residuals,
 };
+use crate::solver::time::TransientStepControl;
 use crate::solver::{
     CompressibleAdvanceContext3d, CompressibleEulerSolver, CompressibleStepInfo, Rk4Storage,
     RungeKutta4Config, RungeKutta4Integrator, SolverState,
@@ -227,9 +228,12 @@ fn advance_block_step(
         let _span = info_span!("aggregate_block_step", blocks = step_infos.len()).entered();
         aggregate_block_step(&step_infos)?
     };
-    aggregate.converged = env
-        .residual_tolerance
-        .is_some_and(|tol| residual_converged(aggregate.residual_log10, tol));
+    let control = TransientStepControl::new(env.residual_tolerance);
+    aggregate.converged = crate::core::compressible_log10_tolerance_met(
+        aggregate.residual_log10,
+        env.residual_tolerance,
+    );
+    let _ = control.finalize_step(&mut aggregate);
     Ok(aggregate)
 }
 
@@ -282,9 +286,10 @@ fn advance_single_block_step(
         &mut state.solver_state,
         &mut state.integrator,
     )?;
-    step_info.converged = params
-        .residual_tolerance
-        .is_some_and(|tol| residual_converged(step_info.residual_log10, tol));
+    step_info.converged = crate::core::compressible_log10_tolerance_met(
+        step_info.residual_log10,
+        params.residual_tolerance,
+    );
     Ok(step_info)
 }
 

@@ -96,5 +96,5 @@ pub fn unstructured_boundary_coverage(
 /// log₁₀(RMS(ρ̇)) 早停容差（`[time].tolerance`）。
 #[must_use]
 pub fn residual_tolerance(case: &CaseSpec) -> Option<Real> {
-    case.time.tolerance.filter(|t| t.is_finite())
+    case.resolved_tolerance()
 }

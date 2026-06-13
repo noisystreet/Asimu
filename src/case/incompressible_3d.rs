@@ -236,7 +236,7 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
 
 fn incompressible_convergence_window(time: &CaseTimeConfig) -> usize {
     if time.mode == CaseTimeMode::Steady {
-        (time.min_steps.unwrap_or(0) as usize).clamp(1, 32)
+        crate::core::incompressible_steady_convergence_window(time.min_steps.unwrap_or(0))
     } else {
         1
     }

@@ -5,6 +5,7 @@
 
 mod case;
 mod limits;
+mod manifest;
 mod mesh_report;
 mod nondimensional;
 mod residual;
@@ -34,6 +35,10 @@ use crate::error::{AsimuError, Result};
 use crate::mesh::Mesh;
 
 pub use limits::{validate_cell_count, validate_file_size, validate_input_path};
+pub use manifest::{
+    MANIFEST_SCHEMA_VERSION, ManifestObservability, ManifestSolveSummary, RunManifest, config_hash,
+    maybe_write_run_manifest, time_mode_label, unix_timestamp_secs, write_run_manifest,
+};
 pub use mesh_report::{
     BoundaryPatchSummary, MeshReport, report_case_mesh, report_mesh1d, report_mesh3d,
     report_structured_mesh,

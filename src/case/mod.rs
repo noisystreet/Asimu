@@ -9,6 +9,7 @@ mod compressible_unstructured_3d_tests;
 mod diffusion;
 mod incompressible_3d;
 mod incompressible_profiles;
+mod manifest;
 mod output_3d;
 mod output_interval;
 mod sod;
@@ -71,9 +72,13 @@ pub fn run_case_path_logged(
     run_case(&case)
 }
 
-/// 运行已解析算例。
+/// 运行已解析算例（含 run manifest 写出）。
 #[instrument(skip(case), fields(name = %case.name))]
 pub fn run_case(case: &CaseSpec) -> Result<CaseRunResult> {
+    manifest::run_case_with_manifest(case)
+}
+
+fn dispatch_case(case: &CaseSpec) -> Result<CaseRunResult> {
     let kind = {
         let _span = info_span!("detect_run_kind").entered();
         detect_run_kind(case)?

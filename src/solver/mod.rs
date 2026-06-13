@@ -70,8 +70,8 @@ pub use state::SolverState;
 pub use time::{
     CflSchedule, LuSgsConfig, Rk4Storage, RungeKutta4Config, RungeKutta4Integrator,
     SteadyStateIntegrator, TimeIntegrationScheme, TimeIntegrator, TimeMode, TimeStepInfo,
-    euler_step, euler_step_local, local_dt_cfl, lu_sgs_step, lu_sgs_step_local, min_positive_dt,
-    rk4_step, rk4_step_local,
+    TransientStepControl, euler_step, euler_step_local, local_dt_cfl, lu_sgs_step,
+    lu_sgs_step_local, min_positive_dt, rk4_step, rk4_step_local,
 };
 pub use wave_speed::max_wave_speed;
 

@@ -149,7 +149,7 @@ pub struct CaseSpec {
 }
 
 /// 算例时间推进配置（`[time]`）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CaseTimeMode {
     Steady,
     Transient,

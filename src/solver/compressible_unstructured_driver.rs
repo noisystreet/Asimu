@@ -4,9 +4,7 @@ use std::time::Instant;
 
 use tracing::{info, info_span};
 
-use crate::core::{
-    Real, elapsed_ms, format_log_fixed4, format_log_sci4, log10_positive, residual_converged,
-};
+use crate::core::{Real, elapsed_ms, format_log_fixed4, format_log_sci4, log10_positive};
 use crate::discretization::InviscidFluxConfig;
 use crate::discretization::{BoundaryGhostBuffer, GradientFields};
 use crate::error::{AsimuError, Result};
@@ -17,6 +15,7 @@ use crate::physics::{FreestreamParams, IdealGasEoS, ReferenceScales, ViscousPhys
 use crate::solver::spectral_radius_unstructured::{
     SpectralRadiusUnstructuredParams, cell_spectral_radius_unstructured,
 };
+use crate::solver::time::TransientStepControl;
 use crate::solver::time::{
     CflSchedule, LuSgsConfig, Rk4Storage, RungeKutta4Config, RungeKutta4Integrator,
     TimeIntegrationScheme, TimeIntegrator, euler_step, euler_step_local, min_positive_dt, rk4_step,
@@ -123,15 +122,11 @@ pub fn run_unstructured_with_observer(
         }
     };
     let mut history = Vec::new();
+    let control = TransientStepControl::new(env.config.residual_tolerance);
     loop {
         let step = advance_unstructured_step(&mut env, fields, &mut work)?;
-        let converged = env
-            .config
-            .residual_tolerance
-            .is_some_and(|tol| residual_converged(step.residual_rms, tol));
         let mut step = step;
-        step.converged = converged;
-        let stop = step.is_final || step.converged;
+        let stop = control.finalize_step(&mut step);
         info!(
             step = step.step,
             dt = %format_log_sci4(step.dt),

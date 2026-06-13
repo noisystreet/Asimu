@@ -3,6 +3,7 @@
 //! 理论：[`docs/theory/time_integration.md`](../../../docs/theory/time_integration.md)
 
 mod common;
+mod control;
 pub mod euler;
 pub mod lu_sgs;
 pub mod residual_smoothing;
@@ -35,6 +36,7 @@ pub trait TimeIntegrator {
     fn advance(&mut self, state: &mut SolverState) -> Result<TimeStepInfo>;
 }
 
+pub use control::TransientStepControl;
 pub use euler::{euler_step, euler_step_local};
 pub use lu_sgs::{LuSgsConfig, lu_sgs_step, lu_sgs_step_local, lu_sgs_step_sweep_local};
 pub use residual_smoothing::{ResidualSmoothingConfig, smooth_residual_3d_limited};
