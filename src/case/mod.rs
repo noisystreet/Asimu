@@ -84,6 +84,7 @@ fn dispatch_case(case: &CaseSpec) -> Result<CaseRunResult> {
         detect_run_kind(case)?
     };
     info!(name = %case.name, ?kind, "开始算例编排");
+    validate::compute_precision(case)?;
     {
         let _span = info_span!(
             "log_boundary_patches",

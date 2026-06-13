@@ -8,6 +8,8 @@ mod case_build;
 mod case_compressible;
 #[path = "case_incompressible.rs"]
 mod case_incompressible;
+#[path = "case_numerics.rs"]
+mod case_numerics;
 #[path = "case_validate.rs"]
 mod case_validate;
 #[path = "mesh_load.rs"]
@@ -17,6 +19,7 @@ pub use case_compressible::{
     CaseObservabilityConfig, CaseOutputConfig, EulerCaseConfig, resolve_case_output_path,
 };
 pub use case_incompressible::{IncompressibleCaseConfig, IncompressibleReferenceConfig};
+pub use case_numerics::CaseNumericsConfig;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -146,6 +149,8 @@ pub struct CaseSpec {
     pub reference: Option<ReferenceScales>,
     /// 不可压缩无量纲参考量；不可压缩算例解析后恒为 `Some`。
     pub incompressible_reference: Option<IncompressibleReferenceScales>,
+    /// 核心计算精度（ADR 0016）；默认 `f64`。
+    pub numerics: CaseNumericsConfig,
 }
 
 /// 算例时间推进配置（`[time]`）。
@@ -344,6 +349,7 @@ struct CaseToml {
     incompressible: Option<IncompressibleToml>,
     output: Option<OutputToml>,
     observability: Option<ObservabilityToml>,
+    numerics: Option<case_numerics::NumericsToml>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -507,6 +513,7 @@ fn parse_case_toml(content: &str, case_dir: Option<&Path>) -> Result<CaseSpec> {
         .map(|r| super::restart::resolve_restart_path(r.path, case_dir));
 
     let time = parse_time_config(raw.time.as_ref(), raw.sod.is_some())?;
+    let numerics = case_numerics::parse_numerics(raw.numerics.as_ref())?;
 
     let deprecated_mesh_zone = raw.mesh.zone;
     let mut case = CaseSpec {
@@ -529,6 +536,7 @@ fn parse_case_toml(content: &str, case_dir: Option<&Path>) -> Result<CaseSpec> {
         case_dir: case_dir.map(Path::to_path_buf),
         reference: None,
         incompressible_reference: None,
+        numerics,
     };
     finalize_parsed_case(deprecated_mesh_zone, &mut case)?;
     Ok(case)

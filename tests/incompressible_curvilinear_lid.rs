@@ -690,6 +690,7 @@ fn curvilinear_lid_case_with_time(
         case_dir: None,
         reference: None,
         incompressible_reference: None,
+        numerics: asimu::io::CaseNumericsConfig::default(),
     }
 }
 

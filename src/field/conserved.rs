@@ -1,31 +1,35 @@
 //! 守恒变量场（可压缩 NS）。
 
+use crate::core::{ComputeFloat, Real};
 use crate::error::{AsimuError, Result};
 use crate::physics::{
     ConservedState, FreestreamContext, FreestreamParams, IdealGasEoS, PrimitiveState,
     ReferenceScales,
 };
 
-use super::ScalarField;
+use super::ScalarFieldT;
 
 /// 单元守恒变量集合（SoA）。
 #[derive(Debug, Clone, PartialEq)]
-pub struct ConservedFields {
-    pub density: ScalarField,
-    pub momentum_x: ScalarField,
-    pub momentum_y: ScalarField,
-    pub momentum_z: ScalarField,
-    pub total_energy: ScalarField,
+pub struct ConservedFieldsT<T: ComputeFloat> {
+    pub density: ScalarFieldT<T>,
+    pub momentum_x: ScalarFieldT<T>,
+    pub momentum_y: ScalarFieldT<T>,
+    pub momentum_z: ScalarFieldT<T>,
+    pub total_energy: ScalarFieldT<T>,
 }
 
-impl ConservedFields {
+/// 默认工程标量守恒场（`f64`）。
+pub type ConservedFields = ConservedFieldsT<Real>;
+
+impl<T: ComputeFloat> ConservedFieldsT<T> {
     pub fn uniform(num_cells: usize, state: ConservedState) -> Result<Self> {
         Ok(Self {
-            density: ScalarField::uniform(num_cells, state.density)?,
-            momentum_x: ScalarField::uniform(num_cells, state.momentum[0])?,
-            momentum_y: ScalarField::uniform(num_cells, state.momentum[1])?,
-            momentum_z: ScalarField::uniform(num_cells, state.momentum[2])?,
-            total_energy: ScalarField::uniform(num_cells, state.total_energy)?,
+            density: ScalarFieldT::uniform(num_cells, T::from_real(state.density))?,
+            momentum_x: ScalarFieldT::uniform(num_cells, T::from_real(state.momentum[0]))?,
+            momentum_y: ScalarFieldT::uniform(num_cells, T::from_real(state.momentum[1]))?,
+            momentum_z: ScalarFieldT::uniform(num_cells, T::from_real(state.momentum[2]))?,
+            total_energy: ScalarFieldT::uniform(num_cells, T::from_real(state.total_energy))?,
         })
     }
 
@@ -80,13 +84,13 @@ impl ConservedFields {
 
     pub fn cell_state(&self, index: usize) -> Result<ConservedState> {
         Ok(ConservedState {
-            density: self.density.values()[index],
+            density: self.density.values()[index].to_real(),
             momentum: [
-                self.momentum_x.values()[index],
-                self.momentum_y.values()[index],
-                self.momentum_z.values()[index],
+                self.momentum_x.values()[index].to_real(),
+                self.momentum_y.values()[index].to_real(),
+                self.momentum_z.values()[index].to_real(),
             ],
-            total_energy: self.total_energy.values()[index],
+            total_energy: self.total_energy.values()[index].to_real(),
         })
     }
 
@@ -94,18 +98,45 @@ impl ConservedFields {
         &self,
         index: usize,
         eos: &IdealGasEoS,
-        min_pressure: crate::core::Real,
+        min_pressure: Real,
     ) -> Result<PrimitiveState> {
         primitive_from_conserved_relaxed(eos, &self.cell_state(index)?, min_pressure)
     }
 
     /// 保证 \(\rho>0\) 且 \(E>\mathrm{KE}+p_\mathrm{floor}/(\gamma-1)\)（显式 RK 步后调用）。
-    pub fn enforce_positivity(&mut self, _eos: &IdealGasEoS, _min_pressure: crate::core::Real) {
+    pub fn enforce_positivity(&mut self, _eos: &IdealGasEoS, _min_pressure: Real) {
         // 已禁用正性钳制——不做任何操作。
     }
 
+    /// 转为 `Real` 守恒场（输出 / 跨精度转换用）。
+    pub fn cast_real(&self) -> Result<ConservedFields> {
+        Ok(ConservedFields {
+            density: ScalarFieldT::from_real_values(self.density.to_real_values())?,
+            momentum_x: ScalarFieldT::from_real_values(self.momentum_x.to_real_values())?,
+            momentum_y: ScalarFieldT::from_real_values(self.momentum_y.to_real_values())?,
+            momentum_z: ScalarFieldT::from_real_values(self.momentum_z.to_real_values())?,
+            total_energy: ScalarFieldT::from_real_values(self.total_energy.to_real_values())?,
+        })
+    }
+
+    #[allow(dead_code)]
+    fn write_cell_state(&mut self, index: usize, state: &ConservedState) {
+        self.density.values_mut()[index] = T::from_real(state.density);
+        self.momentum_x.values_mut()[index] = T::from_real(state.momentum[0]);
+        self.momentum_y.values_mut()[index] = T::from_real(state.momentum[1]);
+        self.momentum_z.values_mut()[index] = T::from_real(state.momentum[2]);
+        self.total_energy.values_mut()[index] = T::from_real(state.total_energy);
+    }
+}
+
+impl ConservedFields {
+    /// 从 typed 场构造 `Real` 守恒场。
+    pub fn from_typed<T: ComputeFloat>(fields: &ConservedFieldsT<T>) -> Result<Self> {
+        fields.cast_real()
+    }
+
     /// 将无量纲守恒量还原为有量纲 SI（输出 VTK/CGNS 用）。
-    pub fn to_dimensional(&self, reference: &crate::physics::ReferenceScales) -> Result<Self> {
+    pub fn to_dimensional(&self, reference: &ReferenceScales) -> Result<Self> {
         let mut out = self.clone();
         let mom_scale = reference.density * reference.velocity;
         let energy_scale = reference.density * reference.velocity * reference.velocity;
@@ -126,22 +157,13 @@ impl ConservedFields {
         }
         Ok(out)
     }
-
-    #[allow(dead_code)]
-    fn write_cell_state(&mut self, index: usize, state: &ConservedState) {
-        self.density.values_mut()[index] = state.density;
-        self.momentum_x.values_mut()[index] = state.momentum[0];
-        self.momentum_y.values_mut()[index] = state.momentum[1];
-        self.momentum_z.values_mut()[index] = state.momentum[2];
-        self.total_energy.values_mut()[index] = state.total_energy;
-    }
 }
 
 /// 来流静压的 1%（下限 1e-6 Pa 或 1e-12 无量纲），与求解器正性限制一致。
 #[must_use]
-pub fn positivity_pressure_floor(freestream_pressure: crate::core::Real) -> crate::core::Real {
-    const ABSOLUTE_MIN: crate::core::Real = 1.0e-6;
-    const RELATIVE_FRACTION: crate::core::Real = 0.01;
+pub fn positivity_pressure_floor(freestream_pressure: Real) -> Real {
+    const ABSOLUTE_MIN: Real = 1.0e-6;
+    const RELATIVE_FRACTION: Real = 0.01;
     if freestream_pressure > 0.0 {
         (RELATIVE_FRACTION * freestream_pressure).max(ABSOLUTE_MIN)
     } else {
@@ -150,12 +172,7 @@ pub fn positivity_pressure_floor(freestream_pressure: crate::core::Real) -> crat
 }
 
 /// 单单元守恒量正性钳制（调试模式下已禁用——不做任何钳制）。
-pub fn clamp_conserved_positivity(
-    _state: &mut ConservedState,
-    _gamma: crate::core::Real,
-    _min_pressure: crate::core::Real,
-) {
-}
+pub fn clamp_conserved_positivity(_state: &mut ConservedState, _gamma: Real, _min_pressure: Real) {}
 
 /// 守恒变量 → 原始变量（理想气体）。
 pub fn primitive_from_conserved(
@@ -176,7 +193,6 @@ pub fn primitive_from_conserved(
         * (velocity[0] * velocity[0] + velocity[1] * velocity[1] + velocity[2] * velocity[2]);
     let internal = cons.total_energy - ke;
     if internal <= 0.0 {
-        // 已禁用夹紧——直接报错暴露数值问题根源。
         return Err(AsimuError::Field(format!(
             "内能非正: rho={rho}, KE={ke}, total_energy={}",
             cons.total_energy
@@ -196,7 +212,7 @@ pub fn primitive_from_conserved(
 pub fn primitive_from_conserved_relaxed(
     eos: &IdealGasEoS,
     cons: &ConservedState,
-    min_pressure: crate::core::Real,
+    min_pressure: Real,
 ) -> Result<PrimitiveState> {
     let mut prim = primitive_from_conserved(eos, cons)?;
     if prim.pressure < min_pressure {
@@ -231,6 +247,20 @@ mod tests {
             .primitive_at(0, &eos, positivity_pressure_floor(params.pressure))
             .expect("prim");
         assert!((prim.density - fields.density.values()[0]).abs() < 1.0e-10);
+    }
+
+    #[test]
+    fn f32_conserved_field_casts_to_real() {
+        let state = ConservedState {
+            density: 1.2,
+            momentum: [0.1, 0.2, 0.3],
+            total_energy: 2.5,
+        };
+        let fields = ConservedFieldsT::<f32>::uniform(3, state).expect("fields");
+        assert_eq!(fields.num_cells(), 3);
+        let real = fields.cast_real().expect("cast");
+        assert!((real.density.values()[0] - 1.2).abs() < 1.0e-6);
+        assert!((real.momentum_x.values()[1] - 0.1).abs() < 1.0e-6);
     }
 
     #[test]

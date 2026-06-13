@@ -1,12 +1,12 @@
 //! 守恒场与残差的线性组合（RK 阶段更新）。
 
-use crate::core::Real;
+use crate::core::{ComputeFloat, Real};
 use crate::error::{AsimuError, Result};
 
-use super::{ConservedFields, ConservedResidual};
+use super::{ConservedFields, ConservedFieldsT, ConservedResidual, ConservedResidualT};
 use crate::physics::ConservedState;
 
-impl ConservedFields {
+impl<T: ComputeFloat> ConservedFieldsT<T> {
     /// `self ← src`。
     pub fn copy_from(&mut self, src: &Self) -> Result<()> {
         ensure_same_size(self.num_cells(), src.num_cells())?;
@@ -32,7 +32,7 @@ impl ConservedFields {
     pub fn assign_axpy_dt(
         &mut self,
         base: &Self,
-        residual: &ConservedResidual,
+        residual: &ConservedResidualT<T>,
         dt: &[Real],
         factor: Real,
         _gamma: Real,
@@ -42,21 +42,117 @@ impl ConservedFields {
         ensure_residual_size(self.num_cells(), residual.num_cells())?;
         ensure_dt_size(self.num_cells(), dt.len())?;
         for (i, &dt_i) in dt.iter().enumerate() {
-            let rho = base.density.values()[i] + factor * dt_i * residual.density.values()[i];
-            let mx = base.momentum_x.values()[i] + factor * dt_i * residual.momentum_x.values()[i];
-            let my = base.momentum_y.values()[i] + factor * dt_i * residual.momentum_y.values()[i];
-            let mz = base.momentum_z.values()[i] + factor * dt_i * residual.momentum_z.values()[i];
-            let energy =
-                base.total_energy.values()[i] + factor * dt_i * residual.total_energy.values()[i];
-            self.density.values_mut()[i] = rho;
-            self.momentum_x.values_mut()[i] = mx;
-            self.momentum_y.values_mut()[i] = my;
-            self.momentum_z.values_mut()[i] = mz;
-            self.total_energy.values_mut()[i] = energy;
+            let scale = factor * dt_i;
+            self.density.values_mut()[i] =
+                base.density.values()[i].add_mul_real(residual.density.values()[i], scale);
+            self.momentum_x.values_mut()[i] =
+                base.momentum_x.values()[i].add_mul_real(residual.momentum_x.values()[i], scale);
+            self.momentum_y.values_mut()[i] =
+                base.momentum_y.values()[i].add_mul_real(residual.momentum_y.values()[i], scale);
+            self.momentum_z.values_mut()[i] =
+                base.momentum_z.values()[i].add_mul_real(residual.momentum_z.values()[i], scale);
+            self.total_energy.values_mut()[i] = base.total_energy.values()[i]
+                .add_mul_real(residual.total_energy.values()[i], scale);
         }
         Ok(())
     }
 
+    /// `self[cell] += scale * increment`（守恒分量）。
+    pub fn add_conserved_increment(
+        &mut self,
+        cell: usize,
+        scale: Real,
+        increment: [Real; 5],
+        _gamma: Real,
+        _min_pressure: Real,
+    ) -> Result<()> {
+        if cell >= self.num_cells() {
+            return Err(AsimuError::Field(format!("单元索引越界: {cell}")));
+        }
+        self.density.values_mut()[cell] =
+            self.density.values()[cell].add_mul_real(T::from_real(increment[0]), scale);
+        self.momentum_x.values_mut()[cell] =
+            self.momentum_x.values()[cell].add_mul_real(T::from_real(increment[1]), scale);
+        self.momentum_y.values_mut()[cell] =
+            self.momentum_y.values()[cell].add_mul_real(T::from_real(increment[2]), scale);
+        self.momentum_z.values_mut()[cell] =
+            self.momentum_z.values()[cell].add_mul_real(T::from_real(increment[3]), scale);
+        self.total_energy.values_mut()[cell] =
+            self.total_energy.values()[cell].add_mul_real(T::from_real(increment[4]), scale);
+        Ok(())
+    }
+
+    /// `self ← base + scale * residual`。
+    pub fn assign_axpy(
+        &mut self,
+        base: &Self,
+        residual: &ConservedResidualT<T>,
+        scale: Real,
+    ) -> Result<()> {
+        ensure_same_size(self.num_cells(), base.num_cells())?;
+        ensure_residual_size(self.num_cells(), residual.num_cells())?;
+        axpy_component(
+            self.density.values_mut(),
+            base.density.values(),
+            residual.density.values(),
+            scale,
+        );
+        axpy_component(
+            self.momentum_x.values_mut(),
+            base.momentum_x.values(),
+            residual.momentum_x.values(),
+            scale,
+        );
+        axpy_component(
+            self.momentum_y.values_mut(),
+            base.momentum_y.values(),
+            residual.momentum_y.values(),
+            scale,
+        );
+        axpy_component(
+            self.momentum_z.values_mut(),
+            base.momentum_z.values(),
+            residual.momentum_z.values(),
+            scale,
+        );
+        axpy_component(
+            self.total_energy.values_mut(),
+            base.total_energy.values(),
+            residual.total_energy.values(),
+            scale,
+        );
+        Ok(())
+    }
+
+    /// `self ← self + scale * residual`。
+    pub fn add_axpy(&mut self, residual: &ConservedResidualT<T>, scale: Real) -> Result<()> {
+        ensure_residual_size(self.num_cells(), residual.num_cells())?;
+        add_scaled_slice(self.density.values_mut(), residual.density.values(), scale);
+        add_scaled_slice(
+            self.momentum_x.values_mut(),
+            residual.momentum_x.values(),
+            scale,
+        );
+        add_scaled_slice(
+            self.momentum_y.values_mut(),
+            residual.momentum_y.values(),
+            scale,
+        );
+        add_scaled_slice(
+            self.momentum_z.values_mut(),
+            residual.momentum_z.values(),
+            scale,
+        );
+        add_scaled_slice(
+            self.total_energy.values_mut(),
+            residual.total_energy.values(),
+            scale,
+        );
+        Ok(())
+    }
+}
+
+impl ConservedFields {
     /// 对角 LU-SGS：`self ← self + ω·Δt·R / (1 + Δt·σ)`（全局 Δt；\(\sigma\) 为 \((|u|+a)/h\)）。
     #[allow(clippy::too_many_arguments)]
     pub fn assign_lusgs_diagonal_increment(
@@ -150,103 +246,9 @@ impl ConservedFields {
         let _ = (gamma, min_pressure);
         Ok(())
     }
-
-    /// `self[cell] += scale * increment`（守恒分量，带正性夹紧）。
-    pub fn add_conserved_increment(
-        &mut self,
-        cell: usize,
-        scale: Real,
-        increment: [Real; 5],
-        _gamma: Real,
-        _min_pressure: Real,
-    ) -> Result<()> {
-        if cell >= self.num_cells() {
-            return Err(AsimuError::Field(format!("单元索引越界: {cell}")));
-        }
-        let rho = self.density.values()[cell] + scale * increment[0];
-        let mx = self.momentum_x.values()[cell] + scale * increment[1];
-        let my = self.momentum_y.values()[cell] + scale * increment[2];
-        let mz = self.momentum_z.values()[cell] + scale * increment[3];
-        let energy = self.total_energy.values()[cell] + scale * increment[4];
-        self.density.values_mut()[cell] = rho;
-        self.momentum_x.values_mut()[cell] = mx;
-        self.momentum_y.values_mut()[cell] = my;
-        self.momentum_z.values_mut()[cell] = mz;
-        self.total_energy.values_mut()[cell] = energy;
-        Ok(())
-    }
-
-    /// `self ← base + scale * residual`。
-    pub fn assign_axpy(
-        &mut self,
-        base: &Self,
-        residual: &ConservedResidual,
-        scale: Real,
-    ) -> Result<()> {
-        ensure_same_size(self.num_cells(), base.num_cells())?;
-        ensure_residual_size(self.num_cells(), residual.num_cells())?;
-        axpy_component(
-            self.density.values_mut(),
-            base.density.values(),
-            residual.density.values(),
-            scale,
-        );
-        axpy_component(
-            self.momentum_x.values_mut(),
-            base.momentum_x.values(),
-            residual.momentum_x.values(),
-            scale,
-        );
-        axpy_component(
-            self.momentum_y.values_mut(),
-            base.momentum_y.values(),
-            residual.momentum_y.values(),
-            scale,
-        );
-        axpy_component(
-            self.momentum_z.values_mut(),
-            base.momentum_z.values(),
-            residual.momentum_z.values(),
-            scale,
-        );
-        axpy_component(
-            self.total_energy.values_mut(),
-            base.total_energy.values(),
-            residual.total_energy.values(),
-            scale,
-        );
-        Ok(())
-    }
-
-    /// `self ← self + scale * residual`。
-    pub fn add_axpy(&mut self, residual: &ConservedResidual, scale: Real) -> Result<()> {
-        ensure_residual_size(self.num_cells(), residual.num_cells())?;
-        add_scaled_slice(self.density.values_mut(), residual.density.values(), scale);
-        add_scaled_slice(
-            self.momentum_x.values_mut(),
-            residual.momentum_x.values(),
-            scale,
-        );
-        add_scaled_slice(
-            self.momentum_y.values_mut(),
-            residual.momentum_y.values(),
-            scale,
-        );
-        add_scaled_slice(
-            self.momentum_z.values_mut(),
-            residual.momentum_z.values(),
-            scale,
-        );
-        add_scaled_slice(
-            self.total_energy.values_mut(),
-            residual.total_energy.values(),
-            scale,
-        );
-        Ok(())
-    }
 }
 
-impl ConservedResidual {
+impl<T: ComputeFloat> ConservedResidualT<T> {
     /// `self ← scale * src`。
     pub fn assign_scaled(&mut self, src: &Self, scale: Real) -> Result<()> {
         ensure_residual_size(self.num_cells(), src.num_cells())?;
@@ -327,19 +329,19 @@ impl ConservedResidual {
         Ok(())
     }
 
-    /// 全场密度残差 L2 范数：\(\|\dot\rho\|_2 = \sqrt{\sum_i \dot\rho_i^2}\)（随网格单元数增大）。
+    /// 全场密度残差 L2 范数（`f64` 累加，ADR 0016 §4）。
     #[must_use]
     pub fn density_l2_norm(&self) -> Real {
-        l2_norm(self.density.values())
+        l2_norm_real(self.density.values())
     }
 
-    /// 全场密度残差 RMS：\(\mathrm{RMS}(\dot\rho)=\|\dot\rho\|_2/\sqrt{N}\)（可与不同规模网格对比）。
+    /// 全场密度残差 RMS（`f64` 累加）。
     #[must_use]
     pub fn density_rms_norm(&self) -> Real {
-        rms_norm(self.density.values())
+        rms_norm_real(self.density.values())
     }
 
-    /// 五方程守恒残差 RMS（所有单元、所有分量）：\(\sqrt{\sum|\dot U|^2 / (5N)}\)。
+    /// 五方程守恒残差 RMS（`f64` 累加）。
     #[must_use]
     pub fn conserved_rms_norm(&self) -> Real {
         let n = self.num_cells();
@@ -354,23 +356,36 @@ impl ConservedResidual {
             self.momentum_z.values(),
             self.total_energy.values(),
         ] {
-            sum_sq += values.iter().map(|v| v * v).sum::<Real>();
+            sum_sq += values
+                .iter()
+                .map(|v| {
+                    let r = v.to_real();
+                    r * r
+                })
+                .sum::<Real>();
         }
         (sum_sq / (5.0 * n as Real)).sqrt()
     }
 }
 
 #[must_use]
-fn l2_norm(values: &[Real]) -> Real {
-    values.iter().map(|v| v * v).sum::<Real>().sqrt()
+fn l2_norm_real<T: ComputeFloat>(values: &[T]) -> Real {
+    values
+        .iter()
+        .map(|v| {
+            let r = v.to_real();
+            r * r
+        })
+        .sum::<Real>()
+        .sqrt()
 }
 
 #[must_use]
-fn rms_norm(values: &[Real]) -> Real {
+fn rms_norm_real<T: ComputeFloat>(values: &[T]) -> Real {
     if values.is_empty() {
         return 0.0;
     }
-    l2_norm(values) / (values.len() as Real).sqrt()
+    l2_norm_real(values) / (values.len() as Real).sqrt()
 }
 
 fn ensure_same_size(left: usize, right: usize) -> Result<()> {
@@ -400,21 +415,21 @@ fn ensure_dt_size(fields: usize, dt_len: usize) -> Result<()> {
     Ok(())
 }
 
-fn axpy_component(dst: &mut [Real], base: &[Real], inc: &[Real], scale: Real) {
+fn axpy_component<T: ComputeFloat>(dst: &mut [T], base: &[T], inc: &[T], scale: Real) {
     for (d, (&b, &r)) in dst.iter_mut().zip(base.iter().zip(inc.iter())) {
-        *d = b + scale * r;
+        *d = b.add_mul_real(r, scale);
     }
 }
 
-fn add_scaled_slice(dst: &mut [Real], src: &[Real], scale: Real) {
+fn add_scaled_slice<T: ComputeFloat>(dst: &mut [T], src: &[T], scale: Real) {
     for (d, &s) in dst.iter_mut().zip(src.iter()) {
-        *d += scale * s;
+        *d = d.add_mul_real(s, scale);
     }
 }
 
-fn scale_component(dst: &mut [Real], src: &[Real], scale: Real) {
+fn scale_component<T: ComputeFloat>(dst: &mut [T], src: &[T], scale: Real) {
     for (d, &s) in dst.iter_mut().zip(src.iter()) {
-        *d = scale * s;
+        *d = T::from_real(s.to_real() * scale);
     }
 }
 
@@ -453,13 +468,14 @@ fn lusgs_updated_state(
     }
 }
 
-fn combine_rk4_component(dst: &mut [Real], k1: &[Real], k2: &[Real], k3: &[Real], k4: &[Real]) {
+fn combine_rk4_component<T: ComputeFloat>(dst: &mut [T], k1: &[T], k2: &[T], k3: &[T], k4: &[T]) {
     let sixth = 1.0 / 6.0;
     for (d, (&a, (&b, (&c, &e)))) in dst
         .iter_mut()
         .zip(k1.iter().zip(k2.iter().zip(k3.iter().zip(k4.iter()))))
     {
-        *d = sixth * (a + 2.0 * b + 2.0 * c + e);
+        let sum = a.to_real() + 2.0 * b.to_real() + 2.0 * c.to_real() + e.to_real();
+        *d = T::from_real(sixth * sum);
     }
 }
 
@@ -503,5 +519,31 @@ mod tests {
         out.assign_axpy(&base, &rhs, 0.5).expect("axpy");
         assert!(approx_eq(out.density.values()[0], 3.0, 1.0e-12));
         assert!(approx_eq(out.density.values()[1], 1.0, 1.0e-12));
+    }
+
+    #[test]
+    fn f32_assign_axpy_matches_real_arithmetic() {
+        let base = ConservedFieldsT::<f32>::uniform(
+            1,
+            crate::physics::ConservedState {
+                density: 1.0,
+                momentum: [0.0, 0.0, 0.0],
+                total_energy: 2.0,
+            },
+        )
+        .expect("base");
+        let mut rhs = ConservedResidualT::<f32>::zeros(1).expect("rhs");
+        rhs.density.values_mut()[0] = f32::from_real(4.0);
+        let mut out = ConservedFieldsT::<f32>::uniform(
+            1,
+            crate::physics::ConservedState {
+                density: 0.0,
+                momentum: [0.0, 0.0, 0.0],
+                total_energy: 0.0,
+            },
+        )
+        .expect("out");
+        out.assign_axpy(&base, &rhs, 0.5).expect("axpy");
+        assert!((out.density.values()[0].to_real() - 3.0).abs() < 1.0e-5);
     }
 }

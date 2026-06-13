@@ -4,6 +4,7 @@
 
 pub mod convergence;
 pub mod id;
+pub mod precision;
 pub mod real;
 pub mod timing;
 
@@ -12,6 +13,7 @@ pub use convergence::{
     log10_residual_converged,
 };
 pub use id::{CellId, FaceId, NodeId};
+pub use precision::{ComputeFloat, ComputePrecision, parse_compute_precision};
 pub use real::{
     Real, RealOps, approx_eq, format_log_fixed4, format_log_sci4, log10_positive,
     residual_converged,

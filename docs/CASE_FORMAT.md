@@ -24,6 +24,7 @@
 | `physics` | table | 是 | 物性（§4） |
 | `boundary` | table | 是 | 边界条件（§5） |
 | `initial` | table | 否 | 初始条件（§5.5）；缺省为全零 |
+| `numerics` | table | 否 | 核心计算精度（§4.5，ADR 0016）；默认 `compute_precision = "f64"` |
 | `time` | table | 否 | 时间推进（§6）；默认 `mode = "steady"` |
 
 ---
@@ -149,6 +150,21 @@ diffusivity = 1.0     # 分子扩散系数 D
 |------|------|------|
 | `diffusivity` | float | ≥ 0 |
 | `velocity` | float 数组 | 可选；2D 为 `[ux, uy]` |
+
+---
+
+## 4.5 `[numerics]`
+
+核心求解热路径精度（ADR [0016](adr/0016-runtime-compute-precision.md)）。网格几何、I/O 与配置数值仍使用 `f64`。
+
+```toml
+[numerics]
+compute_precision = "f64"   # f64（默认）| f32
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `compute_precision` | string | `f64` 默认；`f32` 在 solver typed 化完成前会在 Validate 阶段报错 |
 
 ---
 

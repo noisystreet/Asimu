@@ -93,8 +93,9 @@ let result = solver.run(&mesh)?;
 
 | 函数 | 说明 |
 |------|------|
-| `load_case(&Path) -> Result<CaseSpec>` | 解析 TOML 算例（网格 + BC + 物性） |
-| `CaseSpec` | `mesh`, `boundary`, `initial`, `diffusivity`, `solver` |
+| `load_case(&Path) -> Result<CaseSpec>` | 解析 TOML 算例（网格 + BC + 物性 + `[numerics]`） |
+| `CaseNumericsConfig` | `[numerics]` 段；`compute_precision: ComputePrecision`（默认 `F64`） |
+| `CaseSpec` | `mesh`, `boundary`, `initial`, `numerics`, `diffusivity`, `solver` |
 | `CaseSpec::build_initial_fields()` | 构建 `Fields` |
 | `CaseSpec::initial_scalar(name)` | 单标量；未声明则全零 |
 | `CaseSpec::build_multiblock_conserved_fields(blocks)` | 按 block 顺序构建多块守恒初场 |
@@ -209,6 +210,9 @@ name=<mesh_name>;cells=<count>
 | 类型 | 说明 |
 |------|------|
 | `Real` | 默认 `f64` 数值标量别名 |
+| `ComputePrecision` | 核心计算精度：`F64`（默认）\| `F32`（ADR 0016；solver typed 化前 Validate 拒绝） |
+| `ComputeFloat` | 核心计算标量 trait；实现 `f32` / `f64` |
+| `parse_compute_precision(&str) -> Result<ComputePrecision>` | 解析 `[numerics].compute_precision` |
 | `CellId`, `FaceId`, `NodeId` | 网格实体 newtype |
 | `Vector3` | 三维向量 |
 | `approx_eq(a, b, tol)` | 浮点容差比较 |
@@ -217,7 +221,11 @@ name=<mesh_name>;cells=<count>
 
 | 类型 | 说明 |
 |------|------|
-| `ScalarField` | 标量场；`uniform` / `from_values` 构造 |
+| `ScalarField` | 标量场；`uniform` / `from_values` 构造（默认 `Real`/`f64`） |
+| `ScalarFieldT<T>` | 泛型标量场（`T: ComputeFloat`） |
+| `ConservedFieldsT<T>` | 可压缩守恒变量 SoA；`ConservedFields = ConservedFieldsT<Real>` |
+| `ConservedResidualT<T>` | 守恒残差 SoA；`ConservedResidual = ConservedResidualT<Real>` |
+| `PrimitiveFieldsT<T>` | 原始变量 cache；`PrimitiveFields = PrimitiveFieldsT<Real>` |
 | `IncompressibleFields` | 不可压缩主变量场：`pressure`、`velocity_x/y/z` |
 | `InitialKind` | `uniform` / `linear` / `values` |
 | `InitialSet` | 命名初始条件集合 |

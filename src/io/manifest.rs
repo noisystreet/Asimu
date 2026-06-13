@@ -144,6 +144,7 @@ pub fn config_hash(case: &CaseSpec) -> String {
     case.benchmark_id.hash(&mut hasher);
     case.mesh.num_cells().hash(&mut hasher);
     case.time.max_steps.hash(&mut hasher);
+    case.numerics.compute_precision.hash(&mut hasher);
     if let Some(tol) = case.time.tolerance {
         tol.to_bits().hash(&mut hasher);
     }

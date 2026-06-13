@@ -5,12 +5,22 @@ use std::collections::HashSet;
 use tracing::warn;
 
 use crate::boundary::BoundarySet;
-use crate::core::{FaceId, Real};
+use crate::core::{ComputePrecision, FaceId, Real};
 use crate::discretization::ReconstructionKind;
 use crate::error::{AsimuError, Result};
 use crate::io::CaseSpec;
 use crate::mesh::UnstructuredMesh3d;
 use crate::solver::TimeIntegrationScheme;
+
+/// 核心计算精度与当前 solver 能力是否匹配（ADR 0016 P0）。
+pub fn compute_precision(case: &CaseSpec) -> Result<()> {
+    if case.numerics.compute_precision == ComputePrecision::F32 {
+        return Err(AsimuError::Config(
+            "compute_precision = \"f32\" 尚未实现；当前仅支持 f64（ADR 0016 P0）".to_string(),
+        ));
+    }
+    Ok(())
+}
 
 /// 非结构可压缩离散与时间格式约束。
 pub fn unstructured_compressible(case: &CaseSpec) -> Result<()> {
@@ -97,4 +107,37 @@ pub fn unstructured_boundary_coverage(
 #[must_use]
 pub fn residual_tolerance(case: &CaseSpec) -> Option<Real> {
     case.resolved_tolerance()
+}
+
+#[cfg(test)]
+mod compute_precision_tests {
+    use super::*;
+    use std::path::Path;
+
+    use crate::core::ComputePrecision;
+    use crate::io::{CaseNumericsConfig, load_case};
+
+    #[test]
+    fn f64_passes_validate() {
+        let case = load_case(Path::new(
+            "tests/benchmarks/1d_diffusion_analytical/case.toml",
+        ))
+        .expect("case");
+        assert_eq!(case.numerics.compute_precision, ComputePrecision::F64);
+        compute_precision(&case).expect("f64");
+    }
+
+    #[test]
+    fn f32_rejected_at_validate() {
+        let mut case = load_case(Path::new(
+            "tests/benchmarks/1d_diffusion_analytical/case.toml",
+        ))
+        .expect("case");
+        case.numerics = CaseNumericsConfig {
+            compute_precision: ComputePrecision::F32,
+        };
+        let err = compute_precision(&case).expect_err("f32");
+        assert!(err.to_string().contains("f32"));
+        assert!(err.to_string().contains("尚未实现"));
+    }
 }

@@ -547,6 +547,7 @@ fn rejects_gmres_for_connected_multiblock_at_parse() {
         case_dir: None,
         reference: None,
         incompressible_reference: None,
+        numerics: CaseNumericsConfig::default(),
     };
     nondimensional::apply_nondimensionalization_for_compressible(&mut case).expect("nd");
 
@@ -564,4 +565,76 @@ fn rejects_gmres_for_connected_multiblock_at_parse() {
     .expect("lusgs cfg");
     let err = case.validate_multiblock_compressible().expect_err("sweep");
     assert!(err.to_string().contains("lusgs_sweep"));
+}
+
+#[test]
+fn numerics_defaults_to_f64() {
+    let case = parse_case_toml(BENCHMARK_CASE, None).expect("parse");
+    assert_eq!(
+        case.numerics.compute_precision,
+        crate::core::ComputePrecision::F64
+    );
+}
+
+#[test]
+fn parses_numerics_compute_precision() {
+    let content = r#"
+name = "precision_case"
+benchmark_id = "1d_diffusion_analytical"
+
+[mesh]
+kind = "structured_1d"
+cells = 4
+length = 1.0
+origin = 0.0
+
+[physics]
+diffusivity = 1.0
+
+[boundary.left]
+kind = "dirichlet"
+value = 0.0
+
+[boundary.right]
+kind = "dirichlet"
+value = 1.0
+
+[numerics]
+compute_precision = "f32"
+"#;
+    let case = parse_case_toml(content, None).expect("parse");
+    assert_eq!(
+        case.numerics.compute_precision,
+        crate::core::ComputePrecision::F32
+    );
+}
+
+#[test]
+fn rejects_unknown_numerics_compute_precision() {
+    let content = r#"
+name = "bad_precision"
+benchmark_id = "1d_diffusion_analytical"
+
+[mesh]
+kind = "structured_1d"
+cells = 4
+length = 1.0
+origin = 0.0
+
+[physics]
+diffusivity = 1.0
+
+[boundary.left]
+kind = "dirichlet"
+value = 0.0
+
+[boundary.right]
+kind = "dirichlet"
+value = 1.0
+
+[numerics]
+compute_precision = "mixed"
+"#;
+    let err = parse_case_toml(content, None).expect_err("parse");
+    assert!(err.to_string().contains("compute_precision"));
 }

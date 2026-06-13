@@ -9,7 +9,7 @@ level = "info"
 
 # 数值精度与执行后端（v0.5+ / v1.2+ 启用，当前仅文档预留）
 # [numerics]
-# precision = "f64"       # f64 | f32 | mixed
+# compute_precision = "f64"  # f64 | f32（f32 待 ADR 0016 P1+ 实现）
 # backend = "cpu"         # cpu | gpu-wgpu | gpu-cuda
 
 # 运行产物（v0.3+，见 docs/ARCHITECTURE.md §8.5.1）
