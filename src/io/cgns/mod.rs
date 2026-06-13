@@ -16,7 +16,7 @@ pub use read::{
 };
 pub use unstructured::{CgnsUnstructuredLoadResult, load_cgns_unstructured_zone};
 pub use write::{
-    StructuredVertexSolution, VertexScalarFieldView, write_flow_cgns, write_multiblock_flow_cgns,
-    write_structured_vertex_solution_cgns,
+    StructuredVertexSolution, VertexScalarFieldView, write_flow_cgns, write_flow_cgns_unstructured,
+    write_multiblock_flow_cgns, write_structured_vertex_solution_cgns,
 };
 pub use zonebc::{CgnsPointRange, patch_from_cgns};

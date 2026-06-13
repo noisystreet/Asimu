@@ -202,4 +202,28 @@ unsafe extern "C" {
         field_values: *const *const f64,
         physical_time: f64,
     ) -> c_int;
+    pub fn asimu_cg_write_unstructured_flow(
+        filename: *const c_char,
+        basename: *const c_char,
+        zonename: *const c_char,
+        num_nodes: c_int,
+        num_cells: c_int,
+        points_x: *const f64,
+        points_y: *const f64,
+        points_z: *const f64,
+        section_count: c_int,
+        section_names: *const *const c_char,
+        element_types: *const c_int,
+        section_starts: *const c_int,
+        section_ends: *const c_int,
+        section_connectivity: *const *const CgSize,
+        rho: *const f64,
+        u: *const f64,
+        v: *const f64,
+        w: *const f64,
+        p: *const f64,
+        mach: *const f64,
+        temperature: *const f64,
+        physical_time: f64,
+    ) -> c_int;
 }

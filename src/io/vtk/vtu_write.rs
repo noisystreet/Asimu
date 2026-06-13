@@ -10,7 +10,7 @@ use base64::Engine;
 use crate::error::Result;
 use crate::field::ConservedFields;
 use crate::io::limits::validate_input_path;
-use crate::io::vertex_field::gather_cell_primitives;
+use crate::io::vertex_field::{gather_cell_primitives, gather_unstructured_cell_primitives};
 use crate::mesh::{StructuredMesh3d, UnstructuredMesh3d};
 use crate::physics::IdealGasEoS;
 
@@ -111,46 +111,6 @@ pub fn write_flow_vtu_unstructured(
     };
     let xml = format_flow_vtu_xml(npts, ncells, &scalars, &topo);
     std::fs::write(path, xml).map_err(crate::error::AsimuError::from)
-}
-
-type CellPrimitiveArrays = (
-    Vec<f64>,
-    Vec<f64>,
-    Vec<f64>,
-    Vec<f64>,
-    Vec<f64>,
-    Vec<f64>,
-    Vec<f64>,
-);
-
-fn gather_unstructured_cell_primitives(
-    fields: &ConservedFields,
-    eos: &IdealGasEoS,
-    min_pressure: f64,
-) -> Result<CellPrimitiveArrays> {
-    let n = fields.num_cells();
-    let mut rho = Vec::with_capacity(n);
-    let mut u = Vec::with_capacity(n);
-    let mut v = Vec::with_capacity(n);
-    let mut w = Vec::with_capacity(n);
-    let mut p = Vec::with_capacity(n);
-    let mut mach = Vec::with_capacity(n);
-    let mut temperature = Vec::with_capacity(n);
-    for cell in 0..n {
-        let prim = fields.primitive_at(cell, eos, min_pressure)?;
-        let speed2 = prim.velocity[0] * prim.velocity[0]
-            + prim.velocity[1] * prim.velocity[1]
-            + prim.velocity[2] * prim.velocity[2];
-        let a = (eos.gamma * prim.pressure / prim.density.max(1.0e-30)).sqrt();
-        rho.push(prim.density);
-        u.push(prim.velocity[0]);
-        v.push(prim.velocity[1]);
-        w.push(prim.velocity[2]);
-        p.push(prim.pressure);
-        mach.push(speed2.sqrt() / a.max(1.0e-30));
-        temperature.push(prim.pressure / (prim.density.max(1.0e-30) * eos.gas_constant));
-    }
-    Ok((rho, u, v, w, p, mach, temperature))
 }
 
 fn encode_points_block(mesh: &StructuredMesh3d) -> String {

@@ -158,6 +158,7 @@ let result = solver.run(&mesh)?;
 | `load_cgns_unstructured_zone(&Path, zone_index) -> Result<CgnsUnstructuredLoadResult>` | 读取 unstructured zone → `UnstructuredMesh3d` + `BoundarySet`（tet/hex/pyramid/prism；固定类型或 MIXED sections；FaceCenter ZoneBC） |
 | `load_cgns_all_zones(&Path) -> Result<CgnsMultiLoadResult>` | 读取全部 structured zone；case 解析会将多 zone CGNS 组装为 `MultiBlockStructured3d` |
 | `write_multiblock_flow_cgns(path, mesh, fields, eos, time, p_floor)` | 将多块结构化可压缩流场写为单个多 Zone CGNS 文件 |
+| `write_flow_cgns_unstructured(path, mesh, fields, eos, time, p_floor)` | 将非结构可压缩流场写为单 Zone CGNS（按单元类型分 section；场 @ CellCenter） |
 | `write_structured_vertex_solution_cgns(path, mesh, solution)` | 将单 Zone 结构化网格与任意 Vertex 标量字段写为 CGNS |
 | `export_cgns_zone_to_vts(input, zone, output) -> Result<CgnsLoadResult>` | CGNS zone → VTS |
 | `export_cgns_to_vtm(input, output) -> Result<CgnsMultiLoadResult>` | CGNS 全部 zone → VTM + 多个 VTS |

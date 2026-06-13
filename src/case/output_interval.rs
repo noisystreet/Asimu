@@ -39,7 +39,7 @@ pub fn maybe_write_compressible_structured_interval(
     Ok(written)
 }
 
-/// 非结构可压缩：间隔残差 + 流场 VTU。
+/// 非结构可压缩：间隔残差 + 流场 CGNS。
 pub fn maybe_write_compressible_unstructured_interval(
     case: &CaseSpec,
     mesh: &UnstructuredMesh3d,
@@ -64,14 +64,14 @@ pub fn maybe_write_compressible_unstructured_interval(
     let name = super::output_3d::flow_cgns_name_for_step(base, step.info.step);
     let cgns_path =
         crate::io::resolve_case_output_path(case.case_dir.as_deref(), &output.dir, &name)?;
-    super::compressible_unstructured_3d::write_unstructured_interval_vtu(
+    super::compressible_unstructured_3d::write_unstructured_interval_flow(
         case,
         mesh,
         step.fields,
         step.info.physical_time,
-        cgns_path.with_extension("vtu"),
+        cgns_path.clone(),
     )?;
-    written.push(cgns_path.with_extension("vtu"));
+    written.push(cgns_path);
     Ok(written)
 }
 

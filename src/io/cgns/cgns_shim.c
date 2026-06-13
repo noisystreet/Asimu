@@ -87,6 +87,93 @@ static int asimu_cg_write_zone_flow(
     return CG_OK;
 }
 
+static int asimu_cg_write_unstructured_zone_flow(
+    int fn,
+    int base,
+    const char *zonename,
+    int num_nodes,
+    int num_cells,
+    const double *points_x,
+    const double *points_y,
+    const double *points_z,
+    int section_count,
+    const char **section_names,
+    const int *element_types,
+    const int *section_starts,
+    const int *section_ends,
+    const cgsize_t **section_connectivity,
+    int field_count,
+    const char **field_names,
+    const double **field_values,
+    double physical_time
+) {
+    int zone = 0;
+    int sol = 0;
+    int coord = 0;
+    int field = 0;
+    cgsize_t isize[3];
+    char desc[64];
+    int err;
+
+    (void)num_cells;
+    isize[0] = (cgsize_t)num_nodes;
+    isize[1] = (cgsize_t)num_cells;
+    isize[2] = 0;
+    err = cg_zone_write(fn, base, zonename, isize, CGNS_ENUMV(Unstructured), &zone);
+    if (err != CG_OK) {
+        return err;
+    }
+
+    err = cg_coord_write(
+        fn, base, zone, CGNS_ENUMV(RealDouble), "CoordinateX", points_x, &coord);
+    if (err != CG_OK) {
+        return err;
+    }
+    err = cg_coord_write(
+        fn, base, zone, CGNS_ENUMV(RealDouble), "CoordinateY", points_y, &coord);
+    if (err != CG_OK) {
+        return err;
+    }
+    err = cg_coord_write(
+        fn, base, zone, CGNS_ENUMV(RealDouble), "CoordinateZ", points_z, &coord);
+    if (err != CG_OK) {
+        return err;
+    }
+
+    for (int s = 0; s < section_count; ++s) {
+        int section = 0;
+        err = cg_section_write(
+            fn, base, zone, section_names[s], (CGNS_ENUMT(ElementType_t))element_types[s],
+            (cgsize_t)section_starts[s], (cgsize_t)section_ends[s], 0, section_connectivity[s],
+            &section);
+        if (err != CG_OK) {
+            return err;
+        }
+    }
+
+    err = cg_sol_write(fn, base, zone, "FlowSolution", CGNS_ENUMV(CellCenter), &sol);
+    if (err != CG_OK) {
+        return err;
+    }
+
+    if (physical_time >= 0.0) {
+        snprintf(desc, sizeof(desc), "physical_time=%.16e", physical_time);
+        if (cg_goto(fn, base, "Zone_t", zone, "FlowSolution_t", sol, "end") == CG_OK) {
+            cg_descriptor_write("PhysicalTime", desc);
+        }
+    }
+
+    for (int i = 0; i < field_count; ++i) {
+        err = cg_field_write(
+            fn, base, zone, sol, CGNS_ENUMV(RealDouble), field_names[i], field_values[i], &field);
+        if (err != CG_OK) {
+            return err;
+        }
+    }
+
+    return CG_OK;
+}
+
 /* 写出结构化网格 + 顶点原始变量（ρ, u, v, w, p, Mach, T @ Vertex）。 */
 int asimu_cg_write_structured_flow(
     const char *filename,
@@ -119,6 +206,54 @@ int asimu_cg_write_structured_flow(
         err = asimu_cg_write_zone_flow(
             fn, base, zonename, nx, ny, nz, points_x, points_y, points_z, 7,
             (const char *[]){"Density", "VelocityX", "VelocityY", "VelocityZ", "Pressure", "MachNumber", "Temperature"},
+            (const double *[]){rho, u, v, w, p, mach, temperature}, physical_time);
+    }
+    if (err != CG_OK) {
+        cg_close(fn);
+        return err;
+    }
+    return cg_close(fn);
+}
+
+/* 写出非结构网格 + 单元中心原始变量（ρ, u, v, w, p, Mach, T @ CellCenter）。 */
+int asimu_cg_write_unstructured_flow(
+    const char *filename,
+    const char *basename,
+    const char *zonename,
+    int num_nodes,
+    int num_cells,
+    const double *points_x,
+    const double *points_y,
+    const double *points_z,
+    int section_count,
+    const char **section_names,
+    const int *element_types,
+    const int *section_starts,
+    const int *section_ends,
+    const cgsize_t **section_connectivity,
+    const double *rho,
+    const double *u,
+    const double *v,
+    const double *w,
+    const double *p,
+    const double *mach,
+    const double *temperature,
+    double physical_time
+) {
+    int fn = 0;
+    int base = 0;
+    int err = cg_open(filename, CG_MODE_WRITE, &fn);
+    if (err != CG_OK) {
+        return err;
+    }
+
+    err = cg_base_write(fn, basename, 3, 3, &base);
+    if (err == CG_OK) {
+        err = asimu_cg_write_unstructured_zone_flow(
+            fn, base, zonename, num_nodes, num_cells, points_x, points_y, points_z, section_count,
+            section_names, element_types, section_starts, section_ends, section_connectivity, 7,
+            (const char *[]){"Density", "VelocityX", "VelocityY", "VelocityZ", "Pressure",
+                             "MachNumber", "Temperature"},
             (const double *[]){rho, u, v, w, p, mach, temperature}, physical_time);
     }
     if (err != CG_OK) {

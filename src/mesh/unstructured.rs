@@ -66,6 +66,18 @@ impl CellKind {
             ))),
         }
     }
+
+    /// CGNS `ElementType_t`（与 `io::cgns::ffi` 常量一致）。
+    #[cfg(feature = "io-cgns")]
+    #[must_use]
+    pub const fn cgns_element_type(self) -> i32 {
+        match self {
+            Self::Tet => 10,
+            Self::Pyramid => 12,
+            Self::Prism => 14,
+            Self::Hex => 17,
+        }
+    }
 }
 
 /// 单个非结构单元（全局节点索引）。

@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use tracing::{info, info_span, warn};
+use tracing::{info, info_span};
 
 use crate::case::{CaseRunKind, CaseRunResult, validate};
 use crate::core::{ComputePrecision, Real, format_log_fixed4, format_log_sci4, log10_positive};
@@ -339,14 +339,14 @@ fn unstructured_equation_label(case: &CaseSpec) -> &'static str {
     }
 }
 
-pub(crate) fn write_unstructured_interval_vtu(
+pub(crate) fn write_unstructured_interval_flow(
     case: &CaseSpec,
     mesh: &UnstructuredMesh3d,
     fields: &ConservedFields,
     physical_time: Real,
     path: PathBuf,
 ) -> Result<()> {
-    write_unstructured_flow_vtu(case, mesh, fields, physical_time, path)
+    write_unstructured_flow_cgns(case, mesh, fields, physical_time, path)
 }
 
 fn write_unstructured_outputs(
@@ -363,16 +363,51 @@ fn write_unstructured_outputs(
         return Ok(written);
     };
     let cgns_path = resolve_case_output_path(case.case_dir.as_deref(), &output.dir, name)?;
-    let vtu_path = cgns_path.with_extension("vtu");
     let physical_time = history.last().map(|s| s.physical_time).unwrap_or(0.0);
-    write_unstructured_flow_vtu(case, mesh, fields, physical_time, vtu_path.clone())?;
-    warn!(
-        requested = %cgns_path.display(),
-        written = %vtu_path.display(),
-        "非结构 CGNS 流场写出尚未实现，已写出 VTU"
+    write_unstructured_flow_cgns(case, mesh, fields, physical_time, cgns_path.clone())?;
+    info!(
+        path = %cgns_path.display(),
+        cells = mesh.num_cells(),
+        t = %format_log_sci4(physical_time),
+        "已写出非结构流场 CGNS"
     );
-    written.push(vtu_path);
+    written.push(cgns_path.clone());
+    #[cfg(feature = "io-vtk")]
+    if output.solution_vtk {
+        let vtu_path = cgns_path.with_extension("vtu");
+        write_unstructured_flow_vtu(case, mesh, fields, physical_time, vtu_path.clone())?;
+        written.push(vtu_path);
+    }
     Ok(written)
+}
+
+fn write_unstructured_flow_cgns(
+    case: &CaseSpec,
+    mesh: &UnstructuredMesh3d,
+    fields: &ConservedFields,
+    physical_time: Real,
+    path: PathBuf,
+) -> Result<()> {
+    let (fields_out, eos_out, _time_out, p_floor) =
+        super::output_3d::prepare_dimensional_flow_output(case, fields, physical_time)?;
+    #[cfg(feature = "io-cgns")]
+    {
+        crate::io::write_flow_cgns_unstructured(
+            &path,
+            mesh,
+            &fields_out,
+            &eos_out,
+            physical_time,
+            p_floor,
+        )
+    }
+    #[cfg(not(feature = "io-cgns"))]
+    {
+        let _ = (mesh, fields_out, eos_out, p_floor, path);
+        Err(AsimuError::Config(
+            "非结构流场 CGNS 写出须启用 feature io-cgns".to_string(),
+        ))
+    }
 }
 
 fn write_unstructured_flow_vtu(

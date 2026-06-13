@@ -9,13 +9,13 @@ use std::path::Path;
 use crate::error::{AsimuError, Result};
 use crate::field::ConservedFields;
 use crate::io::limits::{io_error, validate_input_path};
-use crate::io::vertex_field::gather_vertex_primitives;
-use crate::mesh::{MultiBlockStructuredMesh3d, StructuredMesh3d};
+use crate::io::vertex_field::{gather_unstructured_cell_primitives, gather_vertex_primitives};
+use crate::mesh::{CellKind, MultiBlockStructuredMesh3d, StructuredMesh3d, UnstructuredMesh3d};
 use crate::physics::IdealGasEoS;
 
 use super::ffi::{
-    CG_OK, asimu_cg_write_multiblock_structured_flow, asimu_cg_write_structured_flow,
-    asimu_cg_write_structured_solution_fields, cg_get_error,
+    CG_OK, CgSize, asimu_cg_write_multiblock_structured_flow, asimu_cg_write_structured_flow,
+    asimu_cg_write_structured_solution_fields, asimu_cg_write_unstructured_flow, cg_get_error,
 };
 use super::read::CGNS_LOCK;
 
@@ -79,6 +79,102 @@ pub fn write_flow_cgns(
             arrays.p.as_ptr(),
             arrays.mach.as_ptr(),
             arrays.temperature.as_ptr(),
+            physical_time,
+        )
+    };
+    check_cg(err)
+}
+
+/// 将非结构 3D 守恒场写出为 CGNS（坐标 @ Vertex；ρ/u/v/w/p/Mach/T @ CellCenter；按单元类型分 section）。
+pub fn write_flow_cgns_unstructured(
+    path: &Path,
+    mesh: &UnstructuredMesh3d,
+    fields: &ConservedFields,
+    eos: &IdealGasEoS,
+    physical_time: f64,
+    min_pressure: f64,
+) -> Result<()> {
+    validate_input_path(path)?;
+    create_output_parent(path)?;
+    if fields.num_cells() != mesh.num_cells() {
+        return Err(AsimuError::Field(format!(
+            "场单元数 {} 与网格 {} 不一致",
+            fields.num_cells(),
+            mesh.num_cells()
+        )));
+    }
+
+    let (rho, u, v, w, p, mach, temperature) =
+        gather_unstructured_cell_primitives(fields, eos, min_pressure)?;
+    validate_cell_center_flow_len(mesh, &rho, &u, &p, &mach, &temperature)?;
+
+    let num_nodes = mesh.num_nodes();
+    let num_cells = mesh.num_cells();
+    let mut points_x = Vec::with_capacity(num_nodes);
+    let mut points_y = Vec::with_capacity(num_nodes);
+    let mut points_z = Vec::with_capacity(num_nodes);
+    for point in mesh.points() {
+        points_x.push(point[0]);
+        points_y.push(point[1]);
+        points_z.push(point[2]);
+    }
+
+    let sections = build_fixed_element_sections(mesh);
+    let section_names = sections
+        .iter()
+        .map(|section| {
+            CString::new(section.name.as_str()).map_err(|_| {
+                io_error(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("CGNS section 名含内嵌 NUL 字节: {}", section.name),
+                )
+            })
+        })
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let name_ptrs = section_names
+        .iter()
+        .map(|name| name.as_ptr())
+        .collect::<Vec<*const c_char>>();
+    let element_types: Vec<i32> = sections
+        .iter()
+        .map(|section| section.element_type)
+        .collect();
+    let section_starts: Vec<i32> = sections.iter().map(|section| section.start).collect();
+    let section_ends: Vec<i32> = sections.iter().map(|section| section.end).collect();
+    let connectivity_ptrs: Vec<*const CgSize> = sections
+        .iter()
+        .map(|section| section.connectivity.as_ptr())
+        .collect();
+
+    let cpath = CString::new(path.as_os_str().as_encoded_bytes())
+        .map_err(|_| io_error(std::io::ErrorKind::InvalidInput, "CGNS 路径含内嵌 NUL 字节"))?;
+    let base = CString::new("Base").expect("base");
+    let zone = CString::new(mesh.name()).unwrap_or_else(|_| CString::new("Zone").expect("zone"));
+
+    let _guard = CGNS_LOCK.lock().expect("CGNS lock");
+    let err = unsafe {
+        asimu_cg_write_unstructured_flow(
+            cpath.as_ptr(),
+            base.as_ptr(),
+            zone.as_ptr(),
+            i32_from_usize(num_nodes, "num_nodes")?,
+            i32_from_usize(num_cells, "num_cells")?,
+            points_x.as_ptr(),
+            points_y.as_ptr(),
+            points_z.as_ptr(),
+            i32_from_usize(sections.len(), "section_count")?,
+            name_ptrs.as_ptr(),
+            element_types.as_ptr(),
+            section_starts.as_ptr(),
+            section_ends.as_ptr(),
+            connectivity_ptrs.as_ptr(),
+            rho.as_ptr(),
+            u.as_ptr(),
+            v.as_ptr(),
+            w.as_ptr(),
+            p.as_ptr(),
+            mach.as_ptr(),
+            temperature.as_ptr(),
             physical_time,
         )
     };
@@ -281,6 +377,80 @@ fn prepare_vertex_flow_arrays(
     })
 }
 
+struct UnstructuredCgnsSection {
+    name: String,
+    element_type: i32,
+    start: i32,
+    end: i32,
+    connectivity: Vec<CgSize>,
+}
+
+fn build_fixed_element_sections(mesh: &UnstructuredMesh3d) -> Vec<UnstructuredCgnsSection> {
+    let mut sections: Vec<UnstructuredCgnsSection> = Vec::new();
+    for (index, cell) in mesh.cells().iter().enumerate() {
+        let element_id = i32::try_from(index + 1).expect("CGNS element id");
+        let mut nodes = Vec::with_capacity(cell.kind.node_count());
+        for node in &cell.nodes {
+            nodes.push(i32::try_from(node.index() + 1).expect("CGNS 节点索引") as CgSize);
+        }
+        if let Some(last) = sections.last_mut()
+            && last.element_type == cell.kind.cgns_element_type()
+            && last.end + 1 == element_id
+        {
+            last.end = element_id;
+            last.connectivity.extend_from_slice(&nodes);
+            continue;
+        }
+        sections.push(UnstructuredCgnsSection {
+            name: format!("{}_{element_id}", cell_kind_section_prefix(cell.kind)),
+            element_type: cell.kind.cgns_element_type(),
+            start: element_id,
+            end: element_id,
+            connectivity: nodes,
+        });
+    }
+    sections
+}
+
+fn cell_kind_section_prefix(kind: CellKind) -> &'static str {
+    match kind {
+        CellKind::Tet => "Tet",
+        CellKind::Hex => "Hex",
+        CellKind::Pyramid => "Pyramid",
+        CellKind::Prism => "Prism",
+    }
+}
+
+fn i32_from_usize(value: usize, label: &str) -> Result<i32> {
+    i32::try_from(value)
+        .map_err(|_| AsimuError::Mesh(format!("CGNS {label}={value} 超出 i32 范围")))
+}
+
+fn validate_cell_center_flow_len(
+    mesh: &UnstructuredMesh3d,
+    rho: &[f64],
+    u: &[f64],
+    p: &[f64],
+    mach: &[f64],
+    temperature: &[f64],
+) -> Result<()> {
+    let ncells = mesh.num_cells();
+    for (name, data) in [
+        ("Density", rho.len()),
+        ("VelocityX", u.len()),
+        ("Pressure", p.len()),
+        ("MachNumber", mach.len()),
+        ("Temperature", temperature.len()),
+    ] {
+        if data != ncells {
+            return Err(AsimuError::Field(format!(
+                "CGNS CellCenter 场 {name} 长度 {data} 与网格单元数 {ncells} 不一致"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn validate_vertex_flow_len(
     mesh: &StructuredMesh3d,
     rho: &[f64],
@@ -448,6 +618,77 @@ with h5py.File(p, "r") as f:
             found["cx"] += 1
     f.visititems(visit)
 assert found == {{"rho": 2, "cx": 2}}, found
+print("ok")
+"#,
+            path = path.display().to_string()
+        );
+        let status = Command::new("python3")
+            .arg("-c")
+            .arg(&script)
+            .status()
+            .expect("python");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(status.success(), "python verify failed");
+    }
+
+    #[test]
+    fn unstructured_flow_cgns_writes_cell_center_grid_location() {
+        use crate::mesh::{CellKind, UnstructuredCell, UnstructuredMesh3d};
+
+        let mesh = UnstructuredMesh3d::new(
+            "mixed",
+            vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [1.0, 1.0, 0.0],
+                [1.0, 0.0, 1.0],
+                [0.0, 1.0, 1.0],
+            ],
+            vec![
+                UnstructuredCell::new(CellKind::Tet, vec![0, 1, 2, 3]).expect("tet"),
+                UnstructuredCell::new(CellKind::Prism, vec![1, 4, 2, 5, 6, 3]).expect("wedge"),
+            ],
+        )
+        .expect("mesh");
+        let eos = IdealGasEoS::AIR_STANDARD;
+        let fields =
+            ConservedFields::from_freestream(mesh.num_cells(), &eos, &FreestreamParams::default())
+                .expect("fields");
+        let dir = std::env::temp_dir().join("asimu_cgns_unstructured_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join("flow.cgns");
+        write_flow_cgns_unstructured(&path, &mesh, &fields, &eos, 0.0, 1.0e-6).expect("write");
+
+        let loaded =
+            super::super::unstructured::load_cgns_unstructured_zone(&path, 1).expect("load");
+        assert_eq!(loaded.mesh.num_cells(), 2);
+        assert_eq!(loaded.mesh.num_nodes(), 7);
+
+        let script = format!(
+            r#"
+import h5py
+p = {path:?}
+with h5py.File(p, "r") as f:
+    found = {{}}
+    def visit(name, obj):
+        if not isinstance(obj, h5py.Dataset):
+            return
+        if name.endswith("FlowSolution/GridLocation/ data"):
+            found["gl"] = name
+        elif name.endswith("FlowSolution/Density/ data"):
+            found["rho"] = name
+        elif name.endswith("GridCoordinates/CoordinateX/ data"):
+            found["cx"] = name
+    f.visititems(visit)
+    assert "rho" in found and "cx" in found, found
+    assert f[found["rho"]].shape[0] == 2, f[found["rho"]].shape
+    assert f[found["cx"]].shape[0] == 7, f[found["cx"]].shape
+    if "gl" in found:
+        gl = bytes(f[found["gl"]][()]).decode("ascii").replace("\x00", "").strip()
+        assert gl == "CellCenter", gl
 print("ok")
 "#,
             path = path.display().to_string()

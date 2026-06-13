@@ -66,7 +66,7 @@ pub use cgns::{
     Cgns1to1Connection, CgnsLoadResult, CgnsMultiLoadResult, CgnsUnstructuredLoadResult,
     CgnsZoneInfo, StructuredVertexSolution, VertexScalarFieldView, export_cgns_to_vts,
     export_cgns_zone_to_vts, list_cgns_zones, load_cgns_all_zones, load_cgns_unstructured_zone,
-    load_cgns_zone, write_flow_cgns, write_multiblock_flow_cgns,
+    load_cgns_zone, write_flow_cgns, write_flow_cgns_unstructured, write_multiblock_flow_cgns,
     write_structured_vertex_solution_cgns,
 };
 

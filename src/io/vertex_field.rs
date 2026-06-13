@@ -65,6 +65,34 @@ pub fn gather_cell_primitives(
     Ok((rho_c, u_c, v_c, w_c, p_c, mach_c, t_c))
 }
 
+/// 非结构单元中心流场（ρ, u, v, w, p, Mach, T），长度 = `fields.num_cells()`。
+#[cfg(any(feature = "io-vtk", feature = "io-cgns"))]
+pub fn gather_unstructured_cell_primitives(
+    fields: &ConservedFields,
+    eos: &IdealGasEoS,
+    min_pressure: f64,
+) -> Result<CellPrimitiveArrays> {
+    let n = fields.num_cells();
+    let mut rho_c = Vec::with_capacity(n);
+    let mut u_c = Vec::with_capacity(n);
+    let mut v_c = Vec::with_capacity(n);
+    let mut w_c = Vec::with_capacity(n);
+    let mut p_c = Vec::with_capacity(n);
+    let mut mach_c = Vec::with_capacity(n);
+    let mut t_c = Vec::with_capacity(n);
+    for cell in 0..n {
+        let prim = fields.primitive_at(cell, eos, min_pressure)?;
+        rho_c.push(prim.density);
+        u_c.push(prim.velocity[0]);
+        v_c.push(prim.velocity[1]);
+        w_c.push(prim.velocity[2]);
+        p_c.push(prim.pressure);
+        mach_c.push(mach_from_primitive(&prim, eos));
+        t_c.push(temperature_from_primitive(&prim, eos));
+    }
+    Ok((rho_c, u_c, v_c, w_c, p_c, mach_c, t_c))
+}
+
 #[cfg(feature = "io-cgns")]
 pub fn gather_vertex_primitives(
     mesh: &StructuredMesh3d,
