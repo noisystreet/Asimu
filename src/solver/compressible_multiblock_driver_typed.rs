@@ -40,7 +40,9 @@ struct BlockAdvanceEnvTyped<'a> {
 }
 
 /// typed 多块 structured 同步推进（P2 仅支持无 1-to-1 接口）。
-pub fn run_multiblock_structured_typed_with_observer<T: ComputeFloat>(
+pub fn run_multiblock_structured_typed_with_observer<
+    T: ComputeFloat + crate::field::LusgsDiagonalUpdateBackend,
+>(
     input: MultiblockStructuredDriverInput<'_>,
     mut observe_step: impl FnMut(CompressibleMultiblockStepView<'_>) -> Result<()>,
 ) -> Result<(Vec<CompressibleStepInfo>, Vec<ConservedFields>)> {
@@ -74,7 +76,7 @@ pub fn run_multiblock_structured_typed_with_observer<T: ComputeFloat>(
     Ok((history, fields))
 }
 
-fn build_block_run_states_typed<T: ComputeFloat>(
+fn build_block_run_states_typed<T: ComputeFloat + crate::field::LusgsDiagonalUpdateBackend>(
     blocks: &[StructuredBlock3d],
     interface_patches: &[Vec<BoundaryPatch>],
     time_config: RungeKutta4Config,
@@ -111,7 +113,7 @@ fn build_block_run_states_typed<T: ComputeFloat>(
     Ok(states)
 }
 
-fn advance_block_history_typed<T: ComputeFloat>(
+fn advance_block_history_typed<T: ComputeFloat + crate::field::LusgsDiagonalUpdateBackend>(
     env: &BlockAdvanceEnvTyped<'_>,
     states: &mut [BlockRunStateTyped<T>],
     observe_step: &mut impl FnMut(CompressibleMultiblockStepView<'_>) -> Result<()>,
@@ -141,7 +143,7 @@ fn advance_block_history_typed<T: ComputeFloat>(
     Ok(history)
 }
 
-fn advance_block_step_typed<T: ComputeFloat>(
+fn advance_block_step_typed<T: ComputeFloat + crate::field::LusgsDiagonalUpdateBackend>(
     env: &BlockAdvanceEnvTyped<'_>,
     states: &mut [BlockRunStateTyped<T>],
 ) -> Result<CompressibleStepInfo> {

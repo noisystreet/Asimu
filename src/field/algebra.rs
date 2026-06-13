@@ -182,7 +182,97 @@ impl<T: ComputeFloat> ConservedFieldsT<T> {
         }
         Ok(())
     }
+}
 
+/// LU-SGS 对角更新精度后端（仅 crate 内为 `f32` / `f64` 实现）。
+pub trait LusgsDiagonalUpdateBackend: ComputeFloat {
+    #[allow(clippy::too_many_arguments)]
+    fn assign_lusgs_diagonal_update_impl(
+        out: &mut ConservedFieldsT<Self>,
+        base: &ConservedFieldsT<Self>,
+        residual: &ConservedResidualT<Self>,
+        sigma: &[Real],
+        dt: &[Real],
+        omega: Real,
+        gamma: Real,
+        min_pressure: Real,
+    ) -> Result<()>;
+}
+
+impl LusgsDiagonalUpdateBackend for f64 {
+    fn assign_lusgs_diagonal_update_impl(
+        out: &mut ConservedFieldsT<Self>,
+        base: &ConservedFieldsT<Self>,
+        residual: &ConservedResidualT<Self>,
+        sigma: &[Real],
+        dt: &[Real],
+        omega: Real,
+        gamma: Real,
+        min_pressure: Real,
+    ) -> Result<()> {
+        validate_lusgs_diagonal_update_args(out.num_cells(), base, residual, sigma, dt, omega)?;
+        let scale = prepare_lusgs_diagonal_scales(base.num_cells(), sigma, dt, omega)?;
+        crate::exec::cpu::assign_lusgs_diagonal_update(crate::exec::cpu::LusgsDiagonalUpdate {
+            out: crate::exec::cpu::ConservedSoAMut {
+                rho: out.density.values_mut(),
+                mx: out.momentum_x.values_mut(),
+                my: out.momentum_y.values_mut(),
+                mz: out.momentum_z.values_mut(),
+                energy: out.total_energy.values_mut(),
+            },
+            base: crate::exec::cpu::ConservedSoA {
+                rho: base.density.values(),
+                mx: base.momentum_x.values(),
+                my: base.momentum_y.values(),
+                mz: base.momentum_z.values(),
+                energy: base.total_energy.values(),
+            },
+            residual: crate::exec::cpu::ConservedSoA {
+                rho: residual.density.values(),
+                mx: residual.momentum_x.values(),
+                my: residual.momentum_y.values(),
+                mz: residual.momentum_z.values(),
+                energy: residual.total_energy.values(),
+            },
+            scale: &scale,
+        });
+        let _ = (gamma, min_pressure);
+        Ok(())
+    }
+}
+
+impl LusgsDiagonalUpdateBackend for f32 {
+    fn assign_lusgs_diagonal_update_impl(
+        out: &mut ConservedFieldsT<Self>,
+        base: &ConservedFieldsT<Self>,
+        residual: &ConservedResidualT<Self>,
+        sigma: &[Real],
+        dt: &[Real],
+        omega: Real,
+        gamma: Real,
+        min_pressure: Real,
+    ) -> Result<()> {
+        validate_lusgs_diagonal_update_args(out.num_cells(), base, residual, sigma, dt, omega)?;
+        let n = base.num_cells();
+        for (i, &dt_i) in dt.iter().enumerate().take(n) {
+            let scale = omega * dt_i / (1.0 + dt_i * sigma[i]);
+            out.density.values_mut()[i] =
+                base.density.values()[i].add_mul_real(residual.density.values()[i], scale);
+            out.momentum_x.values_mut()[i] =
+                base.momentum_x.values()[i].add_mul_real(residual.momentum_x.values()[i], scale);
+            out.momentum_y.values_mut()[i] =
+                base.momentum_y.values()[i].add_mul_real(residual.momentum_y.values()[i], scale);
+            out.momentum_z.values_mut()[i] =
+                base.momentum_z.values()[i].add_mul_real(residual.momentum_z.values()[i], scale);
+            out.total_energy.values_mut()[i] = base.total_energy.values()[i]
+                .add_mul_real(residual.total_energy.values()[i], scale);
+        }
+        let _ = (gamma, min_pressure);
+        Ok(())
+    }
+}
+
+impl<T: ComputeFloat + LusgsDiagonalUpdateBackend> ConservedFieldsT<T> {
     /// 对角 LU-SGS：`self ← base + ω·Δt_i·R / (1 + Δt_i·σ_i)`。
     #[allow(clippy::too_many_arguments)]
     pub fn assign_lusgs_diagonal_update(
@@ -195,39 +285,58 @@ impl<T: ComputeFloat> ConservedFieldsT<T> {
         gamma: Real,
         min_pressure: Real,
     ) -> Result<()> {
-        ensure_same_size(self.num_cells(), base.num_cells())?;
-        ensure_residual_size(base.num_cells(), residual.num_cells())?;
-        ensure_dt_size(base.num_cells(), dt.len())?;
-        if sigma.len() != base.num_cells() {
-            return Err(AsimuError::Field(
-                "lu_sgs: sigma 与场单元数不一致".to_string(),
-            ));
-        }
-        if omega <= 0.0 {
-            return Err(AsimuError::Field("lu_sgs: omega 须为正".to_string()));
-        }
-        let n = base.num_cells();
-        for (i, &dt_i) in dt.iter().enumerate().take(n) {
-            if dt_i <= 0.0 {
-                return Err(AsimuError::Field(format!("lu_sgs: 单元 {i} 的 Δt 须为正")));
-            }
-        }
-        for (i, &dt_i) in dt.iter().enumerate().take(n) {
-            let scale = omega * dt_i / (1.0 + dt_i * sigma[i]);
-            self.density.values_mut()[i] =
-                base.density.values()[i].add_mul_real(residual.density.values()[i], scale);
-            self.momentum_x.values_mut()[i] =
-                base.momentum_x.values()[i].add_mul_real(residual.momentum_x.values()[i], scale);
-            self.momentum_y.values_mut()[i] =
-                base.momentum_y.values()[i].add_mul_real(residual.momentum_y.values()[i], scale);
-            self.momentum_z.values_mut()[i] =
-                base.momentum_z.values()[i].add_mul_real(residual.momentum_z.values()[i], scale);
-            self.total_energy.values_mut()[i] = base.total_energy.values()[i]
-                .add_mul_real(residual.total_energy.values()[i], scale);
-        }
-        let _ = (gamma, min_pressure);
-        Ok(())
+        T::assign_lusgs_diagonal_update_impl(
+            self,
+            base,
+            residual,
+            sigma,
+            dt,
+            omega,
+            gamma,
+            min_pressure,
+        )
     }
+}
+
+fn validate_lusgs_diagonal_update_args<T: ComputeFloat>(
+    out_cells: usize,
+    base: &ConservedFieldsT<T>,
+    residual: &ConservedResidualT<T>,
+    sigma: &[Real],
+    dt: &[Real],
+    omega: Real,
+) -> Result<()> {
+    ensure_same_size(out_cells, base.num_cells())?;
+    ensure_residual_size(base.num_cells(), residual.num_cells())?;
+    ensure_dt_size(base.num_cells(), dt.len())?;
+    if sigma.len() != base.num_cells() {
+        return Err(AsimuError::Field(
+            "lu_sgs: sigma 与场单元数不一致".to_string(),
+        ));
+    }
+    if omega <= 0.0 {
+        return Err(AsimuError::Field("lu_sgs: omega 须为正".to_string()));
+    }
+    let n = base.num_cells();
+    for (i, &dt_i) in dt.iter().enumerate().take(n) {
+        if dt_i <= 0.0 {
+            return Err(AsimuError::Field(format!("lu_sgs: 单元 {i} 的 Δt 须为正")));
+        }
+    }
+    Ok(())
+}
+
+fn prepare_lusgs_diagonal_scales(
+    n: usize,
+    sigma: &[Real],
+    dt: &[Real],
+    omega: Real,
+) -> Result<Vec<Real>> {
+    let mut scale = vec![0.0; n];
+    for (i, &dt_i) in dt.iter().enumerate().take(n) {
+        scale[i] = omega * dt_i / (1.0 + dt_i * sigma[i]);
+    }
+    Ok(scale)
 }
 
 impl<T: ComputeFloat> ConservedResidualT<T> {
@@ -514,5 +623,68 @@ mod tests {
         .expect("out");
         out.assign_axpy(&base, &rhs, 0.5).expect("axpy");
         assert!((out.density.values()[0].to_real() - 3.0).abs() < 1.0e-5);
+    }
+
+    #[test]
+    fn f64_lusgs_diagonal_update_matches_reference() {
+        let n = 5;
+        let base = ConservedFields::uniform(
+            n,
+            crate::physics::ConservedState {
+                density: 1.0,
+                momentum: [0.1, 0.0, 0.0],
+                total_energy: 2.5,
+            },
+        )
+        .expect("base");
+        let mut residual = ConservedResidual::zeros(n).expect("residual");
+        residual.density.values_mut()[2] = 0.5;
+        residual.momentum_x.values_mut()[2] = 0.2;
+        let sigma = vec![10.0; n];
+        let dt = vec![0.01; n];
+        let scale = 1.0 * dt[2] / (1.0 + dt[2] * sigma[2]);
+        let mut out = base.clone();
+        out.assign_lusgs_diagonal_update(&base, &residual, &sigma, &dt, 1.0, 1.4, 1.0e-6)
+            .expect("update");
+        assert!(approx_eq(
+            out.density.values()[2],
+            base.density.values()[2] + scale * residual.density.values()[2],
+            1.0e-12,
+        ));
+        assert!(approx_eq(
+            out.momentum_x.values()[2],
+            base.momentum_x.values()[2] + scale * residual.momentum_x.values()[2],
+            1.0e-12,
+        ));
+        assert!(approx_eq(
+            out.density.values()[0],
+            base.density.values()[0],
+            1.0e-12
+        ));
+    }
+
+    #[test]
+    fn f32_lusgs_diagonal_update_matches_reference() {
+        let n = 3;
+        let base = ConservedFieldsT::<f32>::uniform(
+            n,
+            crate::physics::ConservedState {
+                density: 1.0,
+                momentum: [0.1, 0.0, 0.0],
+                total_energy: 2.5,
+            },
+        )
+        .expect("base");
+        let mut residual = ConservedResidualT::<f32>::zeros(n).expect("residual");
+        residual.density.values_mut()[1] = f32::from_real(0.4);
+        let sigma = vec![8.0; n];
+        let dt = vec![0.02; n];
+        let scale = dt[1] / (1.0 + dt[1] * sigma[1]);
+        let mut out = base.clone();
+        out.assign_lusgs_diagonal_update(&base, &residual, &sigma, &dt, 1.0, 1.4, 1.0e-6)
+            .expect("update");
+        let expected =
+            base.density.values()[1].to_real() + scale * residual.density.values()[1].to_real();
+        assert!((out.density.values()[1].to_real() - expected).abs() < 1.0e-5);
     }
 }

@@ -63,7 +63,9 @@ struct UnstructuredRunEnvTyped<'a> {
 }
 
 /// typed 非结构同步推进；结束时将场转为 `f64` 供输出。
-pub fn run_unstructured_typed_with_observer<T: ComputeFloat>(
+pub fn run_unstructured_typed_with_observer<
+    T: ComputeFloat + crate::field::LusgsDiagonalUpdateBackend,
+>(
     config: &UnstructuredDriverConfig<'_>,
     fields: &mut ConservedFieldsT<T>,
     mut observe_step: impl FnMut(CompressibleUnstructuredStepView<'_>) -> Result<()>,
@@ -149,7 +151,7 @@ pub fn run_unstructured_typed_with_observer<T: ComputeFloat>(
     Ok((history, fields.cast_real()?))
 }
 
-fn advance_unstructured_step_typed<T: ComputeFloat>(
+fn advance_unstructured_step_typed<T: ComputeFloat + crate::field::LusgsDiagonalUpdateBackend>(
     env: &mut UnstructuredRunEnvTyped<'_>,
     fields: &mut ConservedFieldsT<T>,
     work: &mut UnstructuredStepWorkTyped<T>,
@@ -213,7 +215,7 @@ fn advance_unstructured_step_typed<T: ComputeFloat>(
     })
 }
 
-fn advance_unstructured_lusgs_typed<T: ComputeFloat>(
+fn advance_unstructured_lusgs_typed<T: ComputeFloat + crate::field::LusgsDiagonalUpdateBackend>(
     env: &UnstructuredRunEnvTyped<'_>,
     fields: &mut ConservedFieldsT<T>,
     work: &mut UnstructuredStepWorkTyped<T>,

@@ -17,6 +17,7 @@ use crate::error::Result;
 use crate::mesh::StructuredMesh1d;
 use crate::physics::IdealGasEoS;
 
+pub use algebra::LusgsDiagonalUpdateBackend;
 pub use conserved::{
     ConservedFields, ConservedFieldsT, clamp_conserved_positivity, positivity_pressure_floor,
     primitive_from_conserved, primitive_from_conserved_relaxed,

@@ -58,7 +58,7 @@ impl CompressibleEulerSolver {
     }
 
     /// typed 3D 时间推进（显式 rk4/euler；隐式 lu_sgs/gmres）。
-    pub fn advance_step_3d_typed<T: ComputeFloat>(
+    pub fn advance_step_3d_typed<T: ComputeFloat + crate::field::LusgsDiagonalUpdateBackend>(
         &self,
         ctx: &mut CompressibleAdvanceContext3dTyped<'_, T>,
         fields: &mut ConservedFieldsT<T>,
@@ -167,7 +167,7 @@ impl CompressibleEulerSolver {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn advance_lusgs_step_3d_typed<T: ComputeFloat>(
+    fn advance_lusgs_step_3d_typed<T: ComputeFloat + crate::field::LusgsDiagonalUpdateBackend>(
         &self,
         ctx: &mut CompressibleAdvanceContext3dTyped<'_, T>,
         fields: &mut ConservedFieldsT<T>,

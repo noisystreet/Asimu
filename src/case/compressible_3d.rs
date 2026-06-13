@@ -138,7 +138,9 @@ fn run_compressible_3d(
     ))
 }
 
-fn run_compressible_3d_typed<T: crate::core::ComputeFloat>(
+fn run_compressible_3d_typed<
+    T: crate::core::ComputeFloat + crate::field::LusgsDiagonalUpdateBackend,
+>(
     case: &CaseSpec,
     mesh: &MultiBlockStructuredMesh3d,
 ) -> Result<CaseRunResult> {
