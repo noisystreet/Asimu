@@ -5,10 +5,11 @@ use crate::core::ComputeFloat;
 use crate::core::Real;
 use crate::discretization::residual::InviscidAssemblyUnstructuredTypedParams;
 use crate::discretization::{
-    BoundaryGhostBuffer, GradientFields, InviscidFluxConfig, UnstructuredSolverMeshCache,
-    ViscousAssemblyUnstructuredScratch, ViscousAssemblyUnstructuredTypedInput,
-    assemble_inviscid_residual_unstructured_typed,
+    BoundaryGhostBuffer, GradientFields, InviscidFluxConfig, ReconstructionKind,
+    UnstructuredGradientLsqInput, UnstructuredSolverMeshCache, ViscousAssemblyUnstructuredScratch,
+    ViscousAssemblyUnstructuredTypedInput, assemble_inviscid_residual_unstructured_typed,
     compute_gradients_and_assemble_viscous_unstructured_typed,
+    compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq,
 };
 use crate::error::Result;
 use crate::field::{ConservedFieldsT, ConservedResidualT, PrimitiveFields, PrimitiveFieldsT};
@@ -74,6 +75,27 @@ impl<T: ComputeFloat> EvaluateRhsUnstructuredTyped<'_, T> {
         fields: &ConservedFieldsT<T>,
         residual: &mut ConservedResidualT<T>,
     ) -> Result<()> {
+        if self.inviscid.reconstruction == ReconstructionKind::Muscl {
+            let grad_input = UnstructuredGradientLsqInput {
+                mesh: self.mesh,
+                mesh_cache: self.mesh_cache,
+                primitives: self.spectral_primitives,
+                eos: self.eos,
+                ghosts: self.ghosts,
+                min_pressure: self.min_pressure,
+                viscous: self.viscous,
+            };
+            compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq(
+                grad_input,
+                self.gradient_scratch,
+                &mut self.viscous_scratch.gradient,
+                self.exec,
+            )?;
+        }
+        let gradients = match self.inviscid.reconstruction {
+            ReconstructionKind::Muscl => Some(&*self.gradient_scratch),
+            ReconstructionKind::FirstOrder => None,
+        };
         let assembly = InviscidAssemblyUnstructuredTypedParams {
             mesh: self.mesh,
             eos: self.eos,
@@ -81,8 +103,11 @@ impl<T: ComputeFloat> EvaluateRhsUnstructuredTyped<'_, T> {
             boundaries: self.patches,
             ghosts: self.ghosts,
             primitives: self.primitives,
+            spectral_primitives: self.spectral_primitives,
             mesh_cache: self.mesh_cache,
+            gradients,
             min_pressure: self.min_pressure,
+            exec: self.exec,
         };
         {
             let _span = info_span!("assemble_unstructured_inviscid_residual_typed").entered();

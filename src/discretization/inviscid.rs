@@ -2,8 +2,9 @@
 //!
 //! 理论：[`docs/theory/inviscid_flux.md`](../../docs/theory/inviscid_flux.md) §2
 
-use crate::core::{Real, Vector3};
+use crate::core::{ComputeFloat, Real, Vector3};
 use crate::field::ConservedResidual;
+use crate::field::ConservedResidualT;
 use crate::physics::{ConservedState, PrimitiveState};
 
 /// 面法向无粘通量（质量、动量、能量）。
@@ -67,6 +68,57 @@ pub(crate) fn scatter_fused_interior_inviscid_face(
     residual.my[neighbor] += neighbor_scale * flux.momentum[1];
     residual.mz[neighbor] += neighbor_scale * flux.momentum[2];
     residual.energy[neighbor] += neighbor_scale * flux.energy;
+}
+
+/// 将内面无粘通量 scatter 到 typed 残差（通量/scale 仍为 `f64`）。
+#[inline(always)]
+pub(crate) fn scatter_fused_interior_inviscid_face_typed<T: ComputeFloat>(
+    residual: &mut ConservedResidualT<T>,
+    geom: &InteriorInviscidScatterGeom,
+    flux: &InviscidFlux,
+) {
+    let owner = geom.owner;
+    let neighbor = geom.neighbor;
+    residual.density.values_mut()[owner] =
+        residual.density.values()[owner].add_mul_real(T::from_real(flux.mass), geom.owner_scale);
+    residual.momentum_x.values_mut()[owner] = residual.momentum_x.values()[owner]
+        .add_mul_real(T::from_real(flux.momentum[0]), geom.owner_scale);
+    residual.momentum_y.values_mut()[owner] = residual.momentum_y.values()[owner]
+        .add_mul_real(T::from_real(flux.momentum[1]), geom.owner_scale);
+    residual.momentum_z.values_mut()[owner] = residual.momentum_z.values()[owner]
+        .add_mul_real(T::from_real(flux.momentum[2]), geom.owner_scale);
+    residual.total_energy.values_mut()[owner] = residual.total_energy.values()[owner]
+        .add_mul_real(T::from_real(flux.energy), geom.owner_scale);
+    residual.density.values_mut()[neighbor] = residual.density.values()[neighbor]
+        .add_mul_real(T::from_real(flux.mass), geom.neighbor_scale);
+    residual.momentum_x.values_mut()[neighbor] = residual.momentum_x.values()[neighbor]
+        .add_mul_real(T::from_real(flux.momentum[0]), geom.neighbor_scale);
+    residual.momentum_y.values_mut()[neighbor] = residual.momentum_y.values()[neighbor]
+        .add_mul_real(T::from_real(flux.momentum[1]), geom.neighbor_scale);
+    residual.momentum_z.values_mut()[neighbor] = residual.momentum_z.values()[neighbor]
+        .add_mul_real(T::from_real(flux.momentum[2]), geom.neighbor_scale);
+    residual.total_energy.values_mut()[neighbor] = residual.total_energy.values()[neighbor]
+        .add_mul_real(T::from_real(flux.energy), geom.neighbor_scale);
+}
+
+/// 边界面无粘 scatter（typed 残差）。
+#[inline(always)]
+pub(crate) fn scatter_fused_boundary_inviscid_face_typed<T: ComputeFloat>(
+    residual: &mut ConservedResidualT<T>,
+    owner: usize,
+    owner_scale: Real,
+    flux: &InviscidFlux,
+) {
+    residual.density.values_mut()[owner] =
+        residual.density.values()[owner].add_mul_real(T::from_real(flux.mass), owner_scale);
+    residual.momentum_x.values_mut()[owner] = residual.momentum_x.values()[owner]
+        .add_mul_real(T::from_real(flux.momentum[0]), owner_scale);
+    residual.momentum_y.values_mut()[owner] = residual.momentum_y.values()[owner]
+        .add_mul_real(T::from_real(flux.momentum[1]), owner_scale);
+    residual.momentum_z.values_mut()[owner] = residual.momentum_z.values()[owner]
+        .add_mul_real(T::from_real(flux.momentum[2]), owner_scale);
+    residual.total_energy.values_mut()[owner] =
+        residual.total_energy.values()[owner].add_mul_real(T::from_real(flux.energy), owner_scale);
 }
 
 /// 边界面无粘 scatter（预存 owner scale）。

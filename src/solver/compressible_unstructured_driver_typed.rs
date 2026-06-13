@@ -9,12 +9,11 @@ use crate::core::{
 };
 use crate::discretization::residual::InviscidAssemblyUnstructuredTypedParams;
 use crate::discretization::{
-    BoundaryGhostBuffer, GradientFields, ViscousAssemblyUnstructuredScratch,
-    ViscousAssemblyUnstructuredTypedInput,
+    BoundaryGhostBuffer, GradientFields, ReconstructionKind, UnstructuredGradientLsqInput,
+    UnstructuredSolverMeshCache, ViscousAssemblyUnstructuredScratch,
+    ViscousAssemblyUnstructuredTypedInput, assemble_inviscid_residual_unstructured_typed,
     compute_gradients_and_assemble_viscous_unstructured_typed,
-};
-use crate::discretization::{
-    UnstructuredSolverMeshCache, assemble_inviscid_residual_unstructured_typed,
+    compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq,
 };
 use crate::error::{AsimuError, Result};
 use crate::exec::{ExecConfig, ExecutionContext, MeshExecMetrics};
@@ -280,6 +279,23 @@ fn assemble_unstructured_typed_rhs<T: ComputeFloat>(
             spectral_primitives: work.spectral_primitives,
         })?;
     }
+    if env.config.inviscid.reconstruction == ReconstructionKind::Muscl {
+        let grad_input = UnstructuredGradientLsqInput {
+            mesh: env.config.mesh,
+            mesh_cache: work.mesh_cache,
+            primitives: work.spectral_primitives,
+            eos: env.config.eos,
+            ghosts: work.ghosts,
+            min_pressure: p_floor,
+            viscous: env.config.viscous,
+        };
+        compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq(
+            grad_input,
+            work.gradients,
+            &mut work.viscous_scratch.gradient,
+            work.exec,
+        )?;
+    }
     let assembly = InviscidAssemblyUnstructuredTypedParams {
         mesh: env.config.mesh,
         eos: env.config.eos,
@@ -287,8 +303,14 @@ fn assemble_unstructured_typed_rhs<T: ComputeFloat>(
         boundaries: env.config.patches,
         ghosts: work.ghosts,
         primitives: work.primitives,
+        spectral_primitives: work.spectral_primitives,
         mesh_cache: work.mesh_cache,
+        gradients: match env.config.inviscid.reconstruction {
+            ReconstructionKind::Muscl => Some(&*work.gradients),
+            ReconstructionKind::FirstOrder => None,
+        },
         min_pressure: p_floor,
+        exec: work.exec,
     };
     assemble_inviscid_residual_unstructured_typed(fields, residual, &assembly)?;
     if let Some(viscous) = env.config.viscous {

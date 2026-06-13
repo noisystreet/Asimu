@@ -171,7 +171,7 @@ compute_precision = "f64"   # f64（默认）| f32
 | 项 | 支持 |
 |----|------|
 | 方程 / 网格 | 3D 可压缩 Euler；结构化单块或多块（无 1-to-1 接口）；非结构 |
-| 空间离散 | `reconstruction = first_order` |
+| 空间离散 | `reconstruction = first_order`；非结构另支持 `muscl` + `unstructured_limiter` |
 | 时间推进 | `euler`、`rk4` |
 | 粘性 / NS | 非结构 3D 可支持（`[physics.viscous]`）；`[navier_stokes]` 不支持 |
 | 隐式 | 不支持 `lu_sgs`、`gmres` |

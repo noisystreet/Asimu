@@ -44,8 +44,18 @@ fn validate_f32_capabilities(case: &CaseSpec) -> Result<()> {
         return Err(f32_unsupported("粘性通量 f32 暂仅支持非结构 3D 路径"));
     }
     let disc = case.compressible_discretization()?;
-    if disc.inviscid().reconstruction != ReconstructionKind::FirstOrder {
-        return Err(f32_unsupported("f32 暂仅支持 reconstruction = first_order"));
+    match disc.inviscid().reconstruction {
+        ReconstructionKind::FirstOrder => {}
+        ReconstructionKind::Muscl => {
+            if !matches!(case.mesh, CaseMesh::Unstructured3d(_)) {
+                return Err(f32_unsupported("f32 二阶 MUSCL 暂仅支持非结构 3D 路径"));
+            }
+            if disc.inviscid().unstructured_gradient_limiter.is_none() {
+                return Err(f32_unsupported(
+                    "f32 非结构 MUSCL 须设置 unstructured_limiter = barth_jespersen | venkatakrishnan",
+                ));
+            }
+        }
     }
     match case.time.resolved_time_scheme() {
         TimeIntegrationScheme::Rk4 | TimeIntegrationScheme::Euler => {}
@@ -163,8 +173,40 @@ mod compute_precision_tests {
     use super::*;
     use std::path::Path;
 
+    use crate::boundary::{BoundaryKind, BoundaryPatch, BoundarySet};
     use crate::core::ComputePrecision;
     use crate::io::{CaseNumericsConfig, load_case};
+    use crate::mesh::{CellKind, UnstructuredCell, UnstructuredMesh3d};
+
+    fn attach_single_tet_farfield(case: &mut CaseSpec) {
+        let mesh = UnstructuredMesh3d::new(
+            "tet",
+            vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            vec![UnstructuredCell::new(CellKind::Tet, vec![0, 1, 2, 3]).expect("cell")],
+        )
+        .expect("mesh");
+        let faces = (0..mesh.num_faces())
+            .map(|face| FaceId(face as u32))
+            .collect::<Vec<_>>();
+        let fs = case.freestream.expect("freestream");
+        case.mesh = CaseMesh::Unstructured3d(mesh);
+        case.boundary = BoundarySet::new(vec![BoundaryPatch::new(
+            "farfield",
+            faces,
+            BoundaryKind::Farfield {
+                mach: fs.mach,
+                pressure: fs.pressure,
+                temperature: fs.temperature,
+                alpha: fs.alpha,
+                beta: fs.beta,
+            },
+        )]);
+    }
 
     #[test]
     fn f64_passes_validate() {
@@ -199,6 +241,45 @@ mod compute_precision_tests {
             compute_precision: ComputePrecision::F32,
         };
         compute_precision(&case).expect("unstructured freestream f32");
+    }
+
+    #[test]
+    fn f32_accepts_unstructured_muscl_case() {
+        let mut case = load_case(Path::new(
+            "tests/benchmarks/unstructured_freestream/case.toml",
+        ))
+        .expect("case");
+        case.numerics = CaseNumericsConfig {
+            compute_precision: ComputePrecision::F32,
+        };
+        attach_single_tet_farfield(&mut case);
+        if let Some(euler) = case.euler.as_mut() {
+            euler.reconstruction = Some("muscl".to_string());
+            euler.unstructured_limiter = Some("barth_jespersen".to_string());
+        }
+        compute_precision(&case).expect("unstructured muscl f32");
+    }
+
+    #[test]
+    fn f32_rejects_structured_muscl_case() {
+        let mut case = load_case(Path::new(
+            "tests/benchmarks/unstructured_freestream/case.toml",
+        ))
+        .expect("case");
+        case.numerics = CaseNumericsConfig {
+            compute_precision: ComputePrecision::F32,
+        };
+        let block_mesh = crate::mesh::StructuredMesh3d::uniform_box("box", 2, 2, 2, 1.0, 1.0, 1.0)
+            .expect("mesh");
+        case.mesh = CaseMesh::MultiBlockStructured3d(
+            crate::mesh::MultiBlockStructuredMesh3d::from_single_mesh(block_mesh).expect("mb"),
+        );
+        if let Some(euler) = case.euler.as_mut() {
+            euler.reconstruction = Some("muscl".to_string());
+            euler.unstructured_limiter = Some("barth_jespersen".to_string());
+        }
+        let err = compute_precision(&case).expect_err("structured muscl f32");
+        assert!(err.to_string().contains("MUSCL"));
     }
 
     #[test]

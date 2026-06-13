@@ -131,7 +131,7 @@ fn unstructured_limiter(
         .unwrap_or(UnstructuredGradientLimiter::BarthJespersen)
 }
 
-pub(super) fn compute_interior_inviscid_face_contribution(
+pub(crate) fn compute_interior_inviscid_face_contribution(
     face_idx: usize,
     params: &InviscidAssemblyUnstructuredParams<'_>,
     topology: &UnstructuredFaceTopology,

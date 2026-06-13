@@ -1,21 +1,30 @@
-//! 非结构 3D 网格无粘残差装配（typed 场；P3 首版仅一阶、串行 accumulate）。
+//! 非结构 3D 网格无粘残差装配（typed 场；一阶用 typed primitive，二阶 MUSCL 经 f64 重构）。
 
 use tracing::info_span;
 
 use crate::boundary::BoundarySet;
 use crate::core::{ComputeFloat, Real};
+use crate::discretization::inviscid::{
+    scatter_fused_boundary_inviscid_face_typed, scatter_fused_interior_inviscid_face_typed,
+};
 use crate::discretization::unstructured_face_cache::UnstructuredFaceTopology;
 use crate::discretization::{
-    BoundaryGhostBuffer, FaceFluxInput, InviscidFluxConfig, ReconstructionKind,
-    UnstructuredSolverMeshCache, face_inviscid_flux,
+    BoundaryGhostBuffer, FaceFluxInput, GradientFields, InviscidFluxConfig, ReconstructionKind,
+    UnstructuredLinearReconstructionCtx, UnstructuredSolverMeshCache, face_inviscid_flux,
+    face_inviscid_flux_from_interface, reconstruct_unstructured_boundary_face,
 };
 use crate::error::{AsimuError, Result};
+use crate::exec::ExecutionContext;
 use crate::field::{
-    ConservedFieldsT, ConservedResidualT, PrimitiveFieldsT, primitive_from_conserved_relaxed,
+    ConservedFieldsT, ConservedResidualT, PrimitiveFields, PrimitiveFieldsT,
+    primitive_from_conserved_relaxed,
 };
 use crate::mesh::UnstructuredMesh3d;
 use crate::physics::IdealGasEoS;
 
+use super::assembly_unstructured::{
+    InviscidAssemblyUnstructuredParams, compute_interior_inviscid_face_contribution,
+};
 use super::{accumulate_boundary_face_typed, accumulate_interior_face_typed, is_degenerate_volume};
 
 /// typed 非结构无粘残差装配上下文。
@@ -26,30 +35,49 @@ pub struct InviscidAssemblyUnstructuredTypedParams<'a, T: ComputeFloat> {
     pub boundaries: &'a BoundarySet,
     pub ghosts: &'a BoundaryGhostBuffer,
     pub primitives: &'a PrimitiveFieldsT<T>,
+    /// 二阶 MUSCL：BC/重构/限制器样本用 f64 原始变量（ADR 0016 §4）。
+    pub spectral_primitives: &'a PrimitiveFields,
     pub mesh_cache: &'a UnstructuredSolverMeshCache,
+    pub gradients: Option<&'a GradientFields>,
     pub min_pressure: Real,
+    pub exec: &'a ExecutionContext,
 }
 
-/// 装配非结构 3D 无粘 Euler 残差（一阶；`T=f32`/`f64`）。
+/// 装配非结构 3D 无粘 Euler 残差（`T=f32`/`f64`）。
 pub fn assemble_inviscid_residual_unstructured_typed<T: ComputeFloat>(
     fields: &ConservedFieldsT<T>,
     residual: &mut ConservedResidualT<T>,
     params: &InviscidAssemblyUnstructuredTypedParams<'_, T>,
 ) -> Result<()> {
-    if params.config.reconstruction != ReconstructionKind::FirstOrder {
-        return Err(AsimuError::Config(format!(
-            "compute_precision = \"{}\" 的非结构 typed 路径暂仅支持一阶重构",
-            T::PRECISION.label()
-        )));
-    }
     let n = params.mesh.num_cells();
     if fields.num_cells() != n || residual.num_cells() != n || params.primitives.num_cells() != n {
         return Err(AsimuError::Field(format!(
             "非结构 typed 场/残差/primitive 长度须等于网格单元数 {n}"
         )));
     }
+    if params.spectral_primitives.num_cells() != n {
+        return Err(AsimuError::Field(format!(
+            "非结构 typed spectral primitive 长度须等于网格单元数 {n}"
+        )));
+    }
     residual.clear();
     let topology = &params.mesh_cache.face_topology;
+    match params.config.reconstruction {
+        ReconstructionKind::FirstOrder => {
+            assemble_first_order_typed(residual, params, topology)?;
+        }
+        ReconstructionKind::Muscl => {
+            assemble_muscl_typed(residual, params, topology)?;
+        }
+    }
+    Ok(())
+}
+
+fn assemble_first_order_typed<T: ComputeFloat>(
+    residual: &mut ConservedResidualT<T>,
+    params: &InviscidAssemblyUnstructuredTypedParams<'_, T>,
+    topology: &UnstructuredFaceTopology,
+) -> Result<()> {
     {
         let _span = info_span!(
             "unstructured_inviscid_interior_faces_typed",
@@ -57,7 +85,7 @@ pub fn assemble_inviscid_residual_unstructured_typed<T: ComputeFloat>(
             precision = T::PRECISION.label(),
         )
         .entered();
-        assemble_interior_faces_typed(residual, params, topology)?;
+        assemble_interior_faces_first_order_typed(residual, params, topology)?;
     }
     {
         let _span = info_span!(
@@ -66,7 +94,113 @@ pub fn assemble_inviscid_residual_unstructured_typed<T: ComputeFloat>(
             precision = T::PRECISION.label(),
         )
         .entered();
-        assemble_boundary_faces_typed(residual, params, topology)?;
+        assemble_boundary_faces_first_order_typed(residual, params, topology)?;
+    }
+    Ok(())
+}
+
+fn assemble_muscl_typed<T: ComputeFloat>(
+    residual: &mut ConservedResidualT<T>,
+    params: &InviscidAssemblyUnstructuredTypedParams<'_, T>,
+    topology: &UnstructuredFaceTopology,
+) -> Result<()> {
+    let f64_params = muscl_f64_params(params)?;
+    {
+        let _span = info_span!(
+            "unstructured_inviscid_interior_faces_typed",
+            path = "muscl",
+            faces = topology.interior.len(),
+            precision = T::PRECISION.label(),
+        )
+        .entered();
+        for bucket in &topology.interior_coloring.buckets {
+            for &face_idx in bucket {
+                if let Some((geom, flux)) =
+                    compute_interior_inviscid_face_contribution(face_idx, &f64_params, topology)?
+                {
+                    scatter_fused_interior_inviscid_face_typed(residual, &geom, &flux);
+                }
+            }
+        }
+    }
+    {
+        let _span = info_span!(
+            "unstructured_inviscid_boundary_faces_typed",
+            path = "muscl",
+            faces = topology.boundary.len(),
+            precision = T::PRECISION.label(),
+        )
+        .entered();
+        assemble_boundary_faces_muscl_typed(residual, &f64_params, topology)?;
+    }
+    Ok(())
+}
+
+fn muscl_f64_params<'a, T: ComputeFloat>(
+    params: &'a InviscidAssemblyUnstructuredTypedParams<'a, T>,
+) -> Result<InviscidAssemblyUnstructuredParams<'a>> {
+    if params.gradients.is_none() {
+        return Err(AsimuError::Config(
+            "非结构 typed MUSCL 须先计算 inviscid linear reconstruction gradients".to_string(),
+        ));
+    }
+    if params.config.unstructured_gradient_limiter.is_none() {
+        return Err(AsimuError::Config(
+            "非结构 typed MUSCL 须设置 unstructured_limiter（barth_jespersen 或 venkatakrishnan）"
+                .to_string(),
+        ));
+    }
+    Ok(InviscidAssemblyUnstructuredParams {
+        mesh: params.mesh,
+        eos: params.eos,
+        config: params.config,
+        boundaries: params.boundaries,
+        ghosts: params.ghosts,
+        primitives: params.spectral_primitives,
+        face_topology: Some(&params.mesh_cache.face_topology),
+        mesh_cache: Some(params.mesh_cache),
+        gradients: params.gradients,
+        min_pressure: params.min_pressure,
+        exec: params.exec,
+    })
+}
+
+fn assemble_boundary_faces_muscl_typed<T: ComputeFloat>(
+    residual: &mut ConservedResidualT<T>,
+    params: &InviscidAssemblyUnstructuredParams<'_>,
+    topology: &UnstructuredFaceTopology,
+) -> Result<()> {
+    let mesh_cache = params.mesh_cache.expect("linear reconstruction cache");
+    let gradients = params.gradients.expect("linear reconstruction gradients");
+    let limiter = params
+        .config
+        .unstructured_gradient_limiter
+        .expect("unstructured limiter");
+    let ctx = UnstructuredLinearReconstructionCtx {
+        mesh_cache,
+        primitives: params.primitives,
+        ghosts: params.ghosts,
+        eos: params.eos,
+        min_pressure: params.min_pressure,
+        limiter,
+    };
+    for bface in &topology.boundary {
+        if bface.owner_rhs_scale == 0.0 || is_degenerate_volume(bface.owner_volume) {
+            continue;
+        }
+        let iface = reconstruct_unstructured_boundary_face(
+            bface,
+            ctx,
+            gradients.inviscid_primitive_grad_at(bface.owner),
+        )?;
+        let flux =
+            face_inviscid_flux_from_interface(iface, bface.normal, params.eos, params.config)?;
+        scatter_fused_boundary_inviscid_face_typed(
+            residual,
+            bface.owner,
+            bface.owner_rhs_scale,
+            &flux,
+        );
     }
     Ok(())
 }
@@ -89,7 +223,7 @@ fn first_order_interior_flux<T: ComputeFloat>(
     )
 }
 
-fn assemble_interior_faces_typed<T: ComputeFloat>(
+fn assemble_interior_faces_first_order_typed<T: ComputeFloat>(
     residual: &mut ConservedResidualT<T>,
     params: &InviscidAssemblyUnstructuredTypedParams<'_, T>,
     topology: &UnstructuredFaceTopology,
@@ -122,7 +256,7 @@ fn assemble_interior_faces_typed<T: ComputeFloat>(
     Ok(())
 }
 
-fn assemble_boundary_faces_typed<T: ComputeFloat>(
+fn assemble_boundary_faces_first_order_typed<T: ComputeFloat>(
     residual: &mut ConservedResidualT<T>,
     params: &InviscidAssemblyUnstructuredTypedParams<'_, T>,
     topology: &UnstructuredFaceTopology,
@@ -165,13 +299,26 @@ mod tests {
     use super::*;
     use crate::boundary::{BoundaryKind, BoundaryPatch, BoundarySet};
     use crate::discretization::freestream_pair::FreestreamPairFixture;
-    use crate::discretization::{BoundaryGhostBuffer, apply_compressible_boundary_conditions};
+    use crate::discretization::{
+        BoundaryGhostBuffer, UnstructuredGradientLimiter, UnstructuredGradientLsqInput,
+        UnstructuredGradientScratch, apply_compressible_boundary_conditions,
+        compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq,
+    };
+    use crate::discretization::{GradientFields, InviscidFluxConfig};
+    use crate::exec::ExecutionContext;
     use crate::mesh::{CellKind, UnstructuredCell, UnstructuredMesh3d};
 
-    #[test]
-    fn f32_single_tet_uniform_freestream_has_near_zero_rhs() {
-        let pair = FreestreamPairFixture::air_sutherland(0.2);
-        let side = pair.inviscid_side();
+    fn single_tet_fixture(
+        side: &crate::discretization::freestream_pair::UniformFarfieldSide<'_>,
+    ) -> (
+        UnstructuredMesh3d,
+        BoundarySet,
+        ConservedFieldsT<f32>,
+        BoundaryGhostBuffer,
+        UnstructuredSolverMeshCache,
+        PrimitiveFieldsT<f32>,
+        PrimitiveFields,
+    ) {
         let mesh = UnstructuredMesh3d::new(
             "tet",
             vec![
@@ -222,8 +369,28 @@ mod tests {
         primitives
             .fill_from_conserved(&fields, side.eos, side.min_pressure)
             .expect("fill");
+        let mut spectral = PrimitiveFields::zeros(mesh.num_cells()).expect("spectral");
+        spectral
+            .fill_from_conserved(
+                &fields.cast_real().expect("real"),
+                side.eos,
+                side.min_pressure,
+            )
+            .expect("fill spectral");
+        (
+            mesh, boundary, fields, ghosts, mesh_cache, primitives, spectral,
+        )
+    }
+
+    #[test]
+    fn f32_single_tet_uniform_freestream_has_near_zero_rhs() {
+        let pair = FreestreamPairFixture::air_sutherland(0.2);
+        let side = pair.inviscid_side();
+        let (mesh, boundary, fields, ghosts, mesh_cache, primitives, spectral) =
+            single_tet_fixture(&side);
         let mut rhs = ConservedResidualT::<f32>::zeros(mesh.num_cells()).expect("rhs");
         let config = InviscidFluxConfig::default();
+        let exec = ExecutionContext::for_unit_test();
         let params = InviscidAssemblyUnstructuredTypedParams {
             mesh: &mesh,
             eos: side.eos,
@@ -231,8 +398,11 @@ mod tests {
             boundaries: &boundary,
             ghosts: &ghosts,
             primitives: &primitives,
+            spectral_primitives: &spectral,
             mesh_cache: &mesh_cache,
+            gradients: None,
             min_pressure: side.min_pressure,
+            exec: &exec,
         };
         assemble_inviscid_residual_unstructured_typed(&fields, &mut rhs, &params)
             .expect("assemble");
@@ -242,6 +412,59 @@ mod tests {
                 .iter()
                 .all(|v| v.to_real().abs() < 1.0e-5),
             "f32 tet density rhs"
+        );
+    }
+
+    #[test]
+    fn f32_single_tet_muscl_uniform_freestream_has_near_zero_rhs() {
+        let pair = FreestreamPairFixture::air_sutherland(0.2);
+        let side = pair.inviscid_side();
+        let (mesh, boundary, fields, ghosts, mesh_cache, primitives, spectral) =
+            single_tet_fixture(&side);
+        let mut rhs = ConservedResidualT::<f32>::zeros(mesh.num_cells()).expect("rhs");
+        let config = InviscidFluxConfig {
+            unstructured_gradient_limiter: Some(UnstructuredGradientLimiter::BarthJespersen),
+            ..InviscidFluxConfig::muscl_hllc()
+        };
+        let mut gradients = GradientFields::zeros(mesh.num_cells()).expect("grad");
+        let mut grad_scratch = UnstructuredGradientScratch::new(mesh.num_cells());
+        let mut exec = ExecutionContext::for_unit_test();
+        compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq(
+            UnstructuredGradientLsqInput {
+                mesh: &mesh,
+                mesh_cache: &mesh_cache,
+                primitives: &spectral,
+                eos: side.eos,
+                ghosts: &ghosts,
+                min_pressure: side.min_pressure,
+                viscous: None,
+            },
+            &mut gradients,
+            &mut grad_scratch,
+            &mut exec,
+        )
+        .expect("gradients");
+        let params = InviscidAssemblyUnstructuredTypedParams {
+            mesh: &mesh,
+            eos: side.eos,
+            config: &config,
+            boundaries: &boundary,
+            ghosts: &ghosts,
+            primitives: &primitives,
+            spectral_primitives: &spectral,
+            mesh_cache: &mesh_cache,
+            gradients: Some(&gradients),
+            min_pressure: side.min_pressure,
+            exec: &exec,
+        };
+        assemble_inviscid_residual_unstructured_typed(&fields, &mut rhs, &params)
+            .expect("assemble");
+        assert!(
+            rhs.density
+                .values()
+                .iter()
+                .all(|v| v.to_real().abs() < 1.0e-5),
+            "f32 muscl tet density rhs"
         );
     }
 }
