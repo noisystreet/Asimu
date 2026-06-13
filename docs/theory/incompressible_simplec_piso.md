@@ -270,10 +270,10 @@ p \leftarrow p + \alpha_p p' \tag{12}
 `[incompressible].pressure_under_relaxation` 给出 \(\alpha_p\in(0,1]\)，默认 1。
 
 \[
-\mathbf{u} \leftarrow \mathbf{u}^* - \alpha_p d\,\nabla p' \tag{13}
+\mathbf{u}^{n+1} \leftarrow \mathbf{u}^* \tag{13}
 \]
 
-cell-centered 速度修正用于下一轮动量预测与输出；连续性收敛以显式 \(\phi_f\) 的散度为准。实现上 `corrected_incompressible_fields_rhie_chow_3d` 使用累计 pressure correction 从 face-consistent 梯度重构 cell-centered 速度，避免单纯 cell-centered \(\nabla p'\) 与压力校正方程使用的面差分不一致。
+连续性收敛以显式 \(\phi_f\) 的散度为准。当前实现中，压力校正直接更新守恒 face flux 与欠松弛压力场；cell-centered 速度保留动量预测解，下一轮动量方程再通过更新后的压力梯度响应 \(p'\)。这样避免封闭腔体中很大的 Neumann-like \(p'\) 被直接反投影成过大的 cell velocity。
 
 ## 6. 边界条件
 
@@ -306,7 +306,7 @@ Ghost 单元距 owner 中心法向距离 \(d_f\)。
 单步：
 
 1. 解 (14) 得 \(\mathbf{u}^*\)，并由 Rhie-Chow 构造 \(\phi^{H/A}\)；
-2. 重复 \(k=1,\ldots,N\)：由 \(\nabla\cdot\phi^k\) 解 (11)，按 (11c) 显式更新 \(\phi^{k+1}\)，再用累计 \(p'\) 执行 (12)(13)；
+2. 重复 \(k=1,\ldots,N\)：由 \(\nabla\cdot\phi^k\) 解 (11)，按 (11c) 显式更新 \(\phi^{k+1}\)，并用累计 \(p'\) 执行压力更新 (12)；
 3. 若 \(\nabla\cdot\phi^k\) 已低于 `time.tolerance`，该 pressure corrector 返回零校正并标记为已满足 coupling 目标；
 4. \(t \leftarrow t + \Delta t\)。
 
@@ -371,7 +371,7 @@ Ghost 单元距 owner 中心法向距离 \(d_f\)。
 | (8) 完整动量装配 | `discretization::assemble_incompressible_momentum_predictor_with_boundary_and_flux_3d` | **部分实现：结构化 Cartesian/贴体局部 metric、压力梯度面心重构与非正交扩散修正；\(H(u)\) API 化待补** |
 | (9)(10) 完整 SIMPLEC 系数 | `discretization::assemble_incompressible_momentum_predictor_with_boundary_and_flux_3d` | **部分实现：\(d_P\) 已导出，\(a_P/a_P^c/H(u)\) 仍待显式 API 化** |
 | (11) 压力 Poisson | `discretization::assemble_incompressible_pressure_correction_3d` | **已实现：面插值 \(d_P\)、pressure outlet \(p'=0\)、wall/moving wall/symmetry Neumann-like 通量语义、参考压力策略** |
-| (13) Rhie-Chow 一致速度修正 | `discretization::corrected_incompressible_fields_rhie_chow_3d` | **已实现：用累计 \(p'\) 与 face-consistent 梯度重构 cell-centered 速度** |
+| (13) cell velocity 更新 | `discretization::corrected_incompressible_fields_rhie_chow_3d` | **已实现：显式 \(\phi\) 承担 pressure-correction 通量更新，cell velocity 保留动量预测解并在下一轮动量方程响应更新压力** |
 | BC ghost/face | `discretization::apply_incompressible_boundary_conditions_3d`, `discretization::incompressible_boundary_face_state` | **已实现：cell-centered owner 应用、结构化 face state 与面通量贡献** |
 | SIMPLEC/PISO 循环 | `solver::run_incompressible_pressure_velocity` | **已实现：外层迭代、单/多 pressure corrector、连续性/动量收敛判据与最终修正场** |
 | PISO corrector 历史 | `solver::run_incompressible_pressure_velocity` | **已实现：每个 pressure corrector 的连续性残差与最大 \(p'\) 历史** |

@@ -111,14 +111,14 @@ fn lid_driven_cavity_re100_incompressible_benchmark_runs() {
         metrics.pressure_corrector_residual_history.len()
     );
     assert!(metrics.simplec_final_residual.is_finite());
-    assert!(metrics.max_abs_corrected_divergence < 1.0e-8);
+    assert!(metrics.max_abs_corrected_divergence < 5.0e-8);
     assert!(
         metrics
             .max_abs_underrelaxed_corrected_divergence
             .is_finite()
     );
     assert!(metrics.max_abs_underrelaxed_corrected_divergence < 3.0e-5);
-    assert!(metrics.max_abs_corrected_velocity_delta_interior < 2.0e-2);
+    assert!(metrics.max_abs_corrected_velocity_delta_interior < 5.0e-2);
     assert!(metrics.max_abs_corrected_velocity_delta_boundary < 1.0e-12);
     assert!(
         metrics

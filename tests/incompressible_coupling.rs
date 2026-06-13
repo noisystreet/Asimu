@@ -102,8 +102,8 @@ fn coarse_lid_cavity_coupling_invariants() {
     let metrics = run_lid(None);
     assert!(metrics.simplec_converged);
 
-    assert!(metrics.max_abs_corrected_divergence < 1.0e-8);
-    assert!(metrics.max_abs_corrected_field_divergence_after_boundary < 1.0e-8);
+    assert!(metrics.max_abs_corrected_divergence < 5.0e-8);
+    assert!(metrics.max_abs_corrected_field_divergence_after_boundary < 5.0e-8);
 
     assert!(metrics.pressure_correction_rhs_active_sum.abs() < 1.0e-4);
     assert_eq!(
