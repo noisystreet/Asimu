@@ -83,12 +83,12 @@ Geometry coordinates stay `f64`. See ADR [0003](../adr/0003-multi-precision-and-
 
 ## GPU / execution backend
 
-- **`exec`** (partial today): `src/exec/cpu/` SIMD kernels behind `simd-fvm`
-- **v1.0 (planned)**: `ExecutionContext`, parallel scatter in `exec` ([ADR 0013](../adr/0013-exec-parallel-scatter-execution-context.md))
-- **v1.2+**: `ExecutionContext`, `ExecBackend` trait; GPU for flux / SpMV
+- **`exec`** (partial today): `src/exec/cpu/` SIMD kernels behind `simd-fvm`; `ExecutionContext` + CPU scatter ([ADR 0013](../adr/0013-exec-parallel-scatter-execution-context.md))
+- **Multi-backend model** ([ADR 0017](../adr/0017-gpu-cuda-cudarc-multi-backend.md)): `ExecDevice` (`Cpu` | `Cuda` | future `Wgpu`) + `ExecCpuPolicy` (`Scalar` | `Parallel`); case `[numerics] backend = "cpu" | "gpu-cuda"`
+- **v1.3+ CUDA (preferred for HPC)**: feature `gpu-cuda`, **`cudarc`** in `src/exec/gpu/cuda/` only; CUDA C++ kernels via build-time `nvcc`; f32 unstructured inviscid flux + device scatter first (G1)
+- **v1.2+ wgpu**: still optional cross-platform prototype per ADR 0003; not the primary production path after ADR 0017
 - GPU targets: flux assembly, SpMV — not BC / I/O / convergence control
-- Features (future): `gpu-wgpu` (preferred), `gpu-cuda` (optional)
-- Main crate stays `unsafe`-free; atomics/GPU drivers isolated in `exec/` ([ADR 0013](../adr/0013-exec-parallel-scatter-execution-context.md))
+- Main crate stays `unsafe`-free; CUDA/GPU drivers isolated in `exec/` ([ADR 0013](../adr/0013-exec-parallel-scatter-execution-context.md))
 
 ## MCP integration (planned v1.1+)
 

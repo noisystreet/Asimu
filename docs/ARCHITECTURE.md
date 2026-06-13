@@ -421,7 +421,7 @@ flowchart TB
 | （默认） | CPU + f64 |
 | `precision-f32` | 编译期 `Real = f32` |
 | `gpu-wgpu` | 跨平台 wgpu compute（首选评估） |
-| `gpu-cuda` | NVIDIA CUDA（服务器场景，需 ADR 依赖审批） |
+| `gpu-cuda` | NVIDIA CUDA（`cudarc`；[ADR 0017](adr/0017-gpu-cuda-cudarc-multi-backend.md)） |
 
 **模块与目录（v1.2+）：**
 
@@ -858,7 +858,7 @@ crates/
 | **v1.0.0** | trait 边界冻结、完整文档与 golden tests | 稳定公开 API；CPU `rayon` | **Manifest + V&V benchmark 纳入发布检查清单** |
 | **v1.1.x** | [MCP.md](MCP.md) 实现：`asimu-mcp` stdio | Tools：validate / run / list_fixtures | MCP `get_run_summary` 读 manifest |
 | **v1.2.x** | MCP Resources + `get_run_summary` | `exec` + wgpu 原型；文档 Resource | Resource `asimu://run/latest`（manifest） |
-| **v1.3.x** | MCP Prompts；`.cursor/mcp.json.example` | 可选 CUDA；MCP 与 VTK 输出联动 | 可选 `--profile` flamegraph |
+| **v1.3.x** | MCP Prompts；`.cursor/mcp.json.example` | **`gpu-cuda`**（[ADR 0017](adr/0017-gpu-cuda-cudarc-multi-backend.md) G1–G2）；MCP 与 VTK 输出联动 | 可选 `--profile` flamegraph |
 | **v1.x** | `physics` 可压扩展、`discretization` 通量 | 3D 可压 NS 原型（显式 RK3 + HLLC）；见 [adr/0009](adr/0009-compressible-navier-stokes.md) | Sod / 双马赫 V&V 算例 |
 
 每版本**只填满一层**，避免同时改 mesh 格式、精度模型与 GPU 后端。
@@ -886,6 +886,8 @@ crates/
 | [0013](adr/0013-exec-parallel-scatter-execution-context.md) | `ExecutionContext` + `exec` 并行 scatter（规划基线） |
 | [0014](adr/0014-turbulence-k-omega-sst-rans.md) | 可压 RANS 湍流闭包（Menter k-ω SST，T0–T5） |
 | [0015](adr/0015-incompressible-navier-stokes-simplec-piso.md) | 三维不可压 NS（collocated FVM + SIMPLEC + PISO，I0–I6） |
+| [0016](adr/0016-runtime-compute-precision.md) | 核心计算模块运行时精度（`compute_precision` f32/f64） |
+| [0017](adr/0017-gpu-cuda-cudarc-multi-backend.md) | CUDA 后端（`cudarc`）与 `exec` 多 Backend（`ExecDevice`） |
 
 ### 11.1 空间离散
 

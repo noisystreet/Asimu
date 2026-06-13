@@ -362,5 +362,6 @@ Chrome trace span 迁移：
 | **E3** IDWLS / SpMV 经 `ExecutionContext` | **2026-06-08 已实现** |
 | **E5** dual_ellipsoid benchmark + scatter 契约测试 | **2026-06-08 已实现**（`tests/benchmarks/dual_ellipsoid/`；`make check-exec-parallel-scatter`） |
 | **E4** GPU scatter | v1.2+ 规划 |
+| **G0–G4** CUDA（[ADR 0017](0017-gpu-cuda-cudarc-multi-backend.md)） | v1.3+ 规划 |
 
 修订本 ADR 时 **不删除** 已有条目；默认 scatter 模式变更或主 crate unsafe 政策变更须新开修订段落。

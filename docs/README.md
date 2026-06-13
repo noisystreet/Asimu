@@ -29,5 +29,12 @@
 | [0008](adr/0008-cgns-io.md) | CGNS 读入与 VTS 导出（feature `io-cgns-vts`，系统 libcgns） |
 | [0009](adr/0009-compressible-navier-stokes.md) | 三维可压缩 Navier-Stokes 求解器架构（规划基线） |
 | [0010](adr/0010-unstructured-mixed-mesh.md) | 非结构混合单元网格（面拓扑路线；M1–M4 分阶段） |
+| [0011](adr/0011-parallel-fvm-face-coloring.md) | 非结构 FVM 面着色 + `parallel-fvm` |
+| [0012](adr/0012-unstructured-gradient-limiters.md) | 非结构二阶线性重构与梯度限制器 |
+| [0013](adr/0013-exec-parallel-scatter-execution-context.md) | `ExecutionContext` + `exec` 并行 scatter |
+| [0014](adr/0014-turbulence-k-omega-sst-rans.md) | 可压 RANS 湍流闭包（k-ω SST） |
+| [0015](adr/0015-incompressible-navier-stokes-simplec-piso.md) | 三维不可压 NS（SIMPLEC + PISO） |
+| [0016](adr/0016-runtime-compute-precision.md) | 核心计算模块运行时精度选择 |
+| [0017](adr/0017-gpu-cuda-cudarc-multi-backend.md) | CUDA 后端（`cudarc`）与 `exec` 多 Backend |
 
 维护策略：修改中文架构/数据模型文档时，同步更新 `docs/en/` 对应摘要（见 [AGENTS.md](../AGENTS.md)）。

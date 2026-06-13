@@ -5,6 +5,8 @@
 - **关联**: [ARCHITECTURE.md](../ARCHITECTURE.md) §8.4、[DATA_MODEL.md](../DATA_MODEL.md) §10
 
 > **2026-06-09 修订**：本 ADR 的 GPU / `exec` 后端方向仍有效；“编译期 `precision-f32` 切换全局 `Real`”路线由 [ADR 0016](0016-runtime-compute-precision.md) 修订为：仅核心计算模块支持运行时选择 `f32` / `f64`，并在 solver / case 边界做一次 typed 分发。
+>
+> **2026-06-13 修订**：`gpu-cuda` 依赖与多 Backend 模型由 [ADR 0017](0017-gpu-cuda-cudarc-multi-backend.md) 定案（`cudarc`、`ExecDevice`、build 时 `nvcc`）；wgpu 仍为远期可选，生产 GPU 路径优先 CUDA。
 
 ## 背景
 
