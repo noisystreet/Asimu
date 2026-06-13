@@ -164,7 +164,20 @@ compute_precision = "f64"   # f64（默认）| f32
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `compute_precision` | string | `f64` 默认；`f32` 在 solver typed 化完成前会在 Validate 阶段报错 |
+| `compute_precision` | string | `f64`（默认）或 `f32`。`f32` 在 Validate 阶段校验能力矩阵（ADR 0016）；未覆盖的组合会报错，不会静默回退 `f64` |
+
+**`f32` 当前支持范围（P2/P3）**
+
+| 项 | 支持 |
+|----|------|
+| 方程 / 网格 | 3D 可压缩 Euler；结构化单块或多块（无 1-to-1 接口）；非结构 |
+| 空间离散 | `reconstruction = first_order` |
+| 时间推进 | `euler`、`rk4` |
+| 粘性 / NS | 不支持 |
+| 隐式 | 不支持 `lu_sgs`、`gmres` |
+| 其它 | 不支持 `residual_smoothing` |
+
+网格几何、谱半径监控、I/O 与 manifest 仍使用 `f64`；`f32` 求解结果在写出前转换为 `f64`。
 
 ---
 

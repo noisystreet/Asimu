@@ -115,8 +115,8 @@ pub use residual::{
     ViscousAssemblyUnstructuredScratch, accumulate_boundary_face, accumulate_interior_face,
     assemble_inviscid_residual_1d, assemble_inviscid_residual_3d,
     assemble_inviscid_residual_3d_typed, assemble_inviscid_residual_unstructured,
-    assemble_viscous_residual_3d, assemble_viscous_residual_unstructured,
-    compute_gradients_and_assemble_viscous_3d, compute_gradients_and_assemble_viscous_unstructured,
+    assemble_inviscid_residual_unstructured_typed, assemble_viscous_residual_3d,
+    assemble_viscous_residual_unstructured, compute_gradients_and_assemble_viscous_3d,
     compute_gradients_and_assemble_viscous_unstructured_with_scratch, zero_gradient_ghosts_1d,
 };
 pub use roe::{RoeFluxConfig, roe_flux};

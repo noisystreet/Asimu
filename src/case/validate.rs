@@ -12,7 +12,7 @@ use crate::io::{CaseMesh, CaseSpec};
 use crate::mesh::UnstructuredMesh3d;
 use crate::solver::TimeIntegrationScheme;
 
-/// 核心计算精度与当前 solver 能力是否匹配（ADR 0016 P2）。
+/// 核心计算精度与当前 solver 能力是否匹配（ADR 0016 P3）。
 pub fn compute_precision(case: &CaseSpec) -> Result<()> {
     if case.numerics.compute_precision == ComputePrecision::F64 {
         return Ok(());
@@ -25,14 +25,17 @@ fn validate_f32_capabilities(case: &CaseSpec) -> Result<()> {
         return Ok(());
     }
     if case.is_compressible() {
-        let is_structured_3d = matches!(case.mesh, CaseMesh::MultiBlockStructured3d(_));
-        if !is_structured_3d {
+        let supported_3d = matches!(
+            case.mesh,
+            CaseMesh::MultiBlockStructured3d(_) | CaseMesh::Unstructured3d(_)
+        );
+        if !supported_3d {
             return Err(f32_unsupported(
-                "非结构可压缩路径尚未支持 f32（ADR 0016 P3）",
+                "仅 3D 可压缩 structured/unstructured 路径支持 f32",
             ));
         }
     } else {
-        return Err(f32_unsupported("仅结构化 3D 可压缩 Euler 路径支持 f32"));
+        return Err(f32_unsupported("仅 3D 可压缩 Euler 路径支持 f32"));
     }
     if case.navier_stokes.is_some() || case.physics.viscous.is_some() {
         return Err(f32_unsupported("Navier-Stokes / 粘性通量尚未支持 f32"));
@@ -184,7 +187,7 @@ mod compute_precision_tests {
     }
 
     #[test]
-    fn f32_accepts_structured_freestream_case() {
+    fn f32_accepts_unstructured_first_order_case() {
         let mut case = load_case(Path::new(
             "tests/benchmarks/unstructured_freestream/case.toml",
         ))

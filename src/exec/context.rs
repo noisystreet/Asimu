@@ -5,6 +5,7 @@ use tracing::info;
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::core::ComputePrecision;
 use crate::error::{AsimuError, Result};
 
 use super::metrics::MeshExecMetrics;
@@ -39,6 +40,7 @@ pub enum ResolvedScatterMode {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExecConfig {
     pub backend: ExecBackend,
+    pub compute_precision: ComputePrecision,
     pub parallel_min_len: usize,
     pub scatter_mode: ScatterMode,
     pub scatter_parallel_min_faces: usize,
@@ -52,6 +54,7 @@ impl Default for ExecConfig {
             } else {
                 ExecBackend::CpuScalar
             },
+            compute_precision: ComputePrecision::F64,
             parallel_min_len: 1024,
             scatter_mode: ScatterMode::Auto,
             scatter_parallel_min_faces: EXEC_SCATTER_PARALLEL_MIN_FACES,
@@ -62,6 +65,7 @@ impl Default for ExecConfig {
 /// 执行上下文：backend、已解析 scatter 模式与步间 scratch。
 pub struct ExecutionContext {
     backend: ExecBackend,
+    compute_precision: ComputePrecision,
     requested_scatter_mode: ScatterMode,
     resolved_scatter_mode: ResolvedScatterMode,
     parallel_min_len: usize,
@@ -88,6 +92,7 @@ impl ExecutionContext {
         );
         Self {
             backend: config.backend,
+            compute_precision: config.compute_precision,
             requested_scatter_mode: config.scatter_mode,
             resolved_scatter_mode,
             parallel_min_len: config.parallel_min_len,
@@ -115,6 +120,11 @@ impl ExecutionContext {
     pub(super) fn record_scatter_invocation(&self) {
         self.scatter_invocation_count
             .fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[must_use]
+    pub fn compute_precision(&self) -> ComputePrecision {
+        self.compute_precision
     }
 
     #[must_use]
@@ -239,6 +249,18 @@ impl ExecutionContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exec_context_records_compute_precision() {
+        let ctx = ExecutionContext::new(
+            ExecConfig {
+                compute_precision: ComputePrecision::F32,
+                ..ExecConfig::default()
+            },
+            MeshExecMetrics::empty(),
+        );
+        assert_eq!(ctx.compute_precision(), ComputePrecision::F32);
+    }
 
     #[test]
     fn auto_resolves_serial_on_small_mesh() {

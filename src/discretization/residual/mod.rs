@@ -7,6 +7,7 @@ mod assembly_3d;
 mod assembly_3d_typed;
 mod assembly_3d_viscous;
 mod assembly_unstructured;
+mod assembly_unstructured_typed;
 mod assembly_unstructured_viscous;
 mod face_flux_3d;
 mod muscl_stencil_3d;
@@ -27,6 +28,9 @@ pub use assembly_3d_viscous::{
 };
 pub use assembly_unstructured::{
     InviscidAssemblyUnstructuredParams, assemble_inviscid_residual_unstructured,
+};
+pub use assembly_unstructured_typed::{
+    InviscidAssemblyUnstructuredTypedParams, assemble_inviscid_residual_unstructured_typed,
 };
 pub use assembly_unstructured_viscous::{
     ViscousAssemblyUnstructuredInput, ViscousAssemblyUnstructuredParams,

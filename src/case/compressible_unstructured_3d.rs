@@ -5,21 +5,25 @@ use std::path::PathBuf;
 use tracing::{info, info_span, warn};
 
 use crate::case::{CaseRunKind, CaseRunResult, validate};
-use crate::core::{Real, format_log_fixed4, format_log_sci4, log10_positive};
+use crate::core::{ComputePrecision, Real, format_log_fixed4, format_log_sci4, log10_positive};
 use crate::error::{AsimuError, Result};
 use crate::field::ConservedFields;
 use crate::io::{CaseSpec, resolve_case_output_path};
 use crate::mesh::UnstructuredMesh3d;
 use crate::solver::{
     CompressibleEulerConfig, CompressibleEulerSolver, CompressibleStepInfo, CompressibleTimeMode,
-    RungeKutta4Config, UnstructuredDriverConfig, run_unstructured_with_observer,
+    RungeKutta4Config, UnstructuredDriverConfig, run_unstructured_typed_with_observer,
+    run_unstructured_with_observer,
 };
 
 use super::Compressible3dRunMetrics;
 
 pub(super) fn run(case: &CaseSpec) -> Result<CaseRunResult> {
     let mesh = case.mesh.as_unstructured_3d()?;
-    run_compressible_unstructured_3d(case, mesh)
+    match case.numerics.compute_precision {
+        ComputePrecision::F64 => run_compressible_unstructured_3d(case, mesh),
+        ComputePrecision::F32 => run_compressible_unstructured_3d_typed::<f32>(case, mesh),
+    }
 }
 
 struct UnstructuredPreparedRun {
@@ -156,14 +160,114 @@ fn run_compressible_unstructured_3d(
     for path in output_paths {
         info!(path = %path.display(), "非结构算例输出");
     }
-    Ok(CaseRunResult {
+    Ok(build_unstructured_case_result(
+        case,
+        mesh,
+        metrics,
+        inviscid.short_label(),
+        equation_label,
+    ))
+}
+
+fn run_compressible_unstructured_3d_typed<T: crate::core::ComputeFloat>(
+    case: &CaseSpec,
+    mesh: &UnstructuredMesh3d,
+) -> Result<CaseRunResult> {
+    let _span = info_span!(
+        "run_compressible_unstructured_3d_typed",
+        precision = T::PRECISION.label(),
+        cells = mesh.num_cells(),
+        faces = mesh.num_faces(),
+    )
+    .entered();
+    let prepared = prepare_unstructured_run(case, mesh)?;
+    let UnstructuredPreparedRun {
+        inviscid,
+        solver,
+        eos,
+        freestream,
+        fields,
+        driver_time,
+    } = prepared;
+    let driver = UnstructuredDriverConfig {
+        solver: &solver,
+        mesh,
+        eos: &eos,
+        freestream: &freestream,
+        inviscid: &inviscid,
+        patches: &case.boundary,
+        reference: case.reference.as_ref(),
+        viscous: case.physics.viscous.as_ref(),
+        fixed_dt: driver_time.fixed_dt,
+        local_time_step: driver_time.local_time_step,
+        time_scheme: driver_time.time_scheme,
+        lu_sgs: driver_time.lu_sgs,
+        cfl_schedule: driver_time.cfl_schedule,
+        max_steps: driver_time.max_steps,
+        residual_tolerance: driver_time.residual_tolerance,
+    };
+    let mut fields_t = crate::field::ConservedFieldsT::<T>::from_real_fields(&fields)?;
+    let mut interval_paths = Vec::new();
+    let (history, fields) =
+        run_unstructured_typed_with_observer::<T>(&driver, &mut fields_t, |step| {
+            interval_paths.extend(
+                super::output_interval::maybe_write_compressible_unstructured_interval(
+                    case, mesh, step,
+                )?,
+            );
+            Ok(())
+        })?;
+    let last = history
+        .last()
+        .ok_or_else(|| AsimuError::Solver("非结构 typed 推进未产生任何时间步".to_string()))?;
+    let metrics = Compressible3dRunMetrics {
+        steps: last.step,
+        final_time: last.physical_time,
+        residual_rms: last.residual_rms,
+        residual_log10: log10_positive(last.residual_rms),
+        scheme: inviscid.short_label().to_string(),
+        limiter: inviscid.limiter_label().to_string(),
+        converged: last.converged,
+    };
+    let equation_label = unstructured_equation_label(case);
+    log_unstructured_complete(
+        &metrics,
+        inviscid.short_label(),
+        inviscid.limiter_label(),
+        mesh,
+        equation_label,
+    );
+    let output_paths = write_unstructured_outputs(case, mesh, &fields, &history)?;
+    for path in &interval_paths {
+        info!(path = %path.display(), "算例间隔流场输出");
+    }
+    for path in output_paths {
+        info!(path = %path.display(), "非结构算例输出");
+    }
+    Ok(build_unstructured_case_result(
+        case,
+        mesh,
+        metrics,
+        inviscid.short_label(),
+        equation_label,
+    ))
+}
+
+fn build_unstructured_case_result(
+    case: &CaseSpec,
+    mesh: &UnstructuredMesh3d,
+    metrics: Compressible3dRunMetrics,
+    scheme: &str,
+    equation_label: &str,
+) -> CaseRunResult {
+    CaseRunResult {
         name: case.name.clone(),
         benchmark_id: case.benchmark_id.clone(),
         kind: CaseRunKind::Compressible3dTransient,
         summary: format!(
             "3D unstructured {} {} t={} log10={} steps={} converged={} cells={}",
             equation_label,
-            inviscid.short_label(),
+            scheme,
             format_log_sci4(metrics.final_time),
             format_log_fixed4(metrics.residual_log10),
             metrics.steps,
@@ -174,7 +278,7 @@ fn run_compressible_unstructured_3d(
         sod: None,
         compressible_3d: Some(metrics),
         incompressible_3d: None,
-    })
+    }
 }
 
 pub(crate) fn build_compressible_solver(

@@ -6,7 +6,9 @@ mod compressible_multiblock;
 mod compressible_multiblock_driver;
 mod compressible_multiblock_driver_typed;
 mod compressible_multiblock_interface;
+mod compressible_rhs_unstructured_typed;
 mod compressible_unstructured_driver;
+mod compressible_unstructured_driver_typed;
 pub mod incompressible;
 mod incompressible_diagnostics;
 mod incompressible_linear;
@@ -33,8 +35,9 @@ pub use compressible::{
     GmresImplicitConfig, GmresImplicitDelta, GmresPreconditionerKind,
 };
 pub use compressible_helpers::{
-    EvaluateRhsUnstructured, RefreshCompressibleStateInput, finalize_cell_dts_from_sigma,
-    refresh_compressible_ghosts_and_primitives,
+    EvaluateRhsUnstructured, RefreshCompressibleStateInput, RefreshCompressibleStateTypedInput,
+    finalize_cell_dts_from_sigma, refresh_compressible_ghosts_and_primitives,
+    refresh_compressible_ghosts_and_primitives_typed,
 };
 pub use compressible_multiblock_driver::{
     CompressibleMultiblockStepView, MultiblockStructuredDriverInput,
@@ -44,6 +47,7 @@ pub use compressible_multiblock_driver_typed::run_multiblock_structured_typed_wi
 pub use compressible_unstructured_driver::{
     CompressibleUnstructuredStepView, UnstructuredDriverConfig, run_unstructured_with_observer,
 };
+pub use compressible_unstructured_driver_typed::run_unstructured_typed_with_observer;
 pub use incompressible::{
     IncompressibleLinearSolverConfig, IncompressiblePressureLinearSolverConfig,
     IncompressiblePressureLinearSolverKind, IncompressiblePressureVelocityAlgorithm,
