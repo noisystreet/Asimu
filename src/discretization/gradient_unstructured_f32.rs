@@ -1,17 +1,19 @@
-//! 非结构 IDWLS 梯度（f32 串行路径；面样本与矩阵读 `face_topology_f32` / `lsq_geometry_f32`）。
+//! 非结构 IDWLS 梯度（f32 串行路径；面样本读 `face_topology_f32`，正规方程矩阵求解用 f64 `lsq_geometry`）。
 
 use tracing::info_span;
 
 use crate::core::{ComputeFloat, Real};
 use crate::discretization::gradient_typed::GradientFieldsT;
 use crate::discretization::neg_dr;
-use crate::discretization::unstructured_face_cache::UnstructuredSolverMeshCache;
+use crate::discretization::unstructured_face_cache::{
+    UnstructuredSolverMeshCache, solve_lsq_gradient_f32_rhs,
+};
 use crate::discretization::unstructured_face_cache_f32::{
-    LsqPrecomputedCellF32, UnstructuredBoundaryFaceF32, UnstructuredInteriorFaceF32,
+    UnstructuredBoundaryFaceF32, UnstructuredInteriorFaceF32,
 };
 use crate::error::{AsimuError, Result};
 use crate::exec::ExecutionContext;
-use crate::exec::cpu::{accumulate_lsq_rhs_component_f32, solve_lsq_precomputed_cell_f32};
+use crate::exec::cpu::accumulate_lsq_rhs_component_f32;
 use crate::field::{PrimitiveFieldsT, primitive_from_conserved_relaxed_f32_from_state};
 use crate::mesh::UnstructuredMesh3d;
 use crate::physics::{IdealGasEoS, ViscousPhysicsConfig};
@@ -271,7 +273,7 @@ fn write_lsq_gradients_f32(
     out: &mut GradientFieldsT<f32>,
 ) -> Result<()> {
     let idwls = exec.idwls_rhs_f32();
-    for (cell, geometry) in mesh_cache.lsq_geometry_f32.iter().enumerate() {
+    for (cell, geometry) in mesh_cache.lsq_geometry.iter().enumerate() {
         let du = solve_lsq_cell_f32(geometry, idwls.bu_f32()[cell], "u", cell)?;
         let dv = solve_lsq_cell_f32(geometry, idwls.bv_f32()[cell], "v", cell)?;
         let dw = solve_lsq_cell_f32(geometry, idwls.bw_f32()[cell], "w", cell)?;
@@ -293,12 +295,12 @@ fn write_lsq_gradients_f32(
 }
 
 fn solve_lsq_cell_f32(
-    geometry: &LsqPrecomputedCellF32,
+    geometry: &crate::discretization::unstructured_face_cache::LsqPrecomputedCell,
     rhs: [f32; 3],
     component: &str,
     cell: usize,
 ) -> Result<[f32; 3]> {
-    solve_lsq_precomputed_cell_f32(geometry, rhs).ok_or_else(|| {
+    solve_lsq_gradient_f32_rhs(geometry, rhs).ok_or_else(|| {
         AsimuError::Mesh(format!(
             "非结构单元 {cell} 的 {component} 最小二乘梯度样本退化"
         ))

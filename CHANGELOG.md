@@ -5,6 +5,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- 非结构 f32 IDWLS 梯度：`scale` 缩尺网格（如 dual_ellipsoid `0.001`）下 `lsq_geometry_f32` 行列式下溢导致首步报「最小二乘梯度样本退化」；粘性/二阶无粘梯度求解改回 f64 预计算矩阵，输出仍为 f32。
+
 ### Added
 
 - **ADR 0017 CUDA + LU-SGS**：`case/validate` 允许 `backend=cuda` + `time.scheme=lu_sgs`（须 `local_time_step=true`）；LU-SGS 步末 `mark_cuda_primitives_stale`；benchmark `dual_ellipsoid/case_cuda_lusgs_f32.toml`；单 tet validate 与 GPU smoke（`#[ignore=gpu]`）。

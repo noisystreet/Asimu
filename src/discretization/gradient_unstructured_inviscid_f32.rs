@@ -5,13 +5,15 @@ use tracing::info_span;
 use crate::discretization::gradient_typed::GradientFieldsT;
 use crate::discretization::gradient_unstructured_f32::UnstructuredGradientLsqInputF32;
 use crate::discretization::neg_dr;
-use crate::discretization::unstructured_face_cache::UnstructuredSolverMeshCache;
+use crate::discretization::unstructured_face_cache::{
+    UnstructuredSolverMeshCache, solve_lsq_gradient_f32_rhs,
+};
 use crate::discretization::unstructured_face_cache_f32::{
-    LsqPrecomputedCellF32, UnstructuredBoundaryFaceF32, UnstructuredInteriorFaceF32,
+    UnstructuredBoundaryFaceF32, UnstructuredInteriorFaceF32,
 };
 use crate::error::{AsimuError, Result};
 use crate::exec::ExecutionContext;
-use crate::exec::cpu::{accumulate_lsq_rhs_component_f32, solve_lsq_precomputed_cell_f32};
+use crate::exec::cpu::accumulate_lsq_rhs_component_f32;
 use crate::field::primitive_from_conserved_relaxed_f32_from_state;
 
 /// 非结构二阶线性重构用 IDWLS 梯度（f32）。
@@ -195,7 +197,7 @@ fn write_gradients_f32(
     out: &mut GradientFieldsT<f32>,
 ) -> Result<()> {
     let idwls = exec.idwls_rhs_f32();
-    for (cell, geometry) in mesh_cache.lsq_geometry_f32.iter().enumerate() {
+    for (cell, geometry) in mesh_cache.lsq_geometry.iter().enumerate() {
         let drho = solve_lsq_cell_f32(geometry, idwls.br_f32()[cell], "rho", cell)?;
         let dp = solve_lsq_cell_f32(geometry, idwls.bp_f32()[cell], "p", cell)?;
         let du = solve_lsq_cell_f32(geometry, idwls.bu_f32()[cell], "u", cell)?;
@@ -221,12 +223,12 @@ fn write_gradients_f32(
 }
 
 fn solve_lsq_cell_f32(
-    geometry: &LsqPrecomputedCellF32,
+    geometry: &crate::discretization::unstructured_face_cache::LsqPrecomputedCell,
     rhs: [f32; 3],
     component: &str,
     cell: usize,
 ) -> Result<[f32; 3]> {
-    solve_lsq_precomputed_cell_f32(geometry, rhs).ok_or_else(|| {
+    solve_lsq_gradient_f32_rhs(geometry, rhs).ok_or_else(|| {
         AsimuError::Mesh(format!(
             "非结构单元 {cell} 的 {component} 最小二乘梯度样本退化"
         ))

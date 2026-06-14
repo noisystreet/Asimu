@@ -522,6 +522,18 @@ pub(crate) fn solve_lsq_gradient(geometry: &LsqPrecomputedCell, rhs: Vector3) ->
     crate::exec::cpu::solve_symmetric_3x3(&sym3_from_lsq(geometry), rhs)
 }
 
+/// f32 梯度路径：RHS 为 f32，正规方程矩阵用 f64 预计算（避免缩尺网格 cast 后 det 下溢）。
+pub(crate) fn solve_lsq_gradient_f32_rhs(
+    geometry: &LsqPrecomputedCell,
+    rhs: [f32; 3],
+) -> Option<[f32; 3]> {
+    let grad = solve_lsq_gradient(
+        geometry,
+        Vector3::new(rhs[0] as Real, rhs[1] as Real, rhs[2] as Real),
+    )?;
+    Some([grad.x as f32, grad.y as f32, grad.z as f32])
+}
+
 fn vec_sub(a: Vector3, b: Vector3) -> Vector3 {
     Vector3::new(a.x - b.x, a.y - b.y, a.z - b.z)
 }
