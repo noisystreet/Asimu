@@ -43,6 +43,7 @@ pub mod residual;
 pub mod roe;
 pub mod roe_f32;
 pub mod slau2;
+pub mod slau2_f32;
 pub mod unstructured_face_cache;
 pub mod unstructured_limiter;
 pub mod van_leer;
