@@ -34,6 +34,12 @@ asimu --case output/case_dualellipsoid/case.toml --log-level info --chrome-trace
 asimu --case tests/benchmarks/dual_ellipsoid/case_cuda_f32.toml --log-level info
 ```
 
+`case_cuda_lusgs_f32.toml`：同上但 `scheme = lu_sgs`（对角隐式，2 步）；RHS 无粘/粘性走 CUDA，LU-SGS 扫掠/对角更新仍 CPU。
+
+```bash
+asimu --case tests/benchmarks/dual_ellipsoid/case_cuda_lusgs_f32.toml --log-level info
+```
+
 集成测试 `dual_ellipsoid_cuda_smoke_when_cgns_present`（`#[ignore = gpu]` + `slow-tests`）在 CGNS 可用时比对 CPU/CUDA 残差趋势。
 
 日志字段见算例步末 `非结构时间步 profiling`（`profile_time_integration_ms` 等）。

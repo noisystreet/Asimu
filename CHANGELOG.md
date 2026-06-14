@@ -7,6 +7,7 @@
 
 ### Added
 
+- **ADR 0017 CUDA + LU-SGS**：`case/validate` 允许 `backend=cuda` + `time.scheme=lu_sgs`（须 `local_time_step=true`）；LU-SGS 步末 `mark_cuda_primitives_stale`；benchmark `dual_ellipsoid/case_cuda_lusgs_f32.toml`；单 tet validate 与 GPU smoke（`#[ignore=gpu]`）。
 - **ADR 0017 G3 完成**：cuSPARSE CSR SpMV 经 `ExecutionContext::csr_spmv` 分发（f64）；CUDA 侧 CSR 结构缓存与 workspace；`cpu_csr_spmv_matches_cuda_csr_spmv`（`#[ignore=gpu]`）。
 - **ADR 0017 G2 完成**：非结构 f32 CUDA 粘性内面着色桶 kernel（`viscous_interior_f32.cu`）；梯度 H2D + 动量/能量残差累加 scatter；`case/validate` 允许 `backend=cuda` + 粘性/Navier-Stokes（`rk4`/`euler`）；benchmark `dual_ellipsoid/case_cuda_f32.toml`；单 tet CPU≈CUDA 粘性单测与 case GPU smoke（`#[ignore=gpu]`）。
 - **ADR 0017 G1 完成**：非结构 f32 CUDA 一阶无粘 Roe/HVL 着色桶 kernel；`sync_to_host` / `sync_to_device` 骨架与 `primitives_dirty` 步间缓冲；驱动层 `mark_cuda_primitives_stale`；`make check-cuda` / `make test-cuda`；benchmark `unstructured_cuda_freestream`；case 层 CUDA validate / GPU smoke 测试。

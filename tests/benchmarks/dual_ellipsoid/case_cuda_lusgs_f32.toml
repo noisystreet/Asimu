@@ -1,0 +1,39 @@
+# 符号链接或复制 output/case_dualellipsoid/mix.cgns 到本目录后运行：
+#   asimu --case tests/benchmarks/dual_ellipsoid/case_cuda_lusgs_f32.toml
+# CUDA f32 LU-SGS 隐式步进 smoke（RHS 走 device；sweep/对角更新仍 CPU）。
+name = "dual_ellipsoid_cuda_lusgs_f32"
+benchmark_id = "dual_ellipsoid"
+
+[mesh]
+kind = "cgns"
+path = "mix.cgns"
+scale = 0.001
+
+[numerics]
+compute_precision = "f32"
+backend = "cuda"
+
+[physics]
+gamma = 1.4
+gas_constant = 287.052871936417
+prandtl = 0.72
+
+[freestream]
+mach = 10
+pressure = 1000.0
+temperature = 300.0
+velocity_direction = [1.0, 0.0, 0.0]
+
+[time]
+mode = "steady"
+scheme = "lu_sgs"
+local_time_step = true
+cfl = 0.001
+max_steps = 2
+
+[navier_stokes]
+flux = "hanel_van_leer"
+reconstruction = "first_order"
+
+[output]
+dir = "output"

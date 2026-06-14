@@ -17,8 +17,8 @@ use std::time::Instant;
 use tracing::{debug, info, info_span};
 
 use crate::core::{
-    ComputeFloat, Real, elapsed_ms, format_log_fixed4, format_log_fixed5, format_log_sci4,
-    log10_positive,
+    ComputeFloat, ExecDevice, Real, elapsed_ms, format_log_fixed4, format_log_fixed5,
+    format_log_sci4, log10_positive,
 };
 use crate::discretization::InviscidFaceFluxTyped;
 use crate::discretization::gradient_typed::GradientFieldsT;
@@ -319,6 +319,9 @@ fn advance_unstructured_lusgs_typed<T: UnstructuredComputeBackend>(
             let _span = info_span!("unstructured_lusgs_copy_stage_typed").entered();
             fields.copy_from(&work.storage.stage)?;
         }
+    }
+    if work.exec.device() == ExecDevice::GpuCuda {
+        work.exec.mark_cuda_primitives_stale();
     }
     Ok(())
 }

@@ -63,12 +63,32 @@ fn validate_gpu_cuda_backend_enabled(case: &CaseSpec) -> Result<()> {
     }
     match case.time.resolved_time_scheme() {
         TimeIntegrationScheme::Rk4 | TimeIntegrationScheme::Euler => {}
+        TimeIntegrationScheme::LuSgs => validate_gpu_cuda_lusgs(case)?,
         scheme => {
             return Err(gpu_cuda_unsupported(&format!(
                 "cuda 首版不支持 time.scheme = \"{}\"",
                 scheme.label()
             )));
         }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "cuda")]
+fn validate_gpu_cuda_lusgs(case: &CaseSpec) -> Result<()> {
+    if !case.time.uses_local_time_step() {
+        return Err(gpu_cuda_unsupported(
+            "cuda lu_sgs 须配合 local_time_step = true",
+        ));
+    }
+    if case.time.residual_smoothing_config().enabled {
+        return Err(gpu_cuda_unsupported("cuda 首版不支持 residual_smoothing"));
+    }
+    let lu_sgs = case.time.resolved_lusgs_config()?;
+    if lu_sgs.sweep && !matches!(case.mesh, CaseMesh::Unstructured3d(_)) {
+        return Err(gpu_cuda_unsupported(
+            "cuda f32 lu_sgs 扫掠仅支持非结构 3D 路径",
+        ));
     }
     Ok(())
 }
@@ -484,5 +504,78 @@ mod exec_backend_tests {
             let err = exec_backend(&case).expect_err("f64");
             assert!(err.to_string().contains("f32"));
         }
+    }
+
+    #[test]
+    fn gpu_cuda_accepts_f32_lusgs_unstructured() {
+        let mut case = load_case(Path::new(
+            "tests/benchmarks/unstructured_freestream/case.toml",
+        ))
+        .expect("case");
+        case.numerics = CaseNumericsConfig {
+            compute_precision: ComputePrecision::F32,
+            exec_device: ExecDevice::GpuCuda,
+        };
+        attach_single_tet_unstructured(&mut case);
+        case.time.scheme = Some(TimeIntegrationScheme::LuSgs);
+        case.time.local_time_step = true;
+        #[cfg(feature = "cuda")]
+        {
+            exec_backend(&case).expect("cuda lu_sgs validate");
+        }
+    }
+
+    #[test]
+    fn gpu_cuda_rejects_lusgs_without_local_time_step() {
+        let mut case = load_case(Path::new(
+            "tests/benchmarks/unstructured_freestream/case.toml",
+        ))
+        .expect("case");
+        case.numerics = CaseNumericsConfig {
+            compute_precision: ComputePrecision::F32,
+            exec_device: ExecDevice::GpuCuda,
+        };
+        attach_single_tet_unstructured(&mut case);
+        case.time.scheme = Some(TimeIntegrationScheme::LuSgs);
+        case.time.local_time_step = false;
+        #[cfg(feature = "cuda")]
+        {
+            let err = exec_backend(&case).expect_err("no local dt");
+            assert!(err.to_string().contains("local_time_step"));
+        }
+    }
+
+    fn attach_single_tet_unstructured(case: &mut crate::io::CaseSpec) {
+        use crate::boundary::{BoundaryKind, BoundaryPatch, BoundarySet};
+        use crate::io::CaseMesh;
+        use crate::mesh::{CellKind, UnstructuredCell, UnstructuredMesh3d};
+
+        let mesh = UnstructuredMesh3d::new(
+            "tet",
+            vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            vec![UnstructuredCell::new(CellKind::Tet, vec![0, 1, 2, 3]).expect("cell")],
+        )
+        .expect("mesh");
+        let faces = (0..mesh.num_faces())
+            .map(|face| crate::core::FaceId(face as u32))
+            .collect::<Vec<_>>();
+        let fs = case.freestream.expect("freestream");
+        case.mesh = CaseMesh::Unstructured3d(mesh);
+        case.boundary = BoundarySet::new(vec![BoundaryPatch::new(
+            "farfield",
+            faces,
+            BoundaryKind::Farfield {
+                mach: fs.mach,
+                pressure: fs.pressure,
+                temperature: fs.temperature,
+                alpha: fs.alpha,
+                beta: fs.beta,
+            },
+        )]);
     }
 }
