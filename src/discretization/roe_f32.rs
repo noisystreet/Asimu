@@ -1,10 +1,9 @@
 //! Roe 近似 Riemann 求解器 f32 热路径（语义对齐 `roe.rs` / CUDA kernel）。
 
 use crate::core::Vector3;
-use crate::discretization::inviscid::InviscidFlux;
 use crate::discretization::inviscid_f32::{
     ConservedStateF32, InviscidFluxF32, conserved_from_primitive_f32, face_tangent_basis_f32,
-    inviscid_flux_f32_to_real, normalize_face_normal_f32, physical_inviscid_flux_f32,
+    normalize_face_normal_f32, physical_inviscid_flux_f32,
 };
 use crate::discretization::roe::RoeFluxConfig;
 use crate::discretization::viscous_boundary_f32::PrimitiveStateF32;
@@ -18,7 +17,7 @@ pub fn roe_flux_with_primitives_f32(
     normal: Vector3,
     eos: &IdealGasEoS,
     config: &RoeFluxConfig,
-) -> Result<InviscidFlux> {
+) -> Result<crate::discretization::inviscid_f32::InviscidFluxF32> {
     let n = normalize_face_normal_f32(normal)?;
     let left = conserved_from_primitive_f32(eos, prim_l)?;
     let right = conserved_from_primitive_f32(eos, prim_r)?;
@@ -40,9 +39,7 @@ pub fn roe_flux_with_primitives_f32(
         &waves,
         RoeDissipationCoeffsF32 { l1, l_mid, l5 },
     );
-    Ok(inviscid_flux_f32_to_real(combine_fluxes_f32(
-        flux_l, flux_r, diss,
-    )))
+    Ok(combine_fluxes_f32(flux_l, flux_r, diss))
 }
 
 struct RoeAveragesF32 {
@@ -285,7 +282,7 @@ fn dot3_f32(v: [f32; 3], n: [f32; 3]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::approx_eq;
+    use crate::core::{Real, approx_eq};
     use crate::discretization::roe::roe_flux_with_primitives;
     use crate::discretization::viscous_boundary_f32::primitive_state_f32_from_real;
     use crate::physics::{ConservedState, PrimitiveState};
@@ -320,7 +317,7 @@ mod tests {
             &config,
         )
         .expect("f32");
-        assert!(approx_eq(f32_flux.mass, f64_flux.mass, 1.0e-3));
-        assert!(approx_eq(f32_flux.energy, f64_flux.energy, 1.0e-2));
+        assert!(approx_eq(f32_flux.mass as Real, f64_flux.mass, 1.0e-3));
+        assert!(approx_eq(f32_flux.energy as Real, f64_flux.energy, 1.0e-2));
     }
 }

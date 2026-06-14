@@ -3,8 +3,8 @@
 use crate::core::FaceId;
 use crate::core::{Real, Vector3};
 use crate::discretization::unstructured_face_cache::{
-    LsqPrecomputedCell, UnstructuredBoundaryFace, UnstructuredBoundaryViscousKind,
-    UnstructuredFaceTopology, UnstructuredInteriorFace,
+    GradientLimiterSampleKind, LsqPrecomputedCell, UnstructuredBoundaryFace,
+    UnstructuredBoundaryViscousKind, UnstructuredFaceTopology, UnstructuredInteriorFace,
 };
 
 /// f32 IDWLS 正规方程矩阵 \(A\)（与 [`LsqPrecomputedCell`] 单元索引对齐）。
@@ -29,6 +29,61 @@ impl LsqPrecomputedCellF32 {
             a_yz: cell.a_yz as f32,
             a_zz: cell.a_zz as f32,
         }
+    }
+}
+
+/// f32 梯度限制器样本（与 f64 `GradientLimiterSample` 索引对齐）。
+#[derive(Debug, Clone, Copy)]
+pub struct GradientLimiterSampleF32 {
+    pub dr: [f32; 3],
+    pub kind: GradientLimiterSampleKind,
+}
+
+/// LU-SGS 面耦合几何（f32 预打包）。
+#[derive(Debug, Clone, Copy)]
+pub struct LuSgsCellCouplingF32 {
+    pub neighbor: usize,
+    pub area: f32,
+    pub normal: [f32; 3],
+}
+
+/// 非结构 LU-SGS 拓扑邻接 f32 缓存。
+#[derive(Debug, Clone)]
+pub struct LuSgsUnstructuredCouplingsF32 {
+    cells: Vec<Vec<LuSgsCellCouplingF32>>,
+}
+
+impl LuSgsUnstructuredCouplingsF32 {
+    #[must_use]
+    pub fn from_topology_f32(num_cells: usize, topology: &UnstructuredFaceTopologyF32) -> Self {
+        let mut cells = vec![Vec::new(); num_cells];
+        for face in &topology.interior {
+            cells[face.owner].push(LuSgsCellCouplingF32 {
+                neighbor: face.neighbor,
+                area: face.area,
+                normal: face.normal,
+            });
+            cells[face.neighbor].push(LuSgsCellCouplingF32 {
+                neighbor: face.owner,
+                area: face.area,
+                normal: face.normal,
+            });
+        }
+        Self { cells }
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.cells.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.cells.is_empty()
+    }
+
+    pub(crate) fn cells(&self) -> &[Vec<LuSgsCellCouplingF32>] {
+        &self.cells
     }
 }
 
@@ -100,6 +155,32 @@ pub fn lsq_geometry_f32_from_f64(geometry: &[LsqPrecomputedCell]) -> Vec<LsqPrec
         .iter()
         .map(LsqPrecomputedCellF32::from_f64)
         .collect()
+}
+
+/// 由 f32 面拓扑构建限制器样本列表。
+#[must_use]
+pub fn build_cell_gradient_samples_f32(
+    num_cells: usize,
+    topology: &UnstructuredFaceTopologyF32,
+) -> Vec<Vec<GradientLimiterSampleF32>> {
+    let mut samples = vec![Vec::new(); num_cells];
+    for face in &topology.interior {
+        samples[face.owner].push(GradientLimiterSampleF32 {
+            dr: face.lsq_dr,
+            kind: GradientLimiterSampleKind::NeighborCell(face.neighbor),
+        });
+        samples[face.neighbor].push(GradientLimiterSampleF32 {
+            dr: neg_dr(face.lsq_dr),
+            kind: GradientLimiterSampleKind::NeighborCell(face.owner),
+        });
+    }
+    for (idx, face) in topology.boundary.iter().enumerate() {
+        samples[face.owner].push(GradientLimiterSampleF32 {
+            dr: face.lsq_dr,
+            kind: GradientLimiterSampleKind::Boundary(idx),
+        });
+    }
+    samples
 }
 
 #[inline]

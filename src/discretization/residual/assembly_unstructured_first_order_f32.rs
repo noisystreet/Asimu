@@ -1,16 +1,18 @@
-//! 非结构一阶无粘残差 f32 装配（读取 `face_topology_f32` 预打包几何）。
+//! 非结构一阶无粘残差 f32 装配（读取 `face_topology_f32` 预打包几何；scatter 全 f32）。
 
 use crate::core::Real;
-use crate::discretization::face_flux_typed::InviscidFaceFluxTyped;
+use crate::discretization::face_flux_typed::{
+    face_inviscid_flux_first_order_boundary_soa_f32,
+    face_inviscid_flux_first_order_interior_soa_f32,
+};
 use crate::discretization::residual::{
-    accumulate_boundary_face_typed, accumulate_interior_face_typed, is_degenerate_volume,
+    accumulate_boundary_face_f32, accumulate_interior_face_f32, is_degenerate_volume,
 };
 use crate::discretization::vec3_from_f32;
 use crate::error::{AsimuError, Result};
 use crate::field::ConservedResidualT;
 
 use super::InviscidAssemblyUnstructuredTypedParams;
-use super::first_order_typed::first_order_interior_flux;
 
 pub(super) fn assemble_first_order_interior_faces_serial_f32(
     residual: &mut ConservedResidualT<f32>,
@@ -25,22 +27,22 @@ pub(super) fn assemble_first_order_interior_faces_serial_f32(
         {
             continue;
         }
-        let flux = first_order_interior_flux(
-            params.primitives,
+        let flux = face_inviscid_flux_first_order_interior_soa_f32(
             face.owner,
             face.neighbor,
+            params.primitives,
             vec3_from_f32(face.normal),
             params.eos,
             params.config,
         )?;
-        accumulate_interior_face_typed(
+        accumulate_interior_face_f32(
             residual,
             face.owner,
             face.neighbor,
             &flux,
-            face.area as Real,
-            face.owner_volume as Real,
-            face.neighbor_volume as Real,
+            face.area,
+            face.owner_volume,
+            face.neighbor_volume,
         )?;
     }
     Ok(())
@@ -63,7 +65,7 @@ pub(super) fn assemble_boundary_faces_first_order_f32(
                 bface.face.index()
             ))
         })?;
-        let flux = f32::first_order_boundary_soa(
+        let flux = face_inviscid_flux_first_order_boundary_soa_f32(
             params.primitives,
             bface.owner,
             &ghost,
@@ -72,13 +74,7 @@ pub(super) fn assemble_boundary_faces_first_order_f32(
             params.config,
             params.min_pressure,
         )?;
-        accumulate_boundary_face_typed(
-            residual,
-            bface.owner,
-            &flux,
-            bface.area as Real,
-            bface.owner_volume as Real,
-        )?;
+        accumulate_boundary_face_f32(residual, bface.owner, &flux, bface.area, bface.owner_volume)?;
     }
     Ok(())
 }

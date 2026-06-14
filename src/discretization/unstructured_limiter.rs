@@ -64,6 +64,39 @@ pub fn venkatakrishnan_sample_factor(phi_i: Real, phi_m: Real, grad_dot_dr: Real
     venkatakrishnan_phi(xi).clamp(0.0, 1.0)
 }
 
+/// Barth–Jespersen 单样本限制因子（f32 热路径）。
+#[must_use]
+pub fn barth_jespersen_sample_factor_f32(
+    phi_i: f32,
+    phi_min: f32,
+    phi_max: f32,
+    grad_dot_dr: f32,
+) -> f32 {
+    if grad_dot_dr > 0.0 {
+        ((phi_max - phi_i) / grad_dot_dr).clamp(0.0, 1.0)
+    } else if grad_dot_dr < 0.0 {
+        ((phi_min - phi_i) / grad_dot_dr).clamp(0.0, 1.0)
+    } else {
+        1.0
+    }
+}
+
+/// Venkatakrishnan 光滑函数 \(\varphi(\xi)\)（f32）。
+#[must_use]
+pub fn venkatakrishnan_phi_f32(xi: f32) -> f32 {
+    (xi * xi + 2.0 * xi) / (xi * xi + xi + 2.0)
+}
+
+/// Venkatakrishnan 单样本限制因子（f32 热路径）。
+#[must_use]
+pub fn venkatakrishnan_sample_factor_f32(phi_i: f32, phi_m: f32, grad_dot_dr: f32) -> f32 {
+    if grad_dot_dr.abs() <= f32::EPSILON {
+        return 1.0;
+    }
+    let xi = (phi_m - phi_i) / (2.0 * grad_dot_dr);
+    venkatakrishnan_phi_f32(xi).clamp(0.0, 1.0)
+}
+
 /// 对单元所有 LSQ 样本取最小限制因子。
 #[must_use]
 pub fn limit_cell_gradient_factor(

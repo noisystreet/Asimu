@@ -12,6 +12,8 @@ pub(super) trait InviscidFirstOrderFaceFlux: InviscidFaceFluxTyped {}
 
 impl<T: InviscidFaceFluxTyped> InviscidFirstOrderFaceFlux for T {}
 
+#[allow(dead_code)]
+#[cfg_attr(not(feature = "parallel-fvm"), allow(dead_code))]
 pub(super) fn first_order_interior_flux<T: InviscidFaceFluxTyped>(
     primitives: &PrimitiveFieldsT<T>,
     owner: usize,

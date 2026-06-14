@@ -1,5 +1,12 @@
 //! 非结构 3D 可压缩 typed 时间推进驱动（ADR 0016 P3）。
 
+#[path = "compressible_unstructured_lusgs_typed.rs"]
+mod compressible_unstructured_lusgs_typed;
+
+use compressible_unstructured_lusgs_typed::{
+    UnstructuredLusgsSweep, UnstructuredLusgsSweepContext,
+};
+
 use std::time::Instant;
 
 use tracing::{debug, info, info_span};
@@ -35,10 +42,9 @@ use crate::solver::time::{
     TransientStepControl, euler_step, euler_step_local, min_positive_dt, rk4_step, rk4_step_local,
 };
 use crate::solver::{
-    CompressibleStepInfo, CompressibleUnstructuredStepView, LuSgsSweepUnstructuredInput,
-    LuSgsSweepUnstructuredTypedParams, LuSgsUnstructuredCouplings, LuSgsUnstructuredSweepTyped,
-    RefreshCompressibleStateTypedInput, SolverState, UnstructuredDriverConfig,
-    finalize_cell_dts_from_sigma, lu_sgs_sweep_unstructured_typed,
+    CompressibleStepInfo, CompressibleUnstructuredStepView, LuSgsUnstructuredCouplings,
+    LuSgsUnstructuredSweepTyped, RefreshCompressibleStateTypedInput, SolverState,
+    UnstructuredDriverConfig, finalize_cell_dts_from_sigma,
     refresh_compressible_ghosts_and_primitives_typed,
 };
 
@@ -52,7 +58,7 @@ pub(crate) struct UnstructuredTypedRhsWork<'a, T: ComputeFloat> {
     exec: &'a mut ExecutionContext,
 }
 
-struct UnstructuredStepWorkTyped<T: ComputeFloat> {
+pub(crate) struct UnstructuredStepWorkTyped<T: ComputeFloat> {
     storage: Rk4StorageT<T>,
     state: SolverState,
     integrator: RungeKutta4Integrator,
@@ -260,29 +266,22 @@ fn advance_unstructured_lusgs_typed<T: UnstructuredComputeBackend>(
         )?;
     }
     if lu_sgs.sweep {
-        let mut sweep_params = LuSgsSweepUnstructuredTypedParams {
-            mesh: env.config.mesh,
-            eos: env.config.eos,
-            primitives: &mut work.primitives,
-            min_pressure: p_floor,
-            backward_damping: lu_sgs.sweep_backward_damping,
-        };
         let _span = info_span!(
             "unstructured_lusgs_sweep_typed",
             precision = T::PRECISION.label(),
         )
         .entered();
-        lu_sgs_sweep_unstructured_typed(
+        T::run_lusgs_sweep(
             fields,
-            &work.storage.k1,
-            &mut sweep_params,
-            LuSgsSweepUnstructuredInput {
-                dt: cell_dts,
+            work,
+            &UnstructuredLusgsSweepContext {
+                env,
+                cell_dts,
                 sigma,
-                volumes: &work.volumes,
-                couplings: &work.lusgs_couplings,
+                p_floor,
+                sweep: true,
                 omega: lu_sgs.omega,
-                gamma: env.config.eos.gamma,
+                backward_damping: lu_sgs.sweep_backward_damping,
             },
         )?;
     } else {
@@ -613,6 +612,7 @@ pub(crate) trait UnstructuredComputeBackend:
     + UnstructuredSpectralRadiusTyped
     + LuSgsUnstructuredSweepTyped
     + UnstructuredRhsDispatchImpl
+    + UnstructuredLusgsSweep
 {
 }
 

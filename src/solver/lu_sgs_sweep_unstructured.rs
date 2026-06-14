@@ -25,12 +25,34 @@ pub struct LuSgsSweepUnstructuredParams<'a> {
     pub backward_damping: Real,
 }
 
+use crate::discretization::unstructured_face_cache_f32::LuSgsUnstructuredCouplingsF32;
+
+/// 非结构 LU-SGS 拓扑邻接（f64 或 f32 预打包）。
+pub enum LuSgsUnstructuredCouplingsRef<'a> {
+    F64(&'a LuSgsUnstructuredCouplings),
+    F32(&'a LuSgsUnstructuredCouplingsF32),
+}
+
+impl<'a> LuSgsUnstructuredCouplingsRef<'a> {
+    #[must_use]
+    pub fn len(&self) -> usize {
+        match self {
+            Self::F64(c) => c.len(),
+            Self::F32(c) => c.len(),
+        }
+    }
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 /// 非结构 LU-SGS sweep 的逐单元时间步与标量参数。
 pub struct LuSgsSweepUnstructuredInput<'a> {
     pub dt: &'a [Real],
     pub sigma: &'a [Real],
     pub volumes: &'a [Real],
-    pub couplings: &'a LuSgsUnstructuredCouplings,
+    pub couplings: LuSgsUnstructuredCouplingsRef<'a>,
     pub omega: Real,
     pub gamma: Real,
 }
@@ -85,6 +107,11 @@ pub fn lu_sgs_sweep_unstructured(
             "lu_sgs_sweep_unstructured: 场/残差/dt/sigma/volume 长度不一致".to_string(),
         ));
     }
+    let LuSgsUnstructuredCouplingsRef::F64(couplings) = input.couplings else {
+        return Err(AsimuError::Solver(
+            "lu_sgs_sweep_unstructured: 仅支持 f64 拓扑耦合".to_string(),
+        ));
+    };
     let u0 = fields.clone();
     let scalars = LuSgsSweepScalars {
         dt: input.dt,
@@ -95,18 +122,11 @@ pub fn lu_sgs_sweep_unstructured(
     };
     {
         let _span = info_span!("lu_sgs_unstructured_forward").entered();
-        forward_sweep(
-            fields,
-            &u0,
-            residual,
-            params,
-            &input.couplings.cells,
-            &scalars,
-        )?;
+        forward_sweep(fields, &u0, residual, params, couplings.cells(), &scalars)?;
     }
     {
         let _span = info_span!("lu_sgs_unstructured_backward").entered();
-        backward_sweep(fields, &u0, params, &input.couplings.cells, &scalars)?;
+        backward_sweep(fields, &u0, params, couplings.cells(), &scalars)?;
     }
     let u_sweep = fields.clone();
     stabilize_sweep_update(
@@ -314,7 +334,7 @@ mod tests {
                 dt: &dt,
                 sigma: &sigma,
                 volumes: &volumes,
-                couplings: &couplings,
+                couplings: LuSgsUnstructuredCouplingsRef::F64(&couplings),
                 omega: 1.0,
                 gamma: eos.gamma,
             },

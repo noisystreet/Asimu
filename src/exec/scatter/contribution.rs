@@ -30,6 +30,18 @@ pub struct InviscidScatterOp {
     pub energy: Real,
 }
 
+/// 单面无粘 scatter 贡献（全 f32，无 Real 桥接）。
+#[derive(Debug, Clone, Copy)]
+pub struct InviscidScatterOpF32 {
+    pub owner: usize,
+    pub neighbor: usize,
+    pub owner_scale: f32,
+    pub neighbor_scale: f32,
+    pub mass: f32,
+    pub momentum: [f32; 3],
+    pub energy: f32,
+}
+
 /// 粘性残差可变切片。
 pub struct ViscousResidualMut<'a> {
     pub mx: &'a mut [Real],

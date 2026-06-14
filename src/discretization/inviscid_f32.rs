@@ -1,9 +1,10 @@
-//! f32 无粘物理通量与守恒态辅助（输出仍转为 `InviscidFlux` 供 scatter）。
+//! f32 无粘物理通量、scatter 与守恒态辅助。
 
 use crate::core::{Real, Vector3};
 use crate::discretization::inviscid::InviscidFlux;
 use crate::discretization::viscous_boundary_f32::PrimitiveStateF32;
 use crate::error::{AsimuError, Result};
+use crate::field::ConservedResidualT;
 use crate::physics::IdealGasEoS;
 
 /// f32 守恒态（面通量局部）。
@@ -14,11 +15,21 @@ pub(crate) struct ConservedStateF32 {
     pub total_energy: f32,
 }
 
+/// f32 面法向无粘通量。
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct InviscidFluxF32 {
+pub struct InviscidFluxF32 {
     pub mass: f32,
     pub momentum: [f32; 3],
     pub energy: f32,
+}
+
+/// scatter 阶段内面几何（f32 预存 RHS 缩放）。
+#[derive(Debug, Clone, Copy)]
+pub struct InteriorInviscidScatterGeomF32 {
+    pub owner: usize,
+    pub neighbor: usize,
+    pub owner_scale: f32,
+    pub neighbor_scale: f32,
 }
 
 #[must_use]
@@ -32,6 +43,44 @@ pub(crate) fn inviscid_flux_f32_to_real(flux: InviscidFluxF32) -> InviscidFlux {
         ],
         energy: flux.energy as Real,
     }
+}
+
+/// 将 f32 无粘通量 scatter 到 typed 残差（全 f32，无 Real 桥接）。
+#[inline(always)]
+pub fn scatter_fused_interior_inviscid_face_f32(
+    residual: &mut ConservedResidualT<f32>,
+    geom: &InteriorInviscidScatterGeomF32,
+    flux: &InviscidFluxF32,
+) {
+    let owner = geom.owner;
+    let neighbor = geom.neighbor;
+    let os = geom.owner_scale;
+    let ns = geom.neighbor_scale;
+    residual.density.values_mut()[owner] += os * flux.mass;
+    residual.momentum_x.values_mut()[owner] += os * flux.momentum[0];
+    residual.momentum_y.values_mut()[owner] += os * flux.momentum[1];
+    residual.momentum_z.values_mut()[owner] += os * flux.momentum[2];
+    residual.total_energy.values_mut()[owner] += os * flux.energy;
+    residual.density.values_mut()[neighbor] += ns * flux.mass;
+    residual.momentum_x.values_mut()[neighbor] += ns * flux.momentum[0];
+    residual.momentum_y.values_mut()[neighbor] += ns * flux.momentum[1];
+    residual.momentum_z.values_mut()[neighbor] += ns * flux.momentum[2];
+    residual.total_energy.values_mut()[neighbor] += ns * flux.energy;
+}
+
+/// 边界面无粘 scatter（f32）。
+#[inline(always)]
+pub fn scatter_fused_boundary_inviscid_face_f32(
+    residual: &mut ConservedResidualT<f32>,
+    owner: usize,
+    owner_scale: f32,
+    flux: &InviscidFluxF32,
+) {
+    residual.density.values_mut()[owner] += owner_scale * flux.mass;
+    residual.momentum_x.values_mut()[owner] += owner_scale * flux.momentum[0];
+    residual.momentum_y.values_mut()[owner] += owner_scale * flux.momentum[1];
+    residual.momentum_z.values_mut()[owner] += owner_scale * flux.momentum[2];
+    residual.total_energy.values_mut()[owner] += owner_scale * flux.energy;
 }
 
 pub(crate) fn conserved_from_primitive_f32(

@@ -38,8 +38,7 @@ use crate::discretization::{
 use crate::error::{AsimuError, Result};
 use crate::exec::ExecutionContext;
 use crate::exec::scatter::{
-    InviscidPairScatter, InviscidPairScatterF32, InviscidResidualMut, InviscidResidualMutF32,
-    InviscidScatterOp, scatter_inviscid_pairs, scatter_inviscid_pairs_f32,
+    InviscidPairScatter, InviscidResidualMut, InviscidScatterOp, scatter_inviscid_pairs,
 };
 use crate::field::{ConservedFieldsT, ConservedResidualT, PrimitiveFieldsT};
 use crate::mesh::UnstructuredMesh3d;
@@ -112,7 +111,11 @@ impl InviscidTypedScatterBackend for f32 {
             crate::discretization::InviscidFlux,
         )],
     ) {
-        scatter_inviscid_interior_pairs_f32(residual, ctx, bucket_len, pairs);
+        let _ = (residual, ctx, bucket_len, pairs);
+        debug_assert!(
+            pairs.is_empty(),
+            "f32 非结构无粘 scatter 应走 InteriorInviscidScatterGeomF32 / InviscidFluxF32"
+        );
     }
 
     fn scatter_fused_interior_face(
@@ -120,7 +123,11 @@ impl InviscidTypedScatterBackend for f32 {
         geom: &InteriorInviscidScatterGeom,
         flux: &crate::discretization::InviscidFlux,
     ) {
-        scatter_fused_interior_face_f32(residual, geom, flux);
+        let _ = (residual, geom, flux);
+        debug_assert!(
+            false,
+            "f32 非结构无粘 scatter 应走 scatter_fused_interior_inviscid_face_f32"
+        );
     }
 
     fn try_cuda_first_order_interior(
@@ -168,32 +175,6 @@ fn scatter_inviscid_interior_pairs_f64(
     );
 }
 
-fn scatter_inviscid_interior_pairs_f32(
-    residual: &mut ConservedResidualT<f32>,
-    ctx: &ExecutionContext,
-    bucket_len: usize,
-    pairs: &[(
-        InteriorInviscidScatterGeom,
-        crate::discretization::InviscidFlux,
-    )],
-) {
-    scatter_inviscid_pairs_f32(
-        InviscidPairScatterF32 {
-            ctx,
-            bucket_len,
-            pairs,
-            residual: InviscidResidualMutF32 {
-                density: residual.density.values_mut(),
-                mx: residual.momentum_x.values_mut(),
-                my: residual.momentum_y.values_mut(),
-                mz: residual.momentum_z.values_mut(),
-                energy: residual.total_energy.values_mut(),
-            },
-        },
-        inviscid_scatter_extract,
-    );
-}
-
 #[cfg_attr(feature = "parallel-fvm", allow(dead_code))]
 fn scatter_fused_interior_face_f64(
     residual: &mut ConservedResidualT<f64>,
@@ -210,17 +191,6 @@ fn scatter_fused_interior_face_f64(
         },
         geom,
         flux,
-    );
-}
-
-#[cfg_attr(feature = "parallel-fvm", allow(dead_code))]
-fn scatter_fused_interior_face_f32(
-    residual: &mut ConservedResidualT<f32>,
-    geom: &InteriorInviscidScatterGeom,
-    flux: &crate::discretization::InviscidFlux,
-) {
-    crate::discretization::inviscid::scatter_fused_interior_inviscid_face_typed(
-        residual, geom, flux,
     );
 }
 

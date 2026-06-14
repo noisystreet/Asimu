@@ -8,12 +8,15 @@ use crate::field::{ConservedFieldsT, ConservedResidualT, PrimitiveFieldsT};
 use crate::mesh::UnstructuredMesh3d;
 use crate::physics::IdealGasEoS;
 
+use crate::discretization::unstructured_face_cache_f32::LuSgsCellCouplingF32;
 use crate::solver::lu_sgs_common::{
     LuSgsSweepScalars, apply_limited_cell_increment_typed, conserved_vector_typed, implicit_scale,
     refresh_primitive_at_cell_typed, residual_cell_vector_typed, scale_source,
     stabilize_sweep_update_typed,
 };
-use crate::solver::lu_sgs_sweep_unstructured::{LuSgsCellCoupling, LuSgsSweepUnstructuredInput};
+use crate::solver::lu_sgs_sweep_unstructured::{
+    LuSgsCellCoupling, LuSgsSweepUnstructuredInput, LuSgsUnstructuredCouplingsRef,
+};
 use crate::solver::spectral_radius::face_spectral_radius;
 use crate::solver::spectral_radius_f32::{FacePrimitiveLaneF32, face_spectral_radius_f32};
 
@@ -99,28 +102,31 @@ pub fn lu_sgs_sweep_unstructured_typed<T: LuSgsUnstructuredSweepTyped>(
         omega: input.omega,
         gamma: input.gamma,
     };
-    {
-        let _span = info_span!(
-            "lu_sgs_unstructured_forward_typed",
-            precision = T::PRECISION.label()
-        )
-        .entered();
-        forward_sweep_typed(
-            fields,
-            &u0,
-            residual,
-            params,
-            input.couplings.cells(),
-            &scalars,
-        )?;
-    }
-    {
-        let _span = info_span!(
-            "lu_sgs_unstructured_backward_typed",
-            precision = T::PRECISION.label()
-        )
-        .entered();
-        backward_sweep_typed(fields, &u0, params, input.couplings.cells(), &scalars)?;
+    match input.couplings {
+        LuSgsUnstructuredCouplingsRef::F64(couplings) => {
+            {
+                let _span = info_span!(
+                    "lu_sgs_unstructured_forward_typed",
+                    precision = T::PRECISION.label()
+                )
+                .entered();
+                forward_sweep_typed(fields, &u0, residual, params, couplings.cells(), &scalars)?;
+            }
+            {
+                let _span = info_span!(
+                    "lu_sgs_unstructured_backward_typed",
+                    precision = T::PRECISION.label()
+                )
+                .entered();
+                backward_sweep_typed(fields, &u0, params, couplings.cells(), &scalars)?;
+            }
+        }
+        LuSgsUnstructuredCouplingsRef::F32(_) => {
+            return Err(AsimuError::Solver(
+                "lu_sgs_sweep_unstructured_typed: f32 耦合请调用 lu_sgs_sweep_unstructured_f32"
+                    .to_string(),
+            ));
+        }
     }
     let u_sweep = fields.clone();
     stabilize_sweep_update_typed(
@@ -230,6 +236,153 @@ fn add_coupling_delta_typed<T: LuSgsUnstructuredSweepTyped>(
     }
 }
 
+fn forward_sweep_f32_couplings(
+    fields: &mut ConservedFieldsT<f32>,
+    u0: &ConservedFieldsT<f32>,
+    residual: &ConservedResidualT<f32>,
+    params: &mut LuSgsSweepUnstructuredTypedParams<'_, f32>,
+    couplings: &[Vec<LuSgsCellCouplingF32>],
+    scalars: &LuSgsSweepScalars<'_>,
+) -> Result<()> {
+    for (cell, cell_couplings) in couplings.iter().enumerate().take(fields.num_cells()) {
+        let scale = implicit_scale(scalars.dt[cell], scalars.sigma[cell], scalars.omega);
+        let mut source = residual_cell_vector_typed(residual, cell);
+        for coupling in cell_couplings.iter().filter(|c| c.neighbor < cell) {
+            add_coupling_delta_f32(
+                &mut source,
+                cell,
+                *coupling,
+                scalars.volumes[cell],
+                fields,
+                u0,
+                params,
+            );
+        }
+        apply_limited_cell_increment_typed(
+            fields,
+            cell,
+            scale,
+            source,
+            scalars.gamma,
+            params.min_pressure,
+        )?;
+        refresh_primitive_typed(params, fields, cell)?;
+    }
+    Ok(())
+}
+
+fn backward_sweep_f32_couplings(
+    fields: &mut ConservedFieldsT<f32>,
+    u0: &ConservedFieldsT<f32>,
+    params: &mut LuSgsSweepUnstructuredTypedParams<'_, f32>,
+    couplings: &[Vec<LuSgsCellCouplingF32>],
+    scalars: &LuSgsSweepScalars<'_>,
+) -> Result<()> {
+    for (cell, cell_couplings) in couplings.iter().enumerate().take(fields.num_cells()).rev() {
+        let scale = implicit_scale(scalars.dt[cell], scalars.sigma[cell], scalars.omega);
+        let mut source = [0.0; 5];
+        for coupling in cell_couplings.iter().filter(|c| c.neighbor > cell) {
+            add_coupling_delta_f32(
+                &mut source,
+                cell,
+                *coupling,
+                scalars.volumes[cell],
+                fields,
+                u0,
+                params,
+            );
+        }
+        if source.iter().any(|c| c.abs() > Real::EPSILON) {
+            let damped = scale_source(source, params.backward_damping);
+            apply_limited_cell_increment_typed(
+                fields,
+                cell,
+                scale,
+                damped,
+                scalars.gamma,
+                params.min_pressure,
+            )?;
+            refresh_primitive_typed(params, fields, cell)?;
+        }
+    }
+    Ok(())
+}
+
+fn add_coupling_delta_f32(
+    source: &mut [Real; 5],
+    cell: usize,
+    coupling: LuSgsCellCouplingF32,
+    volume: Real,
+    fields: &ConservedFieldsT<f32>,
+    u0: &ConservedFieldsT<f32>,
+    params: &LuSgsSweepUnstructuredTypedParams<'_, f32>,
+) {
+    let lambda = face_spectral_radius_f32(
+        prim_lane_f32(params.primitives, cell),
+        prim_lane_f32(params.primitives, coupling.neighbor),
+        coupling.normal,
+        params.eos.gamma as f32,
+    )
+    .to_real();
+    let coef = (coupling.area as Real) * lambda / volume.max(1.0e-30);
+    let cur = conserved_vector_typed(fields, coupling.neighbor);
+    let old = conserved_vector_typed(u0, coupling.neighbor);
+    for (s, (&c, &o)) in source.iter_mut().zip(cur.iter().zip(old.iter())) {
+        *s -= coef * (c - o);
+    }
+}
+
+/// f32 预打包耦合的非结构 LU-SGS 双扫。
+pub fn lu_sgs_sweep_unstructured_f32(
+    fields: &mut ConservedFieldsT<f32>,
+    residual: &ConservedResidualT<f32>,
+    params: &mut LuSgsSweepUnstructuredTypedParams<'_, f32>,
+    input: LuSgsSweepUnstructuredInput<'_>,
+) -> Result<()> {
+    let n = fields.num_cells();
+    if residual.num_cells() != n
+        || input.dt.len() != n
+        || input.sigma.len() != n
+        || input.volumes.len() != n
+        || input.couplings.len() != n
+    {
+        return Err(AsimuError::Solver(
+            "lu_sgs_sweep_unstructured_f32: 场/残差/dt/sigma/volume 长度不一致".to_string(),
+        ));
+    }
+    let LuSgsUnstructuredCouplingsRef::F32(couplings) = input.couplings else {
+        return Err(AsimuError::Solver(
+            "lu_sgs_sweep_unstructured_f32: 须使用 f32 拓扑耦合".to_string(),
+        ));
+    };
+    let u0 = fields.clone();
+    let scalars = LuSgsSweepScalars {
+        dt: input.dt,
+        sigma: input.sigma,
+        volumes: input.volumes,
+        omega: input.omega,
+        gamma: input.gamma,
+    };
+    {
+        let _span = info_span!("lu_sgs_unstructured_forward_f32").entered();
+        forward_sweep_f32_couplings(fields, &u0, residual, params, couplings.cells(), &scalars)?;
+    }
+    {
+        let _span = info_span!("lu_sgs_unstructured_backward_f32").entered();
+        backward_sweep_f32_couplings(fields, &u0, params, couplings.cells(), &scalars)?;
+    }
+    let u_sweep = fields.clone();
+    stabilize_sweep_update_typed(
+        fields,
+        &u0,
+        &u_sweep,
+        residual,
+        params.min_pressure,
+        params.eos.gamma,
+        &scalars,
+    )
+}
+
 fn refresh_primitive_typed<T: LuSgsUnstructuredSweepTyped>(
     params: &mut LuSgsSweepUnstructuredTypedParams<'_, T>,
     fields: &ConservedFieldsT<T>,
@@ -259,11 +412,13 @@ fn prim_lane_f32(primitives: &PrimitiveFieldsT<f32>, cell: usize) -> FacePrimiti
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::boundary::{BoundaryKind, BoundaryPatch, BoundarySet, WallHeat};
+    use crate::discretization::UnstructuredSolverMeshCache;
     use crate::field::ConservedFieldsT;
     use crate::mesh::{CellKind, UnstructuredCell};
     use crate::physics::FreestreamParams;
     use crate::solver::lu_sgs_common::fields_are_physical_typed;
-    use crate::solver::lu_sgs_sweep_unstructured::LuSgsUnstructuredCouplings;
+    use crate::solver::lu_sgs_sweep_unstructured::LuSgsUnstructuredCouplingsRef;
 
     fn uniform_freestream_sweep_mesh() -> UnstructuredMesh3d {
         UnstructuredMesh3d::new(
@@ -303,7 +458,17 @@ mod tests {
             .expect("fill");
         let residual = ConservedResidualT::<f32>::zeros(mesh.num_cells()).expect("rhs");
         let volumes = mesh.cell_volumes();
-        let couplings = LuSgsUnstructuredCouplings::from_mesh(&mesh).expect("couplings");
+        let patches = BoundarySet::new(vec![BoundaryPatch::new(
+            "wall",
+            (0..mesh.num_faces())
+                .map(|f| crate::core::FaceId(f as u32))
+                .collect(),
+            BoundaryKind::Wall {
+                no_slip: true,
+                heat: WallHeat::Adiabatic,
+            },
+        )]);
+        let mesh_cache = UnstructuredSolverMeshCache::from_mesh(&mesh, &patches).expect("cache");
         let dt = vec![0.01; mesh.num_cells()];
         let sigma = vec![10.0; mesh.num_cells()];
         let mut params = LuSgsSweepUnstructuredTypedParams {
@@ -313,7 +478,7 @@ mod tests {
             min_pressure,
             backward_damping: 0.5,
         };
-        lu_sgs_sweep_unstructured_typed(
+        lu_sgs_sweep_unstructured_f32(
             &mut fields,
             &residual,
             &mut params,
@@ -321,7 +486,7 @@ mod tests {
                 dt: &dt,
                 sigma: &sigma,
                 volumes: &volumes,
-                couplings: &couplings,
+                couplings: LuSgsUnstructuredCouplingsRef::F32(&mesh_cache.lusgs_couplings_f32),
                 omega: 1.0,
                 gamma: eos.gamma,
             },

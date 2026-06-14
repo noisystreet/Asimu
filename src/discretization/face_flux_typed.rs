@@ -1,4 +1,4 @@
-//! 无粘面通量 typed 分发（f32/f64 共用入口；scatter 仍输出 `InviscidFlux`）。
+//! 无粘面通量 typed 分发（f32/f64 共用入口；f32 scatter 用 `InviscidFluxF32`）。
 
 use crate::core::{ComputeFloat, Real, Vector3};
 use crate::discretization::GhostCellState;
@@ -6,6 +6,7 @@ use crate::discretization::face_flux::{FaceFluxInput, face_inviscid_flux};
 use crate::discretization::flux_config::{FluxScheme, InviscidFluxConfig};
 use crate::discretization::hllc_f32::hllc_flux_with_primitives_f32;
 use crate::discretization::inviscid::InviscidFlux;
+use crate::discretization::inviscid_f32::{InviscidFluxF32, inviscid_flux_f32_to_real};
 use crate::discretization::reconstruction_unstructured_f32::InterfacePrimitiveStatesF32;
 use crate::discretization::roe_f32::roe_flux_with_primitives_f32;
 use crate::discretization::slau2_f32::slau2_flux_with_primitives_f32;
@@ -17,7 +18,7 @@ use crate::discretization::viscous_boundary_f32::{
 };
 use crate::error::Result;
 use crate::field::{PrimitiveFieldsT, primitive_from_conserved_relaxed};
-use crate::physics::{ConservedState, IdealGasEoS};
+use crate::physics::IdealGasEoS;
 
 /// 一阶 / 边界面无粘通量 typed 分发。
 pub trait InviscidFaceFluxTyped: ComputeFloat {
@@ -52,7 +53,9 @@ impl InviscidFaceFluxTyped for f32 {
     ) -> Result<InviscidFlux> {
         let prim_l = primitive_lane_f32(primitives, owner);
         let prim_r = primitive_lane_f32(primitives, neighbor);
-        dispatch_inviscid_flux_primitives_f32(&prim_l, &prim_r, normal, eos, config)
+        Ok(inviscid_flux_f32_to_real(
+            dispatch_inviscid_flux_primitives_f32(&prim_l, &prim_r, normal, eos, config)?,
+        ))
     }
 
     fn first_order_boundary_soa(
@@ -67,7 +70,9 @@ impl InviscidFaceFluxTyped for f32 {
         let prim_l = primitive_lane_f32(primitives, owner);
         let ghost_prim = primitive_from_conserved_relaxed(eos, &ghost.conserved, min_pressure)?;
         let prim_r = primitive_state_f32_from_real(ghost_prim);
-        dispatch_inviscid_flux_primitives_f32(&prim_l, &prim_r, normal, eos, config)
+        Ok(inviscid_flux_f32_to_real(
+            dispatch_inviscid_flux_primitives_f32(&prim_l, &prim_r, normal, eos, config)?,
+        ))
     }
 }
 
@@ -116,11 +121,11 @@ pub fn face_inviscid_flux_from_interface_f32(
     normal: Vector3,
     eos: &IdealGasEoS,
     config: &InviscidFluxConfig,
-) -> Result<InviscidFlux> {
+) -> Result<InviscidFluxF32> {
     dispatch_inviscid_flux_primitives_f32(&iface.left, &iface.right, normal, eos, config)
 }
 
-/// f32 一阶内面 SoA 通量（兼容旧 API）。
+/// f32 一阶内面 SoA 通量（原生 `InviscidFluxF32`）。
 pub fn face_inviscid_flux_first_order_interior_soa_f32(
     owner: usize,
     neighbor: usize,
@@ -128,22 +133,24 @@ pub fn face_inviscid_flux_first_order_interior_soa_f32(
     normal: Vector3,
     eos: &IdealGasEoS,
     config: &InviscidFluxConfig,
-) -> Result<InviscidFlux> {
-    f32::first_order_interior_soa(primitives, owner, neighbor, normal, eos, config)
+) -> Result<InviscidFluxF32> {
+    let prim_l = primitive_lane_f32(primitives, owner);
+    let prim_r = primitive_lane_f32(primitives, neighbor);
+    dispatch_inviscid_flux_primitives_f32(&prim_l, &prim_r, normal, eos, config)
 }
 
-/// f32 一阶边界面 SoA 通量（兼容旧 API）。
+/// f32 一阶边界面 SoA 通量（原生 `InviscidFluxF32`）。
 pub fn face_inviscid_flux_first_order_boundary_soa_f32(
-    owner: usize,
     primitives: &PrimitiveFieldsT<f32>,
-    ghost: &ConservedState,
+    owner: usize,
+    ghost: &crate::discretization::GhostCellState,
     normal: Vector3,
     eos: &IdealGasEoS,
     config: &InviscidFluxConfig,
     min_pressure: Real,
-) -> Result<InviscidFlux> {
+) -> Result<InviscidFluxF32> {
     let prim_l = primitive_lane_f32(primitives, owner);
-    let ghost_prim = primitive_from_conserved_relaxed(eos, ghost, min_pressure)?;
+    let ghost_prim = primitive_from_conserved_relaxed(eos, &ghost.conserved, min_pressure)?;
     let prim_r = primitive_state_f32_from_real(ghost_prim);
     dispatch_inviscid_flux_primitives_f32(&prim_l, &prim_r, normal, eos, config)
 }
@@ -154,7 +161,7 @@ pub(crate) fn dispatch_inviscid_flux_primitives_f32(
     normal: Vector3,
     eos: &IdealGasEoS,
     config: &InviscidFluxConfig,
-) -> Result<InviscidFlux> {
+) -> Result<InviscidFluxF32> {
     match config.scheme {
         FluxScheme::Roe(roe_cfg) => {
             roe_flux_with_primitives_f32(prim_l, prim_r, normal, eos, &roe_cfg)
@@ -226,8 +233,8 @@ mod tests {
             &config,
         )
         .expect("f32");
-        assert!(approx_eq(f32_flux.mass, f64_flux.mass, 1.0e-3));
-        assert!(approx_eq(f32_flux.energy, f64_flux.energy, 1.0e-2));
+        assert!(approx_eq(f32_flux.mass as Real, f64_flux.mass, 1.0e-3));
+        assert!(approx_eq(f32_flux.energy as Real, f64_flux.energy, 1.0e-2));
     }
 
     #[test]
@@ -260,8 +267,8 @@ mod tests {
             &config,
         )
         .expect("f32");
-        assert!(approx_eq(f32_flux.mass, f64_flux.mass, 1.0e-3));
-        assert!(approx_eq(f32_flux.energy, f64_flux.energy, 1.0e-2));
+        assert!(approx_eq(f32_flux.mass as Real, f64_flux.mass, 1.0e-3));
+        assert!(approx_eq(f32_flux.energy as Real, f64_flux.energy, 1.0e-2));
     }
 
     #[test]
@@ -294,8 +301,8 @@ mod tests {
             &config,
         )
         .expect("f32");
-        assert!(approx_eq(f32_flux.mass, f64_flux.mass, 1.0e-3));
-        assert!(approx_eq(f32_flux.energy, f64_flux.energy, 1.0e-2));
+        assert!(approx_eq(f32_flux.mass as Real, f64_flux.mass, 1.0e-3));
+        assert!(approx_eq(f32_flux.energy as Real, f64_flux.energy, 1.0e-2));
     }
 
     #[test]
@@ -328,7 +335,7 @@ mod tests {
             &config,
         )
         .expect("f32");
-        assert!(approx_eq(f32_flux.mass, f64_flux.mass, 1.0e-3));
-        assert!(approx_eq(f32_flux.energy, f64_flux.energy, 1.0e-2));
+        assert!(approx_eq(f32_flux.mass as Real, f64_flux.mass, 1.0e-3));
+        assert!(approx_eq(f32_flux.energy as Real, f64_flux.energy, 1.0e-2));
     }
 }

@@ -3,9 +3,8 @@
 //! 参考：Shima & Kitamura, AIAA J. 49 (2011)；Kitamura & Shima, J. Comput. Phys. 245 (2013)。
 
 use crate::core::Vector3;
-use crate::discretization::inviscid::InviscidFlux;
 use crate::discretization::inviscid_f32::{
-    face_tangent_basis_f32, inviscid_flux_f32_to_real, normalize_face_normal_f32,
+    InviscidFluxF32, face_tangent_basis_f32, normalize_face_normal_f32,
 };
 use crate::discretization::viscous_boundary_f32::PrimitiveStateF32;
 use crate::error::{AsimuError, Result};
@@ -17,7 +16,7 @@ pub fn slau2_flux_with_primitives_f32(
     prim_r: &PrimitiveStateF32,
     normal: Vector3,
     eos: &IdealGasEoS,
-) -> Result<InviscidFlux> {
+) -> Result<InviscidFluxF32> {
     let n = normalize_face_normal_f32(normal)?;
     let (t1, t2) = face_tangent_basis_f32(n);
     let gamma = eos.gamma as f32;
@@ -26,9 +25,7 @@ pub fn slau2_flux_with_primitives_f32(
     validate_face_state_f32(&frame_l)?;
     validate_face_state_f32(&frame_r)?;
     let face_flux = slau2_face_flux_f32(&frame_l, &frame_r, gamma)?;
-    Ok(inviscid_flux_f32_to_real(to_global_flux_f32(
-        face_flux, n, t1, t2,
-    )))
+    Ok(to_global_flux_f32(face_flux, n, t1, t2))
 }
 
 #[derive(Clone, Copy)]
@@ -221,7 +218,7 @@ fn to_global_flux_f32(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::approx_eq;
+    use crate::core::{Real, approx_eq};
     use crate::discretization::slau2::slau2_flux;
     use crate::discretization::viscous_boundary_f32::primitive_state_f32_from_real;
     use crate::physics::{ConservedState, PrimitiveState};
@@ -252,8 +249,8 @@ mod tests {
             &eos,
         )
         .expect("f32");
-        assert!(approx_eq(f32_flux.mass, f64_flux.mass, 1.0e-3));
-        assert!(approx_eq(f32_flux.energy, f64_flux.energy, 1.0e-2));
+        assert!(approx_eq(f32_flux.mass as Real, f64_flux.mass, 1.0e-3));
+        assert!(approx_eq(f32_flux.energy as Real, f64_flux.energy, 1.0e-2));
     }
 
     #[test]
@@ -273,8 +270,8 @@ mod tests {
                 &eos,
             )
             .expect("f32");
-            assert!(approx_eq(f32_flux.mass, f64_flux.mass, 1.0e-3));
-            assert!(approx_eq(f32_flux.energy, f64_flux.energy, 1.0e-2));
+            assert!(approx_eq(f32_flux.mass as Real, f64_flux.mass, 1.0e-3));
+            assert!(approx_eq(f32_flux.energy as Real, f64_flux.energy, 1.0e-2));
         }
     }
 

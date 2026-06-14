@@ -12,8 +12,8 @@ mod viscous_f32;
 
 pub use contribution::{
     InviscidPairScatter, InviscidPairScatterF32, InviscidResidualMut, InviscidResidualMutF32,
-    InviscidScatterOp, ViscousRangeScatter, ViscousResidualMut, ViscousResidualMutF32,
-    ViscousScatterOp, ViscousValidSlotScatter, ViscousValidSlotScatterF32,
+    InviscidScatterOp, InviscidScatterOpF32, ViscousRangeScatter, ViscousResidualMut,
+    ViscousResidualMutF32, ViscousScatterOp, ViscousValidSlotScatter, ViscousValidSlotScatterF32,
 };
 pub use inviscid::scatter_inviscid_pairs;
 pub use inviscid_f32::scatter_inviscid_pairs_f32;
@@ -29,8 +29,9 @@ mod tests {
 
     use super::{
         InviscidPairScatter, InviscidPairScatterF32, InviscidResidualMut, InviscidResidualMutF32,
-        InviscidScatterOp, ViscousRangeScatter, ViscousResidualMut, ViscousScatterOp,
-        scatter_inviscid_pairs, scatter_inviscid_pairs_f32, scatter_viscous_bucket_range,
+        InviscidScatterOp, InviscidScatterOpF32, ViscousRangeScatter, ViscousResidualMut,
+        ViscousScatterOp, scatter_inviscid_pairs, scatter_inviscid_pairs_f32,
+        scatter_viscous_bucket_range,
     };
 
     fn atomic_test_context(bucket_len: usize) -> ExecutionContext {
@@ -175,14 +176,14 @@ mod tests {
         struct Geom {
             owner: usize,
             neighbor: usize,
-            owner_scale: Real,
-            neighbor_scale: Real,
+            owner_scale: f32,
+            neighbor_scale: f32,
         }
         #[derive(Copy, Clone)]
         struct Flux {
-            mass: Real,
-            momentum: [Real; 3],
-            energy: Real,
+            mass: f32,
+            momentum: [f32; 3],
+            energy: f32,
         }
         let pairs = [(
             Geom {
@@ -197,7 +198,7 @@ mod tests {
                 energy: 4.0,
             },
         )];
-        let extract = |g: &Geom, f: &Flux| InviscidScatterOp {
+        let extract = |g: &Geom, f: &Flux| InviscidScatterOpF32 {
             owner: g.owner,
             neighbor: g.neighbor,
             owner_scale: g.owner_scale,

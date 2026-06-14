@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use crate::core::Real;
 
-use super::contribution::{InviscidScatterOp, ViscousScatterOp};
+use super::contribution::{InviscidScatterOp, InviscidScatterOpF32, ViscousScatterOp};
 use super::ptr::SendMutPtr;
 
 #[inline]
@@ -231,50 +231,48 @@ pub(super) unsafe fn scatter_viscous_op_atomic_f32(
 
 #[inline]
 pub(super) unsafe fn scatter_inviscid_op_atomic_f32(
-    op: InviscidScatterOp,
+    op: InviscidScatterOpF32,
     ptrs: InviscidResidualPtrsF32,
 ) {
-    let owner_scale = op.owner_scale as f32;
-    let neighbor_scale = op.neighbor_scale as f32;
     fetch_add_f32(
         ptrs.density.as_ptr().add(op.owner),
-        owner_scale * op.mass as f32,
+        op.owner_scale * op.mass,
     );
     fetch_add_f32(
         ptrs.mx.as_ptr().add(op.owner),
-        owner_scale * op.momentum[0] as f32,
+        op.owner_scale * op.momentum[0],
     );
     fetch_add_f32(
         ptrs.my.as_ptr().add(op.owner),
-        owner_scale * op.momentum[1] as f32,
+        op.owner_scale * op.momentum[1],
     );
     fetch_add_f32(
         ptrs.mz.as_ptr().add(op.owner),
-        owner_scale * op.momentum[2] as f32,
+        op.owner_scale * op.momentum[2],
     );
     fetch_add_f32(
         ptrs.energy.as_ptr().add(op.owner),
-        owner_scale * op.energy as f32,
+        op.owner_scale * op.energy,
     );
     fetch_add_f32(
         ptrs.density.as_ptr().add(op.neighbor),
-        neighbor_scale * op.mass as f32,
+        op.neighbor_scale * op.mass,
     );
     fetch_add_f32(
         ptrs.mx.as_ptr().add(op.neighbor),
-        neighbor_scale * op.momentum[0] as f32,
+        op.neighbor_scale * op.momentum[0],
     );
     fetch_add_f32(
         ptrs.my.as_ptr().add(op.neighbor),
-        neighbor_scale * op.momentum[1] as f32,
+        op.neighbor_scale * op.momentum[1],
     );
     fetch_add_f32(
         ptrs.mz.as_ptr().add(op.neighbor),
-        neighbor_scale * op.momentum[2] as f32,
+        op.neighbor_scale * op.momentum[2],
     );
     fetch_add_f32(
         ptrs.energy.as_ptr().add(op.neighbor),
-        neighbor_scale * op.energy as f32,
+        op.neighbor_scale * op.energy,
     );
 }
 

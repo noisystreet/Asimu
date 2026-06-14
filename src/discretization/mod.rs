@@ -156,7 +156,8 @@ pub use unstructured_face_cache::{
     UnstructuredSolverMeshCache,
 };
 pub use unstructured_face_cache_f32::{
-    LsqPrecomputedCellF32, UnstructuredBoundaryFaceF32, UnstructuredFaceTopologyF32,
+    GradientLimiterSampleF32, LsqPrecomputedCellF32, LuSgsCellCouplingF32,
+    LuSgsUnstructuredCouplingsF32, UnstructuredBoundaryFaceF32, UnstructuredFaceTopologyF32,
     UnstructuredInteriorFaceF32, neg_dr, vec3_from_f32, vec3_to_f32,
 };
 pub use unstructured_limiter::UnstructuredGradientLimiter;

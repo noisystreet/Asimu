@@ -16,6 +16,7 @@ mod muscl_stencil_3d;
 
 use crate::core::{ComputeFloat, Real};
 use crate::discretization::InviscidFlux;
+use crate::discretization::inviscid_f32::InviscidFluxF32;
 use crate::error::Result;
 use crate::field::{ConservedResidual, ConservedResidualT};
 
@@ -68,6 +69,53 @@ fn add_inviscid_flux<T: ComputeFloat>(
     scale: Real,
 ) -> Result<()> {
     residual.add_flux_to_cell(cell, flux.mass, flux.momentum, flux.energy, scale)
+}
+
+/// 将面通量写入 owner / neighbor 控制体右手项（f32 残差，无 Real 桥接）。
+pub fn accumulate_interior_face_f32(
+    residual: &mut ConservedResidualT<f32>,
+    owner: usize,
+    neighbor: usize,
+    flux: &InviscidFluxF32,
+    area: f32,
+    owner_volume: f32,
+    neighbor_volume: f32,
+) -> Result<()> {
+    let owner_scale = -area / owner_volume;
+    let neighbor_scale = area / neighbor_volume;
+    add_inviscid_flux_f32(residual, owner, flux, owner_scale)?;
+    add_inviscid_flux_f32(residual, neighbor, flux, neighbor_scale)?;
+    Ok(())
+}
+
+/// 边界面：仅 owner 单元贡献（f32 残差）。
+pub fn accumulate_boundary_face_f32(
+    residual: &mut ConservedResidualT<f32>,
+    owner: usize,
+    flux: &InviscidFluxF32,
+    area: f32,
+    owner_volume: f32,
+) -> Result<()> {
+    add_inviscid_flux_f32(residual, owner, flux, -area / owner_volume)
+}
+
+fn add_inviscid_flux_f32(
+    residual: &mut ConservedResidualT<f32>,
+    cell: usize,
+    flux: &InviscidFluxF32,
+    scale: f32,
+) -> Result<()> {
+    if cell >= residual.num_cells() {
+        return Err(crate::error::AsimuError::Field(format!(
+            "残差单元索引越界: {cell}"
+        )));
+    }
+    residual.density.values_mut()[cell] += scale * flux.mass;
+    residual.momentum_x.values_mut()[cell] += scale * flux.momentum[0];
+    residual.momentum_y.values_mut()[cell] += scale * flux.momentum[1];
+    residual.momentum_z.values_mut()[cell] += scale * flux.momentum[2];
+    residual.total_energy.values_mut()[cell] += scale * flux.energy;
+    Ok(())
 }
 
 /// 将面通量写入 owner / neighbor 控制体右手项（typed 残差）。

@@ -1,4 +1,4 @@
-//! 非结构网格二阶线性重构（f32 路径；几何/限制器样本距离仍 f64）。
+//! 非结构网格二阶线性重构（f32 路径；几何/限制器样本均为 f32 预打包）。
 
 use crate::core::Real;
 use crate::discretization::BoundaryGhostBuffer;
@@ -7,10 +7,14 @@ use crate::discretization::reconstruction::InterfacePrimitiveStates;
 use crate::discretization::unstructured_face_cache::{
     GradientLimiterSampleKind, UnstructuredSolverMeshCache,
 };
+use crate::discretization::unstructured_face_cache_f32::GradientLimiterSampleF32;
 use crate::discretization::unstructured_face_cache_f32::{
     UnstructuredBoundaryFaceF32, UnstructuredInteriorFaceF32,
 };
 use crate::discretization::unstructured_limiter::UnstructuredGradientLimiter;
+use crate::discretization::unstructured_limiter::{
+    barth_jespersen_sample_factor_f32, venkatakrishnan_sample_factor_f32,
+};
 use crate::discretization::viscous_boundary_f32::{
     PrimitiveStateF32, primitive_state_f32_from_real, primitive_state_f32_to_real,
 };
@@ -179,11 +183,11 @@ fn extrapolate_cell_primitive_f32(
 struct SamplePhiDataF32 {
     phi_min: PrimitiveStateF32,
     phi_max: PrimitiveStateF32,
-    density: Vec<([Real; 3], f32)>,
-    pressure: Vec<([Real; 3], f32)>,
-    velocity_u: Vec<([Real; 3], f32)>,
-    velocity_v: Vec<([Real; 3], f32)>,
-    velocity_w: Vec<([Real; 3], f32)>,
+    density: Vec<([f32; 3], f32)>,
+    pressure: Vec<([f32; 3], f32)>,
+    velocity_u: Vec<([f32; 3], f32)>,
+    velocity_v: Vec<([f32; 3], f32)>,
+    velocity_w: Vec<([f32; 3], f32)>,
 }
 
 fn sample_phi_extrema_and_list_f32(
@@ -202,11 +206,11 @@ fn sample_phi_extrema_and_list_f32(
     let mut velocity_u = Vec::new();
     let mut velocity_v = Vec::new();
     let mut velocity_w = Vec::new();
-    for sample in &mesh_cache.cell_gradient_samples[cell] {
+    for sample in &mesh_cache.cell_gradient_samples_f32[cell] {
         let phi = sample_phi_f32(sample, mesh_cache, primitives, ghosts, eos, min_pressure)?;
         phi_min = min_primitive_f32(&phi_min, &phi);
         phi_max = max_primitive_f32(&phi_max, &phi);
-        let dr = [sample.dr.x, sample.dr.y, sample.dr.z];
+        let dr = sample.dr;
         density.push((dr, phi.density));
         pressure.push((dr, phi.pressure));
         velocity_u.push((dr, phi.velocity[0]));
@@ -225,7 +229,7 @@ fn sample_phi_extrema_and_list_f32(
 }
 
 fn sample_phi_f32(
-    sample: &crate::discretization::unstructured_face_cache::GradientLimiterSample,
+    sample: &GradientLimiterSampleF32,
     mesh_cache: &UnstructuredSolverMeshCache,
     primitives: &PrimitiveFieldsT<f32>,
     ghosts: &BoundaryGhostBuffer,
@@ -235,7 +239,7 @@ fn sample_phi_f32(
     match sample.kind {
         GradientLimiterSampleKind::NeighborCell(idx) => Ok(cell_primitive_f32(primitives, idx)),
         GradientLimiterSampleKind::Boundary(bidx) => {
-            let bface = &mesh_cache.face_topology.boundary[bidx];
+            let bface = &mesh_cache.face_topology_f32.boundary[bidx];
             let ghost = ghosts.get_face(bface.face).ok_or_else(|| {
                 AsimuError::Boundary(format!(
                     "非结构限制器样本 FaceId({}) 缺少 ghost",
@@ -286,28 +290,20 @@ fn limit_cell_gradient_factor_f32(
     phi_min: f32,
     phi_max: f32,
     grad: [f32; 3],
-    samples: &[([Real; 3], f32)],
+    samples: &[([f32; 3], f32)],
 ) -> f32 {
-    use crate::discretization::unstructured_limiter::{
-        barth_jespersen_sample_factor, venkatakrishnan_sample_factor,
-    };
-    let phi_i_r = phi_i as Real;
-    let grad_r = [grad[0] as Real, grad[1] as Real, grad[2] as Real];
     let mut psi = 1.0_f32;
     for &(dr, phi_m) in samples {
-        let grad_dot_dr = grad_r[0] * dr[0] + grad_r[1] * dr[1] + grad_r[2] * dr[2];
+        let grad_dot_dr = dot_f32(grad, dr);
         let sample_psi = match limiter {
-            UnstructuredGradientLimiter::BarthJespersen => barth_jespersen_sample_factor(
-                phi_i_r,
-                phi_min as Real,
-                phi_max as Real,
-                grad_dot_dr,
-            ),
+            UnstructuredGradientLimiter::BarthJespersen => {
+                barth_jespersen_sample_factor_f32(phi_i, phi_min, phi_max, grad_dot_dr)
+            }
             UnstructuredGradientLimiter::Venkatakrishnan => {
-                venkatakrishnan_sample_factor(phi_i_r, phi_m as Real, grad_dot_dr)
+                venkatakrishnan_sample_factor_f32(phi_i, phi_m, grad_dot_dr)
             }
         };
-        psi = psi.min(sample_psi as f32);
+        psi = psi.min(sample_psi);
     }
     psi
 }

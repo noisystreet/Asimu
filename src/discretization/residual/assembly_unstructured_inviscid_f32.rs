@@ -3,8 +3,9 @@
 use crate::discretization::UnstructuredGradientLimiter;
 use crate::discretization::face_flux_typed::face_inviscid_flux_from_interface_f32;
 use crate::discretization::gradient_typed::GradientFieldsT;
-use crate::discretization::inviscid::{
-    InteriorInviscidScatterGeom, scatter_fused_boundary_inviscid_face_typed,
+use crate::discretization::inviscid_f32::{
+    InteriorInviscidScatterGeomF32, InviscidFluxF32, scatter_fused_boundary_inviscid_face_f32,
+    scatter_fused_interior_inviscid_face_f32,
 };
 use crate::discretization::reconstruction_unstructured_f32::{
     UnstructuredLinearReconstructionCtxF32, reconstruct_unstructured_boundary_face_f32,
@@ -16,9 +17,7 @@ use crate::discretization::vec3_from_f32;
 use crate::error::{AsimuError, Result};
 use crate::field::ConservedResidualT;
 
-use super::{
-    InviscidAssemblyUnstructuredTypedParams, InviscidTypedScatterBackend, is_degenerate_volume,
-};
+use super::{InviscidAssemblyUnstructuredTypedParams, is_degenerate_volume};
 
 /// f32 非结构 MUSCL 无粘残差装配（重构与 Riemann 均为原生 f32）。
 pub(super) fn assemble_inviscid_muscl_unstructured_f32(
@@ -74,7 +73,7 @@ fn assemble_interior_faces_muscl_f32(
                 gradients,
                 ctx,
             )? {
-                f32::scatter_fused_interior_face(residual, &geom, &flux);
+                scatter_fused_interior_inviscid_face_f32(residual, &geom, &flux);
             }
         }
     }
@@ -87,12 +86,7 @@ fn compute_interior_inviscid_face_contribution_f32(
     topology: &[UnstructuredInteriorFaceF32],
     gradients: &GradientFieldsT<f32>,
     ctx: UnstructuredLinearReconstructionCtxF32<'_>,
-) -> Result<
-    Option<(
-        InteriorInviscidScatterGeom,
-        crate::discretization::InviscidFlux,
-    )>,
-> {
+) -> Result<Option<(InteriorInviscidScatterGeomF32, InviscidFluxF32)>> {
     let face = &topology[face_idx];
     if face.owner_rhs_scale == 0.0 && face.neighbor_rhs_scale == 0.0 {
         return Ok(None);
@@ -110,11 +104,11 @@ fn compute_interior_inviscid_face_contribution_f32(
         params.config,
     )?;
     Ok(Some((
-        InteriorInviscidScatterGeom {
+        InteriorInviscidScatterGeomF32 {
             owner: face.owner,
             neighbor: face.neighbor,
-            owner_scale: face.owner_rhs_scale as crate::core::Real,
-            neighbor_scale: face.neighbor_rhs_scale as crate::core::Real,
+            owner_scale: face.owner_rhs_scale,
+            neighbor_scale: face.neighbor_rhs_scale,
         },
         flux,
     )))
@@ -152,10 +146,10 @@ fn assemble_boundary_faces_muscl_f32(
             params.eos,
             params.config,
         )?;
-        scatter_fused_boundary_inviscid_face_typed(
+        scatter_fused_boundary_inviscid_face_f32(
             residual,
             bface.owner,
-            bface.owner_rhs_scale as crate::core::Real,
+            bface.owner_rhs_scale,
             &flux,
         );
     }

@@ -12,7 +12,8 @@ pub use interior_face_batch_layout::{InteriorFaceBatchStatic4, InteriorFaceBucke
 use crate::boundary::{BoundaryKind, BoundarySet, WallHeat};
 use crate::core::{CellId, FaceId, Real, Vector3};
 use crate::discretization::unstructured_face_cache_f32::{
-    UnstructuredFaceTopologyF32, lsq_geometry_f32_from_f64,
+    LuSgsUnstructuredCouplingsF32, UnstructuredFaceTopologyF32, build_cell_gradient_samples_f32,
+    lsq_geometry_f32_from_f64,
 };
 use crate::error::Result;
 use crate::mesh::UnstructuredMesh3d;
@@ -187,6 +188,11 @@ pub struct UnstructuredSolverMeshCache {
     /// f32 热路径 IDWLS 矩阵 \(A\)（与 `lsq_geometry` 单元索引对齐）。
     pub lsq_geometry_f32:
         Vec<crate::discretization::unstructured_face_cache_f32::LsqPrecomputedCellF32>,
+    /// f32 梯度限制器样本（MUSCL 外推用）。
+    pub cell_gradient_samples_f32:
+        Vec<Vec<crate::discretization::unstructured_face_cache_f32::GradientLimiterSampleF32>>,
+    /// f32 LU-SGS 面耦合邻接。
+    pub lusgs_couplings_f32: LuSgsUnstructuredCouplingsF32,
     /// 每单元 IDWLS / 限制器样本（内部邻单元 + 边界 ghost 镜像点）。
     pub cell_gradient_samples: Vec<Vec<GradientLimiterSample>>,
     /// IDWLS RHS 单元–面关联（`parallel-fvm` 单元并行累加用）。
@@ -201,6 +207,10 @@ impl UnstructuredSolverMeshCache {
         let num_cells = mesh.num_cells();
         let lsq_geometry = precompute_lsq_geometry(num_cells, &face_topology);
         let lsq_geometry_f32 = lsq_geometry_f32_from_f64(&lsq_geometry);
+        let cell_gradient_samples_f32 =
+            build_cell_gradient_samples_f32(num_cells, &face_topology_f32);
+        let lusgs_couplings_f32 =
+            LuSgsUnstructuredCouplingsF32::from_topology_f32(num_cells, &face_topology_f32);
         let cell_gradient_samples = build_cell_gradient_samples(num_cells, &face_topology);
         let lsq_rhs_incidence = build_lsq_rhs_cell_incidence(num_cells, &face_topology);
         Ok(Self {
@@ -208,6 +218,8 @@ impl UnstructuredSolverMeshCache {
             face_topology_f32,
             lsq_geometry,
             lsq_geometry_f32,
+            cell_gradient_samples_f32,
+            lusgs_couplings_f32,
             cell_gradient_samples,
             lsq_rhs_incidence,
         })

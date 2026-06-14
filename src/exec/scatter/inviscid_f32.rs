@@ -3,26 +3,24 @@
 use crate::exec::context::{ExecutionContext, ResolvedScatterMode};
 
 use super::atomic::{InviscidResidualPtrsF32, scatter_inviscid_op_atomic_f32};
-use super::contribution::{InviscidPairScatterF32, InviscidResidualMutF32, InviscidScatterOp};
+use super::contribution::{InviscidPairScatterF32, InviscidResidualMutF32, InviscidScatterOpF32};
 use super::span::enter_scatter_span;
 
 #[inline]
 fn scatter_inviscid_op_serial_f32(
-    op: InviscidScatterOp,
+    op: InviscidScatterOpF32,
     residual: &mut InviscidResidualMutF32<'_>,
 ) {
-    let owner_scale = op.owner_scale as f32;
-    let neighbor_scale = op.neighbor_scale as f32;
-    residual.density[op.owner] += owner_scale * op.mass as f32;
-    residual.mx[op.owner] += owner_scale * op.momentum[0] as f32;
-    residual.my[op.owner] += owner_scale * op.momentum[1] as f32;
-    residual.mz[op.owner] += owner_scale * op.momentum[2] as f32;
-    residual.energy[op.owner] += owner_scale * op.energy as f32;
-    residual.density[op.neighbor] += neighbor_scale * op.mass as f32;
-    residual.mx[op.neighbor] += neighbor_scale * op.momentum[0] as f32;
-    residual.my[op.neighbor] += neighbor_scale * op.momentum[1] as f32;
-    residual.mz[op.neighbor] += neighbor_scale * op.momentum[2] as f32;
-    residual.energy[op.neighbor] += neighbor_scale * op.energy as f32;
+    residual.density[op.owner] += op.owner_scale * op.mass;
+    residual.mx[op.owner] += op.owner_scale * op.momentum[0];
+    residual.my[op.owner] += op.owner_scale * op.momentum[1];
+    residual.mz[op.owner] += op.owner_scale * op.momentum[2];
+    residual.energy[op.owner] += op.owner_scale * op.energy;
+    residual.density[op.neighbor] += op.neighbor_scale * op.mass;
+    residual.mx[op.neighbor] += op.neighbor_scale * op.momentum[0];
+    residual.my[op.neighbor] += op.neighbor_scale * op.momentum[1];
+    residual.mz[op.neighbor] += op.neighbor_scale * op.momentum[2];
+    residual.energy[op.neighbor] += op.neighbor_scale * op.energy;
 }
 
 fn bucket_uses_atomic_scatter(ctx: &ExecutionContext, bucket_len: usize) -> bool {
@@ -35,7 +33,7 @@ fn bucket_uses_atomic_scatter(ctx: &ExecutionContext, bucket_len: usize) -> bool
 /// 按 `(geom, flux)` 对 scatter 无粘内面通量至 `f32` 残差。
 pub fn scatter_inviscid_pairs_f32<G, F>(
     scatter: InviscidPairScatterF32<'_, G, F>,
-    extract: impl Fn(&G, &F) -> InviscidScatterOp + Sync,
+    extract: impl Fn(&G, &F) -> InviscidScatterOpF32 + Sync,
 ) where
     G: Sync,
     F: Sync,

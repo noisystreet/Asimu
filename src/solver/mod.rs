@@ -62,10 +62,11 @@ pub use incompressible::{
 };
 pub use lu_sgs_sweep_unstructured::{
     LuSgsSweepUnstructuredInput, LuSgsSweepUnstructuredParams, LuSgsUnstructuredCouplings,
-    lu_sgs_sweep_unstructured,
+    LuSgsUnstructuredCouplingsRef, lu_sgs_sweep_unstructured,
 };
 pub use lu_sgs_sweep_unstructured_typed::{
-    LuSgsSweepUnstructuredTypedParams, LuSgsUnstructuredSweepTyped, lu_sgs_sweep_unstructured_typed,
+    LuSgsSweepUnstructuredTypedParams, LuSgsUnstructuredSweepTyped, lu_sgs_sweep_unstructured_f32,
+    lu_sgs_sweep_unstructured_typed,
 };
 pub use sod::{
     SodBenchmarkConfig, SodBenchmarkResult, run_sod_benchmark, sod_initial_fields,
