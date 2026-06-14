@@ -68,7 +68,7 @@ pub struct UnstructuredBoundaryViscousKind {
 }
 
 /// LSQ / 梯度限制器邻接样本。
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GradientLimiterSampleKind {
     NeighborCell(usize),
     /// `UnstructuredFaceTopology::boundary` 中的索引。

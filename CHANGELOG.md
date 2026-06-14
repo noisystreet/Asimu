@@ -7,6 +7,7 @@
 
 ### Added
 
+- 非结构 f32 MUSCL 限制器样本（`cell_gradient_samples_f32`）、LU-SGS 预打包耦合（`lusgs_couplings_f32`）与无粘 scatter 原生热路径（`InviscidFluxF32` / `InviscidScatterOpF32`）；新增 `lu_sgs_sweep_unstructured_f32` 与驱动层 `compressible_unstructured_lusgs_typed` 精度分发。
 - 非结构 f32 面几何预打包缓存：`UnstructuredSolverMeshCache::face_topology_f32`（法向、面积、体积、rhs_scale、`dr_*`、`lsq_dr`/`lsq_w` 等）+ `lsq_geometry_f32`；f32 无粘/粘性/谱半径/IDWLS 梯度热路径不再逐面读取 f64 `Vector3`。
 - ADR 0018：非结构可压缩 f64/f32 统一 typed 驱动、`UnstructuredComputeBackend` 聚合 trait；f64 一阶内面复用 `simd-fvm` batch4 路径。`exec::scatter` 新增 `f32` 原子累加（`AtomicU32` CAS）、`scatter_inviscid_pairs_f32` / `scatter_viscous_valid_slots_f32`；非结构 typed 无粘内面在 `parallel-fvm` 下走着色桶 exec scatter；`unstructured_freestream` benchmark 文档补充 `f32` vs `f64` 对比说明。
 - Restart I/O：单/多块 TOML 支持可选 `compute_precision = "f32"`；`load_*_checked` 与 case `[numerics]` 校验一致，跨精度 restart 报错；新增 `write_conserved_fields_typed` / `load_conserved_fields_typed`。结构化 3D `compute_incompressible_divergence_3d`、`compute_incompressible_velocity_laplacian_3d`、`compute_incompressible_rhie_chow_divergence_3d`、含一阶迎风对流、动量边界面贡献与 `velocity_under_relaxation` 的伪瞬态动量预测 CSR、不可压缩 cell-centered 边界应用、使用面插值 \(d_P\) 与压力出口 \(p'=0\) 的压力校正 CSR、显式 `[incompressible.reference]` 无量纲化；不可压缩 runner 通过 `solver::run_incompressible_simplec` 接入 SIMPLEC 外层迭代、`pressure_under_relaxation` 压力欠松弛、连续性/动量残差历史、最终修正场输出、`max|div(u)|`、`max|div(u*)|`、动量预测三分量 GMRES 求解诊断、由 Rhie-Chow 面通量连续性残差驱动的压力校正 GMRES 求解与 \(p,\mathbf{u}\) 修正诊断，并支持 `[incompressible.linear.momentum]` / `[incompressible.linear.pressure]` 配置 GMRES 参数，补充理论映射。

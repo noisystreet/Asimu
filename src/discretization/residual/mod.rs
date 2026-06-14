@@ -57,9 +57,14 @@ pub use face_flux_3d::{
 
 /// 忽略退化（零体积）控制体的体积下限。
 const DEGENERATE_VOLUME: Real = 1.0e-30;
+const DEGENERATE_VOLUME_F32: f32 = 1.0e-30;
 
 pub(crate) fn is_degenerate_volume(volume: Real) -> bool {
     volume <= DEGENERATE_VOLUME
+}
+
+pub(crate) fn is_degenerate_volume_f32(volume: f32) -> bool {
+    volume <= DEGENERATE_VOLUME_F32
 }
 
 fn add_inviscid_flux<T: ComputeFloat>(

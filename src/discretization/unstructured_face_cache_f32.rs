@@ -238,9 +238,8 @@ fn boundary_face_f32_from_f64(face: &UnstructuredBoundaryFace) -> UnstructuredBo
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::boundary::{BoundaryKind, BoundaryPatch, BoundarySet, WallHeat};
-    use crate::core::approx_eq;
+    use crate::core::{Real, approx_eq};
     use crate::discretization::unstructured_face_cache::UnstructuredSolverMeshCache;
     use crate::mesh::{CellKind, UnstructuredCell, UnstructuredMesh3d};
 
@@ -300,6 +299,66 @@ mod tests {
             assert!(approx_eq(f32_cell.a_xx as Real, f64_cell.a_xx, 1.0e-5));
             assert!(approx_eq(f32_cell.a_yy as Real, f64_cell.a_yy, 1.0e-5));
             assert!(approx_eq(f32_cell.a_zz as Real, f64_cell.a_zz, 1.0e-5));
+        }
+    }
+
+    #[test]
+    fn cell_gradient_samples_f32_matches_f64_reference() {
+        use crate::discretization::unstructured_face_cache::GradientLimiterSampleKind;
+
+        let (mesh, boundary) = single_tet_mesh_and_boundary();
+        let cache = UnstructuredSolverMeshCache::from_mesh(&mesh, &boundary).expect("cache");
+        assert_eq!(
+            cache.cell_gradient_samples_f32.len(),
+            cache.cell_gradient_samples.len()
+        );
+        for (f64_samples, f32_samples) in cache
+            .cell_gradient_samples
+            .iter()
+            .zip(&cache.cell_gradient_samples_f32)
+        {
+            assert_eq!(f32_samples.len(), f64_samples.len());
+            for (f64_sample, f32_sample) in f64_samples.iter().zip(f32_samples) {
+                assert_eq!(f32_sample.kind, f64_sample.kind);
+                assert!(approx_eq(f32_sample.dr[0] as Real, f64_sample.dr.x, 1.0e-5));
+                assert!(approx_eq(f32_sample.dr[1] as Real, f64_sample.dr.y, 1.0e-5));
+                assert!(approx_eq(f32_sample.dr[2] as Real, f64_sample.dr.z, 1.0e-5));
+                if let GradientLimiterSampleKind::NeighborCell(idx) = f32_sample.kind {
+                    assert_eq!(
+                        idx,
+                        match f64_sample.kind {
+                            GradientLimiterSampleKind::NeighborCell(i) => i,
+                            _ => panic!("kind mismatch"),
+                        }
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn lusgs_couplings_f32_matches_f64_reference() {
+        use crate::solver::LuSgsUnstructuredCouplings;
+
+        let (mesh, boundary) = single_tet_mesh_and_boundary();
+        let cache = UnstructuredSolverMeshCache::from_mesh(&mesh, &boundary).expect("cache");
+        let f64_couplings = LuSgsUnstructuredCouplings::from_mesh(&mesh).expect("f64 couplings");
+        let f32_couplings = &cache.lusgs_couplings_f32;
+        assert_eq!(f32_couplings.len(), f64_couplings.len());
+        for (cell, (f64_cell, f32_cell)) in f64_couplings
+            .cells()
+            .iter()
+            .zip(f32_couplings.cells())
+            .enumerate()
+        {
+            assert_eq!(f32_cell.len(), f64_cell.len(), "cell {cell} coupling count");
+            for (f64_c, f32_c) in f64_cell.iter().zip(f32_cell) {
+                assert_eq!(f32_c.neighbor, f64_c.neighbor);
+                assert!(approx_eq(f32_c.area as Real, f64_c.area, 1.0e-5));
+                assert!(approx_eq(f32_c.normal[0] as Real, f64_c.normal.x, 1.0e-5));
+                assert!(approx_eq(f32_c.normal[1] as Real, f64_c.normal.y, 1.0e-5));
+                assert!(approx_eq(f32_c.normal[2] as Real, f64_c.normal.z, 1.0e-5));
+            }
         }
     }
 }
