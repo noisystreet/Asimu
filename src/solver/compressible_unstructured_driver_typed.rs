@@ -712,4 +712,50 @@ mod tests {
             / fields_f64.density.values()[0].max(1.0e-12);
         assert!(rel < 1.0e-3, "rel={rel}");
     }
+
+    #[test]
+    fn f32_unstructured_lusgs_sweep_matches_f64_on_single_tet() {
+        let pair = FreestreamPairFixture::air_sutherland(0.2);
+        let side = pair.inviscid_side();
+        let (mesh, boundary, eos, freestream, solver, inviscid, reference) =
+            single_tet_driver(&side, &pair.reference);
+        let driver = UnstructuredDriverConfig {
+            solver: &solver,
+            mesh: &mesh,
+            eos: &eos,
+            freestream: &freestream,
+            inviscid: &inviscid,
+            patches: &boundary,
+            reference: Some(&reference),
+            viscous: None,
+            fixed_dt: Some(1.0e-4),
+            local_time_step: true,
+            time_scheme: TimeIntegrationScheme::LuSgs,
+            lu_sgs: crate::solver::LuSgsConfig {
+                sweep: true,
+                omega: 1.0,
+                sweep_backward_damping: 0.5,
+            },
+            cfl_schedule: CflSchedule::constant(0.4),
+            max_steps: 1,
+            residual_tolerance: None,
+            exec_config: ExecConfig::default(),
+        };
+        let base = ConservedFields::from_freestream_context(mesh.num_cells(), &side.ctx, side.fs)
+            .expect("base fields");
+        let mut fields_f32 = ConservedFieldsT::<f32>::from_real_fields(&base).expect("f32 fields");
+        let mut fields_f64 = base;
+        let (history_f32, out_f32) =
+            run_unstructured_typed_with_observer::<f32>(&driver, &mut fields_f32, |_| Ok(()))
+                .expect("f32 run");
+        let history_f64 =
+            run_unstructured_with_observer(&driver, &mut fields_f64, |_| Ok(())).expect("f64 run");
+        assert_eq!(history_f32.len(), 1);
+        assert_eq!(history_f64.len(), 1);
+        assert!(history_f32[0].residual_rms.is_finite());
+        assert!(history_f64[0].residual_rms.is_finite());
+        let rel = (out_f32.density.values()[0] - fields_f64.density.values()[0]).abs()
+            / fields_f64.density.values()[0].max(1.0e-12);
+        assert!(rel < 1.0e-3, "rel={rel}");
+    }
 }

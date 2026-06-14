@@ -185,4 +185,46 @@ mod tests {
             0.0
         ));
     }
+
+    #[test]
+    fn f32_rejects_near_vacuum_internal_energy_with_pressure_floor() {
+        let base = [1.0_f32, 0.0, 0.0, 0.0, 1.0e-8_f32];
+        let increment = [0.0_f32; 5];
+        let p_floor = 0.01_f32;
+        assert!(!is_physical_conserved_f32(
+            base[0], base[1], base[2], base[3], base[4], 1.4, p_floor
+        ));
+        assert_eq!(
+            max_physical_increment_scale_f32(base, increment, 1.0, 1.4, p_floor),
+            0.0
+        );
+    }
+
+    #[test]
+    fn f32_increment_limit_matches_f64_on_same_state() {
+        let base = ConservedState {
+            density: 1.0,
+            momentum: [1.0, 0.0, 0.0],
+            total_energy: 1.0,
+        };
+        let increment = [0.0, 10.0, 0.0, 0.0, 0.0];
+        let scale_f64 = max_physical_increment_scale(&base, increment, 1.0, 1.4, 0.0);
+        let base_f32 = [
+            base.density as f32,
+            base.momentum[0] as f32,
+            base.momentum[1] as f32,
+            base.momentum[2] as f32,
+            base.total_energy as f32,
+        ];
+        let inc_f32 = [
+            increment[0] as f32,
+            increment[1] as f32,
+            increment[2] as f32,
+            increment[3] as f32,
+            increment[4] as f32,
+        ];
+        let scale_f32 = max_physical_increment_scale_f32(base_f32, inc_f32, 1.0, 1.4_f32, 0.0);
+        assert!(scale_f64 > 0.0 && scale_f64 < 1.0);
+        assert!((scale_f32 as f64 - scale_f64).abs() < 1.0e-3);
+    }
 }

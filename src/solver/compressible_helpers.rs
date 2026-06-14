@@ -257,6 +257,54 @@ fn inviscid_assembly_params<'a>(
 }
 
 #[cfg(test)]
+mod finalize_cell_dts_tests {
+    use super::*;
+    use crate::core::approx_eq;
+
+    #[test]
+    fn f32_finalize_cell_dts_matches_f64_local_and_fixed_dt() {
+        let volumes = [0.12_f64, 0.25];
+        let sigma = [8.0_f64, 12.0];
+        let cfl = 0.4_f64;
+        let vol_f32: Vec<f32> = volumes.iter().map(|v| *v as f32).collect();
+        let sig_f32: Vec<f32> = sigma.iter().map(|s| *s as f32).collect();
+
+        let local_f64 =
+            finalize_cell_dts_from_sigma(&volumes, &sigma, cfl, None, true).expect("f64 local");
+        let local_f32 =
+            finalize_cell_dts_from_sigma_f32(&vol_f32, &sig_f32, cfl as f32, None, true)
+                .expect("f32 local");
+        for (d32, d64) in local_f32.iter().zip(local_f64.iter()) {
+            assert!(approx_eq(*d32 as f64, *d64, 1.0e-5));
+        }
+        let dt_f64_direct = cell_local_dt_spectral(&volumes, &sigma, cfl).expect("f64 spectral dt");
+        let dt_f32_direct =
+            cell_local_dt_spectral_f32(&vol_f32, &sig_f32, cfl as f32).expect("f32");
+        for (d32, d64) in dt_f32_direct.iter().zip(dt_f64_direct.iter()) {
+            assert!(approx_eq(*d32 as f64, *d64, 1.0e-5));
+        }
+
+        let fixed = 1.0e-4_f64;
+        let fixed_f64 = finalize_cell_dts_from_sigma(&volumes, &sigma, cfl, Some(fixed), true)
+            .expect("f64 fixed");
+        let fixed_f32 = finalize_cell_dts_from_sigma_f32(
+            &vol_f32,
+            &sig_f32,
+            cfl as f32,
+            Some(fixed as f32),
+            true,
+        )
+        .expect("f32 fixed");
+        assert!(fixed_f64.iter().all(|d| approx_eq(*d, fixed, 1.0e-12)));
+        assert!(
+            fixed_f32
+                .iter()
+                .all(|d| approx_eq(*d as f64, fixed, 1.0e-5))
+        );
+    }
+}
+
+#[cfg(test)]
 mod refresh_typed_tests {
     use super::*;
     use crate::boundary::{BoundaryKind, BoundaryPatch, BoundarySet};
