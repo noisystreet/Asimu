@@ -1,6 +1,6 @@
 //! 谱半径 f32 热路径（输出仍为 `Real` 供 CFL / LU-SGS 共用）。
 
-use crate::core::{ComputeFloat, Real};
+use crate::core::Real;
 use crate::error::Result;
 use crate::field::PrimitiveFieldsT;
 use crate::physics::{IdealGasEoS, ViscousPhysicsConfig};
@@ -39,21 +39,21 @@ fn normal_speed_plus_sound_f32(
     u_n.abs() + a
 }
 
-/// f32 原始变量场每单元 \(\max(\nu,\alpha)\)。
+/// 每单元 \(\max(\nu,\alpha)\)（f32 原始变量；输运系数边界转 Real 一次）。
 pub fn cell_viscous_diffusivity_max_f32(
     primitives: &PrimitiveFieldsT<f32>,
     eos: &IdealGasEoS,
     viscous: &ViscousPhysicsConfig,
-) -> Result<Vec<Real>> {
+) -> Result<Vec<f32>> {
     let n = primitives.num_cells();
     let mut diff = Vec::with_capacity(n);
     for i in 0..n {
-        let rho = primitives.density.values()[i].to_real().max(1.0e-30);
-        let pressure = primitives.pressure.values()[i].to_real().max(1.0e-30);
-        let t_star = viscous.static_temperature(pressure, rho, eos);
+        let rho = primitives.density.values()[i].max(1.0e-30_f32);
+        let pressure = primitives.pressure.values()[i].max(1.0e-30_f32);
+        let t_star = viscous.static_temperature(pressure as Real, rho as Real, eos);
         let (mu_eff, _lambda) = viscous.face_transport_coefficients(t_star, t_star, eos)?;
-        let nu = mu_eff / rho;
-        let alpha = mu_eff / (rho * viscous.prandtl);
+        let nu = (mu_eff as f32) / rho;
+        let alpha = (mu_eff as f32) / (rho * viscous.prandtl as f32);
         diff.push(nu.max(alpha));
     }
     Ok(diff)

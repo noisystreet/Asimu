@@ -14,10 +14,11 @@ use crate::field::{PrimitiveFieldsT, primitive_from_conserved_relaxed_f32_from_s
 use crate::mesh::UnstructuredMesh3d;
 use crate::physics::{IdealGasEoS, ViscousPhysicsConfig};
 
-use super::spectral_radius::add_viscous_parabolic_face_sigma;
 use super::spectral_radius_f32::{
     FacePrimitiveLaneF32, cell_viscous_diffusivity_max_f32, face_spectral_radius_f32,
 };
+
+const PARABOLIC_SPECTRAL_FACTOR_3D_F32: f32 = 6.0;
 
 const DEGENERATE_VOLUME: Real = 1.0e-30;
 
@@ -185,7 +186,16 @@ fn accumulate_boundary_hyperbolic_f32(
 
 fn add_hyperbolic_contribution_f32(sigma_cell: &mut Real, radius: f32, area: f32, inv_volume: f32) {
     if inv_volume > 0.0 {
-        *sigma_cell += (radius as Real) * (area as Real) * (inv_volume as Real);
+        *sigma_cell += (radius * area * inv_volume) as Real;
+    }
+}
+
+fn add_parabolic_contribution_f32(sigma_cell: &mut Real, diff: f32, area: f32, volume: f32) {
+    if diff > 0.0 && area > f32::EPSILON && volume > DEGENERATE_VOLUME as f32 {
+        let contrib =
+            PARABOLIC_SPECTRAL_FACTOR_3D_F32 as Real * diff as Real * (area as Real).powi(2)
+                / (volume as Real).powi(2);
+        *sigma_cell += contrib;
     }
 }
 
@@ -201,7 +211,7 @@ fn accumulate_parabolic_sigma_one_cell(
     topology: &UnstructuredFaceTopologyF32,
     incidence: &LsqRhsCellIncidence,
     cell: usize,
-    diffusivity: &[Real],
+    diffusivity: &[f32],
     sigma_cell: &mut Real,
 ) {
     let diff = diffusivity[cell];
@@ -220,16 +230,6 @@ fn accumulate_parabolic_sigma_one_cell(
         let face = &topology.boundary[boundary_idx];
         add_parabolic_contribution_f32(sigma_cell, diff, face.area, face.owner_volume);
     }
-}
-
-fn add_parabolic_contribution_f32(sigma_cell: &mut Real, diff: Real, area: f32, volume: f32) {
-    add_viscous_parabolic_face_sigma(
-        std::slice::from_mut(sigma_cell),
-        &[diff],
-        0,
-        area as Real,
-        volume as Real,
-    );
 }
 
 #[cfg(test)]
