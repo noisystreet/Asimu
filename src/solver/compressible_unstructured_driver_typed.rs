@@ -18,8 +18,8 @@ use std::time::Instant;
 use tracing::{debug, info, info_span};
 
 use crate::core::{
-    ComputeFloat, ComputePrecision, Real, elapsed_ms, format_log_fixed4, format_log_fixed5,
-    format_log_sci4, log10_positive,
+    ComputeFloat, Real, elapsed_ms, format_log_fixed4, format_log_fixed5, format_log_sci4,
+    log10_positive,
 };
 use crate::discretization::InviscidFaceFluxTyped;
 use crate::discretization::gradient_typed::GradientFieldsT;
@@ -525,7 +525,10 @@ impl UnstructuredRhsDispatchImpl for f64 {
 }
 
 fn prepare_unstructured_timestep_typed<
-    T: ComputeFloat + UnstructuredSpectralRadiusTyped + PrimitiveFillFromConserved,
+    T: ComputeFloat
+        + UnstructuredSpectralRadiusTyped
+        + UnstructuredTimestepFromSigma
+        + PrimitiveFillFromConserved,
 >(
     env: &UnstructuredRunEnvTyped<'_>,
     fields: &mut ConservedFieldsT<T>,
@@ -560,29 +563,57 @@ fn prepare_unstructured_timestep_typed<
             viscous: env.config.viscous,
         })?;
     let fixed_dt = env.config.fixed_dt.filter(|dt| *dt > 0.0 && dt.is_finite());
-    match T::PRECISION {
-        ComputePrecision::F32 => {
-            work.timestep.sigma_f32 = sigma.iter().map(|s| *s as f32).collect();
-            work.timestep.cell_dts_f32 = finalize_cell_dts_from_sigma_f32(
-                &work.volumes_f32,
-                &work.timestep.sigma_f32,
-                cfl as f32,
-                fixed_dt.map(|d| d as f32),
-                env.config.local_time_step,
-            )?;
-            Ok(min_positive_dt_f32(&work.timestep.cell_dts_f32) as Real)
-        }
-        ComputePrecision::F64 => {
-            work.timestep.sigma = sigma;
-            work.timestep.cell_dts = finalize_cell_dts_from_sigma(
-                &work.volumes,
-                &work.timestep.sigma,
-                cfl,
-                fixed_dt,
-                env.config.local_time_step,
-            )?;
-            Ok(min_positive_dt(&work.timestep.cell_dts))
-        }
+    T::store_sigma_and_cell_dts(work, sigma, cfl, fixed_dt, env.config.local_time_step)
+}
+
+/// 谱半径结果写入时间步缓冲（f32 原生 \(\sigma_i\)，无 prepare 边界转换）。
+pub(crate) trait UnstructuredTimestepFromSigma: UnstructuredSpectralRadiusTyped {
+    fn store_sigma_and_cell_dts(
+        work: &mut UnstructuredStepWorkTyped<Self>,
+        sigma: Self::Sigma,
+        cfl: Real,
+        fixed_dt: Option<Real>,
+        local_time_step: bool,
+    ) -> Result<Real>;
+}
+
+impl UnstructuredTimestepFromSigma for f32 {
+    fn store_sigma_and_cell_dts(
+        work: &mut UnstructuredStepWorkTyped<f32>,
+        sigma: Vec<f32>,
+        cfl: Real,
+        fixed_dt: Option<Real>,
+        local_time_step: bool,
+    ) -> Result<Real> {
+        work.timestep.sigma_f32 = sigma;
+        work.timestep.cell_dts_f32 = finalize_cell_dts_from_sigma_f32(
+            &work.volumes_f32,
+            &work.timestep.sigma_f32,
+            cfl as f32,
+            fixed_dt.map(|d| d as f32),
+            local_time_step,
+        )?;
+        Ok(min_positive_dt_f32(&work.timestep.cell_dts_f32) as Real)
+    }
+}
+
+impl UnstructuredTimestepFromSigma for f64 {
+    fn store_sigma_and_cell_dts(
+        work: &mut UnstructuredStepWorkTyped<f64>,
+        sigma: Vec<Real>,
+        cfl: Real,
+        fixed_dt: Option<Real>,
+        local_time_step: bool,
+    ) -> Result<Real> {
+        work.timestep.sigma = sigma;
+        work.timestep.cell_dts = finalize_cell_dts_from_sigma(
+            &work.volumes,
+            &work.timestep.sigma,
+            cfl,
+            fixed_dt,
+            local_time_step,
+        )?;
+        Ok(min_positive_dt(&work.timestep.cell_dts))
     }
 }
 
@@ -594,6 +625,7 @@ pub(crate) trait UnstructuredComputeBackend:
     + InviscidTypedScatterBackend
     + ViscousTypedScatterBackend
     + UnstructuredSpectralRadiusTyped
+    + UnstructuredTimestepFromSigma
     + LuSgsUnstructuredSweepTyped
     + UnstructuredRhsDispatchImpl
     + UnstructuredLusgsDiagonalUpdate

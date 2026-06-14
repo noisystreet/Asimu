@@ -109,14 +109,16 @@ pub struct SpectralRadiusUnstructuredTypedParams<'a, T: ComputeFloat> {
     pub viscous: Option<&'a ViscousPhysicsConfig>,
 }
 
-/// typed 非结构谱半径分发（f32 原生 / f64 既有路径）。
+/// typed 非结构谱半径分发（f32 原生 `Vec<f32>` / f64 `Vec<Real>`）。
 pub trait UnstructuredSpectralRadiusTyped: ComputeFloat {
+    type Sigma: Sized;
     fn cell_spectral_radius_unstructured_typed(
         params: &SpectralRadiusUnstructuredTypedParams<'_, Self>,
-    ) -> Result<Vec<Real>>;
+    ) -> Result<Self::Sigma>;
 }
 
 impl UnstructuredSpectralRadiusTyped for f64 {
+    type Sigma = Vec<Real>;
     fn cell_spectral_radius_unstructured_typed(
         params: &SpectralRadiusUnstructuredTypedParams<'_, f64>,
     ) -> Result<Vec<Real>> {
@@ -134,9 +136,10 @@ impl UnstructuredSpectralRadiusTyped for f64 {
 }
 
 impl UnstructuredSpectralRadiusTyped for f32 {
+    type Sigma = Vec<f32>;
     fn cell_spectral_radius_unstructured_typed(
         params: &SpectralRadiusUnstructuredTypedParams<'_, f32>,
-    ) -> Result<Vec<Real>> {
+    ) -> Result<Vec<f32>> {
         super::spectral_radius_unstructured_f32::cell_spectral_radius_unstructured_f32(
             &super::spectral_radius_unstructured_f32::SpectralRadiusUnstructuredF32Params {
                 mesh: params.mesh,

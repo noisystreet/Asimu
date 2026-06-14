@@ -1,4 +1,4 @@
-//! 谱半径 f32 热路径（输出仍为 `Real` 供 CFL / LU-SGS 共用）。
+//! 谱半径 f32 热路径（非结构 \(\sigma_i\) 原生 f32 输出）。
 
 use crate::error::Result;
 use crate::field::PrimitiveFieldsT;

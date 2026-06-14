@@ -1,4 +1,4 @@
-//! 非结构单元谱半径 f32 路径（local time step / LU-SGS 伪时间）。
+//! 非结构单元谱半径 f32 路径（单元 \(\sigma_i\) 输出 `Vec<f32>`；面循环 f32，单元累加 f64 保抛物项）。
 
 use crate::boundary::BoundarySet;
 use crate::core::Real;
@@ -34,10 +34,10 @@ pub struct SpectralRadiusUnstructuredF32Params<'a> {
     pub viscous: Option<&'a ViscousPhysicsConfig>,
 }
 
-/// 非结构面循环谱半径（f32 primitive；\(\sigma_i\) 输出为 `Real`）。
+/// 非结构面循环谱半径（f32 primitive；\(\sigma_i\) 输出为 `f32`）。
 pub fn cell_spectral_radius_unstructured_f32(
     params: &SpectralRadiusUnstructuredF32Params<'_>,
-) -> Result<Vec<Real>> {
+) -> Result<Vec<f32>> {
     let n = params.mesh.num_cells();
     if params.primitives.num_cells() != n {
         return Err(AsimuError::Solver(format!(
@@ -54,12 +54,12 @@ pub fn cell_spectral_radius_unstructured_f32(
     } else {
         None
     };
-    let mut sigma = vec![0.0; n];
+    let mut sigma_acc = vec![0.0_f64; n];
     let topology = &params.mesh_cache.face_topology_f32;
     let incidence = &params.mesh_cache.lsq_rhs_incidence;
     let gamma = params.eos.gamma as f32;
     let prim = params.primitives;
-    for (cell, sigma_cell) in sigma.iter_mut().enumerate().take(n) {
+    for (cell, sigma_cell) in sigma_acc.iter_mut().enumerate().take(n) {
         accumulate_hyperbolic_sigma_one_cell_f32(
             params, prim, topology, incidence, cell, gamma, sigma_cell,
         )?;
@@ -67,8 +67,9 @@ pub fn cell_spectral_radius_unstructured_f32(
             accumulate_parabolic_sigma_one_cell(topology, incidence, cell, diff, sigma_cell);
         }
     }
-    for s in &mut sigma {
-        *s = s.max(Real::EPSILON);
+    let mut sigma = Vec::with_capacity(n);
+    for acc in sigma_acc {
+        sigma.push((acc.max(f64::EPSILON)) as f32);
     }
     Ok(sigma)
 }
@@ -80,7 +81,7 @@ fn accumulate_hyperbolic_sigma_one_cell_f32(
     incidence: &LsqRhsCellIncidence,
     cell: usize,
     gamma: f32,
-    sigma_cell: &mut Real,
+    sigma_cell: &mut f64,
 ) -> Result<()> {
     for &face_idx in &incidence.interior_as_owner[cell] {
         accumulate_interior_hyperbolic_as_owner_f32(
@@ -126,7 +127,7 @@ fn accumulate_interior_hyperbolic_as_owner_f32(
     prim: &PrimitiveFieldsT<f32>,
     face: &UnstructuredInteriorFaceF32,
     gamma: f32,
-    sigma_cell: &mut Real,
+    sigma_cell: &mut f64,
 ) {
     let left = prim_lane_f32(prim, face.owner);
     let right = prim_lane_f32(prim, face.neighbor);
@@ -138,7 +139,7 @@ fn accumulate_interior_hyperbolic_as_neighbor_f32(
     prim: &PrimitiveFieldsT<f32>,
     face: &UnstructuredInteriorFaceF32,
     gamma: f32,
-    sigma_cell: &mut Real,
+    sigma_cell: &mut f64,
 ) {
     let left = prim_lane_f32(prim, face.owner);
     let right = prim_lane_f32(prim, face.neighbor);
@@ -151,7 +152,7 @@ fn accumulate_boundary_hyperbolic_f32(
     prim: &PrimitiveFieldsT<f32>,
     face: &UnstructuredBoundaryFaceF32,
     gamma: f32,
-    sigma_cell: &mut Real,
+    sigma_cell: &mut f64,
 ) -> Result<()> {
     let ghost = params.ghosts.get_face(face.face).ok_or_else(|| {
         AsimuError::Boundary(format!(
@@ -184,18 +185,17 @@ fn accumulate_boundary_hyperbolic_f32(
     Ok(())
 }
 
-fn add_hyperbolic_contribution_f32(sigma_cell: &mut Real, radius: f32, area: f32, inv_volume: f32) {
+fn add_hyperbolic_contribution_f32(sigma_cell: &mut f64, radius: f32, area: f32, inv_volume: f32) {
     if inv_volume > 0.0 {
-        *sigma_cell += (radius * area * inv_volume) as Real;
+        *sigma_cell += f64::from(radius * area * inv_volume);
     }
 }
 
-fn add_parabolic_contribution_f32(sigma_cell: &mut Real, diff: f32, area: f32, volume: f32) {
+fn add_parabolic_contribution_f32(sigma_cell: &mut f64, diff: f32, area: f32, volume: f32) {
     if diff > 0.0 && area > f32::EPSILON && volume > DEGENERATE_VOLUME as f32 {
-        let contrib =
-            PARABOLIC_SPECTRAL_FACTOR_3D_F32 as Real * diff as Real * (area as Real).powi(2)
-                / (volume as Real).powi(2);
-        *sigma_cell += contrib;
+        *sigma_cell +=
+            f64::from(PARABOLIC_SPECTRAL_FACTOR_3D_F32) * f64::from(diff) * f64::from(area).powi(2)
+                / f64::from(volume).powi(2);
     }
 }
 
@@ -212,7 +212,7 @@ fn accumulate_parabolic_sigma_one_cell(
     incidence: &LsqRhsCellIncidence,
     cell: usize,
     diffusivity: &[f32],
-    sigma_cell: &mut Real,
+    sigma_cell: &mut f64,
 ) {
     let diff = diffusivity[cell];
     if diff <= 0.0 {
@@ -327,7 +327,7 @@ mod tests {
                 viscous: None,
             })
             .expect("sigma f32");
-        assert!(approx_eq(sigma_f32[0], sigma_f64[0], 1.0e-3));
+        assert!(approx_eq(sigma_f32[0] as Real, sigma_f64[0], 1.0e-3));
     }
 
     #[test]
@@ -335,7 +335,10 @@ mod tests {
         let (mesh, boundary) = tet_mesh_and_boundary();
         let mesh_cache = UnstructuredSolverMeshCache::from_mesh(&mesh, &boundary).expect("cache");
         let eos = IdealGasEoS::AIR_STANDARD;
-        let fs = FreestreamParams::default();
+        let fs = FreestreamParams {
+            mach: 0.2,
+            ..FreestreamParams::default()
+        };
         let fields_f32 = crate::field::ConservedFieldsT::<f32>::from_real_fields(
             &ConservedFields::from_freestream(mesh.num_cells(), &eos, &fs).expect("fields"),
         )
