@@ -33,6 +33,9 @@ pub(crate) struct EvaluateRhs3dTyped<'a, T: ComputeFloat> {
     pub min_pressure: Real,
     pub primitive_scratch: &'a mut PrimitiveFieldsT<T>,
     pub gradient_scratch: &'a mut GradientFields,
+    pub interface_residual: Option<
+        &'a [crate::solver::compressible_multiblock_interface::InterfaceResidualContribution],
+    >,
 }
 
 impl<T: ComputeFloat + InviscidFaceFluxTyped + PrimitiveFillFromConserved>
@@ -66,6 +69,12 @@ impl<T: ComputeFloat + InviscidFaceFluxTyped + PrimitiveFillFromConserved>
             min_pressure: self.min_pressure,
         };
         assemble_inviscid_residual_3d_typed(fields, residual, &assembly)?;
+        if let Some(contributions) = self.interface_residual {
+            crate::solver::compressible_multiblock_interface::apply_interface_residuals_typed(
+                residual,
+                contributions,
+            )?;
+        }
         let _ = self.gradient_scratch;
         Ok(())
     }

@@ -57,6 +57,7 @@ impl CompressibleEulerSolver {
             min_pressure,
             primitive_scratch: &mut ctx.primitive_scratch,
             gradient_scratch: &mut ctx.gradient_scratch,
+            interface_residual: ctx.interface_residual,
         }
     }
 
@@ -508,6 +509,7 @@ mod tests {
             gradient_scratch: crate::discretization::GradientFields::zeros(mesh.num_cells())
                 .expect("grad"),
             viscous: None,
+            interface_residual: None,
         };
         let mut ctx_f64 = CompressibleAdvanceContext3d {
             mesh: &mesh,
@@ -596,6 +598,7 @@ mod tests {
             gradient_scratch: crate::discretization::GradientFields::zeros(mesh.num_cells())
                 .expect("grad"),
             viscous: None,
+            interface_residual: None,
         };
         let mut storage = Rk4StorageT::<f32>::new(mesh.num_cells()).expect("storage");
         let mut state = SolverState::default();
@@ -647,6 +650,7 @@ mod tests {
             gradient_scratch: crate::discretization::GradientFields::zeros(mesh.num_cells())
                 .expect("grad"),
             viscous: None,
+            interface_residual: None,
         };
         let mut storage = Rk4StorageT::<f32>::new(mesh.num_cells()).expect("storage");
         let mut state = SolverState::default();

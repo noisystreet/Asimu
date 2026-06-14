@@ -1,4 +1,4 @@
-//! 多块 structured 3D 可压缩 typed 时间推进驱动（P2：无块间接口）。
+//! 多块 structured 3D 可压缩 typed 时间推进驱动（含 1-to-1 接口通量）。
 
 use tracing::info_span;
 
@@ -11,7 +11,13 @@ use crate::field::{ConservedFields, ConservedFieldsT, PrimitiveFields, Primitive
 use crate::mesh::{MultiBlockStructuredMesh3d, StructuredBlock3d};
 use crate::physics::{FreestreamParams, IdealGasEoS, ReferenceScales};
 use crate::solver::compressible::CompressibleAdvanceContext3dTyped;
-use crate::solver::compressible_multiblock::build_multiblock_interface_metadata;
+use crate::solver::compressible_multiblock::{
+    BlockInterfaceLink, SharedInterfaceFace, build_multiblock_interface_metadata,
+    fill_interface_ghosts,
+};
+use crate::solver::compressible_multiblock_interface::{
+    SharedInterfaceResidualParams, compute_shared_interface_residuals,
+};
 use crate::solver::time::TransientStepControl;
 use crate::solver::{
     CompressibleEulerSolver, CompressibleMultiblockStepView, CompressibleStepInfo,
@@ -38,9 +44,11 @@ struct BlockAdvanceEnvTyped<'a> {
     mesh: &'a MultiBlockStructuredMesh3d,
     reference: Option<&'a ReferenceScales>,
     residual_tolerance: Option<Real>,
+    links: &'a [Vec<BlockInterfaceLink>],
+    shared_faces: &'a [SharedInterfaceFace],
 }
 
-/// typed 多块 structured 同步推进（P2 仅支持无 1-to-1 接口）。
+/// typed 多块 structured 同步推进（含 1-to-1 共享无粘接口通量）。
 pub fn run_multiblock_structured_typed_with_observer<
     T: ComputeFloat
         + crate::field::LusgsDiagonalUpdateBackend
@@ -51,12 +59,6 @@ pub fn run_multiblock_structured_typed_with_observer<
     mut observe_step: impl FnMut(CompressibleMultiblockStepView<'_>) -> Result<()>,
 ) -> Result<(Vec<CompressibleStepInfo>, Vec<ConservedFields>)> {
     let interfaces = build_multiblock_interface_metadata(input.mesh)?;
-    if !interfaces.shared_faces.is_empty() {
-        return Err(AsimuError::Config(format!(
-            "compute_precision = \"{}\" 暂不支持多块 1-to-1 接口通量",
-            T::PRECISION.label()
-        )));
-    }
     let mut states = build_block_run_states_typed::<T>(
         input.mesh.blocks(),
         &interfaces.patches,
@@ -71,6 +73,8 @@ pub fn run_multiblock_structured_typed_with_observer<
         mesh: input.mesh,
         reference: input.reference,
         residual_tolerance: input.residual_tolerance,
+        links: &interfaces.links,
+        shared_faces: &interfaces.shared_faces,
     };
     let history = advance_block_history_typed(&env, &mut states, &mut observe_step)?;
     let fields = states
@@ -167,9 +171,47 @@ fn advance_block_step_typed<
     states: &mut [BlockRunStateTyped<T>],
 ) -> Result<CompressibleStepInfo> {
     let _span = info_span!("advance_block_step_typed", precision = T::PRECISION.label(),).entered();
+    let snapshots: Vec<ConservedFields> = {
+        let _span = info_span!("clone_block_snapshots", blocks = states.len()).entered();
+        states
+            .iter()
+            .map(|state| state.fields.cast_real())
+            .collect::<Result<Vec<_>>>()?
+    };
+    let interface_residuals = if env.shared_faces.is_empty() {
+        vec![Vec::new(); states.len()]
+    } else {
+        let _span = info_span!(
+            "compute_shared_interface_residuals",
+            blocks = env.mesh.num_blocks()
+        )
+        .entered();
+        compute_shared_interface_residuals(&SharedInterfaceResidualParams {
+            blocks: env.mesh.blocks(),
+            shared_faces: env.shared_faces,
+            snapshots: &snapshots,
+            eos: env.eos,
+            freestream: env.freestream,
+            inviscid: &env.solver.config.inviscid,
+        })?
+    };
     let mut step_infos = Vec::with_capacity(states.len());
     for (block_index, block) in env.mesh.blocks().iter().enumerate() {
+        if !env.links[block_index].is_empty() {
+            let _span = info_span!(
+                "fill_interface_ghosts",
+                block = %block.name,
+                links = env.links[block_index].len()
+            )
+            .entered();
+            fill_interface_ghosts(
+                &mut states[block_index].ghosts,
+                &env.links[block_index],
+                &snapshots,
+            )?;
+        }
         let state = &mut states[block_index];
+        let interface_slice = interface_residuals[block_index].as_slice();
         let mut ctx = CompressibleAdvanceContext3dTyped {
             mesh: &block.mesh,
             structured: &block.mesh,
@@ -191,6 +233,11 @@ fn advance_block_step_typed<
                 GradientFields::zeros(block.mesh.num_cells())?,
             ),
             viscous: env.solver.config.viscous.as_ref(),
+            interface_residual: if interface_slice.is_empty() {
+                None
+            } else {
+                Some(interface_slice)
+            },
         };
         let step_info = env.solver.advance_step_3d_typed(
             &mut ctx,

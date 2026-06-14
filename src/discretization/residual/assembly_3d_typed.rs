@@ -1,4 +1,4 @@
-//! 3D 结构化网格无粘残差装配（typed 场；P2 首版仅一阶）。
+//! 3D 结构化网格无粘残差装配（typed 场；一阶与 MUSCL）。
 
 use tracing::info_span;
 
@@ -11,6 +11,7 @@ use crate::field::{ConservedFieldsT, ConservedResidualT, PrimitiveFieldsT};
 use crate::mesh::{BoundaryMesh3d, StructuredMesh3d};
 use crate::physics::IdealGasEoS;
 
+use super::assembly_3d_muscl_typed::assemble_muscl_faces_3d_typed;
 use super::{accumulate_boundary_face_typed, accumulate_interior_face_typed, is_degenerate_volume};
 
 /// typed 无粘残差装配上下文。
@@ -24,24 +25,18 @@ pub struct InviscidAssembly3dTypedParams<'a, T: ComputeFloat> {
     pub min_pressure: Real,
 }
 
-struct BoundaryAssembly3dTyped<'a, T: ComputeFloat> {
-    mesh: &'a dyn BoundaryMesh3d,
-    structured: &'a StructuredMesh3d,
-    params: &'a InviscidAssembly3dTypedParams<'a, T>,
+pub(super) struct BoundaryAssembly3dTyped<'a, T: ComputeFloat> {
+    pub(super) mesh: &'a dyn BoundaryMesh3d,
+    pub(super) structured: &'a StructuredMesh3d,
+    pub(super) params: &'a InviscidAssembly3dTypedParams<'a, T>,
 }
 
-/// 装配 3D 结构化网格无粘 Euler 残差（一阶；`T=f32`/`f64`）。
+/// 装配 3D 结构化网格无粘 Euler 残差（一阶 / MUSCL；`T=f32`/`f64`）。
 pub fn assemble_inviscid_residual_3d_typed<T: ComputeFloat + InviscidFaceFluxTyped>(
     fields: &ConservedFieldsT<T>,
     residual: &mut ConservedResidualT<T>,
     params: &InviscidAssembly3dTypedParams<'_, T>,
 ) -> Result<()> {
-    if params.config.reconstruction != ReconstructionKind::FirstOrder {
-        return Err(AsimuError::Config(format!(
-            "compute_precision = \"{}\" 的结构化 typed 路径暂仅支持一阶重构",
-            T::PRECISION.label()
-        )));
-    }
     let mesh = params.mesh;
     let n = mesh.num_cells();
     if fields.num_cells() != n || residual.num_cells() != n {
@@ -51,6 +46,27 @@ pub fn assemble_inviscid_residual_3d_typed<T: ComputeFloat + InviscidFaceFluxTyp
         )));
     }
     residual.clear();
+    match params.config.reconstruction {
+        ReconstructionKind::FirstOrder => {
+            assemble_first_order_faces_3d_typed(mesh, residual, params)
+        }
+        ReconstructionKind::Muscl => {
+            let _span = info_span!(
+                "assemble_faces_typed",
+                path = "muscl",
+                precision = T::PRECISION.label(),
+            )
+            .entered();
+            assemble_muscl_faces_3d_typed(mesh, residual, params)
+        }
+    }
+}
+
+fn assemble_first_order_faces_3d_typed<T: ComputeFloat + InviscidFaceFluxTyped>(
+    mesh: &StructuredMesh3d,
+    residual: &mut ConservedResidualT<T>,
+    params: &InviscidAssembly3dTypedParams<'_, T>,
+) -> Result<()> {
     {
         let _span = info_span!("assemble_faces_typed", dim = "i").entered();
         assemble_i_faces_typed(mesh, residual, params)?;
@@ -300,6 +316,43 @@ mod tests {
                     .iter()
                     .all(|v| v.to_real().abs() < 1.0e-6),
                 "{} f32 density rhs",
+                side.label
+            );
+        });
+    }
+
+    #[test]
+    fn f32_uniform_freestream_muscl_has_near_zero_rhs() {
+        let pair = FreestreamPairFixture::air_sutherland(0.2);
+        pair.for_each_inviscid_side(|side| {
+            let (mut mesh, boundary_set, fields, ghosts) =
+                uniform_farfield_box(3, 3, 3, 1.0, 1.0, 1.0, side);
+            mesh.set_metric_mode(MeshMetricMode::Cartesian);
+            let state = fields.cell_state(0).expect("state");
+            let fields_t =
+                ConservedFieldsT::<f32>::uniform(mesh.num_cells(), state).expect("fields");
+            let mut primitives = PrimitiveFieldsT::<f32>::zeros(mesh.num_cells()).expect("prim");
+            primitives
+                .fill_from_conserved(&fields_t, side.eos, side.min_pressure)
+                .expect("fill");
+            let mut rhs = ConservedResidualT::<f32>::zeros(mesh.num_cells()).expect("rhs");
+            let config = InviscidFluxConfig::muscl_hllc();
+            let params = InviscidAssembly3dTypedParams {
+                mesh: &mesh,
+                eos: side.eos,
+                config: &config,
+                boundaries: &boundary_set,
+                ghosts: &ghosts,
+                primitives: &primitives,
+                min_pressure: side.min_pressure,
+            };
+            assemble_inviscid_residual_3d_typed(&fields_t, &mut rhs, &params).expect("assemble");
+            assert!(
+                rhs.density
+                    .values()
+                    .iter()
+                    .all(|v| v.to_real().abs() < 1.0e-5),
+                "{} f32 muscl density rhs",
                 side.label
             );
         });

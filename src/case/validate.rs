@@ -110,8 +110,8 @@ fn validate_f32_capabilities(case: &CaseSpec) -> Result<()> {
         return Err(f32_unsupported("f32 暂不支持 residual_smoothing"));
     }
     if let CaseMesh::MultiBlockStructured3d(mesh) = &case.mesh {
-        if !mesh.interfaces().is_empty() {
-            return Err(f32_unsupported("f32 暂不支持多块 1-to-1 接口通量"));
+        if !mesh.interfaces().is_empty() && case.physics.viscous.is_some() {
+            return Err(f32_unsupported("f32 多块接口通量暂不支持粘性通量"));
         }
     }
     Ok(())
@@ -122,10 +122,9 @@ fn validate_f32_discretization(case: &CaseSpec) -> Result<()> {
     match disc.inviscid().reconstruction {
         ReconstructionKind::FirstOrder => Ok(()),
         ReconstructionKind::Muscl => {
-            if !matches!(case.mesh, CaseMesh::Unstructured3d(_)) {
-                return Err(f32_unsupported("f32 二阶 MUSCL 暂仅支持非结构 3D 路径"));
-            }
-            if disc.inviscid().unstructured_gradient_limiter.is_none() {
+            if matches!(case.mesh, CaseMesh::Unstructured3d(_))
+                && disc.inviscid().unstructured_gradient_limiter.is_none()
+            {
                 return Err(f32_unsupported(
                     "f32 非结构 MUSCL 须设置 unstructured_limiter = barth_jespersen | venkatakrishnan",
                 ));
@@ -358,7 +357,7 @@ mod compute_precision_tests {
     }
 
     #[test]
-    fn f32_rejects_structured_muscl_case() {
+    fn f32_accepts_structured_muscl_case() {
         let mut case = load_case(Path::new(
             "tests/benchmarks/unstructured_freestream/case.toml",
         ))
@@ -374,10 +373,8 @@ mod compute_precision_tests {
         );
         if let Some(euler) = case.euler.as_mut() {
             euler.reconstruction = Some("muscl".to_string());
-            euler.unstructured_limiter = Some("barth_jespersen".to_string());
         }
-        let err = compute_precision(&case).expect_err("structured muscl f32");
-        assert!(err.to_string().contains("MUSCL"));
+        compute_precision(&case).expect("structured muscl f32");
     }
 
     #[test]

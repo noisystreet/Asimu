@@ -58,6 +58,7 @@
 
 ### Changed
 
+- **f32 能力矩阵扩展**（ADR 0016）：结构化 3D typed MUSCL（`muscl_stencil_3d_typed`）；多块 1-to-1 共享接口通量（`compressible_multiblock_driver_typed` + `apply_interface_residuals_typed`）
 - **非结构 f64 MUSCL typed 原生路径**（ADR 0018 U3）：新增 `assembly_unstructured_inviscid_f64`，删除 `muscl_f64_params` / `assemble_boundary_faces_muscl_typed` 桥接；`InviscidMusclAssembly for f64` 与 f32 对称直连重构与 Riemann
 - **Cargo Feature 矩阵与 CI 覆盖**：ARCHITECTURE §8.7 文档化 `parallel-fvm` / `simd-fvm` / I/O features 组合、Makefile/CI 矩阵与已知缺口；同步 `docs/en/ARCHITECTURE.md` 摘要
 - **`parallel-fvm` 默认启用**：`Cargo.toml` `default = ["parallel-fvm"]`；`make check` / CI / pre-commit 含 `io-vtk,parallel-fvm`（dual_ellipsoid trace：475 万内面 / 9 色桶；见 ADR 0011 修订）

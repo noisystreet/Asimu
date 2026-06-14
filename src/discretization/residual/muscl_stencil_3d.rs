@@ -8,11 +8,11 @@ use crate::field::{PrimitiveFields, primitive_from_conserved_relaxed};
 use crate::mesh::{LogicalFace3d, StructuredMesh3d};
 use crate::physics::{ConservedState, IdealGasEoS, PrimitiveState};
 
-struct LoadedPrimitiveStencil4 {
-    owner: PrimitiveState,
-    neighbor: PrimitiveState,
-    left_of_owner: Option<PrimitiveState>,
-    right_of_neighbor: Option<PrimitiveState>,
+pub(crate) struct LoadedPrimitiveStencil4 {
+    pub owner: PrimitiveState,
+    pub neighbor: PrimitiveState,
+    pub left_of_owner: Option<PrimitiveState>,
+    pub right_of_neighbor: Option<PrimitiveState>,
 }
 
 impl LoadedPrimitiveStencil4 {
@@ -61,7 +61,7 @@ fn load_primitive_stencil(
     }
 }
 
-fn flux_from_primitive_stencil(
+pub(crate) fn flux_from_primitive_stencil(
     stencil: LoadedPrimitiveStencil4,
     normal: Vector3,
     eos: &IdealGasEoS,

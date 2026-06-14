@@ -4,7 +4,9 @@ use std::collections::BTreeSet;
 
 use crate::boundary::{BoundaryKind, BoundaryPatch};
 use crate::core::{FaceId, Real, Vector3};
+use crate::discretization::{BoundaryGhostBuffer, GhostCellState};
 use crate::error::{AsimuError, Result};
+use crate::field::ConservedFields;
 use crate::mesh::{
     BoundaryMesh3d, LogicalFace3d, MultiBlockStructuredMesh3d, StructuredBlock3d,
     StructuredIndexRange3d, StructuredMesh3d,
@@ -110,6 +112,19 @@ pub(crate) fn build_multiblock_interface_metadata(
         }
     }
     Ok(metadata)
+}
+
+/// 用 donor block 快照填充接口 ghost（多块 typed / f64 共用）。
+pub(crate) fn fill_interface_ghosts(
+    ghosts: &mut BoundaryGhostBuffer,
+    links: &[BlockInterfaceLink],
+    snapshots: &[ConservedFields],
+) -> Result<()> {
+    for link in links {
+        let conserved = snapshots[link.donor_block_index].cell_state(link.donor_cell)?;
+        ghosts.insert_face(link.face, GhostCellState { conserved });
+    }
+    Ok(())
 }
 
 fn canonical_interface_key(

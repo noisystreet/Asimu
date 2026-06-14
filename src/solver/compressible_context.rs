@@ -48,6 +48,10 @@ pub struct CompressibleAdvanceContext3dTyped<'a, T: crate::core::ComputeFloat> {
     pub spectral_primitives: PrimitiveFields,
     pub gradient_scratch: GradientFields,
     pub viscous: Option<&'a ViscousPhysicsConfig>,
+    /// 多块 1-to-1 共享接口残差修正（单块路径保持 `None`）。
+    pub(crate) interface_residual: Option<
+        &'a [crate::solver::compressible_multiblock_interface::InterfaceResidualContribution],
+    >,
 }
 
 impl<'a, T: crate::core::ComputeFloat> CompressibleAdvanceContext3dTyped<'a, T> {

@@ -121,6 +121,23 @@ pub(crate) fn apply_interface_residuals(
     Ok(())
 }
 
+/// typed 多块共享接口残差修正（通量仍以 f64 装配，写入 `ConservedResidualT<T>`）。
+pub(crate) fn apply_interface_residuals_typed<T: crate::core::ComputeFloat>(
+    residual: &mut crate::field::ConservedResidualT<T>,
+    contributions: &[InterfaceResidualContribution],
+) -> Result<()> {
+    for contribution in contributions {
+        residual.add_flux_to_cell(
+            contribution.cell,
+            contribution.flux.mass,
+            contribution.flux.momentum,
+            contribution.flux.energy,
+            contribution.scale,
+        )?;
+    }
+    Ok(())
+}
+
 fn p_floor(freestream: &FreestreamParams) -> Real {
     crate::field::positivity_pressure_floor(freestream.pressure)
 }

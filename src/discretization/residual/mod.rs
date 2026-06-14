@@ -4,6 +4,7 @@
 
 mod assembly_1d;
 mod assembly_3d;
+mod assembly_3d_muscl_typed;
 mod assembly_3d_typed;
 mod assembly_3d_viscous;
 mod assembly_unstructured;
@@ -13,6 +14,7 @@ mod assembly_unstructured_viscous_f32;
 mod assembly_unstructured_viscous_typed;
 mod face_flux_3d;
 mod muscl_stencil_3d;
+mod muscl_stencil_3d_typed;
 
 use crate::core::{ComputeFloat, Real};
 use crate::discretization::InviscidFlux;
