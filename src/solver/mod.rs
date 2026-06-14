@@ -15,9 +15,12 @@ mod incompressible_linear;
 mod incompressible_pressure_reference;
 pub mod lu_sgs_common;
 pub mod lu_sgs_sweep_unstructured;
+mod lu_sgs_sweep_unstructured_typed;
 pub mod sod;
 pub mod spectral_radius;
+pub mod spectral_radius_f32;
 pub mod spectral_radius_unstructured;
+mod spectral_radius_unstructured_f32;
 pub mod state;
 pub mod time;
 pub mod wave_speed;
@@ -63,6 +66,9 @@ pub use lu_sgs_sweep_unstructured::{
     LuSgsSweepUnstructuredInput, LuSgsSweepUnstructuredParams, LuSgsUnstructuredCouplings,
     lu_sgs_sweep_unstructured,
 };
+pub use lu_sgs_sweep_unstructured_typed::{
+    LuSgsSweepUnstructuredTypedParams, LuSgsUnstructuredSweepTyped, lu_sgs_sweep_unstructured_typed,
+};
 pub use sod::{
     SodBenchmarkConfig, SodBenchmarkResult, run_sod_benchmark, sod_initial_fields,
     write_sod_compare_profile, write_sod_profile,
@@ -72,7 +78,11 @@ pub use spectral_radius::{
     cell_viscous_diffusivity_max, local_pseudo_dt_lusgs,
 };
 pub use spectral_radius_unstructured::{
-    SpectralRadiusUnstructuredParams, cell_spectral_radius_unstructured,
+    SpectralRadiusUnstructuredParams, SpectralRadiusUnstructuredTypedParams,
+    UnstructuredSpectralRadiusTyped, cell_spectral_radius_unstructured,
+};
+pub use spectral_radius_unstructured_f32::{
+    SpectralRadiusUnstructuredF32Params, cell_spectral_radius_unstructured_f32,
 };
 pub use state::SolverState;
 pub use time::{

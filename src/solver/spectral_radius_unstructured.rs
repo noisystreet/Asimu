@@ -1,14 +1,14 @@
 //! 非结构单元谱半径（local time step / 对角 LU-SGS）。
 
 use crate::boundary::BoundarySet;
-use crate::core::Real;
+use crate::core::{ComputeFloat, Real};
 use crate::discretization::BoundaryGhostBuffer;
 use crate::discretization::unstructured_face_cache::{
     LsqRhsCellIncidence, UnstructuredBoundaryFace, UnstructuredFaceTopology,
     UnstructuredInteriorFace, UnstructuredSolverMeshCache,
 };
 use crate::error::{AsimuError, Result};
-use crate::field::{PrimitiveFields, primitive_from_conserved_relaxed};
+use crate::field::{PrimitiveFields, PrimitiveFieldsT, primitive_from_conserved_relaxed};
 use crate::mesh::UnstructuredMesh3d;
 use crate::physics::{IdealGasEoS, ViscousPhysicsConfig};
 
@@ -95,6 +95,61 @@ pub fn cell_spectral_radius_unstructured(
         *s = s.max(Real::EPSILON);
     }
     Ok(sigma)
+}
+
+/// typed 非结构谱半径求值上下文。
+pub struct SpectralRadiusUnstructuredTypedParams<'a, T: ComputeFloat> {
+    pub mesh: &'a UnstructuredMesh3d,
+    pub mesh_cache: &'a UnstructuredSolverMeshCache,
+    pub boundaries: &'a BoundarySet,
+    pub ghosts: &'a BoundaryGhostBuffer,
+    pub primitives: &'a PrimitiveFieldsT<T>,
+    pub eos: &'a IdealGasEoS,
+    pub min_pressure: Real,
+    pub viscous: Option<&'a ViscousPhysicsConfig>,
+}
+
+/// typed 非结构谱半径分发（f32 原生 / f64 既有路径）。
+pub trait UnstructuredSpectralRadiusTyped: ComputeFloat {
+    fn cell_spectral_radius_unstructured_typed(
+        params: &SpectralRadiusUnstructuredTypedParams<'_, Self>,
+    ) -> Result<Vec<Real>>;
+}
+
+impl UnstructuredSpectralRadiusTyped for f64 {
+    fn cell_spectral_radius_unstructured_typed(
+        params: &SpectralRadiusUnstructuredTypedParams<'_, f64>,
+    ) -> Result<Vec<Real>> {
+        cell_spectral_radius_unstructured(&SpectralRadiusUnstructuredParams {
+            mesh: params.mesh,
+            mesh_cache: params.mesh_cache,
+            boundaries: params.boundaries,
+            ghosts: params.ghosts,
+            primitives: params.primitives,
+            eos: params.eos,
+            min_pressure: params.min_pressure,
+            viscous: params.viscous,
+        })
+    }
+}
+
+impl UnstructuredSpectralRadiusTyped for f32 {
+    fn cell_spectral_radius_unstructured_typed(
+        params: &SpectralRadiusUnstructuredTypedParams<'_, f32>,
+    ) -> Result<Vec<Real>> {
+        super::spectral_radius_unstructured_f32::cell_spectral_radius_unstructured_f32(
+            &super::spectral_radius_unstructured_f32::SpectralRadiusUnstructuredF32Params {
+                mesh: params.mesh,
+                mesh_cache: params.mesh_cache,
+                boundaries: params.boundaries,
+                ghosts: params.ghosts,
+                primitives: params.primitives,
+                eos: params.eos,
+                min_pressure: params.min_pressure,
+                viscous: params.viscous,
+            },
+        )
+    }
 }
 
 fn accumulate_hyperbolic_sigma_one_cell(

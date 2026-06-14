@@ -26,11 +26,9 @@ use crate::discretization::{
 };
 use crate::error::{AsimuError, Result};
 use crate::exec::{ExecutionContext, MeshExecMetrics};
-use crate::field::{
-    ConservedFields, ConservedFieldsT, ConservedResidualT, PrimitiveFields, PrimitiveFieldsT,
-};
+use crate::field::{ConservedFields, ConservedFieldsT, ConservedResidualT, PrimitiveFieldsT};
 use crate::solver::spectral_radius_unstructured::{
-    SpectralRadiusUnstructuredParams, cell_spectral_radius_unstructured,
+    SpectralRadiusUnstructuredTypedParams, UnstructuredSpectralRadiusTyped,
 };
 use crate::solver::time::TransientStepControl;
 use crate::solver::time::{
@@ -38,8 +36,10 @@ use crate::solver::time::{
     euler_step, euler_step_local, min_positive_dt, rk4_step, rk4_step_local,
 };
 use crate::solver::{
-    CompressibleStepInfo, CompressibleUnstructuredStepView, RefreshCompressibleStateTypedInput,
-    SolverState, UnstructuredDriverConfig, finalize_cell_dts_from_sigma,
+    CompressibleStepInfo, CompressibleUnstructuredStepView, LuSgsSweepUnstructuredInput,
+    LuSgsSweepUnstructuredTypedParams, LuSgsUnstructuredCouplings, LuSgsUnstructuredSweepTyped,
+    RefreshCompressibleStateTypedInput, SolverState, UnstructuredDriverConfig,
+    finalize_cell_dts_from_sigma, lu_sgs_sweep_unstructured_typed,
     refresh_compressible_ghosts_and_primitives_typed,
 };
 
@@ -59,14 +59,13 @@ struct UnstructuredStepWorkTyped<T: ComputeFloat> {
     integrator: RungeKutta4Integrator,
     ghosts: BoundaryGhostBuffer,
     primitives: PrimitiveFieldsT<T>,
-    /// f32 谱半径 scratch（f64 路径不写入）。
-    spectral_radius_scratch: PrimitiveFields,
     gradients: GradientFieldsT<T>,
     viscous_scratch: ViscousAssemblyUnstructuredScratch,
     viscous_grad_scratch_f32: UnstructuredGradientScratchF32,
     mesh_cache: UnstructuredSolverMeshCache,
     exec: ExecutionContext,
     volumes: Vec<Real>,
+    lusgs_couplings: LuSgsUnstructuredCouplings,
 }
 
 pub(crate) struct UnstructuredRunEnvTyped<'a> {
@@ -81,6 +80,8 @@ pub fn run_unstructured_typed_with_observer<
         + InviscidTypedScatterBackend
         + ViscousTypedScatterBackend
         + UnstructuredTypedRhsDispatch
+        + UnstructuredSpectralRadiusTyped
+        + LuSgsUnstructuredSweepTyped
         + rhs_dispatch::DispatchImpl,
 >(
     config: &UnstructuredDriverConfig<'_>,
@@ -130,13 +131,13 @@ pub fn run_unstructured_typed_with_observer<
             }),
             ghosts: BoundaryGhostBuffer::with_face_capacity(env.config.mesh.num_faces()),
             primitives: PrimitiveFieldsT::zeros(n)?,
-            spectral_radius_scratch: PrimitiveFields::zeros(n)?,
             gradients: GradientFieldsT::<T>::zeros(n)?,
             viscous_scratch: ViscousAssemblyUnstructuredScratch::new(n),
             viscous_grad_scratch_f32: UnstructuredGradientScratchF32::new(n),
             mesh_cache,
             exec,
             volumes: env.config.mesh.cell_volumes(),
+            lusgs_couplings: LuSgsUnstructuredCouplings::from_mesh(env.config.mesh)?,
         }
     };
     let mut history = Vec::new();
@@ -171,6 +172,8 @@ fn advance_unstructured_step_typed<
         + crate::field::LusgsDiagonalUpdateBackend
         + InviscidTypedScatterBackend
         + ViscousTypedScatterBackend
+        + UnstructuredSpectralRadiusTyped
+        + LuSgsUnstructuredSweepTyped
         + rhs_dispatch::DispatchImpl,
 >(
     env: &mut UnstructuredRunEnvTyped<'_>,
@@ -241,6 +244,7 @@ fn advance_unstructured_lusgs_typed<
         + crate::field::LusgsDiagonalUpdateBackend
         + InviscidTypedScatterBackend
         + ViscousTypedScatterBackend
+        + LuSgsUnstructuredSweepTyped
         + rhs_dispatch::DispatchImpl,
 >(
     env: &UnstructuredRunEnvTyped<'_>,
@@ -253,11 +257,6 @@ fn advance_unstructured_lusgs_typed<
     if !env.config.local_time_step {
         return Err(AsimuError::Config(
             "非结构 time.scheme = \"lu_sgs\" 须配合 local_time_step = true".to_string(),
-        ));
-    }
-    if env.config.lu_sgs.sweep {
-        return Err(AsimuError::Config(
-            "compute_precision f32 非结构 typed 路径暂不支持 lusgs_sweep = true".to_string(),
         ));
     }
     let lu_sgs = env.config.lu_sgs;
@@ -285,21 +284,49 @@ fn advance_unstructured_lusgs_typed<
             p_floor,
         )?;
     }
-    {
-        let _span = info_span!("unstructured_lusgs_diagonal_update_typed").entered();
-        work.storage.stage.assign_lusgs_diagonal_update(
-            &work.storage.u0,
+    if lu_sgs.sweep {
+        let mut sweep_params = LuSgsSweepUnstructuredTypedParams {
+            mesh: env.config.mesh,
+            eos: env.config.eos,
+            primitives: &mut work.primitives,
+            min_pressure: p_floor,
+            backward_damping: lu_sgs.sweep_backward_damping,
+        };
+        let _span = info_span!(
+            "unstructured_lusgs_sweep_typed",
+            precision = T::PRECISION.label(),
+        )
+        .entered();
+        lu_sgs_sweep_unstructured_typed(
+            fields,
             &work.storage.k1,
-            sigma,
-            cell_dts,
-            lu_sgs.omega,
-            env.config.eos.gamma,
-            p_floor,
+            &mut sweep_params,
+            LuSgsSweepUnstructuredInput {
+                dt: cell_dts,
+                sigma,
+                volumes: &work.volumes,
+                couplings: &work.lusgs_couplings,
+                omega: lu_sgs.omega,
+                gamma: env.config.eos.gamma,
+            },
         )?;
-    }
-    {
-        let _span = info_span!("unstructured_lusgs_copy_stage_typed").entered();
-        fields.copy_from(&work.storage.stage)?;
+    } else {
+        {
+            let _span = info_span!("unstructured_lusgs_diagonal_update_typed").entered();
+            work.storage.stage.assign_lusgs_diagonal_update(
+                &work.storage.u0,
+                &work.storage.k1,
+                sigma,
+                cell_dts,
+                lu_sgs.omega,
+                env.config.eos.gamma,
+                p_floor,
+            )?;
+        }
+        {
+            let _span = info_span!("unstructured_lusgs_copy_stage_typed").entered();
+            fields.copy_from(&work.storage.stage)?;
+        }
     }
     Ok(())
 }
@@ -565,7 +592,7 @@ impl rhs_dispatch::DispatchImpl for f64 {
     }
 }
 
-fn prepare_unstructured_timestep_typed<T: ComputeFloat>(
+fn prepare_unstructured_timestep_typed<T: ComputeFloat + UnstructuredSpectralRadiusTyped>(
     env: &UnstructuredRunEnvTyped<'_>,
     fields: &mut ConservedFieldsT<T>,
     work: &mut UnstructuredStepWorkTyped<T>,
@@ -587,18 +614,17 @@ fn prepare_unstructured_timestep_typed<T: ComputeFloat>(
         min_pressure: p_floor,
         primitives: &mut work.primitives,
     })?;
-    work.spectral_radius_scratch = work.primitives.cast_real()?;
-    let params = SpectralRadiusUnstructuredParams {
-        mesh: env.config.mesh,
-        mesh_cache: &work.mesh_cache,
-        boundaries: env.config.patches,
-        ghosts: &work.ghosts,
-        primitives: &work.spectral_radius_scratch,
-        eos: env.config.eos,
-        min_pressure: p_floor,
-        viscous: env.config.viscous,
-    };
-    let sigma = cell_spectral_radius_unstructured(&params)?;
+    let sigma =
+        T::cell_spectral_radius_unstructured_typed(&SpectralRadiusUnstructuredTypedParams {
+            mesh: env.config.mesh,
+            mesh_cache: &work.mesh_cache,
+            boundaries: env.config.patches,
+            ghosts: &work.ghosts,
+            primitives: &work.primitives,
+            eos: env.config.eos,
+            min_pressure: p_floor,
+            viscous: env.config.viscous,
+        })?;
     let cell_dts = finalize_cell_dts_from_sigma(
         &work.volumes,
         &sigma,

@@ -190,3 +190,166 @@ pub(crate) fn refresh_primitive_at_cell(
     primitives.velocity_z.values_mut()[cell] = prim.velocity[2];
     Ok(())
 }
+
+// --- typed 扫掠辅助（f32/f64 共用；正性限制仍经 `ConservedState`）---
+
+pub(crate) fn residual_cell_vector_typed<T: crate::core::ComputeFloat>(
+    residual: &crate::field::ConservedResidualT<T>,
+    cell: usize,
+) -> [Real; 5] {
+    [
+        residual.density.values()[cell].to_real(),
+        residual.momentum_x.values()[cell].to_real(),
+        residual.momentum_y.values()[cell].to_real(),
+        residual.momentum_z.values()[cell].to_real(),
+        residual.total_energy.values()[cell].to_real(),
+    ]
+}
+
+pub(crate) fn conserved_vector_typed<T: crate::core::ComputeFloat>(
+    fields: &crate::field::ConservedFieldsT<T>,
+    cell: usize,
+) -> [Real; 5] {
+    [
+        fields.density.values()[cell].to_real(),
+        fields.momentum_x.values()[cell].to_real(),
+        fields.momentum_y.values()[cell].to_real(),
+        fields.momentum_z.values()[cell].to_real(),
+        fields.total_energy.values()[cell].to_real(),
+    ]
+}
+
+pub(crate) fn apply_limited_cell_increment_typed<T: crate::core::ComputeFloat>(
+    fields: &mut crate::field::ConservedFieldsT<T>,
+    cell: usize,
+    scale: Real,
+    increment: [Real; 5],
+    gamma: Real,
+    min_pressure: Real,
+) -> Result<()> {
+    let base = fields.cell_state(cell)?;
+    let effective = max_physical_increment_scale(&base, increment, scale, gamma, min_pressure);
+    if effective <= 0.0 {
+        return Ok(());
+    }
+    let updated = state_after_increment(&base, increment, effective);
+    write_cell_state_typed(fields, cell, &updated);
+    Ok(())
+}
+
+pub(crate) fn write_cell_state_typed<T: crate::core::ComputeFloat>(
+    fields: &mut crate::field::ConservedFieldsT<T>,
+    cell: usize,
+    state: &ConservedState,
+) {
+    fields.density.values_mut()[cell] = T::from_real(state.density);
+    fields.momentum_x.values_mut()[cell] = T::from_real(state.momentum[0]);
+    fields.momentum_y.values_mut()[cell] = T::from_real(state.momentum[1]);
+    fields.momentum_z.values_mut()[cell] = T::from_real(state.momentum[2]);
+    fields.total_energy.values_mut()[cell] = T::from_real(state.total_energy);
+}
+
+pub(crate) fn fields_are_physical_typed<T: crate::core::ComputeFloat>(
+    fields: &crate::field::ConservedFieldsT<T>,
+    gamma: Real,
+    min_pressure: Real,
+) -> Result<bool> {
+    for cell in 0..fields.num_cells() {
+        let state = fields.cell_state(cell)?;
+        if !is_physical_conserved(&state, gamma, min_pressure) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+pub(crate) fn blend_fields_typed<T: crate::core::ComputeFloat>(
+    out: &mut crate::field::ConservedFieldsT<T>,
+    base: &crate::field::ConservedFieldsT<T>,
+    target: &crate::field::ConservedFieldsT<T>,
+    alpha: Real,
+) -> Result<()> {
+    for cell in 0..base.num_cells() {
+        let b = base.cell_state(cell)?;
+        let t = target.cell_state(cell)?;
+        let delta = [
+            t.density - b.density,
+            t.momentum[0] - b.momentum[0],
+            t.momentum[1] - b.momentum[1],
+            t.momentum[2] - b.momentum[2],
+            t.total_energy - b.total_energy,
+        ];
+        write_cell_state_typed(out, cell, &state_after_increment(&b, delta, alpha));
+    }
+    Ok(())
+}
+
+pub(crate) fn stabilize_sweep_update_typed<T: crate::core::ComputeFloat>(
+    fields: &mut crate::field::ConservedFieldsT<T>,
+    u0: &crate::field::ConservedFieldsT<T>,
+    u_sweep: &crate::field::ConservedFieldsT<T>,
+    residual: &crate::field::ConservedResidualT<T>,
+    min_pressure: Real,
+    gamma: Real,
+    scalars: &LuSgsSweepScalars<'_>,
+) -> Result<()> {
+    if fields_are_physical_typed(u_sweep, gamma, min_pressure)? {
+        return Ok(());
+    }
+    const MIN_ALPHA: Real = 1.0 / 1024.0;
+    let mut alpha = 1.0;
+    loop {
+        blend_fields_typed(fields, u0, u_sweep, alpha)?;
+        if fields_are_physical_typed(fields, gamma, min_pressure)? {
+            return Ok(());
+        }
+        alpha *= 0.5;
+        if alpha < MIN_ALPHA {
+            apply_diagonal_fallback_typed(fields, u0, residual, gamma, min_pressure, scalars)?;
+            return Ok(());
+        }
+    }
+}
+
+pub(crate) fn apply_diagonal_fallback_typed<T: crate::core::ComputeFloat>(
+    fields: &mut crate::field::ConservedFieldsT<T>,
+    u0: &crate::field::ConservedFieldsT<T>,
+    residual: &crate::field::ConservedResidualT<T>,
+    gamma: Real,
+    min_pressure: Real,
+    scalars: &LuSgsSweepScalars<'_>,
+) -> Result<()> {
+    for cell in 0..fields.num_cells() {
+        let scale = implicit_scale(scalars.dt[cell], scalars.sigma[cell], scalars.omega);
+        let increment = residual_cell_vector_typed(residual, cell);
+        let base = u0.cell_state(cell)?;
+        let effective = max_physical_increment_scale(&base, increment, scale, gamma, min_pressure);
+        if effective > 0.0 {
+            write_cell_state_typed(
+                fields,
+                cell,
+                &state_after_increment(&base, increment, effective),
+            );
+        } else {
+            write_cell_state_typed(fields, cell, &base);
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn refresh_primitive_at_cell_typed<T: crate::core::ComputeFloat>(
+    fields: &crate::field::ConservedFieldsT<T>,
+    cell: usize,
+    eos: &IdealGasEoS,
+    min_pressure: Real,
+    primitives: &mut crate::field::PrimitiveFieldsT<T>,
+) -> Result<()> {
+    let cons = fields.cell_state(cell)?;
+    let prim = crate::field::primitive_from_conserved_relaxed(eos, &cons, min_pressure)?;
+    primitives.density.values_mut()[cell] = T::from_real(prim.density);
+    primitives.pressure.values_mut()[cell] = T::from_real(prim.pressure);
+    primitives.velocity_x.values_mut()[cell] = T::from_real(prim.velocity[0]);
+    primitives.velocity_y.values_mut()[cell] = T::from_real(prim.velocity[1]);
+    primitives.velocity_z.values_mut()[cell] = T::from_real(prim.velocity[2]);
+    Ok(())
+}

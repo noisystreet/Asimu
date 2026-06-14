@@ -151,9 +151,9 @@ fn validate_f32_lusgs_time(case: &CaseSpec) -> Result<()> {
     if !case.time.uses_local_time_step() {
         return Err(f32_unsupported("f32 lu_sgs 须配合 local_time_step = true"));
     }
-    let lu_sgs = case.time.resolved_lusgs_config()?;
-    if lu_sgs.sweep {
-        return Err(f32_unsupported("f32 暂不支持 lusgs_sweep = true"));
+    if case.time.resolved_lusgs_config()?.sweep && !matches!(case.mesh, CaseMesh::Unstructured3d(_))
+    {
+        return Err(f32_unsupported("f32 仅非结构路径支持 lusgs_sweep = true"));
     }
     Ok(())
 }

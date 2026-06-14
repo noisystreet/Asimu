@@ -36,15 +36,15 @@ pub struct LuSgsSweepUnstructuredInput<'a> {
 }
 
 #[derive(Clone, Copy)]
-struct CellCoupling {
-    neighbor: usize,
-    area: Real,
-    normal: Vector3,
+pub(crate) struct LuSgsCellCoupling {
+    pub(crate) neighbor: usize,
+    pub(crate) area: Real,
+    pub(crate) normal: Vector3,
 }
 
 /// 非结构 LU-SGS 拓扑邻接缓存，仅依赖网格 face owner/neighbor。
 pub struct LuSgsUnstructuredCouplings {
-    cells: Vec<Vec<CellCoupling>>,
+    cells: Vec<Vec<LuSgsCellCoupling>>,
 }
 
 impl LuSgsUnstructuredCouplings {
@@ -60,6 +60,10 @@ impl LuSgsUnstructuredCouplings {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.cells.is_empty()
+    }
+
+    pub(crate) fn cells(&self) -> &[Vec<LuSgsCellCoupling>] {
+        &self.cells
     }
 }
 
@@ -116,7 +120,7 @@ pub fn lu_sgs_sweep_unstructured(
     )
 }
 
-fn build_cell_couplings(mesh: &UnstructuredMesh3d) -> Result<Vec<Vec<CellCoupling>>> {
+fn build_cell_couplings(mesh: &UnstructuredMesh3d) -> Result<Vec<Vec<LuSgsCellCoupling>>> {
     let mut couplings = vec![Vec::new(); mesh.num_cells()];
     for face in 0..mesh.num_faces() {
         let face_id = FaceId(face as u32);
@@ -127,12 +131,12 @@ fn build_cell_couplings(mesh: &UnstructuredMesh3d) -> Result<Vec<Vec<CellCouplin
         let owner = owner_id.index() as usize;
         let neighbor = neighbor_id.index() as usize;
         let metric = mesh.face_metric(face_id);
-        couplings[owner].push(CellCoupling {
+        couplings[owner].push(LuSgsCellCoupling {
             neighbor,
             area: metric.area,
             normal: metric.normal,
         });
-        couplings[neighbor].push(CellCoupling {
+        couplings[neighbor].push(LuSgsCellCoupling {
             neighbor: owner,
             area: metric.area,
             normal: metric.normal,
@@ -146,7 +150,7 @@ fn forward_sweep(
     u0: &ConservedFields,
     residual: &ConservedResidual,
     params: &mut LuSgsSweepUnstructuredParams<'_>,
-    couplings: &[Vec<CellCoupling>],
+    couplings: &[Vec<LuSgsCellCoupling>],
     scalars: &LuSgsSweepScalars<'_>,
 ) -> Result<()> {
     for (cell, cell_couplings) in couplings.iter().enumerate().take(fields.num_cells()) {
@@ -180,7 +184,7 @@ fn backward_sweep(
     fields: &mut ConservedFields,
     u0: &ConservedFields,
     params: &mut LuSgsSweepUnstructuredParams<'_>,
-    couplings: &[Vec<CellCoupling>],
+    couplings: &[Vec<LuSgsCellCoupling>],
     scalars: &LuSgsSweepScalars<'_>,
 ) -> Result<()> {
     for (cell, cell_couplings) in couplings.iter().enumerate().take(fields.num_cells()).rev() {
@@ -216,7 +220,7 @@ fn backward_sweep(
 fn add_coupling_delta(
     source: &mut [Real; 5],
     cell: usize,
-    coupling: CellCoupling,
+    coupling: LuSgsCellCoupling,
     volume: Real,
     fields: &ConservedFields,
     u0: &ConservedFields,
