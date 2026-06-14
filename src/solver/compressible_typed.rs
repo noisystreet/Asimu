@@ -7,7 +7,7 @@ use tracing::info_span;
 use super::compressible_rhs_typed::EvaluateRhs3dTyped;
 use super::gmres_implicit_3d::{GmresStepLog, GmresStepTiming, log_gmres_step_diagnostics};
 use crate::core::{ComputeFloat, Real, elapsed_ms, log10_positive};
-use crate::discretization::InviscidFluxConfig;
+use crate::discretization::{InviscidFaceFluxTyped, InviscidFluxConfig};
 use crate::error::{AsimuError, Result};
 use crate::field::{ConservedFieldsT, ConservedResidualT};
 use crate::physics::IdealGasEoS;
@@ -34,7 +34,7 @@ mod gmres_implicit_3d_typed;
 use gmres_implicit_3d_typed::apply_delta_with_line_search_typed;
 
 impl CompressibleEulerSolver {
-    pub(crate) fn rhs_context_3d_typed<'a, T: ComputeFloat>(
+    pub(crate) fn rhs_context_3d_typed<'a, T: ComputeFloat + InviscidFaceFluxTyped>(
         &'a self,
         ctx: &'a mut CompressibleAdvanceContext3dTyped<'_, T>,
         inviscid: &'a InviscidFluxConfig,
@@ -57,7 +57,9 @@ impl CompressibleEulerSolver {
     }
 
     /// typed 3D 时间推进（显式 rk4/euler；隐式 lu_sgs/gmres）。
-    pub fn advance_step_3d_typed<T: ComputeFloat + crate::field::LusgsDiagonalUpdateBackend>(
+    pub fn advance_step_3d_typed<
+        T: ComputeFloat + crate::field::LusgsDiagonalUpdateBackend + InviscidFaceFluxTyped,
+    >(
         &self,
         ctx: &mut CompressibleAdvanceContext3dTyped<'_, T>,
         fields: &mut ConservedFieldsT<T>,
@@ -81,7 +83,7 @@ impl CompressibleEulerSolver {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn advance_gmres_step_3d_typed<T: ComputeFloat>(
+    fn advance_gmres_step_3d_typed<T: ComputeFloat + InviscidFaceFluxTyped>(
         &self,
         ctx: &mut CompressibleAdvanceContext3dTyped<'_, T>,
         fields: &mut ConservedFieldsT<T>,
@@ -166,7 +168,9 @@ impl CompressibleEulerSolver {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn advance_lusgs_step_3d_typed<T: ComputeFloat + crate::field::LusgsDiagonalUpdateBackend>(
+    fn advance_lusgs_step_3d_typed<
+        T: ComputeFloat + crate::field::LusgsDiagonalUpdateBackend + InviscidFaceFluxTyped,
+    >(
         &self,
         ctx: &mut CompressibleAdvanceContext3dTyped<'_, T>,
         fields: &mut ConservedFieldsT<T>,
@@ -245,7 +249,7 @@ impl CompressibleEulerSolver {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn advance_explicit_step_3d_typed<T: ComputeFloat>(
+    fn advance_explicit_step_3d_typed<T: ComputeFloat + InviscidFaceFluxTyped>(
         &self,
         ctx: &mut CompressibleAdvanceContext3dTyped<'_, T>,
         fields: &mut ConservedFieldsT<T>,

@@ -4,12 +4,10 @@ use tracing::info_span;
 
 use crate::boundary::{BoundaryKind, BoundarySet};
 use crate::core::{ComputeFloat, Real};
-use crate::discretization::face_flux::{FaceFluxInput, face_inviscid_flux};
+use crate::discretization::face_flux_typed::InviscidFaceFluxTyped;
 use crate::discretization::{BoundaryGhostBuffer, InviscidFluxConfig, ReconstructionKind};
 use crate::error::{AsimuError, Result};
-use crate::field::{
-    ConservedFieldsT, ConservedResidualT, PrimitiveFieldsT, primitive_from_conserved_relaxed,
-};
+use crate::field::{ConservedFieldsT, ConservedResidualT, PrimitiveFieldsT};
 use crate::mesh::{BoundaryMesh3d, StructuredMesh3d};
 use crate::physics::IdealGasEoS;
 
@@ -33,7 +31,7 @@ struct BoundaryAssembly3dTyped<'a, T: ComputeFloat> {
 }
 
 /// 装配 3D 结构化网格无粘 Euler 残差（一阶；`T=f32`/`f64`）。
-pub fn assemble_inviscid_residual_3d_typed<T: ComputeFloat>(
+pub fn assemble_inviscid_residual_3d_typed<T: ComputeFloat + InviscidFaceFluxTyped>(
     fields: &ConservedFieldsT<T>,
     residual: &mut ConservedResidualT<T>,
     params: &InviscidAssembly3dTypedParams<'_, T>,
@@ -79,7 +77,7 @@ pub fn assemble_inviscid_residual_3d_typed<T: ComputeFloat>(
     Ok(())
 }
 
-fn first_order_interior_flux<T: ComputeFloat>(
+fn first_order_interior_flux<T: InviscidFaceFluxTyped>(
     primitives: &PrimitiveFieldsT<T>,
     owner: usize,
     neighbor: usize,
@@ -87,17 +85,10 @@ fn first_order_interior_flux<T: ComputeFloat>(
     eos: &IdealGasEoS,
     config: &InviscidFluxConfig,
 ) -> Result<crate::discretization::InviscidFlux> {
-    let owner_prim = primitives.cell_primitive(owner);
-    let neighbor_prim = primitives.cell_primitive(neighbor);
-    face_inviscid_flux(
-        FaceFluxInput::first_order(&owner_prim, &neighbor_prim),
-        normal,
-        eos,
-        config,
-    )
+    T::first_order_interior_soa(primitives, owner, neighbor, normal, eos, config)
 }
 
-fn assemble_i_faces_typed<T: ComputeFloat>(
+fn assemble_i_faces_typed<T: InviscidFaceFluxTyped>(
     mesh: &StructuredMesh3d,
     residual: &mut ConservedResidualT<T>,
     params: &InviscidAssembly3dTypedParams<'_, T>,
@@ -139,7 +130,7 @@ fn assemble_i_faces_typed<T: ComputeFloat>(
     Ok(())
 }
 
-fn assemble_j_faces_typed<T: ComputeFloat>(
+fn assemble_j_faces_typed<T: InviscidFaceFluxTyped>(
     mesh: &StructuredMesh3d,
     residual: &mut ConservedResidualT<T>,
     params: &InviscidAssembly3dTypedParams<'_, T>,
@@ -181,7 +172,7 @@ fn assemble_j_faces_typed<T: ComputeFloat>(
     Ok(())
 }
 
-fn assemble_k_faces_typed<T: ComputeFloat>(
+fn assemble_k_faces_typed<T: InviscidFaceFluxTyped>(
     mesh: &StructuredMesh3d,
     residual: &mut ConservedResidualT<T>,
     params: &InviscidAssembly3dTypedParams<'_, T>,
@@ -223,7 +214,7 @@ fn assemble_k_faces_typed<T: ComputeFloat>(
     Ok(())
 }
 
-fn assemble_boundary_faces_3d_typed<T: ComputeFloat>(
+fn assemble_boundary_faces_3d_typed<T: InviscidFaceFluxTyped>(
     residual: &mut ConservedResidualT<T>,
     ctx: &BoundaryAssembly3dTyped<'_, T>,
 ) -> Result<()> {
@@ -240,20 +231,15 @@ fn assemble_boundary_faces_3d_typed<T: ComputeFloat>(
             let ghost = params.ghosts.get_face(face).ok_or_else(|| {
                 AsimuError::Boundary(format!("边界面 FaceId({}) 缺少 ghost 状态", face.index()))
             })?;
-            let flux = {
-                let owner_prim = params.primitives.cell_primitive(owner);
-                let neighbor_prim = primitive_from_conserved_relaxed(
-                    params.eos,
-                    &ghost.conserved,
-                    params.min_pressure,
-                )?;
-                face_inviscid_flux(
-                    FaceFluxInput::first_order(&owner_prim, &neighbor_prim),
-                    geom.normal,
-                    params.eos,
-                    params.config,
-                )?
-            };
+            let flux = T::first_order_boundary_soa(
+                params.primitives,
+                owner,
+                &ghost,
+                geom.normal,
+                params.eos,
+                params.config,
+                params.min_pressure,
+            )?;
             let (logical, local) = crate::mesh::LogicalFace3d::decode(face)?;
             let (i, j, k) = mesh.face_ij(logical, local)?;
             let owner_volume = mesh.cell_metric(i, j, k).volume;
@@ -272,7 +258,7 @@ mod tests {
     use crate::discretization::freestream_pair::{FreestreamPairFixture, uniform_farfield_box};
     use crate::mesh::MeshMetricMode;
 
-    fn assemble_uniform_freestream_typed<T: ComputeFloat>(
+    fn assemble_uniform_freestream_typed<T: ComputeFloat + InviscidFaceFluxTyped>(
         side: &crate::discretization::freestream_pair::UniformFarfieldSide<'_>,
         metric_mode: MeshMetricMode,
     ) -> ConservedResidualT<T> {

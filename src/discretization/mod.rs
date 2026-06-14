@@ -9,6 +9,7 @@ pub mod bc_compressible;
 pub mod diffusion_1d;
 pub mod face_flux;
 pub mod face_flux_f32;
+pub mod face_flux_typed;
 pub mod flux_common;
 pub mod flux_config;
 pub mod gradient;
@@ -45,6 +46,7 @@ pub mod slau2;
 pub mod unstructured_face_cache;
 pub mod unstructured_limiter;
 pub mod van_leer;
+pub mod van_leer_f32;
 pub mod viscous;
 pub mod viscous_assembly;
 pub mod viscous_boundary_f32;
@@ -75,6 +77,7 @@ pub use face_flux_f32::{
     face_inviscid_flux_first_order_boundary_soa_f32,
     face_inviscid_flux_first_order_interior_soa_f32, face_inviscid_flux_from_interface_f32,
 };
+pub use face_flux_typed::InviscidFaceFluxTyped;
 pub use flux_config::{FluxScheme, InviscidFluxConfig, ReconstructionKind, SlopeLimiter};
 pub use gradient::{
     GradientFields, GradientFieldsT, InviscidPrimitiveGradients, VelocityGradient,

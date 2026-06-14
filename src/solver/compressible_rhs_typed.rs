@@ -7,7 +7,8 @@ use crate::core::ComputeFloat;
 use crate::core::Real;
 use crate::discretization::residual::InviscidAssembly3dTypedParams;
 use crate::discretization::{
-    BoundaryGhostBuffer, GradientFields, InviscidFluxConfig, assemble_inviscid_residual_3d_typed,
+    BoundaryGhostBuffer, GradientFields, InviscidFaceFluxTyped, InviscidFluxConfig,
+    assemble_inviscid_residual_3d_typed,
 };
 use crate::error::Result;
 use crate::field::{ConservedFieldsT, ConservedResidualT, PrimitiveFieldsT};
@@ -33,7 +34,7 @@ pub(crate) struct EvaluateRhs3dTyped<'a, T: ComputeFloat> {
     pub gradient_scratch: &'a mut GradientFields,
 }
 
-impl<T: ComputeFloat> EvaluateRhs3dTyped<'_, T> {
+impl<T: ComputeFloat + InviscidFaceFluxTyped> EvaluateRhs3dTyped<'_, T> {
     pub fn run(
         &mut self,
         fields: &ConservedFieldsT<T>,

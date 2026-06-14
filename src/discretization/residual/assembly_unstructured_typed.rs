@@ -16,6 +16,7 @@ use tracing::info_span;
 
 use crate::boundary::BoundarySet;
 use crate::core::{ComputeFloat, Real};
+use crate::discretization::face_flux_typed::InviscidFaceFluxTyped;
 use crate::discretization::gradient_typed::GradientFieldsT;
 use crate::discretization::inviscid::{
     InteriorInviscidScatterGeom, scatter_fused_boundary_inviscid_face_typed,
@@ -541,7 +542,7 @@ fn assemble_first_order_interior_faces_serial<T: InviscidFirstOrderFaceFlux>(
     Ok(())
 }
 
-fn assemble_boundary_faces_first_order_typed<T: InviscidFirstOrderFaceFlux>(
+fn assemble_boundary_faces_first_order_typed<T: InviscidFaceFluxTyped>(
     residual: &mut ConservedResidualT<T>,
     params: &InviscidAssemblyUnstructuredTypedParams<'_, T>,
     topology: &UnstructuredFaceTopology,
@@ -559,7 +560,7 @@ fn assemble_boundary_faces_first_order_typed<T: InviscidFirstOrderFaceFlux>(
                 bface.face.index()
             ))
         })?;
-        let flux = T::first_order_boundary_flux(
+        let flux = T::first_order_boundary_soa(
             params.primitives,
             bface.owner,
             &ghost,

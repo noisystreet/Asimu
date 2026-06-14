@@ -4,6 +4,7 @@ use tracing::{debug_span, info, warn};
 
 use crate::case::{CaseRunKind, CaseRunResult};
 use crate::core::{ComputePrecision, Real, format_log_fixed4, format_log_sci4, log10_positive};
+use crate::discretization::InviscidFaceFluxTyped;
 use crate::error::{AsimuError, Result};
 use crate::io::{CaseSpec, CaseTimeMode};
 use crate::mesh::MultiBlockStructuredMesh3d;
@@ -138,7 +139,7 @@ fn run_compressible_3d(
 }
 
 fn run_compressible_3d_typed<
-    T: crate::core::ComputeFloat + crate::field::LusgsDiagonalUpdateBackend,
+    T: crate::core::ComputeFloat + crate::field::LusgsDiagonalUpdateBackend + InviscidFaceFluxTyped,
 >(
     case: &CaseSpec,
     mesh: &MultiBlockStructuredMesh3d,
