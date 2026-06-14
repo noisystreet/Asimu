@@ -37,11 +37,12 @@ pub trait TimeIntegrator {
 }
 
 pub use control::TransientStepControl;
-pub use euler::{euler_step, euler_step_local};
+pub use euler::{euler_step, euler_step_local, euler_step_local_f32};
 pub use lu_sgs::{LuSgsConfig, lu_sgs_step, lu_sgs_step_local, lu_sgs_step_sweep_local};
 pub use residual_smoothing::{ResidualSmoothingConfig, smooth_residual_3d_limited};
 pub use rk4::{
     Rk4Storage, Rk4StorageT, RungeKutta4Config, RungeKutta4Integrator, rk4_step, rk4_step_local,
+    rk4_step_local_f32,
 };
 pub use scheme::TimeIntegrationScheme;
 
@@ -127,6 +128,16 @@ pub fn local_dt_cfl(lengths: &[Real], wave_speeds: &[Real], cfl: Real) -> Result
 /// 时间步数组的最小值（日志/伪时间累积用）。
 #[must_use]
 pub fn min_positive_dt(dt: &[Real]) -> Real {
+    dt.iter()
+        .copied()
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+        .unwrap_or(0.0)
+}
+
+/// f32 时间步数组最小值（日志/伪时间累积用）。
+#[must_use]
+pub fn min_positive_dt_f32(dt: &[f32]) -> f32 {
     dt.iter()
         .copied()
         .filter(|v| v.is_finite() && *v > 0.0)

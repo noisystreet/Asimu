@@ -78,6 +78,49 @@ where
     Ok(())
 }
 
+/// 逐单元 \(\Delta t_i\) 的前向 Euler（f32 当地时间步）。
+pub fn euler_step_local_f32<F>(
+    fields: &mut ConservedFieldsT<f32>,
+    storage: &mut Rk4StorageT<f32>,
+    dt: &[f32],
+    mut evaluate_rhs: F,
+    eos: Option<&crate::physics::IdealGasEoS>,
+    min_pressure: Real,
+) -> Result<()>
+where
+    F: FnMut(&ConservedFieldsT<f32>, &mut ConservedResidualT<f32>) -> Result<()>,
+{
+    let n = fields.num_cells();
+    storage.ensure_capacity(n)?;
+    if dt.len() != n {
+        return Err(crate::error::AsimuError::Solver(format!(
+            "euler_step_local_f32: dt 长度 {} 与单元数 {n} 不一致",
+            dt.len()
+        )));
+    }
+    maybe_enforce_positivity(fields, eos, min_pressure);
+    let gamma = eos.map(|e| e.gamma as f32).unwrap_or(1.4_f32);
+    storage.u0.copy_from(fields)?;
+    {
+        let _span = info_span!("euler_rhs").entered();
+        evaluate_rhs(&storage.u0, &mut storage.k1)?;
+    }
+    {
+        let _span = info_span!("euler_update").entered();
+        storage.stage.assign_axpy_dt_f32(
+            &storage.u0,
+            &storage.k1,
+            dt,
+            1.0,
+            gamma,
+            min_pressure as f32,
+        )?;
+        fields.copy_from(&storage.stage)?;
+        maybe_enforce_positivity(fields, eos, min_pressure);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

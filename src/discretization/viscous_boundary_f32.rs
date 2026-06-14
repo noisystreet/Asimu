@@ -1,8 +1,9 @@
 //! f32 粘性边界面通量 compute + scatter（几何仍 f64）。
 
 use crate::boundary::WallHeat;
-use crate::core::{Real, Vector3};
+use crate::core::Real;
 use crate::discretization::gradient_typed::{GradientFieldsT, VelocityGradientT};
+use crate::discretization::inviscid_f32::FaceNormalF32;
 use crate::discretization::viscous_assembly::ViscousBoundaryFaceKind;
 use crate::discretization::viscous_f32::{
     ColoredViscousFaceFluxF32, ViscousFaceAveragedLaneF32,
@@ -75,16 +76,14 @@ pub fn wall_extrapolated_gradient_f32(
     grad_cell: &VelocityGradientT<f32>,
     prim_owner: &PrimitiveStateF32,
     prim_ghost: &PrimitiveStateF32,
-    normal: Vector3,
+    normal: FaceNormalF32,
     spacing: Real,
 ) -> VelocityGradientT<f32> {
     if spacing <= Real::EPSILON {
         return *grad_cell;
     }
     let inv_two_delta = 1.0_f32 / (2.0 * spacing as f32);
-    let nx = normal.x as f32;
-    let ny = normal.y as f32;
-    let nz = normal.z as f32;
+    let [nx, ny, nz] = normal;
     let mut grad = *grad_cell;
     for (grad_comp, u_o, u_g) in [
         (&mut grad.du, prim_owner.velocity[0], prim_ghost.velocity[0]),
@@ -143,7 +142,7 @@ fn viscous_face_flux_f32(
     grad_l: &VelocityGradientT<f32>,
     prim_r: &PrimitiveStateF32,
     grad_r: &VelocityGradientT<f32>,
-    normal: Vector3,
+    normal: FaceNormalF32,
     mu: f32,
     lambda: f32,
 ) -> ColoredViscousFaceFluxF32 {
@@ -166,14 +165,8 @@ fn viscous_face_flux_f32(
         dt_dy: grad.dt[1],
         dt_dz: grad.dt[2],
     };
-    fused_interior_viscous_face_flux_averaged_f32(
-        lane,
-        normal.x as f32,
-        normal.y as f32,
-        normal.z as f32,
-        mu,
-        lambda,
-    )
+    let [nx, ny, nz] = normal;
+    fused_interior_viscous_face_flux_averaged_f32(lane, nx, ny, nz, mu, lambda)
 }
 
 #[must_use]
@@ -203,7 +196,7 @@ pub fn viscous_flux_at_boundary_f32(
     params: &ViscousBoundaryFluxParamsF32<'_>,
     owner: usize,
     ghost_prim: PrimitiveStateF32,
-    normal: Vector3,
+    normal: FaceNormalF32,
     spacing: Real,
     kind: ViscousBoundaryFaceKind,
     temperatures: &[f32],
@@ -230,10 +223,8 @@ pub fn viscous_flux_at_boundary_f32(
     let mut flux = viscous_face_flux_f32(&prim_o, &grad_o, &ghost, &grad_g, normal, mu, lambda);
     if kind.no_slip {
         let grad = average_gradient_f32(&grad_o, &grad_g);
-        flux.energy = lambda
-            * (grad.dt[0] * normal.x as f32
-                + grad.dt[1] * normal.y as f32
-                + grad.dt[2] * normal.z as f32);
+        let [nx, ny, nz] = normal;
+        flux.energy = lambda * (grad.dt[0] * nx + grad.dt[1] * ny + grad.dt[2] * nz);
     }
     if let Some(heat) = kind.wall_heat {
         flux.energy = wall_heat_flux_into_fluid_f32(
@@ -286,13 +277,7 @@ mod tests {
             velocity: [2.0, 0.0, 0.0],
             ..owner
         };
-        let grad_g = wall_extrapolated_gradient_f32(
-            &grad_o,
-            &owner,
-            &ghost,
-            Vector3::new(1.0, 0.0, 0.0),
-            0.1,
-        );
+        let grad_g = wall_extrapolated_gradient_f32(&grad_o, &owner, &ghost, [1.0, 0.0, 0.0], 0.1);
         assert!((grad_g.du[0] - 10.0).abs() < 1.0e-4);
         assert!((grad_g.du[1] - 1.0).abs() < 1.0e-6);
     }
@@ -322,7 +307,7 @@ mod tests {
             &params,
             0,
             ghost,
-            Vector3::new(1.0, 0.0, 0.0),
+            [1.0, 0.0, 0.0],
             0.2,
             ViscousBoundaryFaceKind {
                 is_wall: false,

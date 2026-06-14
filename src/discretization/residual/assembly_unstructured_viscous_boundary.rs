@@ -74,7 +74,6 @@ pub(crate) fn assemble_boundary_faces_f32(
     min_pressure: crate::core::Real,
     temperatures: &[f32],
 ) -> Result<()> {
-    use crate::discretization::vec3_from_f32;
     for face in &face_topology.boundary {
         if is_degenerate_volume(face.owner_volume as crate::core::Real) {
             continue;
@@ -92,7 +91,7 @@ pub(crate) fn assemble_boundary_faces_f32(
             params,
             face.owner,
             ghost_prim,
-            vec3_from_f32(face.normal),
+            face.normal,
             face.spacing as crate::core::Real,
             ViscousBoundaryFaceKind {
                 is_wall: kind.is_wall,

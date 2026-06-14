@@ -47,6 +47,16 @@ impl<'a> LuSgsUnstructuredCouplingsRef<'a> {
     }
 }
 
+/// 非结构 LU-SGS sweep 的逐单元时间步与标量参数（f32 热路径）。
+pub struct LuSgsSweepUnstructuredF32Input<'a> {
+    pub dt: &'a [f32],
+    pub sigma: &'a [f32],
+    pub volumes: &'a [f32],
+    pub couplings: LuSgsUnstructuredCouplingsRef<'a>,
+    pub omega: f32,
+    pub gamma: f32,
+}
+
 /// 非结构 LU-SGS sweep 的逐单元时间步与标量参数。
 pub struct LuSgsSweepUnstructuredInput<'a> {
     pub dt: &'a [Real],

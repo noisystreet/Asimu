@@ -1,12 +1,32 @@
 //! LU-SGS 扫掠共用辅助：正性限制、线搜索、对角回退、原始变量刷新。
 
-use crate::core::{ComputeFloat, Real};
+use crate::core::Real;
 use crate::error::Result;
 use crate::field::{
     ConservedFields, ConservedResidual, PrimitiveFields, is_physical_conserved,
-    max_physical_increment_scale, state_after_increment,
+    is_physical_conserved_f32, max_physical_increment_scale, max_physical_increment_scale_f32,
+    state_after_increment, state_after_increment_f32,
 };
 use crate::physics::{ConservedState, IdealGasEoS};
+
+/// LU-SGS 扫掠标量参数（f32 热路径）。
+pub(crate) struct LuSgsSweepScalarsF32<'a> {
+    pub dt: &'a [f32],
+    pub sigma: &'a [f32],
+    pub volumes: &'a [f32],
+    pub omega: f32,
+    pub gamma: f32,
+}
+
+/// 与对角 LU-SGS 一致（f32）：\(\Delta\mathbf{U}=\omega\,\Delta t\,\mathbf{R}/(1+\Delta t\,\sigma)\)。
+#[inline]
+pub(crate) fn implicit_scale_f32(dt: f32, sigma: f32, omega: f32) -> f32 {
+    let denom = 1.0 + dt * sigma;
+    if !(dt > 0.0 && omega > 0.0 && denom > 0.0) {
+        return 0.0;
+    }
+    omega * dt / denom
+}
 
 /// LU-SGS 扫掠标量参数（结构化/非结构共用）。
 pub(crate) struct LuSgsSweepScalars<'a> {
@@ -251,27 +271,145 @@ pub(crate) fn conserved_vector_f32(
 
 /// f32 source 阻尼（backward sweep）。
 #[inline]
-pub(crate) fn scale_source_f32(source: [f32; 5], factor: Real) -> [f32; 5] {
-    let f = factor as f32;
+pub(crate) fn scale_source_f32(source: [f32; 5], factor: f32) -> [f32; 5] {
     [
-        source[0] * f,
-        source[1] * f,
-        source[2] * f,
-        source[3] * f,
-        source[4] * f,
+        source[0] * factor,
+        source[1] * factor,
+        source[2] * factor,
+        source[3] * factor,
+        source[4] * factor,
     ]
 }
 
-/// 正性限制入口：f32 增量在边界一次性转 Real。
 #[inline]
-pub(crate) fn increment_real_from_f32(increment: [f32; 5]) -> [Real; 5] {
-    [
-        increment[0].to_real(),
-        increment[1].to_real(),
-        increment[2].to_real(),
-        increment[3].to_real(),
-        increment[4].to_real(),
-    ]
+pub(crate) fn write_conserved_lane_f32(
+    fields: &mut crate::field::ConservedFieldsT<f32>,
+    cell: usize,
+    lane: [f32; 5],
+) {
+    fields.density.values_mut()[cell] = lane[0];
+    fields.momentum_x.values_mut()[cell] = lane[1];
+    fields.momentum_y.values_mut()[cell] = lane[2];
+    fields.momentum_z.values_mut()[cell] = lane[3];
+    fields.total_energy.values_mut()[cell] = lane[4];
+}
+
+pub(crate) fn apply_limited_cell_increment_f32(
+    fields: &mut crate::field::ConservedFieldsT<f32>,
+    cell: usize,
+    scale: f32,
+    increment: [f32; 5],
+    gamma: f32,
+    min_pressure: f32,
+) -> Result<()> {
+    let base = conserved_vector_f32(fields, cell);
+    let effective = max_physical_increment_scale_f32(base, increment, scale, gamma, min_pressure);
+    if effective <= 0.0 {
+        return Ok(());
+    }
+    write_conserved_lane_f32(
+        fields,
+        cell,
+        state_after_increment_f32(base, increment, effective),
+    );
+    Ok(())
+}
+
+pub(crate) fn fields_are_physical_f32(
+    fields: &crate::field::ConservedFieldsT<f32>,
+    gamma: f32,
+    min_pressure: f32,
+) -> Result<bool> {
+    for cell in 0..fields.num_cells() {
+        let lane = conserved_vector_f32(fields, cell);
+        if !is_physical_conserved_f32(
+            lane[0],
+            lane[1],
+            lane[2],
+            lane[3],
+            lane[4],
+            gamma,
+            min_pressure,
+        ) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+pub(crate) fn blend_fields_f32(
+    out: &mut crate::field::ConservedFieldsT<f32>,
+    base: &crate::field::ConservedFieldsT<f32>,
+    target: &crate::field::ConservedFieldsT<f32>,
+    alpha: f32,
+) -> Result<()> {
+    for cell in 0..base.num_cells() {
+        let b = conserved_vector_f32(base, cell);
+        let t = conserved_vector_f32(target, cell);
+        let delta = [
+            t[0] - b[0],
+            t[1] - b[1],
+            t[2] - b[2],
+            t[3] - b[3],
+            t[4] - b[4],
+        ];
+        write_conserved_lane_f32(out, cell, state_after_increment_f32(b, delta, alpha));
+    }
+    Ok(())
+}
+
+pub(crate) fn stabilize_sweep_update_f32(
+    fields: &mut crate::field::ConservedFieldsT<f32>,
+    u0: &crate::field::ConservedFieldsT<f32>,
+    u_sweep: &crate::field::ConservedFieldsT<f32>,
+    residual: &crate::field::ConservedResidualT<f32>,
+    min_pressure: f32,
+    gamma: f32,
+    scalars: &LuSgsSweepScalarsF32<'_>,
+) -> Result<()> {
+    if fields_are_physical_f32(u_sweep, gamma, min_pressure)? {
+        return Ok(());
+    }
+    const MIN_ALPHA: f32 = 1.0 / 1024.0;
+    let mut alpha = 1.0_f32;
+    loop {
+        blend_fields_f32(fields, u0, u_sweep, alpha)?;
+        if fields_are_physical_f32(fields, gamma, min_pressure)? {
+            return Ok(());
+        }
+        alpha *= 0.5;
+        if alpha < MIN_ALPHA {
+            apply_diagonal_fallback_f32(fields, u0, residual, gamma, min_pressure, scalars)?;
+            return Ok(());
+        }
+    }
+}
+
+pub(crate) fn apply_diagonal_fallback_f32(
+    fields: &mut crate::field::ConservedFieldsT<f32>,
+    u0: &crate::field::ConservedFieldsT<f32>,
+    residual: &crate::field::ConservedResidualT<f32>,
+    gamma: f32,
+    min_pressure: f32,
+    scalars: &LuSgsSweepScalarsF32<'_>,
+) -> Result<()> {
+    for cell in 0..fields.num_cells() {
+        let scale = implicit_scale_f32(scalars.dt[cell], scalars.sigma[cell], scalars.omega);
+        let increment = residual_cell_vector_f32(residual, cell);
+        let base = conserved_vector_f32(u0, cell);
+        let effective =
+            max_physical_increment_scale_f32(base, increment, scale, gamma, min_pressure);
+        if effective > 0.0 {
+            write_conserved_lane_f32(
+                fields,
+                cell,
+                state_after_increment_f32(base, increment, effective),
+            );
+        } else {
+            write_conserved_lane_f32(fields, cell, base);
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn apply_limited_cell_increment_typed<T: crate::core::ComputeFloat>(

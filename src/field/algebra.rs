@@ -55,7 +55,40 @@ impl<T: ComputeFloat> ConservedFieldsT<T> {
         }
         Ok(())
     }
+}
 
+impl ConservedFieldsT<f32> {
+    /// `self ← base + factor * dt[i] * residual[i]`（f32 逐单元 dt）。
+    pub fn assign_axpy_dt_f32(
+        &mut self,
+        base: &Self,
+        residual: &ConservedResidualT<f32>,
+        dt: &[f32],
+        factor: f32,
+        _gamma: f32,
+        _min_pressure: f32,
+    ) -> Result<()> {
+        ensure_same_size(self.num_cells(), base.num_cells())?;
+        ensure_residual_size(self.num_cells(), residual.num_cells())?;
+        ensure_dt_size_f32(self.num_cells(), dt.len())?;
+        for (i, &dt_i) in dt.iter().enumerate() {
+            let scale = factor * dt_i;
+            self.density.values_mut()[i] =
+                base.density.values()[i] + residual.density.values()[i] * scale;
+            self.momentum_x.values_mut()[i] =
+                base.momentum_x.values()[i] + residual.momentum_x.values()[i] * scale;
+            self.momentum_y.values_mut()[i] =
+                base.momentum_y.values()[i] + residual.momentum_y.values()[i] * scale;
+            self.momentum_z.values_mut()[i] =
+                base.momentum_z.values()[i] + residual.momentum_z.values()[i] * scale;
+            self.total_energy.values_mut()[i] =
+                base.total_energy.values()[i] + residual.total_energy.values()[i] * scale;
+        }
+        Ok(())
+    }
+}
+
+impl<T: ComputeFloat> ConservedFieldsT<T> {
     /// `self[cell] += scale * increment`（守恒分量）。
     pub fn add_conserved_increment(
         &mut self,
@@ -270,6 +303,72 @@ impl LusgsDiagonalUpdateBackend for f32 {
         let _ = (gamma, min_pressure);
         Ok(())
     }
+}
+
+/// f32 对角 LU-SGS 更新（原生 f32 \(\sigma,\Delta t\)）。
+#[allow(clippy::too_many_arguments)]
+pub fn assign_lusgs_diagonal_update_f32(
+    out: &mut ConservedFieldsT<f32>,
+    base: &ConservedFieldsT<f32>,
+    residual: &ConservedResidualT<f32>,
+    sigma: &[f32],
+    dt: &[f32],
+    omega: f32,
+    _gamma: Real,
+    _min_pressure: Real,
+) -> Result<()> {
+    validate_lusgs_diagonal_update_args_f32(out.num_cells(), base, residual, sigma, dt, omega)?;
+    let n = base.num_cells();
+    for (i, &dt_i) in dt.iter().enumerate().take(n) {
+        let scale = omega * dt_i / (1.0 + dt_i * sigma[i]);
+        out.density.values_mut()[i] =
+            base.density.values()[i] + residual.density.values()[i] * scale;
+        out.momentum_x.values_mut()[i] =
+            base.momentum_x.values()[i] + residual.momentum_x.values()[i] * scale;
+        out.momentum_y.values_mut()[i] =
+            base.momentum_y.values()[i] + residual.momentum_y.values()[i] * scale;
+        out.momentum_z.values_mut()[i] =
+            base.momentum_z.values()[i] + residual.momentum_z.values()[i] * scale;
+        out.total_energy.values_mut()[i] =
+            base.total_energy.values()[i] + residual.total_energy.values()[i] * scale;
+    }
+    Ok(())
+}
+
+fn validate_lusgs_diagonal_update_args_f32(
+    out_cells: usize,
+    base: &ConservedFieldsT<f32>,
+    residual: &ConservedResidualT<f32>,
+    sigma: &[f32],
+    dt: &[f32],
+    omega: f32,
+) -> Result<()> {
+    ensure_same_size(out_cells, base.num_cells())?;
+    ensure_residual_size(base.num_cells(), residual.num_cells())?;
+    ensure_dt_size_f32(base.num_cells(), dt.len())?;
+    if sigma.len() != base.num_cells() {
+        return Err(AsimuError::Field(
+            "lu_sgs: sigma 与场单元数不一致".to_string(),
+        ));
+    }
+    if omega <= 0.0 {
+        return Err(AsimuError::Field("lu_sgs: omega 须为正".to_string()));
+    }
+    for (i, &dt_i) in dt.iter().enumerate().take(base.num_cells()) {
+        if dt_i <= 0.0 {
+            return Err(AsimuError::Field(format!("lu_sgs: 单元 {i} 的 Δt 须为正")));
+        }
+    }
+    Ok(())
+}
+
+fn ensure_dt_size_f32(fields: usize, dt_len: usize) -> Result<()> {
+    if fields != dt_len {
+        return Err(AsimuError::Field(format!(
+            "逐单元 dt 长度 {dt_len} 与场单元数 {fields} 不一致"
+        )));
+    }
+    Ok(())
 }
 
 impl<T: ComputeFloat + LusgsDiagonalUpdateBackend> ConservedFieldsT<T> {

@@ -463,6 +463,30 @@ pub fn cell_local_dt_spectral(volumes: &[Real], sigma: &[Real], cfl: Real) -> Re
     Ok(dt)
 }
 
+/// Blazek 局部时间步 f32 热路径：\(\Delta t_i = \mathrm{CFL}/\sigma_i\)。
+pub fn cell_local_dt_spectral_f32(volumes: &[f32], sigma: &[f32], cfl: f32) -> Result<Vec<f32>> {
+    if volumes.len() != sigma.len() {
+        return Err(AsimuError::Solver(
+            "cell_local_dt_spectral_f32: volumes 与 sigma 长度不一致".to_string(),
+        ));
+    }
+    if cfl <= 0.0 {
+        return Err(AsimuError::Solver(
+            "cell_local_dt_spectral_f32: CFL 须为正".to_string(),
+        ));
+    }
+    let mut dt = Vec::with_capacity(volumes.len());
+    for (&v, &s) in volumes.iter().zip(sigma.iter()) {
+        if v <= 0.0 || s <= 0.0 {
+            return Err(AsimuError::Solver(
+                "cell_local_dt_spectral_f32: 体积与谱半径须为正".to_string(),
+            ));
+        }
+        dt.push(cfl / s);
+    }
+    Ok(dt)
+}
+
 /// 3D 逐单元局部时间步：先算 \(\sigma_i\)，再按 Blazek 公式得 \(\Delta t_i\)。
 pub fn cell_local_dt_cfl_3d(params: &SpectralRadius3dParams<'_>, cfl: Real) -> Result<Vec<Real>> {
     let volumes = params.mesh.cell_volumes();

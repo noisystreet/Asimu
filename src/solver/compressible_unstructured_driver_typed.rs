@@ -3,8 +3,14 @@
 #[path = "compressible_unstructured_lusgs_typed.rs"]
 mod compressible_unstructured_lusgs_typed;
 
+#[path = "compressible_unstructured_explicit_typed.rs"]
+mod compressible_unstructured_explicit_typed;
+
+use compressible_unstructured_explicit_typed::{
+    UnstructuredExplicitTimeAdvance, advance_unstructured_explicit_typed,
+};
 use compressible_unstructured_lusgs_typed::{
-    UnstructuredLusgsSweep, UnstructuredLusgsSweepContext,
+    UnstructuredLusgsDiagonalUpdate, UnstructuredLusgsSweep, UnstructuredLusgsSweepContext,
 };
 
 use std::time::Instant;
@@ -12,8 +18,8 @@ use std::time::Instant;
 use tracing::{debug, info, info_span};
 
 use crate::core::{
-    ComputeFloat, Real, elapsed_ms, format_log_fixed4, format_log_fixed5, format_log_sci4,
-    log10_positive,
+    ComputeFloat, ComputePrecision, Real, elapsed_ms, format_log_fixed4, format_log_fixed5,
+    format_log_sci4, log10_positive,
 };
 use crate::discretization::InviscidFaceFluxTyped;
 use crate::discretization::gradient_typed::GradientFieldsT;
@@ -32,24 +38,31 @@ use crate::discretization::{
 };
 use crate::error::{AsimuError, Result};
 use crate::exec::{ExecutionContext, MeshExecMetrics};
-use crate::field::LusgsDiagonalUpdateBackend;
 use crate::field::{
-    ConservedFields, ConservedFieldsT, ConservedResidualT, PrimitiveFieldsT,
-    PrimitiveFillFromConserved,
+    ConservedFields, ConservedFieldsT, ConservedResidualT, LusgsDiagonalUpdateBackend,
+    PrimitiveFieldsT, PrimitiveFillFromConserved,
 };
 use crate::solver::spectral_radius_unstructured::{
     SpectralRadiusUnstructuredTypedParams, UnstructuredSpectralRadiusTyped,
 };
 use crate::solver::time::{
     Rk4StorageT, RungeKutta4Config, RungeKutta4Integrator, TimeIntegrationScheme, TimeIntegrator,
-    TransientStepControl, euler_step, euler_step_local, min_positive_dt, rk4_step, rk4_step_local,
+    TransientStepControl, min_positive_dt, min_positive_dt_f32,
 };
 use crate::solver::{
     CompressibleStepInfo, CompressibleUnstructuredStepView, LuSgsUnstructuredCouplings,
     LuSgsUnstructuredSweepTyped, RefreshCompressibleStateTypedInput, SolverState,
-    UnstructuredDriverConfig, finalize_cell_dts_from_sigma,
+    UnstructuredDriverConfig, finalize_cell_dts_from_sigma, finalize_cell_dts_from_sigma_f32,
     refresh_compressible_ghosts_and_primitives_typed,
 };
+
+/// 非结构时间步缓冲（f64 与 f32 热路径分离）。
+pub(crate) struct UnstructuredTimestepBuffers {
+    pub sigma: Vec<Real>,
+    pub cell_dts: Vec<Real>,
+    pub sigma_f32: Vec<f32>,
+    pub cell_dts_f32: Vec<f32>,
+}
 
 pub(crate) struct UnstructuredTypedRhsWork<'a, T: ComputeFloat> {
     ghosts: &'a mut BoundaryGhostBuffer,
@@ -73,6 +86,8 @@ pub(crate) struct UnstructuredStepWorkTyped<T: ComputeFloat> {
     mesh_cache: UnstructuredSolverMeshCache,
     exec: ExecutionContext,
     volumes: Vec<Real>,
+    volumes_f32: Vec<f32>,
+    timestep: UnstructuredTimestepBuffers,
     lusgs_couplings: LuSgsUnstructuredCouplings,
 }
 
@@ -136,6 +151,19 @@ pub fn run_unstructured_typed_with_observer<T: UnstructuredComputeBackend>(
             mesh_cache,
             exec,
             volumes: env.config.mesh.cell_volumes(),
+            volumes_f32: env
+                .config
+                .mesh
+                .cell_volumes()
+                .iter()
+                .map(|v| *v as f32)
+                .collect(),
+            timestep: UnstructuredTimestepBuffers {
+                sigma: Vec::new(),
+                cell_dts: Vec::new(),
+                sigma_f32: Vec::new(),
+                cell_dts_f32: Vec::new(),
+            },
             lusgs_couplings: LuSgsUnstructuredCouplings::from_mesh(env.config.mesh)?,
         }
     };
@@ -178,10 +206,9 @@ fn advance_unstructured_step_typed<T: UnstructuredComputeBackend>(
         .at_step(work.state.time_step.saturating_add(1), env.config.max_steps);
     let p_floor = crate::field::positivity_pressure_floor(env.config.freestream.pressure);
     let compute_dt_start = Instant::now();
-    let (cell_dts, sigma) = prepare_unstructured_timestep_typed(env, fields, work, cfl, p_floor)?;
-    let compute_dt_ms = elapsed_ms(compute_dt_start);
-    let dt = min_positive_dt(&cell_dts);
+    let dt = prepare_unstructured_timestep_typed(env, fields, work, cfl, p_floor)?;
     work.integrator.config.dt = dt;
+    let compute_dt_ms = elapsed_ms(compute_dt_start);
     let time_integration_start = Instant::now();
     {
         let _span = info_span!(
@@ -192,10 +219,10 @@ fn advance_unstructured_step_typed<T: UnstructuredComputeBackend>(
         .entered();
         match env.config.time_scheme {
             TimeIntegrationScheme::LuSgs => {
-                advance_unstructured_lusgs_typed(env, fields, work, &cell_dts, &sigma, p_floor)?;
+                advance_unstructured_lusgs_typed(env, fields, work, p_floor)?;
             }
             TimeIntegrationScheme::Euler | TimeIntegrationScheme::Rk4 => {
-                advance_unstructured_explicit_typed(env, fields, work, dt, &cell_dts, p_floor)?;
+                advance_unstructured_explicit_typed(env, fields, work, dt, p_floor)?;
             }
             scheme => {
                 return Err(AsimuError::Config(format!(
@@ -234,8 +261,6 @@ fn advance_unstructured_lusgs_typed<T: UnstructuredComputeBackend>(
     env: &UnstructuredRunEnvTyped<'_>,
     fields: &mut ConservedFieldsT<T>,
     work: &mut UnstructuredStepWorkTyped<T>,
-    cell_dts: &[Real],
-    sigma: &[Real],
     p_floor: Real,
 ) -> Result<()> {
     if !env.config.local_time_step {
@@ -279,8 +304,6 @@ fn advance_unstructured_lusgs_typed<T: UnstructuredComputeBackend>(
             work,
             &UnstructuredLusgsSweepContext {
                 env,
-                cell_dts,
-                sigma,
                 p_floor,
                 sweep: true,
                 omega: lu_sgs.omega,
@@ -290,15 +313,7 @@ fn advance_unstructured_lusgs_typed<T: UnstructuredComputeBackend>(
     } else {
         {
             let _span = info_span!("unstructured_lusgs_diagonal_update_typed").entered();
-            work.storage.stage.assign_lusgs_diagonal_update(
-                &work.storage.u0,
-                &work.storage.k1,
-                sigma,
-                cell_dts,
-                lu_sgs.omega,
-                env.config.eos.gamma,
-                p_floor,
-            )?;
+            T::assign_lusgs_diagonal_update(work, lu_sgs.omega, env.config.eos.gamma, p_floor)?;
         }
         {
             let _span = info_span!("unstructured_lusgs_copy_stage_typed").entered();
@@ -308,60 +323,7 @@ fn advance_unstructured_lusgs_typed<T: UnstructuredComputeBackend>(
     Ok(())
 }
 
-fn advance_unstructured_explicit_typed<T: UnstructuredRhsDispatchImpl>(
-    env: &UnstructuredRunEnvTyped<'_>,
-    fields: &mut ConservedFieldsT<T>,
-    work: &mut UnstructuredStepWorkTyped<T>,
-    dt: Real,
-    cell_dts: &[Real],
-    p_floor: Real,
-) -> Result<()> {
-    let local = env.config.local_time_step;
-    let scheme = env.config.time_scheme;
-    let eos = env.config.eos;
-    let mut reuse_current_state = true;
-    let mut rhs_work = UnstructuredTypedRhsWork {
-        ghosts: &mut work.ghosts,
-        primitives: &mut work.primitives,
-        gradients: &mut work.gradients,
-        viscous_scratch: &mut work.viscous_scratch,
-        viscous_grad_scratch_f32: &mut work.viscous_grad_scratch_f32,
-        mesh_cache: &work.mesh_cache,
-        exec: &mut work.exec,
-    };
-    let evaluate = |u: &ConservedFieldsT<T>, r: &mut ConservedResidualT<T>| {
-        let refresh = !reuse_current_state;
-        reuse_current_state = false;
-        assemble_unstructured_typed_rhs(env, &mut rhs_work, u, r, refresh, p_floor)
-    };
-    match (scheme, local) {
-        (TimeIntegrationScheme::Rk4, true) => rk4_step_local(
-            fields,
-            &mut work.storage,
-            cell_dts,
-            evaluate,
-            Some(eos),
-            p_floor,
-        ),
-        (TimeIntegrationScheme::Rk4, false) => rk4_step(fields, &mut work.storage, dt, evaluate),
-        (TimeIntegrationScheme::Euler, true) => euler_step_local(
-            fields,
-            &mut work.storage,
-            cell_dts,
-            evaluate,
-            Some(eos),
-            p_floor,
-        ),
-        (TimeIntegrationScheme::Euler, false) => {
-            euler_step(fields, &mut work.storage, dt, evaluate, Some(eos), p_floor)
-        }
-        _ => Err(AsimuError::Solver(
-            "非结构 typed 显式推进收到不支持的时间格式".to_string(),
-        )),
-    }
-}
-
-fn assemble_unstructured_typed_rhs<T: UnstructuredRhsDispatchImpl>(
+pub(crate) fn assemble_unstructured_typed_rhs<T: UnstructuredRhsDispatchImpl>(
     env: &UnstructuredRunEnvTyped<'_>,
     work: &mut UnstructuredTypedRhsWork<'_, T>,
     fields: &ConservedFieldsT<T>,
@@ -570,7 +532,7 @@ fn prepare_unstructured_timestep_typed<
     work: &mut UnstructuredStepWorkTyped<T>,
     cfl: Real,
     p_floor: Real,
-) -> Result<(Vec<Real>, Vec<Real>)> {
+) -> Result<Real> {
     fields.enforce_positivity(env.config.eos, p_floor);
     work.ghosts
         .ensure_face_capacity(env.config.mesh.num_faces());
@@ -597,14 +559,31 @@ fn prepare_unstructured_timestep_typed<
             min_pressure: p_floor,
             viscous: env.config.viscous,
         })?;
-    let cell_dts = finalize_cell_dts_from_sigma(
-        &work.volumes,
-        &sigma,
-        cfl,
-        env.config.fixed_dt.filter(|dt| *dt > 0.0 && dt.is_finite()),
-        env.config.local_time_step,
-    )?;
-    Ok((cell_dts, sigma))
+    let fixed_dt = env.config.fixed_dt.filter(|dt| *dt > 0.0 && dt.is_finite());
+    match T::PRECISION {
+        ComputePrecision::F32 => {
+            work.timestep.sigma_f32 = sigma.iter().map(|s| *s as f32).collect();
+            work.timestep.cell_dts_f32 = finalize_cell_dts_from_sigma_f32(
+                &work.volumes_f32,
+                &work.timestep.sigma_f32,
+                cfl as f32,
+                fixed_dt.map(|d| d as f32),
+                env.config.local_time_step,
+            )?;
+            Ok(min_positive_dt_f32(&work.timestep.cell_dts_f32) as Real)
+        }
+        ComputePrecision::F64 => {
+            work.timestep.sigma = sigma;
+            work.timestep.cell_dts = finalize_cell_dts_from_sigma(
+                &work.volumes,
+                &work.timestep.sigma,
+                cfl,
+                fixed_dt,
+                env.config.local_time_step,
+            )?;
+            Ok(min_positive_dt(&work.timestep.cell_dts))
+        }
+    }
 }
 
 /// 非结构可压缩求解热路径所需精度后端（ADR 0018；密封于 f32 / f64）。
@@ -617,7 +596,9 @@ pub(crate) trait UnstructuredComputeBackend:
     + UnstructuredSpectralRadiusTyped
     + LuSgsUnstructuredSweepTyped
     + UnstructuredRhsDispatchImpl
+    + UnstructuredLusgsDiagonalUpdate
     + UnstructuredLusgsSweep
+    + UnstructuredExplicitTimeAdvance
     + PrimitiveFillFromConserved
 {
 }

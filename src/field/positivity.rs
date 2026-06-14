@@ -72,6 +72,82 @@ pub fn max_physical_increment_scale(
     0.0
 }
 
+/// f32 守恒 lane：\(\mathbf{U} \leftarrow \mathbf{U}_0 + \lambda\,\Delta\mathbf{U}\)（LU-SGS 热路径）。
+#[must_use]
+pub fn state_after_increment_f32(base: [f32; 5], increment: [f32; 5], factor: f32) -> [f32; 5] {
+    [
+        base[0] + factor * increment[0],
+        base[1] + factor * increment[1],
+        base[2] + factor * increment[2],
+        base[3] + factor * increment[3],
+        base[4] + factor * increment[4],
+    ]
+}
+
+/// f32 正性判定（与 [`is_physical_conserved`] 语义一致）。
+#[must_use]
+pub fn is_physical_conserved_f32(
+    rho: f32,
+    mx: f32,
+    my: f32,
+    mz: f32,
+    energy: f32,
+    gamma: f32,
+    min_pressure: f32,
+) -> bool {
+    if rho <= 0.0 || !rho.is_finite() || !energy.is_finite() {
+        return false;
+    }
+    let ke = 0.5 * (mx * mx + my * my + mz * mz) / rho;
+    let min_internal = min_pressure.max(0.0) / (gamma - 1.0);
+    let internal = energy - ke;
+    internal.is_finite() && internal > min_internal
+}
+
+/// f32 增量限制（与 [`max_physical_increment_scale`] 语义一致）。
+#[must_use]
+pub fn max_physical_increment_scale_f32(
+    base: [f32; 5],
+    increment: [f32; 5],
+    scale: f32,
+    gamma: f32,
+    min_pressure: f32,
+) -> f32 {
+    if scale <= 0.0 {
+        return 0.0;
+    }
+    let trial_full = state_after_increment_f32(base, increment, scale);
+    if is_physical_conserved_f32(
+        trial_full[0],
+        trial_full[1],
+        trial_full[2],
+        trial_full[3],
+        trial_full[4],
+        gamma,
+        min_pressure,
+    ) {
+        return scale;
+    }
+    let mut alpha = 0.5_f32;
+    for _ in 0..12 {
+        let trial = alpha * scale;
+        let next = state_after_increment_f32(base, increment, trial);
+        if is_physical_conserved_f32(
+            next[0],
+            next[1],
+            next[2],
+            next[3],
+            next[4],
+            gamma,
+            min_pressure,
+        ) {
+            return trial;
+        }
+        alpha *= 0.5;
+    }
+    0.0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

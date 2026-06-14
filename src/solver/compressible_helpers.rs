@@ -18,8 +18,8 @@ use crate::mesh::{BoundaryMesh3d, UnstructuredMesh3d};
 use crate::physics::{
     FreestreamContext, FreestreamParams, IdealGasEoS, ReferenceScales, ViscousPhysicsConfig,
 };
-use crate::solver::spectral_radius::cell_local_dt_spectral;
-use crate::solver::time::min_positive_dt;
+use crate::solver::spectral_radius::{cell_local_dt_spectral, cell_local_dt_spectral_f32};
+use crate::solver::time::{min_positive_dt, min_positive_dt_f32};
 
 /// BC + 原始变量刷新输入（结构/非结构共用）。
 pub struct RefreshCompressibleStateInput<'a> {
@@ -102,6 +102,24 @@ pub fn finalize_cell_dts_from_sigma(
         cell_dts.fill(dt);
     } else if !local_time_step {
         let dt = min_positive_dt(&cell_dts);
+        cell_dts.fill(dt);
+    }
+    Ok(cell_dts)
+}
+
+/// f32 谱半径 → 单元时间步（固定 dt / 全局 dt 策略与 f64 一致）。
+pub fn finalize_cell_dts_from_sigma_f32(
+    volumes: &[f32],
+    sigma: &[f32],
+    cfl: f32,
+    fixed_dt: Option<f32>,
+    local_time_step: bool,
+) -> Result<Vec<f32>> {
+    let mut cell_dts = cell_local_dt_spectral_f32(volumes, sigma, cfl)?;
+    if let Some(dt) = fixed_dt.filter(|dt| *dt > 0.0 && dt.is_finite()) {
+        cell_dts.fill(dt);
+    } else if !local_time_step {
+        let dt = min_positive_dt_f32(&cell_dts);
         cell_dts.fill(dt);
     }
     Ok(cell_dts)

@@ -2,19 +2,17 @@
 
 use crate::core::{ComputeFloat, Real};
 use crate::error::Result;
-use crate::field::ConservedFieldsT;
+use crate::field::{ConservedFieldsT, assign_lusgs_diagonal_update_f32};
 
 use super::{UnstructuredRunEnvTyped, UnstructuredStepWorkTyped};
 use crate::solver::{
-    LuSgsSweepUnstructuredInput, LuSgsSweepUnstructuredTypedParams, LuSgsUnstructuredCouplingsRef,
-    lu_sgs_sweep_unstructured_f32, lu_sgs_sweep_unstructured_typed,
+    LuSgsSweepUnstructuredF32Input, LuSgsSweepUnstructuredInput, LuSgsSweepUnstructuredTypedParams,
+    LuSgsUnstructuredCouplingsRef, lu_sgs_sweep_unstructured_f32, lu_sgs_sweep_unstructured_typed,
 };
 
 /// LU-SGS 扫掠上下文（驱动层传入）。
 pub(crate) struct UnstructuredLusgsSweepContext<'a> {
     pub env: &'a UnstructuredRunEnvTyped<'a>,
-    pub cell_dts: &'a [Real],
-    pub sigma: &'a [Real],
     pub p_floor: Real,
     pub sweep: bool,
     pub omega: Real,
@@ -40,7 +38,6 @@ impl UnstructuredLusgsSweep for f32 {
             return Ok(());
         }
         let couplings = LuSgsUnstructuredCouplingsRef::F32(&work.mesh_cache.lusgs_couplings_f32);
-        let volumes = &work.volumes;
         let residual = &work.storage.k1;
         let mut sweep_params = LuSgsSweepUnstructuredTypedParams {
             mesh: ctx.env.config.mesh,
@@ -53,13 +50,13 @@ impl UnstructuredLusgsSweep for f32 {
             fields,
             residual,
             &mut sweep_params,
-            LuSgsSweepUnstructuredInput {
-                dt: ctx.cell_dts,
-                sigma: ctx.sigma,
-                volumes,
+            LuSgsSweepUnstructuredF32Input {
+                dt: &work.timestep.cell_dts_f32,
+                sigma: &work.timestep.sigma_f32,
+                volumes: &work.volumes_f32,
                 couplings,
-                omega: ctx.omega,
-                gamma: ctx.env.config.eos.gamma,
+                omega: ctx.omega as f32,
+                gamma: ctx.env.config.eos.gamma as f32,
             },
         )
     }
@@ -75,7 +72,6 @@ impl UnstructuredLusgsSweep for f64 {
             return Ok(());
         }
         let couplings = LuSgsUnstructuredCouplingsRef::F64(&work.lusgs_couplings);
-        let volumes = &work.volumes;
         let residual = &work.storage.k1;
         let mut sweep_params = LuSgsSweepUnstructuredTypedParams {
             mesh: ctx.env.config.mesh,
@@ -89,13 +85,62 @@ impl UnstructuredLusgsSweep for f64 {
             residual,
             &mut sweep_params,
             LuSgsSweepUnstructuredInput {
-                dt: ctx.cell_dts,
-                sigma: ctx.sigma,
-                volumes,
+                dt: &work.timestep.cell_dts,
+                sigma: &work.timestep.sigma,
+                volumes: &work.volumes,
                 couplings,
                 omega: ctx.omega,
                 gamma: ctx.env.config.eos.gamma,
             },
+        )
+    }
+}
+
+/// LU-SGS 非扫掠对角更新（f32 用原生 \(\sigma,\Delta t_i\) 缓冲）。
+pub(crate) trait UnstructuredLusgsDiagonalUpdate: ComputeFloat {
+    fn assign_lusgs_diagonal_update(
+        work: &mut UnstructuredStepWorkTyped<Self>,
+        omega: Real,
+        gamma: Real,
+        p_floor: Real,
+    ) -> Result<()>;
+}
+
+impl UnstructuredLusgsDiagonalUpdate for f32 {
+    fn assign_lusgs_diagonal_update(
+        work: &mut UnstructuredStepWorkTyped<f32>,
+        omega: Real,
+        gamma: Real,
+        p_floor: Real,
+    ) -> Result<()> {
+        assign_lusgs_diagonal_update_f32(
+            &mut work.storage.stage,
+            &work.storage.u0,
+            &work.storage.k1,
+            &work.timestep.sigma_f32,
+            &work.timestep.cell_dts_f32,
+            omega as f32,
+            gamma,
+            p_floor,
+        )
+    }
+}
+
+impl UnstructuredLusgsDiagonalUpdate for f64 {
+    fn assign_lusgs_diagonal_update(
+        work: &mut UnstructuredStepWorkTyped<f64>,
+        omega: Real,
+        gamma: Real,
+        p_floor: Real,
+    ) -> Result<()> {
+        work.storage.stage.assign_lusgs_diagonal_update(
+            &work.storage.u0,
+            &work.storage.k1,
+            &work.timestep.sigma,
+            &work.timestep.cell_dts,
+            omega,
+            gamma,
+            p_floor,
         )
     }
 }

@@ -10,13 +10,15 @@ use crate::physics::IdealGasEoS;
 
 use crate::discretization::unstructured_face_cache_f32::LuSgsCellCouplingF32;
 use crate::solver::lu_sgs_common::{
-    LuSgsSweepScalars, PrimitiveRefreshLane, apply_limited_cell_increment_typed,
-    conserved_vector_f32, conserved_vector_typed, implicit_scale, increment_real_from_f32,
-    refresh_primitive_at_cell_typed, residual_cell_vector_f32, residual_cell_vector_typed,
-    scale_source, scale_source_f32, stabilize_sweep_update_typed,
+    LuSgsSweepScalars, LuSgsSweepScalarsF32, PrimitiveRefreshLane,
+    apply_limited_cell_increment_f32, apply_limited_cell_increment_typed, conserved_vector_f32,
+    conserved_vector_typed, implicit_scale, implicit_scale_f32, refresh_primitive_at_cell_typed,
+    residual_cell_vector_f32, residual_cell_vector_typed, scale_source, scale_source_f32,
+    stabilize_sweep_update_f32, stabilize_sweep_update_typed,
 };
 use crate::solver::lu_sgs_sweep_unstructured::{
-    LuSgsCellCoupling, LuSgsSweepUnstructuredInput, LuSgsUnstructuredCouplingsRef,
+    LuSgsCellCoupling, LuSgsSweepUnstructuredF32Input, LuSgsSweepUnstructuredInput,
+    LuSgsUnstructuredCouplingsRef,
 };
 use crate::solver::spectral_radius::face_spectral_radius;
 use crate::solver::spectral_radius_f32::{FacePrimitiveLaneF32, face_spectral_radius_f32};
@@ -243,29 +245,29 @@ fn forward_sweep_f32_couplings(
     residual: &ConservedResidualT<f32>,
     params: &mut LuSgsSweepUnstructuredTypedParams<'_, f32>,
     couplings: &[Vec<LuSgsCellCouplingF32>],
-    scalars: &LuSgsSweepScalars<'_>,
+    scalars: &LuSgsSweepScalarsF32<'_>,
 ) -> Result<()> {
     for (cell, cell_couplings) in couplings.iter().enumerate().take(fields.num_cells()) {
-        let scale = implicit_scale(scalars.dt[cell], scalars.sigma[cell], scalars.omega);
+        let scale = implicit_scale_f32(scalars.dt[cell], scalars.sigma[cell], scalars.omega);
         let mut source = residual_cell_vector_f32(residual, cell);
         for coupling in cell_couplings.iter().filter(|c| c.neighbor < cell) {
             add_coupling_delta_f32(
                 &mut source,
                 cell,
                 *coupling,
-                scalars.volumes[cell] as f32,
+                scalars.volumes[cell],
                 fields,
                 u0,
                 params,
             );
         }
-        apply_limited_cell_increment_typed(
+        apply_limited_cell_increment_f32(
             fields,
             cell,
             scale,
-            increment_real_from_f32(source),
+            source,
             scalars.gamma,
-            params.min_pressure,
+            params.min_pressure as f32,
         )?;
         refresh_primitive_typed(params, fields, cell)?;
     }
@@ -277,31 +279,32 @@ fn backward_sweep_f32_couplings(
     u0: &ConservedFieldsT<f32>,
     params: &mut LuSgsSweepUnstructuredTypedParams<'_, f32>,
     couplings: &[Vec<LuSgsCellCouplingF32>],
-    scalars: &LuSgsSweepScalars<'_>,
+    scalars: &LuSgsSweepScalarsF32<'_>,
 ) -> Result<()> {
     for (cell, cell_couplings) in couplings.iter().enumerate().take(fields.num_cells()).rev() {
-        let scale = implicit_scale(scalars.dt[cell], scalars.sigma[cell], scalars.omega);
+        let scale = implicit_scale_f32(scalars.dt[cell], scalars.sigma[cell], scalars.omega);
         let mut source = [0.0_f32; 5];
+        let damp = params.backward_damping as f32;
         for coupling in cell_couplings.iter().filter(|c| c.neighbor > cell) {
             add_coupling_delta_f32(
                 &mut source,
                 cell,
                 *coupling,
-                scalars.volumes[cell] as f32,
+                scalars.volumes[cell],
                 fields,
                 u0,
                 params,
             );
         }
         if source.iter().any(|c| c.abs() > f32::EPSILON) {
-            let damped = scale_source_f32(source, params.backward_damping);
-            apply_limited_cell_increment_typed(
+            let damped = scale_source_f32(source, damp);
+            apply_limited_cell_increment_f32(
                 fields,
                 cell,
                 scale,
-                increment_real_from_f32(damped),
+                damped,
                 scalars.gamma,
-                params.min_pressure,
+                params.min_pressure as f32,
             )?;
             refresh_primitive_typed(params, fields, cell)?;
         }
@@ -337,7 +340,7 @@ pub fn lu_sgs_sweep_unstructured_f32(
     fields: &mut ConservedFieldsT<f32>,
     residual: &ConservedResidualT<f32>,
     params: &mut LuSgsSweepUnstructuredTypedParams<'_, f32>,
-    input: LuSgsSweepUnstructuredInput<'_>,
+    input: LuSgsSweepUnstructuredF32Input<'_>,
 ) -> Result<()> {
     let n = fields.num_cells();
     if residual.num_cells() != n
@@ -356,13 +359,14 @@ pub fn lu_sgs_sweep_unstructured_f32(
         ));
     };
     let u0 = fields.clone();
-    let scalars = LuSgsSweepScalars {
+    let scalars = LuSgsSweepScalarsF32 {
         dt: input.dt,
         sigma: input.sigma,
         volumes: input.volumes,
         omega: input.omega,
         gamma: input.gamma,
     };
+    let min_p = params.min_pressure as f32;
     {
         let _span = info_span!("lu_sgs_unstructured_forward_f32").entered();
         forward_sweep_f32_couplings(fields, &u0, residual, params, couplings.cells(), &scalars)?;
@@ -372,13 +376,13 @@ pub fn lu_sgs_sweep_unstructured_f32(
         backward_sweep_f32_couplings(fields, &u0, params, couplings.cells(), &scalars)?;
     }
     let u_sweep = fields.clone();
-    stabilize_sweep_update_typed(
+    stabilize_sweep_update_f32(
         fields,
         &u0,
         &u_sweep,
         residual,
-        params.min_pressure,
-        params.eos.gamma,
+        min_p,
+        scalars.gamma,
         &scalars,
     )
 }
@@ -417,8 +421,10 @@ mod tests {
     use crate::field::ConservedFieldsT;
     use crate::mesh::{CellKind, UnstructuredCell};
     use crate::physics::FreestreamParams;
-    use crate::solver::lu_sgs_common::fields_are_physical_typed;
-    use crate::solver::lu_sgs_sweep_unstructured::LuSgsUnstructuredCouplingsRef;
+    use crate::solver::lu_sgs_common::fields_are_physical_f32;
+    use crate::solver::lu_sgs_sweep_unstructured::{
+        LuSgsSweepUnstructuredF32Input, LuSgsUnstructuredCouplingsRef,
+    };
 
     fn uniform_freestream_sweep_mesh() -> UnstructuredMesh3d {
         UnstructuredMesh3d::new(
@@ -457,7 +463,9 @@ mod tests {
             .fill_from_conserved(&fields, &eos, min_pressure)
             .expect("fill");
         let residual = ConservedResidualT::<f32>::zeros(mesh.num_cells()).expect("rhs");
-        let volumes = mesh.cell_volumes();
+        let volumes: Vec<f32> = mesh.cell_volumes().iter().map(|v| *v as f32).collect();
+        let dt: Vec<f32> = vec![0.01_f32; mesh.num_cells()];
+        let sigma: Vec<f32> = vec![10.0_f32; mesh.num_cells()];
         let patches = BoundarySet::new(vec![BoundaryPatch::new(
             "wall",
             (0..mesh.num_faces())
@@ -469,8 +477,6 @@ mod tests {
             },
         )]);
         let mesh_cache = UnstructuredSolverMeshCache::from_mesh(&mesh, &patches).expect("cache");
-        let dt = vec![0.01; mesh.num_cells()];
-        let sigma = vec![10.0; mesh.num_cells()];
         let mut params = LuSgsSweepUnstructuredTypedParams {
             mesh: &mesh,
             eos: &eos,
@@ -482,16 +488,19 @@ mod tests {
             &mut fields,
             &residual,
             &mut params,
-            LuSgsSweepUnstructuredInput {
+            LuSgsSweepUnstructuredF32Input {
                 dt: &dt,
                 sigma: &sigma,
                 volumes: &volumes,
                 couplings: LuSgsUnstructuredCouplingsRef::F32(&mesh_cache.lusgs_couplings_f32),
                 omega: 1.0,
-                gamma: eos.gamma,
+                gamma: eos.gamma as f32,
             },
         )
         .expect("sweep");
-        assert!(fields_are_physical_typed(&fields, eos.gamma, min_pressure).expect("physical"));
+        assert!(
+            fields_are_physical_f32(&fields, eos.gamma as f32, min_pressure as f32)
+                .expect("physical")
+        );
     }
 }

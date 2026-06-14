@@ -38,8 +38,8 @@ pub use compressible::{
 };
 pub use compressible_helpers::{
     EvaluateRhsUnstructured, RefreshCompressibleStateInput, RefreshCompressibleStateTypedInput,
-    finalize_cell_dts_from_sigma, refresh_compressible_ghosts_and_primitives,
-    refresh_compressible_ghosts_and_primitives_typed,
+    finalize_cell_dts_from_sigma, finalize_cell_dts_from_sigma_f32,
+    refresh_compressible_ghosts_and_primitives, refresh_compressible_ghosts_and_primitives_typed,
 };
 pub use compressible_multiblock_driver::{
     CompressibleMultiblockStepView, MultiblockStructuredDriverInput,
@@ -61,8 +61,8 @@ pub use incompressible::{
     run_incompressible_pressure_velocity_with_observer, run_incompressible_simplec,
 };
 pub use lu_sgs_sweep_unstructured::{
-    LuSgsSweepUnstructuredInput, LuSgsSweepUnstructuredParams, LuSgsUnstructuredCouplings,
-    LuSgsUnstructuredCouplingsRef, lu_sgs_sweep_unstructured,
+    LuSgsSweepUnstructuredF32Input, LuSgsSweepUnstructuredInput, LuSgsSweepUnstructuredParams,
+    LuSgsUnstructuredCouplings, LuSgsUnstructuredCouplingsRef, lu_sgs_sweep_unstructured,
 };
 pub use lu_sgs_sweep_unstructured_typed::{
     LuSgsSweepUnstructuredTypedParams, LuSgsUnstructuredSweepTyped, lu_sgs_sweep_unstructured_f32,
@@ -88,7 +88,8 @@ pub use time::{
     CflSchedule, LuSgsConfig, Rk4Storage, Rk4StorageT, RungeKutta4Config, RungeKutta4Integrator,
     SteadyStateIntegrator, TimeIntegrationScheme, TimeIntegrator, TimeMode, TimeStepInfo,
     TransientStepControl, euler_step, euler_step_local, local_dt_cfl, lu_sgs_step,
-    lu_sgs_step_local, min_positive_dt, rk4_step, rk4_step_local,
+    lu_sgs_step_local, min_positive_dt, min_positive_dt_f32, rk4_step, rk4_step_local,
+    rk4_step_local_f32,
 };
 pub use wave_speed::max_wave_speed;
 

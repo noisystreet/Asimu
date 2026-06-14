@@ -182,6 +182,72 @@ where
     Ok(())
 }
 
+/// 逐单元 \(\Delta t_i\) 的 RK4 步进（f32 当地时间步）。
+pub fn rk4_step_local_f32<F>(
+    fields: &mut ConservedFieldsT<f32>,
+    storage: &mut Rk4StorageT<f32>,
+    dt: &[f32],
+    mut evaluate_rhs: F,
+    eos: Option<&crate::physics::IdealGasEoS>,
+    min_pressure: Real,
+) -> Result<()>
+where
+    F: FnMut(&ConservedFieldsT<f32>, &mut ConservedResidualT<f32>) -> Result<()>,
+{
+    let n = fields.num_cells();
+    storage.ensure_capacity(n)?;
+    if dt.len() != n {
+        return Err(crate::error::AsimuError::Solver(format!(
+            "rk4_step_local_f32: dt 长度 {} 与单元数 {n} 不一致",
+            dt.len()
+        )));
+    }
+    storage.u0.copy_from(fields)?;
+    maybe_enforce_positivity(fields, eos, min_pressure);
+    let gamma = eos.map(|e| e.gamma as f32).unwrap_or(1.4_f32);
+    let min_p = min_pressure as f32;
+    {
+        let _span = info_span!("rk4_stage", stage = 1).entered();
+        evaluate_rhs(fields, &mut storage.k1)?;
+    }
+    storage
+        .stage
+        .assign_axpy_dt_f32(&storage.u0, &storage.k1, dt, 0.5, gamma, min_p)?;
+    maybe_enforce_positivity(&mut storage.stage, eos, min_pressure);
+    {
+        let _span = info_span!("rk4_stage", stage = 2).entered();
+        evaluate_rhs(&storage.stage, &mut storage.k2)?;
+    }
+    storage
+        .stage
+        .assign_axpy_dt_f32(&storage.u0, &storage.k2, dt, 0.5, gamma, min_p)?;
+    maybe_enforce_positivity(&mut storage.stage, eos, min_pressure);
+    {
+        let _span = info_span!("rk4_stage", stage = 3).entered();
+        evaluate_rhs(&storage.stage, &mut storage.k3)?;
+    }
+    storage
+        .stage
+        .assign_axpy_dt_f32(&storage.u0, &storage.k3, dt, 1.0, gamma, min_p)?;
+    maybe_enforce_positivity(&mut storage.stage, eos, min_pressure);
+    {
+        let _span = info_span!("rk4_stage", stage = 4).entered();
+        evaluate_rhs(&storage.stage, &mut storage.k4)?;
+    }
+    {
+        let _span = info_span!("rk4_update").entered();
+        storage.increment.assign_rk4_increment(
+            &storage.k1,
+            &storage.k2,
+            &storage.k3,
+            &storage.k4,
+        )?;
+        fields.assign_axpy_dt_f32(&storage.u0, &storage.increment, dt, 1.0, gamma, min_p)?;
+        maybe_enforce_positivity(fields, eos, min_pressure);
+    }
+    Ok(())
+}
+
 /// RK4 工作区（阶段态与四个斜率）；Euler 步进复用 `k1`/`u0`。
 #[derive(Debug, Clone, PartialEq)]
 pub struct Rk4StorageT<T: ComputeFloat> {

@@ -17,7 +17,7 @@ use crate::error::Result;
 use crate::mesh::StructuredMesh1d;
 use crate::physics::IdealGasEoS;
 
-pub use algebra::LusgsDiagonalUpdateBackend;
+pub use algebra::{LusgsDiagonalUpdateBackend, assign_lusgs_diagonal_update_f32};
 pub use conserved::{
     ConservedFields, ConservedFieldsT, clamp_conserved_positivity, positivity_pressure_floor,
     primitive_from_conserved, primitive_from_conserved_relaxed,
@@ -27,7 +27,10 @@ pub use incompressible::IncompressibleFields;
 pub use initial::{
     FluidInitialConfig, InitialKind, InitialSet, ScalarInitial, build_scalar_initial,
 };
-pub use positivity::{is_physical_conserved, max_physical_increment_scale, state_after_increment};
+pub use positivity::{
+    is_physical_conserved, is_physical_conserved_f32, max_physical_increment_scale,
+    max_physical_increment_scale_f32, state_after_increment, state_after_increment_f32,
+};
 pub use primitive::{PrimitiveFields, PrimitiveFieldsT, PrimitiveFillFromConserved};
 pub use residual::{ConservedResidual, ConservedResidualT};
 pub use scalar_field::{ScalarField, ScalarFieldT};
