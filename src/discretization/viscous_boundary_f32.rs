@@ -14,7 +14,7 @@ use crate::field::{ConservedResidualT, PrimitiveFieldsT};
 use crate::physics::{IdealGasEoS, PrimitiveState, ViscousPhysicsConfig};
 
 /// f32 原始变量（边界面通量局部态）。
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PrimitiveStateF32 {
     pub density: f32,
     pub velocity: [f32; 3],
@@ -28,6 +28,20 @@ pub struct ViscousBoundaryFluxParamsF32<'a> {
     pub viscous: &'a ViscousPhysicsConfig,
     pub primitives: &'a PrimitiveFieldsT<f32>,
     pub gradients: &'a GradientFieldsT<f32>,
+}
+
+#[must_use]
+pub fn primitive_state_f32_to_real(prim: PrimitiveStateF32) -> PrimitiveState {
+    PrimitiveState {
+        density: prim.density as Real,
+        velocity: [
+            prim.velocity[0] as Real,
+            prim.velocity[1] as Real,
+            prim.velocity[2] as Real,
+        ],
+        pressure: prim.pressure as Real,
+        temperature: prim.temperature as Real,
+    }
 }
 
 #[must_use]

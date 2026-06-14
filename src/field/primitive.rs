@@ -64,6 +64,17 @@ impl<T: ComputeFloat> PrimitiveFieldsT<T> {
         Ok(())
     }
 
+    /// 转为 `Real` 原始变量场（谱半径等仍走 f64 路径时用）。
+    pub fn cast_real(&self) -> Result<PrimitiveFields> {
+        Ok(PrimitiveFields {
+            density: ScalarFieldT::from_real_values(self.density.to_real_values())?,
+            pressure: ScalarFieldT::from_real_values(self.pressure.to_real_values())?,
+            velocity_x: ScalarFieldT::from_real_values(self.velocity_x.to_real_values())?,
+            velocity_y: ScalarFieldT::from_real_values(self.velocity_y.to_real_values())?,
+            velocity_z: ScalarFieldT::from_real_values(self.velocity_z.to_real_values())?,
+        })
+    }
+
     #[must_use]
     pub fn cell_primitive(&self, index: usize) -> PrimitiveState {
         let rho = self.density.values()[index].to_real();

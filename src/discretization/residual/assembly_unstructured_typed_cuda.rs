@@ -87,10 +87,10 @@ mod tests {
     use crate::discretization::freestream_pair::FreestreamPairFixture;
     use crate::discretization::{
         BoundaryGhostBuffer, InviscidFluxConfig, UnstructuredSolverMeshCache,
-        apply_compressible_boundary_conditions,
+        apply_compressible_boundary_conditions_typed,
     };
     use crate::exec::{ExecConfig, ExecutionContext, MeshExecMetrics};
-    use crate::field::{ConservedFieldsT, PrimitiveFields, PrimitiveFieldsT};
+    use crate::field::{ConservedFieldsT, PrimitiveFieldsT};
     use crate::mesh::{CellKind, UnstructuredCell, UnstructuredMesh3d};
 
     use super::super::{
@@ -106,7 +106,6 @@ mod tests {
         BoundaryGhostBuffer,
         UnstructuredSolverMeshCache,
         PrimitiveFieldsT<f32>,
-        PrimitiveFields,
     ) {
         let mesh = UnstructuredMesh3d::new(
             "tet",
@@ -143,10 +142,10 @@ mod tests {
         )
         .expect("typed");
         let mut ghosts = BoundaryGhostBuffer::with_face_capacity(mesh.num_faces());
-        apply_compressible_boundary_conditions(
+        apply_compressible_boundary_conditions_typed(
             &mesh,
             &boundary,
-            &fields.cast_real().expect("real"),
+            &fields,
             &mut ghosts,
             &side.ctx,
             side.fs,
@@ -158,17 +157,7 @@ mod tests {
         primitives
             .fill_from_conserved(&fields, side.eos, side.min_pressure)
             .expect("fill");
-        let mut spectral = PrimitiveFields::zeros(mesh.num_cells()).expect("spectral");
-        spectral
-            .fill_from_conserved(
-                &fields.cast_real().expect("real"),
-                side.eos,
-                side.min_pressure,
-            )
-            .expect("fill spectral");
-        (
-            mesh, boundary, fields, ghosts, mesh_cache, primitives, spectral,
-        )
+        (mesh, boundary, fields, ghosts, mesh_cache, primitives)
     }
 
     #[test]
@@ -176,8 +165,7 @@ mod tests {
     fn cpu_f32_matches_cuda_f32_inviscid_single_tet() {
         let pair = FreestreamPairFixture::air_sutherland(0.2);
         let side = pair.inviscid_side();
-        let (mesh, boundary, fields, ghosts, mesh_cache, primitives, spectral) =
-            single_tet_fixture(&side);
+        let (mesh, boundary, fields, ghosts, mesh_cache, primitives) = single_tet_fixture(&side);
         let config = InviscidFluxConfig::default();
 
         let mut cpu_rhs = ConservedResidualT::<f32>::zeros(mesh.num_cells()).expect("cpu rhs");
@@ -189,7 +177,6 @@ mod tests {
             boundaries: &boundary,
             ghosts: &ghosts,
             primitives: &primitives,
-            spectral_primitives: &spectral,
             mesh_cache: &mesh_cache,
             gradients: None,
             min_pressure: side.min_pressure,
@@ -210,7 +197,6 @@ mod tests {
             boundaries: &boundary,
             ghosts: &ghosts,
             primitives: &primitives,
-            spectral_primitives: &spectral,
             mesh_cache: &mesh_cache,
             gradients: None,
             min_pressure: side.min_pressure,
@@ -252,8 +238,7 @@ mod tests {
     fn cpu_f32_matches_cuda_f32_inviscid_hvl_single_tet() {
         let pair = FreestreamPairFixture::air_sutherland(0.2);
         let side = pair.inviscid_side();
-        let (mesh, boundary, fields, ghosts, mesh_cache, primitives, spectral) =
-            single_tet_fixture(&side);
+        let (mesh, boundary, fields, ghosts, mesh_cache, primitives) = single_tet_fixture(&side);
         let config = InviscidFluxConfig::hanel_van_leer_first_order();
 
         let mut cpu_rhs = ConservedResidualT::<f32>::zeros(mesh.num_cells()).expect("cpu rhs");
@@ -265,7 +250,6 @@ mod tests {
             boundaries: &boundary,
             ghosts: &ghosts,
             primitives: &primitives,
-            spectral_primitives: &spectral,
             mesh_cache: &mesh_cache,
             gradients: None,
             min_pressure: side.min_pressure,
@@ -286,7 +270,6 @@ mod tests {
             boundaries: &boundary,
             ghosts: &ghosts,
             primitives: &primitives,
-            spectral_primitives: &spectral,
             mesh_cache: &mesh_cache,
             gradients: None,
             min_pressure: side.min_pressure,

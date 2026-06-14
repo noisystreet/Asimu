@@ -7,7 +7,7 @@ use crate::discretization::residual::InviscidAssemblyUnstructuredTypedParams;
 use crate::discretization::residual::InviscidTypedScatterBackend;
 use crate::discretization::residual::ViscousTypedScatterBackend;
 use crate::discretization::{
-    BoundaryGhostBuffer, GradientFields, GradientFieldsT, InviscidFluxConfig, ReconstructionKind,
+    BoundaryGhostBuffer, GradientFieldsT, InviscidFluxConfig, ReconstructionKind,
     UnstructuredGradientLsqInput, UnstructuredGradientScratchF32, UnstructuredSolverMeshCache,
     ViscousAssemblyUnstructuredF32Input, ViscousAssemblyUnstructuredScratch,
     ViscousAssemblyUnstructuredTypedInput, assemble_inviscid_residual_unstructured_typed,
@@ -17,7 +17,7 @@ use crate::discretization::{
     compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq_f32,
 };
 use crate::error::Result;
-use crate::field::{ConservedFieldsT, ConservedResidualT, PrimitiveFields, PrimitiveFieldsT};
+use crate::field::{ConservedFieldsT, ConservedResidualT, PrimitiveFieldsT};
 use crate::mesh::UnstructuredMesh3d;
 use crate::physics::{FreestreamParams, IdealGasEoS, ReferenceScales, ViscousPhysicsConfig};
 use crate::solver::compressible_helpers::{
@@ -42,9 +42,7 @@ pub(crate) struct EvaluateRhsUnstructuredTyped<
     pub viscous: Option<&'a ViscousPhysicsConfig>,
     pub min_pressure: Real,
     pub primitives: &'a mut PrimitiveFieldsT<T>,
-    pub spectral_primitives: &'a mut PrimitiveFields,
     pub gradient_scratch: &'a mut GradientFieldsT<T>,
-    pub muscl_gradient_bridge: &'a mut GradientFields,
     pub viscous_scratch: &'a mut ViscousAssemblyUnstructuredScratch,
     pub viscous_grad_scratch_f32: &'a mut UnstructuredGradientScratchF32,
     pub exec: &'a mut crate::exec::ExecutionContext,
@@ -69,7 +67,6 @@ impl EvaluateRhsUnstructuredTyped<'_, f32> {
             viscous: self.viscous,
             min_pressure: self.min_pressure,
             primitives: self.primitives,
-            spectral_primitives: self.spectral_primitives,
         })?;
         self.assemble_from_current_state(fields, residual)
     }
@@ -94,10 +91,9 @@ impl EvaluateRhsUnstructuredTyped<'_, f32> {
                 self.gradient_scratch,
                 self.exec,
             )?;
-            *self.muscl_gradient_bridge = self.gradient_scratch.to_real_fields()?;
         }
         let gradients = match self.inviscid.reconstruction {
-            ReconstructionKind::Muscl => Some(&*self.muscl_gradient_bridge),
+            ReconstructionKind::Muscl => Some(&*self.gradient_scratch),
             ReconstructionKind::FirstOrder => None,
         };
         let mut assembly = InviscidAssemblyUnstructuredTypedParams {
@@ -107,7 +103,6 @@ impl EvaluateRhsUnstructuredTyped<'_, f32> {
             boundaries: self.patches,
             ghosts: self.ghosts,
             primitives: self.primitives,
-            spectral_primitives: self.spectral_primitives,
             mesh_cache: self.mesh_cache,
             gradients,
             min_pressure: self.min_pressure,
@@ -157,7 +152,6 @@ impl EvaluateRhsUnstructuredTyped<'_, f64> {
             viscous: self.viscous,
             min_pressure: self.min_pressure,
             primitives: self.primitives,
-            spectral_primitives: self.spectral_primitives,
         })?;
         self.assemble_from_current_state(fields, residual)
     }
@@ -171,7 +165,7 @@ impl EvaluateRhsUnstructuredTyped<'_, f64> {
             let grad_input = UnstructuredGradientLsqInput {
                 mesh: self.mesh,
                 mesh_cache: self.mesh_cache,
-                primitives: self.spectral_primitives,
+                primitives: self.primitives,
                 eos: self.eos,
                 ghosts: self.ghosts,
                 min_pressure: self.min_pressure,
@@ -195,7 +189,6 @@ impl EvaluateRhsUnstructuredTyped<'_, f64> {
             boundaries: self.patches,
             ghosts: self.ghosts,
             primitives: self.primitives,
-            spectral_primitives: self.spectral_primitives,
             mesh_cache: self.mesh_cache,
             gradients,
             min_pressure: self.min_pressure,
@@ -210,7 +203,7 @@ impl EvaluateRhsUnstructuredTyped<'_, f64> {
                 viscous,
                 boundaries: self.patches,
                 ghosts: self.ghosts,
-                primitives: self.spectral_primitives,
+                primitives: self.primitives,
                 min_pressure: self.min_pressure,
                 gradient_scratch: self.gradient_scratch,
                 exec: self.exec,

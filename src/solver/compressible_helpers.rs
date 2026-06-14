@@ -8,7 +8,7 @@ use crate::discretization::{
     BoundaryGhostBuffer, GradientFields, InviscidAssemblyUnstructuredParams, ReconstructionKind,
     UnstructuredGradientLsqInput, UnstructuredSolverMeshCache, ViscousAssemblyUnstructuredInput,
     ViscousAssemblyUnstructuredScratch, apply_compressible_boundary_conditions,
-    assemble_inviscid_residual_unstructured,
+    apply_compressible_boundary_conditions_typed, assemble_inviscid_residual_unstructured,
     compute_gradients_and_assemble_viscous_unstructured_with_scratch,
     compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq,
 };
@@ -35,7 +35,7 @@ pub struct RefreshCompressibleStateInput<'a> {
     pub primitives: &'a mut PrimitiveFields,
 }
 
-/// typed 场 BC + 原始变量刷新（BC/谱半径仍经 `cast_real` 走 f64 路径）。
+/// typed 场 BC + 原始变量刷新（ghost 逐面读 typed `cell_state`，不再整场合 `cast_real`）。
 pub struct RefreshCompressibleStateTypedInput<'a, T: crate::core::ComputeFloat> {
     pub boundary_mesh: &'a dyn BoundaryMesh3d,
     pub patches: &'a BoundarySet,
@@ -47,7 +47,6 @@ pub struct RefreshCompressibleStateTypedInput<'a, T: crate::core::ComputeFloat> 
     pub viscous: Option<&'a ViscousPhysicsConfig>,
     pub min_pressure: Real,
     pub primitives: &'a mut crate::field::PrimitiveFieldsT<T>,
-    pub spectral_primitives: &'a mut PrimitiveFields,
 }
 
 /// 刷新 BC ghost 与原始变量（结构/非结构共用）。
@@ -69,23 +68,20 @@ pub fn refresh_compressible_ghosts_and_primitives(
         .fill_from_conserved(input.fields, input.eos, input.min_pressure)
 }
 
-/// typed 守恒场：ghost 经 f64 BC 施加，计算 primitive 仍用 typed 场。
+/// typed 守恒场：ghost 与 primitive 均基于 typed 场刷新。
 pub fn refresh_compressible_ghosts_and_primitives_typed<T: crate::core::ComputeFloat>(
     input: RefreshCompressibleStateTypedInput<'_, T>,
 ) -> Result<()> {
-    let fields_real = input.fields.cast_real()?;
-    refresh_compressible_ghosts_and_primitives(RefreshCompressibleStateInput {
-        boundary_mesh: input.boundary_mesh,
-        patches: input.patches,
-        fields: &fields_real,
-        ghosts: input.ghosts,
-        eos: input.eos,
-        freestream: input.freestream,
-        reference: input.reference,
-        viscous: input.viscous,
-        min_pressure: input.min_pressure,
-        primitives: input.spectral_primitives,
-    })?;
+    let fs_ctx = FreestreamContext::new(input.eos, input.reference, input.viscous);
+    apply_compressible_boundary_conditions_typed(
+        input.boundary_mesh,
+        input.patches,
+        input.fields,
+        input.ghosts,
+        &fs_ctx,
+        input.freestream,
+        input.viscous,
+    )?;
     input
         .primitives
         .fill_from_conserved(input.fields, input.eos, input.min_pressure)
@@ -237,5 +233,101 @@ fn inviscid_assembly_params<'a>(
         gradients: Some(ctx.gradients),
         min_pressure: ctx.min_pressure,
         exec: ctx.exec,
+    }
+}
+
+#[cfg(test)]
+mod refresh_typed_tests {
+    use super::*;
+    use crate::boundary::{BoundaryKind, BoundaryPatch, BoundarySet};
+    use crate::core::approx_eq;
+    use crate::discretization::freestream_pair::FreestreamPairFixture;
+    use crate::field::ConservedFieldsT;
+    use crate::mesh::{CellKind, UnstructuredCell, UnstructuredMesh3d};
+
+    #[test]
+    fn f32_typed_ghost_refresh_matches_f64_per_face() {
+        let pair = FreestreamPairFixture::air_sutherland(0.2);
+        let side = pair.inviscid_side();
+        let mesh = UnstructuredMesh3d::new(
+            "tet",
+            vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            vec![UnstructuredCell::new(CellKind::Tet, vec![0, 1, 2, 3]).expect("cell")],
+        )
+        .expect("mesh");
+        let faces = (0..mesh.num_faces())
+            .map(|face| crate::core::FaceId(face as u32))
+            .collect::<Vec<_>>();
+        let boundary = BoundarySet::new(vec![BoundaryPatch::new(
+            "farfield",
+            faces.clone(),
+            BoundaryKind::Farfield {
+                mach: side.fs.mach,
+                pressure: side.fs.pressure,
+                temperature: side.fs.temperature,
+                alpha: 0.0,
+                beta: 0.0,
+            },
+        )]);
+        let fields_f32 = ConservedFieldsT::<f32>::from_real_fields(
+            &crate::field::ConservedFields::from_freestream_context(
+                mesh.num_cells(),
+                &side.ctx,
+                side.fs,
+            )
+            .expect("fields"),
+        )
+        .expect("f32");
+        let fields_f64 = fields_f32.cast_real().expect("f64");
+        let mut ghosts_f32 = BoundaryGhostBuffer::with_face_capacity(mesh.num_faces());
+        let mut ghosts_f64 = BoundaryGhostBuffer::with_face_capacity(mesh.num_faces());
+        let mut prim_f32 =
+            crate::field::PrimitiveFieldsT::<f32>::zeros(mesh.num_cells()).expect("prim f32");
+        let mut prim_f64 = PrimitiveFields::zeros(mesh.num_cells()).expect("prim f64");
+        refresh_compressible_ghosts_and_primitives_typed(RefreshCompressibleStateTypedInput {
+            boundary_mesh: &mesh,
+            patches: &boundary,
+            fields: &fields_f32,
+            ghosts: &mut ghosts_f32,
+            eos: side.eos,
+            freestream: side.fs,
+            reference: None,
+            viscous: None,
+            min_pressure: side.min_pressure,
+            primitives: &mut prim_f32,
+        })
+        .expect("f32 refresh");
+        refresh_compressible_ghosts_and_primitives(RefreshCompressibleStateInput {
+            boundary_mesh: &mesh,
+            patches: &boundary,
+            fields: &fields_f64,
+            ghosts: &mut ghosts_f64,
+            eos: side.eos,
+            freestream: side.fs,
+            reference: None,
+            viscous: None,
+            min_pressure: side.min_pressure,
+            primitives: &mut prim_f64,
+        })
+        .expect("f64 refresh");
+        for &face in &faces {
+            let g32 = ghosts_f32.get_face(face).expect("f32 ghost");
+            let g64 = ghosts_f64.get_face(face).expect("f64 ghost");
+            assert!(approx_eq(
+                g32.conserved.density,
+                g64.conserved.density,
+                1.0e-5
+            ));
+            assert!(approx_eq(
+                g32.conserved.total_energy,
+                g64.conserved.total_energy,
+                1.0e-5
+            ));
+        }
     }
 }

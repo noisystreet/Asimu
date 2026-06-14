@@ -6,10 +6,10 @@
 use crate::boundary::{
     BcHandler, BoundaryKind, BoundaryPatch, BoundaryRegistry, BoundarySet, WallHeat,
 };
-use crate::core::{Real, Vector3};
+use crate::core::{ComputeFloat, Real, Vector3};
 use crate::discretization::wall_thermal::wall_ghost_temperature;
 use crate::error::Result;
-use crate::field::ConservedFields;
+use crate::field::{ConservedFields, ConservedFieldsT};
 use crate::mesh::{BoundaryMesh3d, FaceGeometry3d};
 use crate::physics::{
     ConservedState, FreestreamContext, FreestreamParams, IdealGasEoS, PrimitiveState,
@@ -414,10 +414,10 @@ fn characteristic_outlet_primitive(
     )
 }
 
-fn apply_patch_compressible(
+fn apply_patch_compressible_typed<T: ComputeFloat>(
     mesh: &dyn BoundaryMesh3d,
     patch: &BoundaryPatch,
-    fields: &ConservedFields,
+    fields: &ConservedFieldsT<T>,
     ghosts: &mut BoundaryGhostBuffer,
     fs_ctx: &FreestreamContext<'_>,
     freestream: &FreestreamParams,
@@ -527,6 +527,24 @@ fn apply_patch_compressible(
     Ok(())
 }
 
+/// 可压缩 NS 边界 ghost 施加（typed 守恒场；owner 经 `cell_state` 逐单元读取）。
+#[tracing::instrument(skip_all, level = "info", fields(patches = patches.patches().len()))]
+pub fn apply_compressible_boundary_conditions_typed<T: ComputeFloat>(
+    mesh: &dyn BoundaryMesh3d,
+    patches: &BoundarySet,
+    fields: &ConservedFieldsT<T>,
+    ghosts: &mut BoundaryGhostBuffer,
+    fs_ctx: &FreestreamContext<'_>,
+    freestream: &FreestreamParams,
+    viscous: Option<&ViscousPhysicsConfig>,
+) -> Result<()> {
+    BoundaryRegistry::validate_patches(patches.patches())?;
+    for patch in patches.patches() {
+        apply_patch_compressible_typed(mesh, patch, fields, ghosts, fs_ctx, freestream, viscous)?;
+    }
+    Ok(())
+}
+
 /// 可压缩 NS 边界 ghost 施加（类比 CFL3D `bc.F`）。
 #[tracing::instrument(skip_all, level = "info", fields(patches = patches.patches().len()))]
 pub fn apply_compressible_boundary_conditions(
@@ -538,11 +556,9 @@ pub fn apply_compressible_boundary_conditions(
     freestream: &FreestreamParams,
     viscous: Option<&ViscousPhysicsConfig>,
 ) -> Result<()> {
-    BoundaryRegistry::validate_patches(patches.patches())?;
-    for patch in patches.patches() {
-        apply_patch_compressible(mesh, patch, fields, ghosts, fs_ctx, freestream, viscous)?;
-    }
-    Ok(())
+    apply_compressible_boundary_conditions_typed(
+        mesh, patches, fields, ghosts, fs_ctx, freestream, viscous,
+    )
 }
 
 #[cfg(test)]

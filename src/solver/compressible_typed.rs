@@ -52,7 +52,6 @@ impl CompressibleEulerSolver {
             viscous: self.config.viscous.as_ref(),
             min_pressure,
             primitive_scratch: &mut ctx.primitive_scratch,
-            spectral_primitives: &mut ctx.spectral_primitives,
             gradient_scratch: &mut ctx.gradient_scratch,
         }
     }
@@ -398,8 +397,8 @@ impl CompressibleEulerSolver {
             viscous: ctx.viscous,
             min_pressure: p_floor,
             primitives: &mut ctx.primitive_scratch,
-            spectral_primitives: &mut ctx.spectral_primitives,
         })?;
+        ctx.spectral_primitives = ctx.primitive_scratch.cast_real()?;
         let params = SpectralRadius3dParams {
             mesh: ctx.structured,
             boundary_mesh: ctx.mesh,

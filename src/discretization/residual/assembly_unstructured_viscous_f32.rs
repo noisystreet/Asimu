@@ -4,29 +4,39 @@ use tracing::info_span;
 
 use crate::boundary::BoundarySet;
 use crate::core::Real;
+use crate::discretization::UnstructuredGradientScratchF32;
 use crate::discretization::gradient_typed::GradientFieldsT;
 use crate::discretization::gradient_unstructured_f32::{
     UnstructuredGradientLsqInputF32, compute_unstructured_gradients_idw_lsq_f32,
 };
-use crate::discretization::unstructured_face_cache::UnstructuredSolverMeshCache;
+use crate::discretization::unstructured_face_cache::{
+    UnstructuredFaceTopology, UnstructuredSolverMeshCache,
+};
 use crate::discretization::viscous_f32::{
     average_face_lane_f32, fused_interior_viscous_face_flux_averaged_f32,
     scatter_fused_interior_viscous_face_f32,
 };
-use crate::discretization::{GradientFields, UnstructuredGradientScratchF32};
 use crate::error::Result;
 use crate::exec::ColoredViscousFaceGeom;
 use crate::exec::ExecutionContext;
-use crate::field::{ConservedResidualT, PrimitiveFields, PrimitiveFieldsT, ScalarField};
+use crate::field::{ConservedResidualT, PrimitiveFieldsT};
 use crate::mesh::UnstructuredMesh3d;
 use crate::physics::{IdealGasEoS, ViscousPhysicsConfig};
 
 use super::assembly_unstructured_viscous::assemble_boundary_faces_f32;
 use super::assembly_unstructured_viscous::{
-    ViscousAssemblyUnstructuredParams, ViscousAssemblyUnstructuredScratch,
-    prepare_unstructured_viscous_transport,
+    ViscousAssemblyUnstructuredScratch, prepare_unstructured_viscous_transport_f32,
 };
 use crate::discretization::viscous_boundary_f32::ViscousBoundaryFluxParamsF32;
+
+struct ViscousInteriorAssemblyF32<'a> {
+    face_topology: &'a UnstructuredFaceTopology,
+    eos: &'a IdealGasEoS,
+    viscous: &'a ViscousPhysicsConfig,
+    primitives: &'a PrimitiveFieldsT<f32>,
+    gradients: &'a GradientFieldsT<f32>,
+    temperatures: &'a [f32],
+}
 
 /// f32 非结构粘性装配输入。
 pub struct ViscousAssemblyUnstructuredF32Input<'a> {
@@ -70,35 +80,16 @@ pub fn compute_gradients_and_assemble_viscous_unstructured_f32(
             input.exec,
         )?;
     }
-    scratch
-        .gradient
-        .temperatures
-        .resize(grad_scratch.temperatures.len(), 0.0);
-    for (dst, &src) in scratch
-        .gradient
-        .temperatures
-        .iter_mut()
-        .zip(grad_scratch.temperatures.iter())
-    {
-        *dst = src as Real;
-    }
-    let f64_primitives = bridge_primitives_f32(input.primitives)?;
-    let dummy_gradients = GradientFields::zeros(input.mesh.num_cells())?;
-    let params = ViscousAssemblyUnstructuredParams {
-        mesh: input.mesh,
-        face_topology: &input.mesh_cache.face_topology,
-        eos: input.eos,
-        viscous: input.viscous,
-        ghosts: input.ghosts,
-        primitives: &f64_primitives,
-        gradients: &dummy_gradients,
-        min_pressure: input.min_pressure,
-    };
     assemble_viscous_residual_f32_interior(
         residual,
-        &params,
-        input.primitives,
-        input.gradient_scratch,
+        &ViscousInteriorAssemblyF32 {
+            face_topology: &input.mesh_cache.face_topology,
+            eos: input.eos,
+            viscous: input.viscous,
+            primitives: input.primitives,
+            gradients: input.gradient_scratch,
+            temperatures: &grad_scratch.temperatures,
+        },
         scratch,
     )?;
     let boundary_params = ViscousBoundaryFluxParamsF32 {
@@ -117,25 +108,20 @@ pub fn compute_gradients_and_assemble_viscous_unstructured_f32(
     )
 }
 
-fn bridge_primitives_f32(prim: &PrimitiveFieldsT<f32>) -> Result<PrimitiveFields> {
-    Ok(PrimitiveFields {
-        density: ScalarField::from_real_values(prim.density.to_real_values())?,
-        pressure: ScalarField::from_real_values(prim.pressure.to_real_values())?,
-        velocity_x: ScalarField::from_real_values(prim.velocity_x.to_real_values())?,
-        velocity_y: ScalarField::from_real_values(prim.velocity_y.to_real_values())?,
-        velocity_z: ScalarField::from_real_values(prim.velocity_z.to_real_values())?,
-    })
-}
-
 fn assemble_viscous_residual_f32_interior(
     residual: &mut ConservedResidualT<f32>,
-    params: &ViscousAssemblyUnstructuredParams<'_>,
-    primitives: &PrimitiveFieldsT<f32>,
-    gradients: &GradientFieldsT<f32>,
+    params: &ViscousInteriorAssemblyF32<'_>,
     scratch: &mut ViscousAssemblyUnstructuredScratch,
 ) -> Result<()> {
-    let constant = prepare_unstructured_viscous_transport(params, scratch)?;
-    let grad_slices = gradients.velocity_gradient_slices();
+    let constant = prepare_unstructured_viscous_transport_f32(
+        params.face_topology,
+        params.primitives.num_cells(),
+        params.viscous,
+        params.eos,
+        params.temperatures,
+        scratch,
+    )?;
+    let grad_slices = params.gradients.velocity_gradient_slices();
     let _span = info_span!(
         "unstructured_viscous_interior_flux_f32",
         faces = params.face_topology.interior.len(),
@@ -163,7 +149,8 @@ fn assemble_viscous_residual_f32_interior(
             owner_scale: face.owner_rhs_scale,
             neighbor_scale: face.neighbor_rhs_scale,
         };
-        let lane = average_face_lane_f32(face.owner, face.neighbor, primitives, &grad_slices);
+        let lane =
+            average_face_lane_f32(face.owner, face.neighbor, params.primitives, &grad_slices);
         let flux = fused_interior_viscous_face_flux_averaged_f32(
             lane,
             normal.x as f32,
@@ -187,9 +174,17 @@ mod tests {
     use crate::field::ConservedFields;
     use crate::mesh::{CellKind, UnstructuredCell, UnstructuredMesh3d};
     use crate::physics::FreestreamParams;
+    use crate::physics::ViscosityModel;
 
-    #[test]
-    fn f32_native_boundary_uniform_closed_tet_has_near_zero_viscous_rhs() {
+    fn uniform_closed_tet_viscous_rhs() -> (
+        UnstructuredMesh3d,
+        IdealGasEoS,
+        BoundarySet,
+        UnstructuredSolverMeshCache,
+        BoundaryGhostBuffer,
+        PrimitiveFieldsT<f32>,
+        FreestreamParams,
+    ) {
         let mesh = UnstructuredMesh3d::new(
             "tet",
             vec![
@@ -233,6 +228,63 @@ mod tests {
             },
         )]);
         let mesh_cache = UnstructuredSolverMeshCache::from_mesh(&mesh, &boundary).expect("cache");
+        (mesh, eos, boundary, mesh_cache, ghosts, primitives_f32, fs)
+    }
+
+    #[test]
+    fn f32_sutherland_uniform_closed_tet_has_near_zero_viscous_rhs() {
+        let (mesh, eos, boundary, mesh_cache, ghosts, primitives_f32, _fs) =
+            uniform_closed_tet_viscous_rhs();
+        let viscous =
+            ViscousPhysicsConfig::new(ViscosityModel::AIR_SUTHERLAND, 0.72).expect("viscous");
+        let mut grad = GradientFieldsT::<f32>::zeros(mesh.num_cells()).expect("grad");
+        let mut rhs = ConservedResidualT::<f32>::zeros(mesh.num_cells()).expect("rhs");
+        let mut exec = ExecutionContext::for_unit_test();
+        let mut scratch = ViscousAssemblyUnstructuredScratch::new(mesh.num_cells());
+        let mut grad_scratch = UnstructuredGradientScratchF32::new(mesh.num_cells());
+        let mut input = ViscousAssemblyUnstructuredF32Input {
+            mesh: &mesh,
+            mesh_cache: &mesh_cache,
+            eos: &eos,
+            viscous: &viscous,
+            boundaries: &boundary,
+            ghosts: &ghosts,
+            primitives: &primitives_f32,
+            min_pressure: 1.0e-8,
+            gradient_scratch: &mut grad,
+            exec: &mut exec,
+        };
+        compute_gradients_and_assemble_viscous_unstructured_f32(
+            &mut rhs,
+            &mut input,
+            &mut scratch,
+            &mut grad_scratch,
+        )
+        .expect("visc");
+        assert!(
+            rhs.density
+                .values()
+                .iter()
+                .all(|v| v.to_real().abs() < 1.0e-12)
+        );
+        assert!(
+            rhs.momentum_x
+                .values()
+                .iter()
+                .all(|v| v.to_real().abs() < 1.0e-8)
+        );
+        assert!(
+            rhs.total_energy
+                .values()
+                .iter()
+                .all(|v| v.to_real().abs() < 1.0e-8)
+        );
+    }
+
+    #[test]
+    fn f32_native_boundary_uniform_closed_tet_has_near_zero_viscous_rhs() {
+        let (mesh, eos, boundary, mesh_cache, ghosts, primitives_f32, _fs) =
+            uniform_closed_tet_viscous_rhs();
         let viscous = ViscousPhysicsConfig::default();
         let mut grad = GradientFieldsT::<f32>::zeros(mesh.num_cells()).expect("grad");
         let mut rhs = ConservedResidualT::<f32>::zeros(mesh.num_cells()).expect("rhs");

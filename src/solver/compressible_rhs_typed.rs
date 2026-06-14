@@ -10,7 +10,7 @@ use crate::discretization::{
     BoundaryGhostBuffer, GradientFields, InviscidFluxConfig, assemble_inviscid_residual_3d_typed,
 };
 use crate::error::Result;
-use crate::field::{ConservedFieldsT, ConservedResidualT, PrimitiveFields, PrimitiveFieldsT};
+use crate::field::{ConservedFieldsT, ConservedResidualT, PrimitiveFieldsT};
 use crate::mesh::{BoundaryMesh3d, StructuredMesh3d};
 use crate::physics::{FreestreamParams, IdealGasEoS, ReferenceScales, ViscousPhysicsConfig};
 use crate::solver::compressible_helpers::{
@@ -30,7 +30,6 @@ pub(crate) struct EvaluateRhs3dTyped<'a, T: ComputeFloat> {
     pub viscous: Option<&'a ViscousPhysicsConfig>,
     pub min_pressure: Real,
     pub primitive_scratch: &'a mut PrimitiveFieldsT<T>,
-    pub spectral_primitives: &'a mut PrimitiveFields,
     pub gradient_scratch: &'a mut GradientFields,
 }
 
@@ -52,7 +51,6 @@ impl<T: ComputeFloat> EvaluateRhs3dTyped<'_, T> {
             viscous: self.viscous,
             min_pressure: self.min_pressure,
             primitives: self.primitive_scratch,
-            spectral_primitives: self.spectral_primitives,
         })?;
         let assembly = InviscidAssembly3dTypedParams {
             mesh: self.structured,

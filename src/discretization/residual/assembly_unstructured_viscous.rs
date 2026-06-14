@@ -264,6 +264,13 @@ pub(crate) fn fill_face_transport_coefficients(
     params: &ViscousAssemblyUnstructuredParams<'_>,
     scratch: &mut ViscousAssemblyUnstructuredScratch,
 ) -> Result<()> {
+    fill_face_transport_coefficients_for_topology(params.face_topology, scratch)
+}
+
+pub(crate) fn fill_face_transport_coefficients_for_topology(
+    face_topology: &UnstructuredFaceTopology,
+    scratch: &mut ViscousAssemblyUnstructuredScratch,
+) -> Result<()> {
     let cell_mu = &scratch.cell_mu;
     let cell_lambda = &scratch.cell_lambda;
     #[cfg(feature = "parallel-fvm")]
@@ -271,7 +278,7 @@ pub(crate) fn fill_face_transport_coefficients(
         crate::exec::parallel::par_for_each_zip3_mut(
             &mut scratch.face_mu,
             &mut scratch.face_lambda,
-            &params.face_topology.interior,
+            &face_topology.interior,
             |mu, lambda, face| {
                 if face.owner_rhs_scale == 0.0 && face.neighbor_rhs_scale == 0.0 {
                     return;
@@ -283,7 +290,7 @@ pub(crate) fn fill_face_transport_coefficients(
     }
     #[cfg(not(feature = "parallel-fvm"))]
     {
-        for (i, face) in params.face_topology.interior.iter().enumerate() {
+        for (i, face) in face_topology.interior.iter().enumerate() {
             if face.owner_rhs_scale == 0.0 && face.neighbor_rhs_scale == 0.0 {
                 continue;
             }
@@ -713,6 +720,45 @@ pub(crate) fn prepare_unstructured_viscous_transport(
         fill_face_transport_coefficients(params, scratch)?;
         Ok(None)
     }
+}
+
+/// f32 梯度温度下的非结构粘性输运系数准备（不依赖 f64 primitives）。
+pub(crate) fn prepare_unstructured_viscous_transport_f32(
+    face_topology: &UnstructuredFaceTopology,
+    num_cells: usize,
+    viscous: &ViscousPhysicsConfig,
+    eos: &IdealGasEoS,
+    temperatures: &[f32],
+    scratch: &mut ViscousAssemblyUnstructuredScratch,
+) -> Result<Option<(Real, Real)>> {
+    let num_faces = face_topology.interior.len();
+    scratch.ensure_face_transport(num_faces);
+    if matches!(viscous.model, ViscosityModel::Constant { .. }) {
+        let constant = face_transport_coefficients(1.0, 1.0, viscous, eos)?;
+        scratch.constant_transport = Some(constant);
+        Ok(Some(constant))
+    } else {
+        scratch.constant_transport = None;
+        scratch.ensure_cell_transport(num_cells);
+        fill_cell_transport_coefficients_f32(viscous, eos, temperatures, scratch)?;
+        fill_face_transport_coefficients_for_topology(face_topology, scratch)?;
+        Ok(None)
+    }
+}
+
+fn fill_cell_transport_coefficients_f32(
+    viscous: &ViscousPhysicsConfig,
+    eos: &IdealGasEoS,
+    temperatures: &[f32],
+    scratch: &mut ViscousAssemblyUnstructuredScratch,
+) -> Result<()> {
+    for (cell, &t) in temperatures.iter().enumerate() {
+        let t_real = t as Real;
+        let (mu, lambda) = face_transport_coefficients(t_real, t_real, viscous, eos)?;
+        scratch.cell_mu[cell] = mu;
+        scratch.cell_lambda[cell] = lambda;
+    }
+    Ok(())
 }
 
 pub(crate) use boundary::{assemble_boundary_faces_f32, assemble_boundary_faces_typed};

@@ -34,6 +34,7 @@ pub mod incompressible_velocity_correction;
 pub mod inviscid;
 pub mod reconstruction;
 pub mod reconstruction_unstructured;
+pub mod reconstruction_unstructured_f32;
 pub mod residual;
 pub mod roe;
 pub mod slau2;
@@ -57,8 +58,9 @@ use crate::mesh::Mesh;
 
 pub use bc::{apply_boundary_conditions, apply_dirichlet, apply_dirichlet_face, apply_neumann};
 pub use bc_compressible::{
-    BoundaryGhostBuffer, GhostCellState, apply_compressible_boundary_conditions, farfield_ghost,
-    inlet_ghost, outlet_ghost, symmetry_ghost, wall_ghost,
+    BoundaryGhostBuffer, GhostCellState, apply_compressible_boundary_conditions,
+    apply_compressible_boundary_conditions_typed, farfield_ghost, inlet_ghost, outlet_ghost,
+    symmetry_ghost, wall_ghost,
 };
 pub use diffusion_1d::assemble_diffusion_1d;
 pub use face_flux::{
