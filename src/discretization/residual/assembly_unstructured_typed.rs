@@ -7,6 +7,11 @@ mod assembly_unstructured_typed_cuda;
 #[path = "assembly_unstructured_inviscid_f32.rs"]
 mod inviscid_f32;
 
+#[path = "assembly_unstructured_first_order_typed.rs"]
+mod first_order_typed;
+
+use first_order_typed::{InviscidFirstOrderFaceFlux, first_order_interior_flux};
+
 use tracing::info_span;
 
 use crate::boundary::BoundarySet;
@@ -17,8 +22,8 @@ use crate::discretization::inviscid::{
 };
 use crate::discretization::unstructured_face_cache::UnstructuredFaceTopology;
 use crate::discretization::{
-    BoundaryGhostBuffer, FaceFluxInput, InviscidFluxConfig, ReconstructionKind,
-    UnstructuredLinearReconstructionCtx, UnstructuredSolverMeshCache, face_inviscid_flux,
+    BoundaryGhostBuffer, InviscidFluxConfig, ReconstructionKind,
+    UnstructuredLinearReconstructionCtx, UnstructuredSolverMeshCache,
     face_inviscid_flux_from_interface, reconstruct_unstructured_boundary_face,
 };
 use crate::error::{AsimuError, Result};
@@ -27,9 +32,7 @@ use crate::exec::scatter::{
     InviscidPairScatter, InviscidPairScatterF32, InviscidResidualMut, InviscidResidualMutF32,
     InviscidScatterOp, scatter_inviscid_pairs, scatter_inviscid_pairs_f32,
 };
-use crate::field::{
-    ConservedFieldsT, ConservedResidualT, PrimitiveFieldsT, primitive_from_conserved_relaxed,
-};
+use crate::field::{ConservedFieldsT, ConservedResidualT, PrimitiveFieldsT};
 use crate::mesh::UnstructuredMesh3d;
 use crate::physics::IdealGasEoS;
 
@@ -468,26 +471,8 @@ fn assemble_boundary_faces_muscl_typed<T: ComputeFloat>(
     Ok(())
 }
 
-fn first_order_interior_flux<T: ComputeFloat>(
-    primitives: &PrimitiveFieldsT<T>,
-    owner: usize,
-    neighbor: usize,
-    normal: crate::core::Vector3,
-    eos: &IdealGasEoS,
-    config: &InviscidFluxConfig,
-) -> Result<crate::discretization::InviscidFlux> {
-    let owner_prim = primitives.cell_primitive(owner);
-    let neighbor_prim = primitives.cell_primitive(neighbor);
-    face_inviscid_flux(
-        FaceFluxInput::first_order(&owner_prim, &neighbor_prim),
-        normal,
-        eos,
-        config,
-    )
-}
-
 /// 一阶内面装配分发（f32 串行 typed；f64 可走 parallel 桶）。
-trait InviscidFirstOrderInterior: InviscidTypedScatterBackend {
+trait InviscidFirstOrderInterior: InviscidTypedScatterBackend + InviscidFirstOrderFaceFlux {
     fn assemble_first_order_interior_faces(
         residual: &mut ConservedResidualT<Self>,
         params: &InviscidAssemblyUnstructuredTypedParams<'_, Self>,
@@ -523,7 +508,7 @@ impl InviscidFirstOrderInterior for f64 {
     }
 }
 
-fn assemble_first_order_interior_faces_serial<T: ComputeFloat>(
+fn assemble_first_order_interior_faces_serial<T: InviscidFirstOrderFaceFlux>(
     residual: &mut ConservedResidualT<T>,
     params: &InviscidAssemblyUnstructuredTypedParams<'_, T>,
     topology: &UnstructuredFaceTopology,
@@ -556,7 +541,7 @@ fn assemble_first_order_interior_faces_serial<T: ComputeFloat>(
     Ok(())
 }
 
-fn assemble_boundary_faces_first_order_typed<T: ComputeFloat>(
+fn assemble_boundary_faces_first_order_typed<T: InviscidFirstOrderFaceFlux>(
     residual: &mut ConservedResidualT<T>,
     params: &InviscidAssemblyUnstructuredTypedParams<'_, T>,
     topology: &UnstructuredFaceTopology,
@@ -574,14 +559,14 @@ fn assemble_boundary_faces_first_order_typed<T: ComputeFloat>(
                 bface.face.index()
             ))
         })?;
-        let owner_prim = params.primitives.cell_primitive(bface.owner);
-        let ghost_prim =
-            primitive_from_conserved_relaxed(params.eos, &ghost.conserved, params.min_pressure)?;
-        let flux = face_inviscid_flux(
-            FaceFluxInput::first_order(&owner_prim, &ghost_prim),
+        let flux = T::first_order_boundary_flux(
+            params.primitives,
+            bface.owner,
+            &ghost,
             bface.normal,
             params.eos,
             params.config,
+            params.min_pressure,
         )?;
         accumulate_boundary_face_typed(
             residual,

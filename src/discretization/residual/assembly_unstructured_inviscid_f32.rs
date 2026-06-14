@@ -5,11 +5,11 @@ use crate::discretization::inviscid::{
     InteriorInviscidScatterGeom, scatter_fused_boundary_inviscid_face_typed,
 };
 use crate::discretization::reconstruction_unstructured_f32::{
-    UnstructuredLinearReconstructionCtxF32, interface_primitive_states_f32_to_f64,
-    reconstruct_unstructured_boundary_face_f32, reconstruct_unstructured_interior_face_f32,
+    UnstructuredLinearReconstructionCtxF32, reconstruct_unstructured_boundary_face_f32,
+    reconstruct_unstructured_interior_face_f32,
 };
 use crate::discretization::unstructured_face_cache::UnstructuredFaceTopology;
-use crate::discretization::{UnstructuredGradientLimiter, face_inviscid_flux_from_interface};
+use crate::discretization::{UnstructuredGradientLimiter, face_inviscid_flux_from_interface_f32};
 use crate::error::{AsimuError, Result};
 use crate::field::ConservedResidualT;
 
@@ -17,7 +17,7 @@ use super::{
     InviscidAssemblyUnstructuredTypedParams, InviscidTypedScatterBackend, is_degenerate_volume,
 };
 
-/// f32 非结构 MUSCL 无粘残差装配（重构 f32，Riemann 仍 f64）。
+/// f32 非结构 MUSCL 无粘残差装配（重构与 Riemann 均为原生 f32）。
 pub(super) fn assemble_inviscid_muscl_unstructured_f32(
     residual: &mut ConservedResidualT<f32>,
     params: &InviscidAssemblyUnstructuredTypedParams<'_, f32>,
@@ -95,12 +95,8 @@ fn compute_interior_inviscid_face_contribution_f32(
         gradients.inviscid_primitive_grad_at(face.owner),
         gradients.inviscid_primitive_grad_at(face.neighbor),
     )?;
-    let flux = face_inviscid_flux_from_interface(
-        interface_primitive_states_f32_to_f64(iface_f32),
-        face.normal,
-        params.eos,
-        params.config,
-    )?;
+    let flux =
+        face_inviscid_flux_from_interface_f32(iface_f32, face.normal, params.eos, params.config)?;
     Ok(Some((
         InteriorInviscidScatterGeom {
             owner: face.owner,
@@ -136,8 +132,8 @@ fn assemble_boundary_faces_muscl_f32(
             ctx,
             gradients.inviscid_primitive_grad_at(bface.owner),
         )?;
-        let flux = face_inviscid_flux_from_interface(
-            interface_primitive_states_f32_to_f64(iface_f32),
+        let flux = face_inviscid_flux_from_interface_f32(
+            iface_f32,
             bface.normal,
             params.eos,
             params.config,

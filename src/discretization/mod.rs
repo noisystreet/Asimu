@@ -8,6 +8,7 @@ pub mod bc;
 pub mod bc_compressible;
 pub mod diffusion_1d;
 pub mod face_flux;
+pub mod face_flux_f32;
 pub mod flux_common;
 pub mod flux_config;
 pub mod gradient;
@@ -18,6 +19,7 @@ pub mod gradient_unstructured;
 pub mod gradient_unstructured_f32;
 pub mod gradient_unstructured_inviscid_f32;
 pub mod hllc;
+pub mod hllc_f32;
 pub mod incompressible;
 pub mod incompressible_bc;
 pub mod incompressible_boundary_flux;
@@ -32,11 +34,13 @@ pub mod incompressible_pressure;
 pub mod incompressible_rhie_chow;
 pub mod incompressible_velocity_correction;
 pub mod inviscid;
+pub mod inviscid_f32;
 pub mod reconstruction;
 pub mod reconstruction_unstructured;
 pub mod reconstruction_unstructured_f32;
 pub mod residual;
 pub mod roe;
+pub mod roe_f32;
 pub mod slau2;
 pub mod unstructured_face_cache;
 pub mod unstructured_limiter;
@@ -66,6 +70,10 @@ pub use diffusion_1d::assemble_diffusion_1d;
 pub use face_flux::{
     FaceFluxInput, face_inviscid_flux, face_inviscid_flux_first_order_boundary_soa,
     face_inviscid_flux_first_order_interior_soa, face_inviscid_flux_from_interface,
+};
+pub use face_flux_f32::{
+    face_inviscid_flux_first_order_boundary_soa_f32,
+    face_inviscid_flux_first_order_interior_soa_f32, face_inviscid_flux_from_interface_f32,
 };
 pub use flux_config::{FluxScheme, InviscidFluxConfig, ReconstructionKind, SlopeLimiter};
 pub use gradient::{
