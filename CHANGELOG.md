@@ -7,7 +7,10 @@
 
 ### Added
 
-- 非结构 f32 一阶无粘内面与粘性内面在 `parallel-fvm` 下均走着色桶并行 compute + f32 scatter（`scatter_inviscid_pairs_f32` / `scatter_viscous_valid_slots_f32`）；粘性边界面 `scatter_viscous_boundary_f32` 改为原生 f32 `+=`。
+- 非结构 f32 热路径原生原变量恢复：`primitive_from_conserved_relaxed_f32` / `PrimitiveFillFromConserved`；ghost 边界面单次 `primitive_from_conserved_relaxed_f32_from_state`。
+- f32 Riemann 求解器法向 API：`FaceNormalF32`（`[f32; 3]`）；一阶/MUSCL 装配直接传 `face_topology_f32.normal`，消除 `vec3_from_f32`→`Vector3` 往返。
+- f32 Sutherland 输运系数：`ViscousPhysicsConfig::face_transport_coefficients_f32`、`static_temperature_f32`；粘性装配/谱半径/边界面通量全 f32 温度链。
+- 非结构 f32 谱半径：面循环 f32 原变量与法向；单元 \(\sigma\) Real 累加（粘性抛物项精度）；`cell_viscous_diffusivity_max_f32` 返回 `Vec<f32>`。
 - 非结构 f32 LU-SGS 扫掠 `source` / 耦合差分全 f32（`residual_cell_vector_f32`、`conserved_vector_f32`）；正性限制边界一次性 `increment_real_from_f32`。
 - 非结构 f32 MUSCL 内面在 `parallel-fvm` 下走着色桶 `scatter_inviscid_pairs_f32`；粘性 f32 内面 scatter 改为 `InteriorViscousScatterGeomF32` / `ViscousScatterOpF32` 原生热路径。
 - 非结构 f32 MUSCL 限制器样本（`cell_gradient_samples_f32`）、LU-SGS 预打包耦合（`lusgs_couplings_f32`）与无粘 scatter 原生热路径（`InviscidFluxF32` / `InviscidScatterOpF32`）；新增 `lu_sgs_sweep_unstructured_f32` 与驱动层 `compressible_unstructured_lusgs_typed` 精度分发。
