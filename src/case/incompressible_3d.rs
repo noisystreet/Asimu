@@ -27,12 +27,16 @@ use crate::solver::{
     run_incompressible_pressure_velocity_with_observer,
 };
 
+use super::benchmark::KnownIncompressibleBenchmark;
 use super::incompressible_profiles::{
     incompressible_centerline_profiles, lid_cavity_profile_error, poiseuille_profile_error,
 };
 use super::taylor_green::{
     analytical_kinetic_energy_ratio, kinetic_energy, taylor_green_decay_rates,
-    taylor_green_initial_fields,
+};
+use super::time_advance::{
+    IncompressibleTimeAdvanceKind, incompressible_physical_transient,
+    incompressible_time_advance_kind,
 };
 use super::{CaseRunKind, CaseRunResult};
 
@@ -125,15 +129,18 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         .ok_or_else(|| AsimuError::Config("不可压缩算例须包含 [incompressible] 段".to_string()))?;
     let steps = case.resolved_max_steps();
     let dt = case.time.dt.unwrap_or(0.0);
+    let time_advance = incompressible_time_advance_kind(case);
     let transient = case.time.mode == CaseTimeMode::Transient;
-    let time_marching = incompressible_time_marching(case);
-    validate_incompressible_transient_inputs(case, transient, dt)?;
-    let mut fields = initial_incompressible_fields(case, mesh, config)?;
-    let kinetic_energy_initial = initial_kinetic_energy(case, mesh, config, &fields);
+    let time_marching = incompressible_physical_transient(time_advance);
+    let known_benchmark = KnownIncompressibleBenchmark::from_case(case);
+    validate_incompressible_transient_inputs(case, transient, dt, time_advance)?;
+    let mut fields = initial_incompressible_fields(known_benchmark, mesh, config)?;
+    let kinetic_energy_initial = initial_kinetic_energy(known_benchmark, mesh, config, &fields);
     let boundary_stats =
         apply_incompressible_boundary_conditions_3d(mesh, &mut fields, &case.boundary)?;
     let pseudo_time_step = case.time.dt.filter(|value| *value > 0.0).unwrap_or(1.0);
-    let track_kinetic_energy = case.benchmark_id.as_deref() == Some("taylor_green_3d");
+    let track_kinetic_energy =
+        known_benchmark.is_some_and(KnownIncompressibleBenchmark::tracks_kinetic_energy);
     let mut kinetic_energy_history = Vec::new();
     if track_kinetic_energy {
         kinetic_energy_history.push(kinetic_energy(mesh, &fields, config.density));
@@ -156,13 +163,14 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
     let nondimensional_time = dt * completed_steps as f64;
     let physical_time = physical_time_from_nondimensional(case, nondimensional_time);
     written.extend(write_outputs(case, mesh, &diagnostic, nondimensional_time)?);
-    let benchmark = collect_incompressible_benchmark_diagnostics(
+    let benchmark_diagnostics = collect_incompressible_benchmark_diagnostics(
         &IncompressibleBenchmarkCollectContext {
-            case,
+            known_benchmark,
             mesh,
             config,
-            transient: time_marching,
+            time_advance,
             pseudo_time_step,
+            nondimensional_time,
             diagnostic: &diagnostic,
             kinetic_energy_initial,
             kinetic_energy_history: &kinetic_energy_history,
@@ -183,17 +191,9 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
             physical_time,
             diagnostic,
             boundary_stats,
-            benchmark,
+            benchmark_diagnostics,
         )),
     })
-}
-
-pub(crate) fn incompressible_time_marching(case: &CaseSpec) -> bool {
-    case.time.mode == CaseTimeMode::Transient
-        && matches!(
-            case.time.resolved_time_scheme(),
-            TimeIntegrationScheme::Piso | TimeIntegrationScheme::Bdf1
-        )
 }
 
 fn incompressible_run_kind(time_marching: bool) -> CaseRunKind {
@@ -208,36 +208,43 @@ fn validate_incompressible_transient_inputs(
     case: &CaseSpec,
     transient: bool,
     dt: Real,
+    time_advance: IncompressibleTimeAdvanceKind,
 ) -> Result<()> {
     if transient && dt <= 0.0 {
         return Err(AsimuError::Config(
             "不可压缩瞬态算例须设置正 [time].dt".to_string(),
         ));
     }
-    validate_incompressible_transient_scheme(case)
+    validate_incompressible_time_advance_scheme(case, time_advance)
 }
 
 fn initial_incompressible_fields(
-    case: &CaseSpec,
+    benchmark: Option<KnownIncompressibleBenchmark>,
     mesh: &StructuredMesh3d,
     config: &crate::io::IncompressibleCaseConfig,
 ) -> Result<IncompressibleFields> {
-    let fields = match case.benchmark_id.as_deref() {
-        Some("taylor_green_3d") => taylor_green_initial_fields(mesh)?,
-        _ => IncompressibleFields::uniform(mesh.num_cells(), config.pressure, config.velocity)?,
+    let fields = if let Some(benchmark) = benchmark {
+        if let Some(fields) = benchmark.initial_fields(mesh, config)? {
+            fields
+        } else {
+            IncompressibleFields::uniform(mesh.num_cells(), config.pressure, config.velocity)?
+        }
+    } else {
+        IncompressibleFields::uniform(mesh.num_cells(), config.pressure, config.velocity)?
     };
     fields.validate_len(mesh.num_cells())?;
     Ok(fields)
 }
 
 fn initial_kinetic_energy(
-    case: &CaseSpec,
+    benchmark: Option<KnownIncompressibleBenchmark>,
     mesh: &StructuredMesh3d,
     config: &crate::io::IncompressibleCaseConfig,
     fields: &IncompressibleFields,
 ) -> Option<Real> {
-    (case.benchmark_id.as_deref() == Some("taylor_green_3d"))
-        .then(|| kinetic_energy(mesh, fields, config.density))
+    benchmark
+        .filter(|benchmark| benchmark.tracks_kinetic_energy())
+        .map(|_| kinetic_energy(mesh, fields, config.density))
 }
 
 fn incompressible_solver_config<'a>(
@@ -283,11 +290,12 @@ fn incompressible_solver_config<'a>(
 }
 
 struct IncompressibleBenchmarkCollectContext<'a> {
-    case: &'a CaseSpec,
+    known_benchmark: Option<KnownIncompressibleBenchmark>,
     mesh: &'a StructuredMesh3d,
     config: &'a crate::io::IncompressibleCaseConfig,
-    transient: bool,
+    time_advance: IncompressibleTimeAdvanceKind,
     pseudo_time_step: Real,
+    nondimensional_time: Real,
     diagnostic: &'a IncompressibleSimplecDiagnostic,
     kinetic_energy_initial: Option<Real>,
     kinetic_energy_history: &'a [Real],
@@ -298,30 +306,32 @@ fn collect_incompressible_benchmark_diagnostics(
     written: Vec<PathBuf>,
 ) -> BenchmarkDiagnostics {
     let IncompressibleBenchmarkCollectContext {
-        case,
+        known_benchmark,
         mesh,
         config,
-        transient,
+        time_advance,
         pseudo_time_step,
+        nondimensional_time,
         diagnostic,
         kinetic_energy_initial,
         kinetic_energy_history,
     } = *ctx;
     let centerline_profiles = incompressible_centerline_profiles(
-        case,
+        known_benchmark,
         mesh,
         config.kinematic_viscosity,
         config.body_force,
         &diagnostic.corrected_fields,
     );
     let poiseuille_profile_error = poiseuille_profile_error(
-        case,
+        known_benchmark,
         mesh,
         config.kinematic_viscosity,
         config.body_force,
         &diagnostic.corrected_fields,
     );
-    let lid_cavity_profile_error = lid_cavity_profile_error(case, centerline_profiles.as_ref());
+    let lid_cavity_profile_error =
+        lid_cavity_profile_error(known_benchmark, centerline_profiles.as_ref());
     let kinetic_energy_final = kinetic_energy_initial
         .map(|_| kinetic_energy(mesh, &diagnostic.corrected_fields, config.density));
     let kinetic_energy_decay_ratio =
@@ -334,14 +344,13 @@ fn collect_incompressible_benchmark_diagnostics(
                     0.0
                 }
             });
-    let dt = case.time.dt.unwrap_or(0.0);
-    let nondimensional_time = dt * diagnostic.simplec_iterations as f64;
     let kinetic_energy_analytical_ratio = kinetic_energy_initial.and_then(|_| {
-        transient.then(|| {
+        incompressible_physical_transient(time_advance).then(|| {
             analytical_kinetic_energy_ratio(config.kinematic_viscosity, nondimensional_time)
         })
     });
-    let track_kinetic_energy = case.benchmark_id.as_deref() == Some("taylor_green_3d");
+    let track_kinetic_energy =
+        known_benchmark.is_some_and(KnownIncompressibleBenchmark::tracks_kinetic_energy);
     let (kinetic_energy_decay_rate, kinetic_energy_analytical_decay_rate) =
         taylor_green_decay_rates(
             track_kinetic_energy,
@@ -414,14 +423,17 @@ fn log_incompressible_completion(
     );
 }
 
-fn validate_incompressible_transient_scheme(case: &CaseSpec) -> Result<()> {
-    if case.time.mode != CaseTimeMode::Transient {
+fn validate_incompressible_time_advance_scheme(
+    case: &CaseSpec,
+    time_advance: IncompressibleTimeAdvanceKind,
+) -> Result<()> {
+    if time_advance != IncompressibleTimeAdvanceKind::PhysicalTransient {
         return Ok(());
     }
-    match case.time.scheme {
-        None | Some(TimeIntegrationScheme::Piso) | Some(TimeIntegrationScheme::Bdf1) => Ok(()),
-        Some(other) => Err(AsimuError::Config(format!(
-            "不可压缩瞬态算例 time.scheme 须为 piso 或 bdf1（当前 \"{}\"）",
+    match case.time.resolved_time_scheme() {
+        TimeIntegrationScheme::Piso | TimeIntegrationScheme::Bdf1 => Ok(()),
+        other => Err(AsimuError::Config(format!(
+            "不可压缩物理瞬态算例 time.scheme 须为 piso 或 bdf1（当前 \"{}\"）",
             other.label()
         ))),
     }

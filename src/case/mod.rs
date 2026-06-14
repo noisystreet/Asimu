@@ -2,6 +2,7 @@
 //!
 //! 应用层（`app`）与集成测试共用本模块，避免在 CLI 中重复装配逻辑。
 
+mod benchmark;
 mod compressible_3d;
 mod compressible_unstructured_3d;
 #[cfg(test)]
@@ -14,6 +15,7 @@ mod output_3d;
 mod output_interval;
 mod sod;
 mod taylor_green;
+mod time_advance;
 mod validate;
 
 use std::path::Path;
@@ -125,11 +127,15 @@ fn detect_run_kind(case: &CaseSpec) -> Result<CaseRunKind> {
     }
     if case.incompressible.is_some() {
         case.mesh.as_3d()?;
-        return Ok(if incompressible_3d::incompressible_time_marching(case) {
-            CaseRunKind::Incompressible3dTransient
-        } else {
-            CaseRunKind::Incompressible3dSteady
-        });
+        return Ok(
+            if time_advance::incompressible_physical_transient(
+                time_advance::incompressible_time_advance_kind(case),
+            ) {
+                CaseRunKind::Incompressible3dTransient
+            } else {
+                CaseRunKind::Incompressible3dSteady
+            },
+        );
     }
     case.mesh.as_1d()?;
     if case.time.mode == crate::io::CaseTimeMode::Transient {

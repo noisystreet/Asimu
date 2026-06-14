@@ -2,26 +2,29 @@
 
 use crate::core::Real;
 use crate::field::IncompressibleFields;
-use crate::io::CaseSpec;
 use crate::mesh::StructuredMesh3d;
 
+use super::benchmark::KnownIncompressibleBenchmark;
 use super::incompressible_3d::{
     IncompressibleCenterlineProfileError, IncompressibleCenterlineProfiles,
     IncompressibleLineSample, IncompressibleProfileError,
 };
 
 pub(crate) fn incompressible_centerline_profiles(
-    case: &CaseSpec,
+    benchmark: Option<KnownIncompressibleBenchmark>,
     mesh: &StructuredMesh3d,
     kinematic_viscosity: Real,
     body_force: [Real; 3],
     fields: &IncompressibleFields,
 ) -> Option<IncompressibleCenterlineProfiles> {
-    match case.benchmark_id.as_deref() {
-        Some(id) if id.starts_with("lid_driven_cavity_re100") => {
+    let benchmark = benchmark.filter(|benchmark| benchmark.emits_centerline_profiles());
+    match benchmark {
+        Some(KnownIncompressibleBenchmark::LidDrivenCavityRe100) => {
             Some(lid_cavity_centerline_profiles(mesh, fields))
         }
-        Some("channel_poiseuille") if kinematic_viscosity > 0.0 && body_force[0].abs() > 0.0 => {
+        Some(KnownIncompressibleBenchmark::ChannelPoiseuille)
+            if kinematic_viscosity > 0.0 && body_force[0].abs() > 0.0 =>
+        {
             Some(channel_poiseuille_centerline_profiles(mesh, fields))
         }
         _ => None,
@@ -221,13 +224,13 @@ fn channel_poiseuille_centerline_profiles(
 }
 
 pub(crate) fn poiseuille_profile_error(
-    case: &CaseSpec,
+    benchmark: Option<KnownIncompressibleBenchmark>,
     mesh: &StructuredMesh3d,
     kinematic_viscosity: Real,
     body_force: [Real; 3],
     fields: &IncompressibleFields,
 ) -> Option<IncompressibleProfileError> {
-    if case.benchmark_id.as_deref() != Some("channel_poiseuille")
+    if benchmark != Some(KnownIncompressibleBenchmark::ChannelPoiseuille)
         || kinematic_viscosity <= 0.0
         || body_force[0].abs() <= Real::EPSILON
     {
@@ -258,14 +261,10 @@ pub(crate) fn poiseuille_profile_error(
 }
 
 pub(crate) fn lid_cavity_profile_error(
-    case: &CaseSpec,
+    benchmark: Option<KnownIncompressibleBenchmark>,
     profiles: Option<&IncompressibleCenterlineProfiles>,
 ) -> Option<IncompressibleCenterlineProfileError> {
-    if !case
-        .benchmark_id
-        .as_deref()
-        .is_some_and(|id| id.starts_with("lid_driven_cavity_re100"))
-    {
+    if benchmark != Some(KnownIncompressibleBenchmark::LidDrivenCavityRe100) {
         return None;
     }
     let profiles = profiles?;
