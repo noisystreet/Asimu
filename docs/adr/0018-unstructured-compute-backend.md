@@ -54,7 +54,7 @@ ADR 0016 P3 已引入非结构 typed 驱动（`run_unstructured_typed_with_obser
 | `assemble_inviscid_residual_unstructured` | U2 前保留（单元测试 / `compute_interior_inviscid_face_contribution`） |
 | `EvaluateRhsUnstructured` | U1 后仅测试/文档引用，生产不经由 |
 | `compressible_rhs_unstructured_typed.rs` | U1 删除（与 `DispatchImpl` 重复） |
-| MUSCL f64 桥接 `muscl_f64_params` | U3：梯度/限制器全 `GradientFieldsT<T>` 后删除 |
+| MUSCL f64 桥接 `muscl_f64_params` | **U3 已完成**：`assembly_unstructured_inviscid_f64` 直连 `GradientFieldsT<f64>` |
 
 ## 备选方案
 
@@ -71,7 +71,7 @@ ADR 0016 P3 已引入非结构 typed 驱动（`run_unstructured_typed_with_obser
 | U0 | ADR + `UnstructuredComputeBackend` + case f64 → typed | `make check` |
 | U1 | legacy driver 薄包装；删 `EvaluateRhsUnstructuredTyped` | 非结构 smoke / LU-SGS 测试 |
 | U2 | f64 SIMD 挂接 typed 一阶内面 | `simd-fvm` 下 assembly 测试 |
-| U3 | MUSCL/粘性 f64 桥接收缩（后续 PR） | dual_ellipsoid MUSCL golden |
+| U3 | MUSCL f64 typed 原生装配（删 `muscl_f64_params`）；粘性 f64 桥接收缩（后续 PR） | 单 tet MUSCL freestream；dual_ellipsoid MUSCL golden |
 
 ## 兼容性
 

@@ -57,6 +57,7 @@
 
 ### Changed
 
+- **非结构 f64 MUSCL typed 原生路径**（ADR 0018 U3）：新增 `assembly_unstructured_inviscid_f64`，删除 `muscl_f64_params` / `assemble_boundary_faces_muscl_typed` 桥接；`InviscidMusclAssembly for f64` 与 f32 对称直连重构与 Riemann
 - **Cargo Feature 矩阵与 CI 覆盖**：ARCHITECTURE §8.7 文档化 `parallel-fvm` / `simd-fvm` / I/O features 组合、Makefile/CI 矩阵与已知缺口；同步 `docs/en/ARCHITECTURE.md` 摘要
 - **`parallel-fvm` 默认启用**：`Cargo.toml` `default = ["parallel-fvm"]`；`make check` / CI / pre-commit 含 `io-vtk,parallel-fvm`（dual_ellipsoid trace：475 万内面 / 9 色桶；见 ADR 0011 修订）
 - **IDWLS RHS 单元并行累加**（`parallel-fvm`）：`LsqRhsCellIncidence` + 单元 `rayon` 路径；粘性梯度与二阶线性重构 \(\nabla\rho,\nabla p\) 共用；golden `parallel_idw_lsq_accumulate_matches_face_serial`
