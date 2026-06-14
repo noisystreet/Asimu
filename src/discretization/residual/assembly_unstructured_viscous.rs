@@ -715,7 +715,7 @@ pub(crate) fn prepare_unstructured_viscous_transport(
     }
 }
 
-pub(crate) use boundary::assemble_boundary_faces_typed;
+pub(crate) use boundary::{assemble_boundary_faces_f32, assemble_boundary_faces_typed};
 
 #[cfg(test)]
 #[path = "assembly_unstructured_viscous_tests.rs"]

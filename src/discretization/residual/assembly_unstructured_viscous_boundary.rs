@@ -5,6 +5,10 @@ use crate::discretization::viscous_assembly::{
     ViscousBoundaryFaceKind, ViscousBoundaryFluxParams, accumulate_viscous_boundary,
     accumulate_viscous_boundary_typed, viscous_flux_at_boundary,
 };
+use crate::discretization::viscous_boundary_f32::{
+    ViscousBoundaryFluxParamsF32, primitive_state_f32_from_real, scatter_viscous_boundary_f32,
+    viscous_flux_at_boundary_f32,
+};
 use crate::error::{AsimuError, Result};
 use crate::field::{ConservedResidual, ConservedResidualT, primitive_from_conserved_relaxed};
 
@@ -55,6 +59,44 @@ pub(crate) fn assemble_boundary_faces_typed<T: ComputeFloat>(
             contrib.area,
             contrib.owner_volume,
         )?;
+    }
+    Ok(())
+}
+
+/// f32 非结构粘性边界面装配（通量 compute + scatter 均为 f32）。
+pub(crate) fn assemble_boundary_faces_f32(
+    residual: &mut ConservedResidualT<f32>,
+    face_topology: &crate::discretization::unstructured_face_cache::UnstructuredFaceTopology,
+    ghosts: &crate::discretization::BoundaryGhostBuffer,
+    params: &ViscousBoundaryFluxParamsF32<'_>,
+    min_pressure: crate::core::Real,
+    temperatures: &[f32],
+) -> Result<()> {
+    for face in &face_topology.boundary {
+        if is_degenerate_volume(face.owner_volume) {
+            continue;
+        }
+        let ghost = ghosts.get_face(face.face).ok_or_else(|| {
+            AsimuError::Boundary(format!("边界面 FaceId({}) 缺少 ghost", face.face.index()))
+        })?;
+        let ghost_prim_f64 =
+            primitive_from_conserved_relaxed(params.eos, &ghost.conserved, min_pressure)?;
+        let ghost_prim = primitive_state_f32_from_real(ghost_prim_f64);
+        let kind = face.viscous;
+        let flux = viscous_flux_at_boundary_f32(
+            params,
+            face.owner,
+            ghost_prim,
+            face.normal,
+            face.spacing,
+            ViscousBoundaryFaceKind {
+                is_wall: kind.is_wall,
+                no_slip: kind.no_slip,
+                wall_heat: kind.wall_heat,
+            },
+            temperatures,
+        )?;
+        scatter_viscous_boundary_f32(residual, face.owner, &flux, face.area, face.owner_volume);
     }
     Ok(())
 }

@@ -42,6 +42,7 @@ pub mod unstructured_limiter;
 pub mod van_leer;
 pub mod viscous;
 pub mod viscous_assembly;
+pub mod viscous_boundary_f32;
 pub mod viscous_f32;
 pub mod wall_thermal;
 
