@@ -1,9 +1,8 @@
 //! Roe 近似 Riemann 求解器 f32 热路径（语义对齐 `roe.rs` / CUDA kernel）。
 
-use crate::core::Vector3;
 use crate::discretization::inviscid_f32::{
-    ConservedStateF32, InviscidFluxF32, conserved_from_primitive_f32, face_tangent_basis_f32,
-    normalize_face_normal_f32, physical_inviscid_flux_f32,
+    ConservedStateF32, FaceNormalF32, InviscidFluxF32, conserved_from_primitive_f32,
+    face_tangent_basis_f32, normalize_face_normal_f32, physical_inviscid_flux_f32,
 };
 use crate::discretization::roe::RoeFluxConfig;
 use crate::discretization::viscous_boundary_f32::PrimitiveStateF32;
@@ -14,7 +13,7 @@ use crate::physics::IdealGasEoS;
 pub fn roe_flux_with_primitives_f32(
     prim_l: &PrimitiveStateF32,
     prim_r: &PrimitiveStateF32,
-    normal: Vector3,
+    normal: FaceNormalF32,
     eos: &IdealGasEoS,
     config: &RoeFluxConfig,
 ) -> Result<crate::discretization::inviscid_f32::InviscidFluxF32> {
@@ -68,7 +67,7 @@ fn roe_averages_f32(
     left: &ConservedStateF32,
     right: &ConservedStateF32,
     gamma: f32,
-    normal: Vector3,
+    normal: FaceNormalF32,
 ) -> Result<RoeAveragesF32> {
     let sqrt_dl = prim_l.density.sqrt();
     let sqrt_dr = prim_r.density.sqrt();
@@ -85,9 +84,7 @@ fn roe_averages_f32(
     let gamma_term = (enthalpy - 0.5 * vel2).max(1.0e-6);
     let a = ((gamma - 1.0) * gamma_term).sqrt();
     let rho = sqrt_dl * sqrt_dr;
-    let nx = normal.x as f32;
-    let ny = normal.y as f32;
-    let nz = normal.z as f32;
+    let [nx, ny, nz] = normal;
     let un = velocity[0] * nx + velocity[1] * ny + velocity[2] * nz;
     Ok(RoeAveragesF32 {
         rho,
@@ -102,19 +99,17 @@ fn wave_strengths_f32(
     prim_l: &PrimitiveStateF32,
     prim_r: &PrimitiveStateF32,
     roe: &RoeAveragesF32,
-    normal: Vector3,
-    t1: Vector3,
-    t2: Vector3,
+    normal: FaceNormalF32,
+    t1: FaceNormalF32,
+    t2: FaceNormalF32,
 ) -> Result<WaveStrengthsF32> {
-    let nx = normal.x as f32;
-    let ny = normal.y as f32;
-    let nz = normal.z as f32;
+    let [nx, ny, nz] = normal;
     let un_l = dot3_f32(prim_l.velocity, [nx, ny, nz]);
     let un_r = dot3_f32(prim_r.velocity, [nx, ny, nz]);
-    let ut1_l = dot3_f32(prim_l.velocity, [t1.x as f32, t1.y as f32, t1.z as f32]);
-    let ut1_r = dot3_f32(prim_r.velocity, [t1.x as f32, t1.y as f32, t1.z as f32]);
-    let ut2_l = dot3_f32(prim_l.velocity, [t2.x as f32, t2.y as f32, t2.z as f32]);
-    let ut2_r = dot3_f32(prim_r.velocity, [t2.x as f32, t2.y as f32, t2.z as f32]);
+    let ut1_l = dot3_f32(prim_l.velocity, t1);
+    let ut1_r = dot3_f32(prim_r.velocity, t1);
+    let ut2_l = dot3_f32(prim_l.velocity, t2);
+    let ut2_r = dot3_f32(prim_r.velocity, t2);
     let dp = prim_r.pressure - prim_l.pressure;
     let drho = prim_r.density - prim_l.density;
     let dun = un_r - un_l;
@@ -163,9 +158,9 @@ struct RoeDissipationCoeffsF32 {
 }
 
 fn dissipation_vector_f32(
-    normal: Vector3,
-    t1: Vector3,
-    t2: Vector3,
+    normal: FaceNormalF32,
+    t1: FaceNormalF32,
+    t2: FaceNormalF32,
     roe: &RoeAveragesF32,
     waves: &WaveStrengthsF32,
     coeffs: RoeDissipationCoeffsF32,
@@ -175,9 +170,9 @@ fn dissipation_vector_f32(
     let h = roe.enthalpy;
     let a = roe.a;
     let un = roe.un;
-    let n = [normal.x as f32, normal.y as f32, normal.z as f32];
-    let t1v = [t1.x as f32, t1.y as f32, t1.z as f32];
-    let t2v = [t2.x as f32, t2.y as f32, t2.z as f32];
+    let n = normal;
+    let t1v = t1;
+    let t2v = t2;
 
     let mut diss = scale_eigenvector_f32(
         &eigenvector_acoustic_f32(u, h, a, un, n, -1.0),
@@ -282,7 +277,7 @@ fn dot3_f32(v: [f32; 3], n: [f32; 3]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{Real, approx_eq};
+    use crate::core::{Real, Vector3, approx_eq};
     use crate::discretization::roe::roe_flux_with_primitives;
     use crate::discretization::viscous_boundary_f32::primitive_state_f32_from_real;
     use crate::physics::{ConservedState, PrimitiveState};
@@ -304,10 +299,11 @@ mod tests {
         };
         let cons_l = ConservedState::from_primitive(&eos, &left).expect("left");
         let cons_r = ConservedState::from_primitive(&eos, &right).expect("right");
-        let normal = Vector3::new(1.0, 0.0, 0.0);
+        let normal_f64 = Vector3::new(1.0, 0.0, 0.0);
+        let normal = [1.0_f32, 0.0, 0.0];
         let config = RoeFluxConfig::default();
         let f64_flux =
-            roe_flux_with_primitives(&cons_l, &cons_r, &left, &right, normal, &eos, &config)
+            roe_flux_with_primitives(&cons_l, &cons_r, &left, &right, normal_f64, &eos, &config)
                 .expect("f64");
         let f32_flux = roe_flux_with_primitives_f32(
             &primitive_state_f32_from_real(left),

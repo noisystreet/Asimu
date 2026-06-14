@@ -1,8 +1,7 @@
 //! HLLC 近似 Riemann 求解器 f32 热路径（语义对齐 `hllc.rs`）。
 
-use crate::core::Vector3;
 use crate::discretization::inviscid_f32::{
-    InviscidFluxF32, conserved_from_primitive_f32, face_tangent_basis_f32,
+    FaceNormalF32, InviscidFluxF32, conserved_from_primitive_f32, face_tangent_basis_f32,
     normalize_face_normal_f32,
 };
 use crate::discretization::viscous_boundary_f32::PrimitiveStateF32;
@@ -13,7 +12,7 @@ use crate::physics::IdealGasEoS;
 pub fn hllc_flux_with_primitives_f32(
     prim_l: &PrimitiveStateF32,
     prim_r: &PrimitiveStateF32,
-    normal: Vector3,
+    normal: FaceNormalF32,
     eos: &IdealGasEoS,
 ) -> Result<InviscidFluxF32> {
     let n = normalize_face_normal_f32(normal)?;
@@ -52,21 +51,15 @@ struct FaceConservedF32 {
 
 fn to_face_frame_f32(
     prim: &PrimitiveStateF32,
-    normal: Vector3,
-    t1: Vector3,
-    t2: Vector3,
+    normal: FaceNormalF32,
+    t1: FaceNormalF32,
+    t2: FaceNormalF32,
     eos: &IdealGasEoS,
 ) -> Result<FaceFrameStateF32> {
     let cons = conserved_from_primitive_f32(eos, prim)?;
-    let nx = normal.x as f32;
-    let ny = normal.y as f32;
-    let nz = normal.z as f32;
-    let t1x = t1.x as f32;
-    let t1y = t1.y as f32;
-    let t1z = t1.z as f32;
-    let t2x = t2.x as f32;
-    let t2y = t2.y as f32;
-    let t2z = t2.z as f32;
+    let [nx, ny, nz] = normal;
+    let [t1x, t1y, t1z] = t1;
+    let [t2x, t2y, t2z] = t2;
     let rho = prim.density;
     let u = prim.velocity;
     let un = u[0] * nx + u[1] * ny + u[2] * nz;
@@ -291,19 +284,13 @@ fn add_fluxes_f32(base: FaceFrameFluxF32, correction: FaceConservedF32) -> FaceF
 
 fn to_global_flux_f32(
     face: FaceFrameFluxF32,
-    normal: Vector3,
-    t1: Vector3,
-    t2: Vector3,
+    normal: FaceNormalF32,
+    t1: FaceNormalF32,
+    t2: FaceNormalF32,
 ) -> crate::discretization::inviscid_f32::InviscidFluxF32 {
-    let nx = normal.x as f32;
-    let ny = normal.y as f32;
-    let nz = normal.z as f32;
-    let t1x = t1.x as f32;
-    let t1y = t1.y as f32;
-    let t1z = t1.z as f32;
-    let t2x = t2.x as f32;
-    let t2y = t2.y as f32;
-    let t2z = t2.z as f32;
+    let [nx, ny, nz] = normal;
+    let [t1x, t1y, t1z] = t1;
+    let [t2x, t2y, t2z] = t2;
     crate::discretization::inviscid_f32::InviscidFluxF32 {
         mass: face.mass,
         momentum: [
@@ -324,7 +311,7 @@ fn to_global_flux_f32(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{Real, approx_eq};
+    use crate::core::{Real, Vector3, approx_eq};
     use crate::discretization::hllc::hllc_flux_with_primitives;
     use crate::discretization::viscous_boundary_f32::primitive_state_f32_from_real;
     use crate::physics::{ConservedState, PrimitiveState};
@@ -346,9 +333,10 @@ mod tests {
         };
         let cons_l = ConservedState::from_primitive(&eos, &left).expect("left");
         let cons_r = ConservedState::from_primitive(&eos, &right).expect("right");
-        let normal = Vector3::new(1.0, 0.0, 0.0);
-        let f64_flux =
-            hllc_flux_with_primitives(&cons_l, &cons_r, &left, &right, normal, &eos).expect("f64");
+        let normal_f64 = Vector3::new(1.0, 0.0, 0.0);
+        let normal = [1.0_f32, 0.0, 0.0];
+        let f64_flux = hllc_flux_with_primitives(&cons_l, &cons_r, &left, &right, normal_f64, &eos)
+            .expect("f64");
         let f32_flux = hllc_flux_with_primitives_f32(
             &primitive_state_f32_from_real(left),
             &primitive_state_f32_from_real(right),

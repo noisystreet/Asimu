@@ -14,7 +14,6 @@ use crate::discretization::reconstruction_unstructured_f32::{
 };
 use crate::discretization::unstructured_face_cache::UnstructuredFaceTopology;
 use crate::discretization::unstructured_face_cache_f32::UnstructuredInteriorFaceF32;
-use crate::discretization::vec3_from_f32;
 use crate::error::{AsimuError, Result};
 use crate::exec::scatter::{
     InviscidPairScatterF32, InviscidResidualMutF32, InviscidScatterOpF32,
@@ -156,12 +155,8 @@ fn compute_interior_inviscid_face_contribution_f32(
         gradients.inviscid_primitive_grad_at(face.owner),
         gradients.inviscid_primitive_grad_at(face.neighbor),
     )?;
-    let flux = face_inviscid_flux_from_interface_f32(
-        iface_f32,
-        vec3_from_f32(face.normal),
-        params.eos,
-        params.config,
-    )?;
+    let flux =
+        face_inviscid_flux_from_interface_f32(iface_f32, face.normal, params.eos, params.config)?;
     Ok(Some((
         InteriorInviscidScatterGeomF32 {
             owner: face.owner,
@@ -199,7 +194,7 @@ fn assemble_boundary_faces_muscl_f32(
         )?;
         let flux = face_inviscid_flux_from_interface_f32(
             iface_f32,
-            vec3_from_f32(bface.normal),
+            bface.normal,
             params.eos,
             params.config,
         )?;

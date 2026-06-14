@@ -6,7 +6,9 @@ use crate::discretization::face_flux::{FaceFluxInput, face_inviscid_flux};
 use crate::discretization::flux_config::{FluxScheme, InviscidFluxConfig};
 use crate::discretization::hllc_f32::hllc_flux_with_primitives_f32;
 use crate::discretization::inviscid::InviscidFlux;
-use crate::discretization::inviscid_f32::{InviscidFluxF32, inviscid_flux_f32_to_real};
+use crate::discretization::inviscid_f32::{
+    FaceNormalF32, InviscidFluxF32, inviscid_flux_f32_to_real,
+};
 use crate::discretization::reconstruction_unstructured_f32::InterfacePrimitiveStatesF32;
 use crate::discretization::roe_f32::roe_flux_with_primitives_f32;
 use crate::discretization::slau2_f32::slau2_flux_with_primitives_f32;
@@ -54,8 +56,9 @@ impl InviscidFaceFluxTyped for f32 {
     ) -> Result<InviscidFlux> {
         let prim_l = primitive_lane_f32(primitives, owner);
         let prim_r = primitive_lane_f32(primitives, neighbor);
+        let n = face_normal_f32_from_vec3(normal);
         Ok(inviscid_flux_f32_to_real(
-            dispatch_inviscid_flux_primitives_f32(&prim_l, &prim_r, normal, eos, config)?,
+            dispatch_inviscid_flux_primitives_f32(&prim_l, &prim_r, n, eos, config)?,
         ))
     }
 
@@ -71,8 +74,9 @@ impl InviscidFaceFluxTyped for f32 {
         let prim_l = primitive_lane_f32(primitives, owner);
         let prim_r =
             primitive_from_conserved_relaxed_f32_from_state(eos, &ghost.conserved, min_pressure)?;
+        let n = face_normal_f32_from_vec3(normal);
         Ok(inviscid_flux_f32_to_real(
-            dispatch_inviscid_flux_primitives_f32(&prim_l, &prim_r, normal, eos, config)?,
+            dispatch_inviscid_flux_primitives_f32(&prim_l, &prim_r, n, eos, config)?,
         ))
     }
 }
@@ -119,7 +123,7 @@ impl InviscidFaceFluxTyped for f64 {
 /// f32 界面原始变量数值通量（非结构 MUSCL / 边界面）。
 pub fn face_inviscid_flux_from_interface_f32(
     iface: InterfacePrimitiveStatesF32,
-    normal: Vector3,
+    normal: FaceNormalF32,
     eos: &IdealGasEoS,
     config: &InviscidFluxConfig,
 ) -> Result<InviscidFluxF32> {
@@ -131,7 +135,7 @@ pub fn face_inviscid_flux_first_order_interior_soa_f32(
     owner: usize,
     neighbor: usize,
     primitives: &PrimitiveFieldsT<f32>,
-    normal: Vector3,
+    normal: FaceNormalF32,
     eos: &IdealGasEoS,
     config: &InviscidFluxConfig,
 ) -> Result<InviscidFluxF32> {
@@ -145,7 +149,7 @@ pub fn face_inviscid_flux_first_order_boundary_soa_f32(
     primitives: &PrimitiveFieldsT<f32>,
     owner: usize,
     ghost: &crate::discretization::GhostCellState,
-    normal: Vector3,
+    normal: FaceNormalF32,
     eos: &IdealGasEoS,
     config: &InviscidFluxConfig,
     min_pressure: Real,
@@ -159,7 +163,7 @@ pub fn face_inviscid_flux_first_order_boundary_soa_f32(
 pub(crate) fn dispatch_inviscid_flux_primitives_f32(
     prim_l: &PrimitiveStateF32,
     prim_r: &PrimitiveStateF32,
-    normal: Vector3,
+    normal: FaceNormalF32,
     eos: &IdealGasEoS,
     config: &InviscidFluxConfig,
 ) -> Result<InviscidFluxF32> {
@@ -174,6 +178,11 @@ pub(crate) fn dispatch_inviscid_flux_primitives_f32(
         }
         FluxScheme::Slau2 => slau2_flux_with_primitives_f32(prim_l, prim_r, normal, eos),
     }
+}
+
+#[inline]
+fn face_normal_f32_from_vec3(normal: Vector3) -> FaceNormalF32 {
+    [normal.x as f32, normal.y as f32, normal.z as f32]
 }
 
 #[inline]
@@ -216,11 +225,12 @@ mod tests {
             pressure: 0.1,
             temperature: 1.0,
         };
-        let normal = Vector3::new(1.0, 0.0, 0.0);
+        let normal_f64 = Vector3::new(1.0, 0.0, 0.0);
+        let normal = [1.0_f32, 0.0, 0.0];
         let config = InviscidFluxConfig::muscl_hllc();
         let f64_flux = face_inviscid_flux_from_interface(
             InterfacePrimitiveStates { left, right },
-            normal,
+            normal_f64,
             &eos,
             &config,
         )
@@ -254,11 +264,12 @@ mod tests {
             pressure: 0.95,
             temperature: 1.0,
         };
-        let normal = Vector3::new(1.0, 0.0, 0.0);
+        let normal_f64 = Vector3::new(1.0, 0.0, 0.0);
+        let normal = [1.0_f32, 0.0, 0.0];
         let config = InviscidFluxConfig::hanel_van_leer_first_order();
         let cons_l = ConservedState::from_primitive(&eos, &left).expect("left");
         let cons_r = ConservedState::from_primitive(&eos, &right).expect("right");
-        let f64_flux = hanel_van_leer_flux(&cons_l, &cons_r, normal, &eos).expect("f64");
+        let f64_flux = hanel_van_leer_flux(&cons_l, &cons_r, normal_f64, &eos).expect("f64");
         let f32_flux = face_inviscid_flux_from_interface_f32(
             InterfacePrimitiveStatesF32 {
                 left: primitive_state_f32_from_real(left),
@@ -288,11 +299,12 @@ mod tests {
             pressure: 0.95,
             temperature: 1.0,
         };
-        let normal = Vector3::new(1.0, 0.0, 0.0);
+        let normal_f64 = Vector3::new(1.0, 0.0, 0.0);
+        let normal = [1.0_f32, 0.0, 0.0];
         let config = InviscidFluxConfig::van_leer_first_order();
         let cons_l = ConservedState::from_primitive(&eos, &left).expect("left");
         let cons_r = ConservedState::from_primitive(&eos, &right).expect("right");
-        let f64_flux = van_leer_flux(&cons_l, &cons_r, normal, &eos).expect("f64");
+        let f64_flux = van_leer_flux(&cons_l, &cons_r, normal_f64, &eos).expect("f64");
         let f32_flux = face_inviscid_flux_from_interface_f32(
             InterfacePrimitiveStatesF32 {
                 left: primitive_state_f32_from_real(left),
@@ -322,11 +334,12 @@ mod tests {
             pressure: 0.95,
             temperature: 1.0,
         };
-        let normal = Vector3::new(1.0, 0.0, 0.0);
+        let normal_f64 = Vector3::new(1.0, 0.0, 0.0);
+        let normal = [1.0_f32, 0.0, 0.0];
         let config = InviscidFluxConfig::muscl_slau2();
         let cons_l = ConservedState::from_primitive(&eos, &left).expect("left");
         let cons_r = ConservedState::from_primitive(&eos, &right).expect("right");
-        let f64_flux = slau2_flux(&cons_l, &cons_r, normal, &eos).expect("f64");
+        let f64_flux = slau2_flux(&cons_l, &cons_r, normal_f64, &eos).expect("f64");
         let f32_flux = face_inviscid_flux_from_interface_f32(
             InterfacePrimitiveStatesF32 {
                 left: primitive_state_f32_from_real(left),

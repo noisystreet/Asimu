@@ -1,8 +1,7 @@
 //! Van Leer / Hanel FVS f32 热路径（语义对齐 `van_leer.rs` / CUDA HVL kernel）。
 
-use crate::core::Vector3;
 use crate::discretization::inviscid_f32::{
-    InviscidFluxF32, face_tangent_basis_f32, normalize_face_normal_f32,
+    FaceNormalF32, InviscidFluxF32, face_tangent_basis_f32, normalize_face_normal_f32,
 };
 use crate::discretization::viscous_boundary_f32::PrimitiveStateF32;
 use crate::error::{AsimuError, Result};
@@ -18,7 +17,7 @@ enum EnergyFluxSplitF32 {
 pub fn van_leer_flux_with_primitives_f32(
     prim_l: &PrimitiveStateF32,
     prim_r: &PrimitiveStateF32,
-    normal: Vector3,
+    normal: FaceNormalF32,
     eos: &IdealGasEoS,
 ) -> Result<InviscidFluxF32> {
     fvs_flux_with_primitives_f32(prim_l, prim_r, normal, eos, EnergyFluxSplitF32::VanLeer)
@@ -28,7 +27,7 @@ pub fn van_leer_flux_with_primitives_f32(
 pub fn hanel_van_leer_flux_with_primitives_f32(
     prim_l: &PrimitiveStateF32,
     prim_r: &PrimitiveStateF32,
-    normal: Vector3,
+    normal: FaceNormalF32,
     eos: &IdealGasEoS,
 ) -> Result<InviscidFluxF32> {
     fvs_flux_with_primitives_f32(prim_l, prim_r, normal, eos, EnergyFluxSplitF32::Hanel)
@@ -37,7 +36,7 @@ pub fn hanel_van_leer_flux_with_primitives_f32(
 fn fvs_flux_with_primitives_f32(
     prim_l: &PrimitiveStateF32,
     prim_r: &PrimitiveStateF32,
-    normal: Vector3,
+    normal: FaceNormalF32,
     eos: &IdealGasEoS,
     energy_split: EnergyFluxSplitF32,
 ) -> Result<InviscidFluxF32> {
@@ -74,24 +73,18 @@ struct FaceFrameFluxF32 {
 fn face_frame_from_primitive_f32(
     prim: &PrimitiveStateF32,
     gamma: f32,
-    normal: Vector3,
-    t1: Vector3,
-    t2: Vector3,
+    normal: FaceNormalF32,
+    t1: FaceNormalF32,
+    t2: FaceNormalF32,
 ) -> Result<FaceFrameStateF32> {
     if prim.density <= 0.0 || prim.pressure <= 0.0 {
         return Err(AsimuError::Field(
             "Van Leer f32 状态须为正密度与压力".to_string(),
         ));
     }
-    let nx = normal.x as f32;
-    let ny = normal.y as f32;
-    let nz = normal.z as f32;
-    let t1x = t1.x as f32;
-    let t1y = t1.y as f32;
-    let t1z = t1.z as f32;
-    let t2x = t2.x as f32;
-    let t2y = t2.y as f32;
-    let t2z = t2.z as f32;
+    let [nx, ny, nz] = normal;
+    let [t1x, t1y, t1z] = t1;
+    let [t2x, t2y, t2z] = t2;
     let rho = prim.density;
     let u = prim.velocity;
     let un = u[0] * nx + u[1] * ny + u[2] * nz;
@@ -210,19 +203,13 @@ fn add_face_fluxes_f32(left: FaceFrameFluxF32, right: FaceFrameFluxF32) -> FaceF
 
 fn to_global_flux_f32(
     face: FaceFrameFluxF32,
-    normal: Vector3,
-    t1: Vector3,
-    t2: Vector3,
+    normal: FaceNormalF32,
+    t1: FaceNormalF32,
+    t2: FaceNormalF32,
 ) -> crate::discretization::inviscid_f32::InviscidFluxF32 {
-    let nx = normal.x as f32;
-    let ny = normal.y as f32;
-    let nz = normal.z as f32;
-    let t1x = t1.x as f32;
-    let t1y = t1.y as f32;
-    let t1z = t1.z as f32;
-    let t2x = t2.x as f32;
-    let t2y = t2.y as f32;
-    let t2z = t2.z as f32;
+    let [nx, ny, nz] = normal;
+    let [t1x, t1y, t1z] = t1;
+    let [t2x, t2y, t2z] = t2;
     crate::discretization::inviscid_f32::InviscidFluxF32 {
         mass: face.mass,
         momentum: [
@@ -243,7 +230,7 @@ fn to_global_flux_f32(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{Real, approx_eq};
+    use crate::core::{Real, Vector3, approx_eq};
     use crate::discretization::van_leer::{hanel_van_leer_flux, van_leer_flux};
     use crate::discretization::viscous_boundary_f32::primitive_state_f32_from_real;
     use crate::physics::{ConservedState, PrimitiveState};
@@ -266,8 +253,9 @@ mod tests {
         let (left, right) = freestream_pair();
         let cons_l = ConservedState::from_primitive(&eos, &left).expect("left");
         let cons_r = ConservedState::from_primitive(&eos, &right).expect("right");
-        let normal = Vector3::new(0.6, 0.8, 0.0);
-        let f64_flux = van_leer_flux(&cons_l, &cons_r, normal, &eos).expect("f64");
+        let normal_f64 = Vector3::new(0.6, 0.8, 0.0);
+        let normal = [0.6_f32, 0.8, 0.0];
+        let f64_flux = van_leer_flux(&cons_l, &cons_r, normal_f64, &eos).expect("f64");
         let f32_flux = van_leer_flux_with_primitives_f32(
             &primitive_state_f32_from_real(left),
             &primitive_state_f32_from_real(right),
@@ -285,8 +273,9 @@ mod tests {
         let (left, right) = freestream_pair();
         let cons_l = ConservedState::from_primitive(&eos, &left).expect("left");
         let cons_r = ConservedState::from_primitive(&eos, &right).expect("right");
-        let normal = Vector3::new(0.6, 0.8, 0.0);
-        let f64_flux = hanel_van_leer_flux(&cons_l, &cons_r, normal, &eos).expect("f64");
+        let normal_f64 = Vector3::new(0.6, 0.8, 0.0);
+        let normal = [0.6_f32, 0.8, 0.0];
+        let f64_flux = hanel_van_leer_flux(&cons_l, &cons_r, normal_f64, &eos).expect("f64");
         let f32_flux = hanel_van_leer_flux_with_primitives_f32(
             &primitive_state_f32_from_real(left),
             &primitive_state_f32_from_real(right),

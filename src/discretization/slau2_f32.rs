@@ -2,9 +2,8 @@
 //!
 //! 参考：Shima & Kitamura, AIAA J. 49 (2011)；Kitamura & Shima, J. Comput. Phys. 245 (2013)。
 
-use crate::core::Vector3;
 use crate::discretization::inviscid_f32::{
-    InviscidFluxF32, face_tangent_basis_f32, normalize_face_normal_f32,
+    FaceNormalF32, InviscidFluxF32, face_tangent_basis_f32, normalize_face_normal_f32,
 };
 use crate::discretization::viscous_boundary_f32::PrimitiveStateF32;
 use crate::error::{AsimuError, Result};
@@ -14,7 +13,7 @@ use crate::physics::IdealGasEoS;
 pub fn slau2_flux_with_primitives_f32(
     prim_l: &PrimitiveStateF32,
     prim_r: &PrimitiveStateF32,
-    normal: Vector3,
+    normal: FaceNormalF32,
     eos: &IdealGasEoS,
 ) -> Result<InviscidFluxF32> {
     let n = normalize_face_normal_f32(normal)?;
@@ -46,24 +45,18 @@ struct FaceFrameFluxF32 {
 
 fn face_frame_from_primitive_f32(
     prim: &PrimitiveStateF32,
-    normal: Vector3,
-    t1: Vector3,
-    t2: Vector3,
+    normal: FaceNormalF32,
+    t1: FaceNormalF32,
+    t2: FaceNormalF32,
 ) -> Result<FaceFrameStateF32> {
     if prim.density <= 0.0 || prim.pressure <= 0.0 {
         return Err(AsimuError::Field(
             "SLAU2 f32 状态须为正密度与压力".to_string(),
         ));
     }
-    let nx = normal.x as f32;
-    let ny = normal.y as f32;
-    let nz = normal.z as f32;
-    let t1x = t1.x as f32;
-    let t1y = t1.y as f32;
-    let t1z = t1.z as f32;
-    let t2x = t2.x as f32;
-    let t2y = t2.y as f32;
-    let t2z = t2.z as f32;
+    let [nx, ny, nz] = normal;
+    let [t1x, t1y, t1z] = t1;
+    let [t2x, t2y, t2z] = t2;
     let u = prim.velocity;
     Ok(FaceFrameStateF32 {
         rho: prim.density,
@@ -185,19 +178,13 @@ fn slau2_face_flux_f32(
 
 fn to_global_flux_f32(
     face: FaceFrameFluxF32,
-    normal: Vector3,
-    t1: Vector3,
-    t2: Vector3,
+    normal: FaceNormalF32,
+    t1: FaceNormalF32,
+    t2: FaceNormalF32,
 ) -> crate::discretization::inviscid_f32::InviscidFluxF32 {
-    let nx = normal.x as f32;
-    let ny = normal.y as f32;
-    let nz = normal.z as f32;
-    let t1x = t1.x as f32;
-    let t1y = t1.y as f32;
-    let t1z = t1.z as f32;
-    let t2x = t2.x as f32;
-    let t2y = t2.y as f32;
-    let t2z = t2.z as f32;
+    let [nx, ny, nz] = normal;
+    let [t1x, t1y, t1z] = t1;
+    let [t2x, t2y, t2z] = t2;
     crate::discretization::inviscid_f32::InviscidFluxF32 {
         mass: face.mass,
         momentum: [
@@ -218,7 +205,7 @@ fn to_global_flux_f32(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{Real, approx_eq};
+    use crate::core::{Real, Vector3, approx_eq};
     use crate::discretization::slau2::slau2_flux;
     use crate::discretization::viscous_boundary_f32::primitive_state_f32_from_real;
     use crate::physics::{ConservedState, PrimitiveState};
@@ -240,8 +227,9 @@ mod tests {
         };
         let cons_l = ConservedState::from_primitive(&eos, &left).expect("left");
         let cons_r = ConservedState::from_primitive(&eos, &right).expect("right");
-        let normal = Vector3::new(1.0, 0.0, 0.0);
-        let f64_flux = slau2_flux(&cons_l, &cons_r, normal, &eos).expect("f64");
+        let normal_f64 = Vector3::new(1.0, 0.0, 0.0);
+        let normal = [1.0_f32, 0.0, 0.0];
+        let f64_flux = slau2_flux(&cons_l, &cons_r, normal_f64, &eos).expect("f64");
         let f32_flux = slau2_flux_with_primitives_f32(
             &primitive_state_f32_from_real(left),
             &primitive_state_f32_from_real(right),
@@ -256,13 +244,14 @@ mod tests {
     #[test]
     fn uniform_states_match_f64_slau2_f32() {
         let eos = IdealGasEoS::AIR_STANDARD;
-        let n = Vector3::new(1.0, 0.0, 0.0);
+        let n_f64 = Vector3::new(1.0, 0.0, 0.0);
+        let n = [1.0_f32, 0.0, 0.0];
         for mach in [0.0_f64, 0.5, 2.0] {
             let prim = eos
                 .freestream_primitive(mach, 1.0, 1.0, [1.0, 0.0, 0.0])
                 .expect("prim");
             let cons = ConservedState::from_primitive(&eos, &prim).expect("cons");
-            let f64_flux = slau2_flux(&cons, &cons, n, &eos).expect("f64");
+            let f64_flux = slau2_flux(&cons, &cons, n_f64, &eos).expect("f64");
             let f32_flux = slau2_flux_with_primitives_f32(
                 &primitive_state_f32_from_real(prim),
                 &primitive_state_f32_from_real(prim),
@@ -293,7 +282,7 @@ mod tests {
         let flux = slau2_flux_with_primitives_f32(
             &primitive_state_f32_from_real(left_prim),
             &primitive_state_f32_from_real(right_prim),
-            Vector3::new(1.0, 0.0, 0.0),
+            [1.0_f32, 0.0, 0.0],
             &eos,
         )
         .expect("flux");

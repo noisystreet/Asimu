@@ -14,7 +14,6 @@ use crate::discretization::inviscid_f32::{
 use crate::discretization::residual::is_degenerate_volume_f32;
 use crate::discretization::unstructured_face_cache::UnstructuredFaceTopology;
 use crate::discretization::unstructured_face_cache_f32::UnstructuredInteriorFaceF32;
-use crate::discretization::vec3_from_f32;
 use crate::error::{AsimuError, Result};
 use crate::exec::scatter::{
     InviscidPairScatterF32, InviscidResidualMutF32, InviscidScatterOpF32,
@@ -121,7 +120,7 @@ fn compute_interior_first_order_face_contribution_f32(
         face.owner,
         face.neighbor,
         params.primitives,
-        vec3_from_f32(face.normal),
+        face.normal,
         params.eos,
         params.config,
     )?;
@@ -157,7 +156,7 @@ pub(super) fn assemble_boundary_faces_first_order_f32(
             params.primitives,
             bface.owner,
             &ghost,
-            vec3_from_f32(bface.normal),
+            bface.normal,
             params.eos,
             params.config,
             params.min_pressure,

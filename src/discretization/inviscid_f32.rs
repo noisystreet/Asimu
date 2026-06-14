@@ -1,11 +1,14 @@
 //! f32 无粘物理通量、scatter 与守恒态辅助。
 
-use crate::core::{Real, Vector3};
+use crate::core::Real;
 use crate::discretization::inviscid::InviscidFlux;
 use crate::discretization::viscous_boundary_f32::PrimitiveStateF32;
 use crate::error::{AsimuError, Result};
 use crate::field::ConservedResidualT;
 use crate::physics::IdealGasEoS;
+
+/// f32 面法向（单位向量，与 `face_topology_f32` 预打包一致）。
+pub type FaceNormalF32 = [f32; 3];
 
 /// f32 守恒态（面通量局部）。
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -113,11 +116,9 @@ pub(crate) fn conserved_from_primitive_f32(
 pub(crate) fn physical_inviscid_flux_f32(
     cons: &ConservedStateF32,
     prim: &PrimitiveStateF32,
-    normal: Vector3,
+    normal: FaceNormalF32,
 ) -> InviscidFluxF32 {
-    let nx = normal.x as f32;
-    let ny = normal.y as f32;
-    let nz = normal.z as f32;
+    let [nx, ny, nz] = normal;
     let un = prim.velocity[0] * nx + prim.velocity[1] * ny + prim.velocity[2] * nz;
     let p = prim.pressure;
     let rho = prim.density;
@@ -134,20 +135,20 @@ pub(crate) fn physical_inviscid_flux_f32(
 }
 
 #[inline]
-pub(crate) fn normalize_face_normal_f32(normal: Vector3) -> Result<Vector3> {
-    let mag = (normal.x * normal.x + normal.y * normal.y + normal.z * normal.z).sqrt();
-    if mag < Real::EPSILON {
+pub(crate) fn normalize_face_normal_f32(normal: FaceNormalF32) -> Result<FaceNormalF32> {
+    let mag = (normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]).sqrt();
+    if mag < f32::EPSILON {
         return Err(AsimuError::Mesh("面法向不能为零向量".to_string()));
     }
-    Ok(Vector3::new(normal.x / mag, normal.y / mag, normal.z / mag))
+    Ok([normal[0] / mag, normal[1] / mag, normal[2] / mag])
 }
 
 #[must_use]
-pub(crate) fn face_tangent_basis_f32(normal: Vector3) -> (Vector3, Vector3) {
-    let reference = if normal.x.abs() < 0.9 {
-        Vector3::new(1.0, 0.0, 0.0)
+pub(crate) fn face_tangent_basis_f32(normal: FaceNormalF32) -> (FaceNormalF32, FaceNormalF32) {
+    let reference = if normal[0].abs() < 0.9 {
+        [1.0, 0.0, 0.0]
     } else {
-        Vector3::new(0.0, 1.0, 0.0)
+        [0.0, 1.0, 0.0]
     };
     let t1 = cross_f32(normal, reference);
     let t1 = normalize_unchecked_f32(t1);
@@ -155,15 +156,15 @@ pub(crate) fn face_tangent_basis_f32(normal: Vector3) -> (Vector3, Vector3) {
     (t1, normalize_unchecked_f32(t2))
 }
 
-fn cross_f32(a: Vector3, b: Vector3) -> Vector3 {
-    Vector3::new(
-        a.y * b.z - a.z * b.y,
-        a.z * b.x - a.x * b.z,
-        a.x * b.y - a.y * b.x,
-    )
+fn cross_f32(a: FaceNormalF32, b: FaceNormalF32) -> FaceNormalF32 {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
 }
 
-fn normalize_unchecked_f32(v: Vector3) -> Vector3 {
-    let mag = (v.x * v.x + v.y * v.y + v.z * v.z).sqrt();
-    Vector3::new(v.x / mag, v.y / mag, v.z / mag)
+fn normalize_unchecked_f32(v: FaceNormalF32) -> FaceNormalF32 {
+    let mag = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    [v[0] / mag, v[1] / mag, v[2] / mag]
 }
