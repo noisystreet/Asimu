@@ -14,6 +14,7 @@
 | `unstructured_cuda_freestream/` | v1.3 | CUDA G1：f32 非结构一阶 Roe device kernel 端到端 smoke |
 | `channel_poiseuille/` | v0.3 | 不可压缩通道流 smoke V&V 骨架 |
 | `lid_driven_cavity_re100/` | v0.4 | 不可压缩 Re=100 顶盖方腔（16×16 稳态 SIMPLEC + Ghia V&V） |
+| `taylor_green_3d/` | v0.3 I3 | 不可压缩 Taylor–Green 瞬态 PISO/BDF1 动能衰减 smoke |
 | `1d_advection_diffusion/` | v0.2 | 规划 |
 
 运行 benchmark 时，`RunManifest.benchmark_id` 应设为对应 ID（见 [OBSERVABILITY.md](../../docs/OBSERVABILITY.md)）。

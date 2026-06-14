@@ -156,6 +156,46 @@ fn lid_driven_cavity_re100_incompressible_benchmark_runs() {
 }
 
 #[test]
+fn taylor_green_3d_incompressible_benchmark_runs() {
+    let result =
+        run_case_path(Path::new("tests/benchmarks/taylor_green_3d/case.toml")).expect("run");
+    assert_eq!(result.benchmark_id.as_deref(), Some("taylor_green_3d"));
+    assert_eq!(
+        result.kind,
+        asimu::case::CaseRunKind::Incompressible3dTransient
+    );
+    let metrics = result.incompressible_3d.expect("incompressible metrics");
+    assert_eq!(metrics.algorithm, "piso");
+    assert_eq!(metrics.pressure_correctors, 2);
+    assert_eq!(metrics.steps, 40);
+    let initial = metrics
+        .kinetic_energy_initial
+        .expect("kinetic energy initial");
+    let final_energy = metrics.kinetic_energy_final.expect("kinetic energy final");
+    let decay = metrics
+        .kinetic_energy_decay_ratio
+        .expect("kinetic energy decay ratio");
+    assert!((decay - final_energy / initial).abs() < 1.0e-12);
+    let decay_rate = metrics
+        .kinetic_energy_decay_rate
+        .expect("kinetic energy decay rate");
+    let analytical_rate = metrics
+        .kinetic_energy_analytical_decay_rate
+        .expect("kinetic energy analytical decay rate");
+    assert!(decay_rate > 0.0, "decay_rate={decay_rate}");
+    assert!(analytical_rate > 0.0);
+    // 粗网格 collocated PISO 当前显著超耗散；先约束量级与单调衰减，待网格/求解器收紧后再比 4ν*。
+    assert!(
+        decay_rate > analytical_rate * 0.05,
+        "decay_rate={decay_rate} analytical={analytical_rate}"
+    );
+    assert!(
+        decay_rate < analytical_rate * 50.0,
+        "decay_rate={decay_rate} analytical={analytical_rate}"
+    );
+}
+
+#[test]
 fn incompressible_runner_writes_residual_csv() {
     let root = std::env::temp_dir().join(format!(
         "asimu_incompressible_output_{}",

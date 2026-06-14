@@ -30,6 +30,10 @@ use crate::solver::{
 use super::incompressible_profiles::{
     incompressible_centerline_profiles, lid_cavity_profile_error, poiseuille_profile_error,
 };
+use super::taylor_green::{
+    analytical_kinetic_energy_ratio, kinetic_energy, taylor_green_decay_rates,
+    taylor_green_initial_fields,
+};
 use super::{CaseRunKind, CaseRunResult};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -78,6 +82,12 @@ pub struct Incompressible3dRunMetrics {
     pub centerline_profiles: Option<IncompressibleCenterlineProfiles>,
     pub poiseuille_profile_error: Option<IncompressibleProfileError>,
     pub lid_cavity_profile_error: Option<IncompressibleCenterlineProfileError>,
+    pub kinetic_energy_initial: Option<Real>,
+    pub kinetic_energy_final: Option<Real>,
+    pub kinetic_energy_decay_ratio: Option<Real>,
+    pub kinetic_energy_analytical_ratio: Option<Real>,
+    pub kinetic_energy_decay_rate: Option<Real>,
+    pub kinetic_energy_analytical_decay_rate: Option<Real>,
     pub written: Vec<PathBuf>,
 }
 
@@ -115,46 +125,188 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         .ok_or_else(|| AsimuError::Config("不可压缩算例须包含 [incompressible] 段".to_string()))?;
     let steps = case.resolved_max_steps();
     let dt = case.time.dt.unwrap_or(0.0);
-    let mut fields =
-        IncompressibleFields::uniform(mesh.num_cells(), config.pressure, config.velocity)?;
-    fields.validate_len(mesh.num_cells())?;
+    let transient = case.time.mode == CaseTimeMode::Transient;
+    let time_marching = incompressible_time_marching(case);
+    validate_incompressible_transient_inputs(case, transient, dt)?;
+    let mut fields = initial_incompressible_fields(case, mesh, config)?;
+    let kinetic_energy_initial = initial_kinetic_energy(case, mesh, config, &fields);
     let boundary_stats =
         apply_incompressible_boundary_conditions_3d(mesh, &mut fields, &case.boundary)?;
     let pseudo_time_step = case.time.dt.filter(|value| *value > 0.0).unwrap_or(1.0);
+    let track_kinetic_energy = case.benchmark_id.as_deref() == Some("taylor_green_3d");
+    let mut kinetic_energy_history = Vec::new();
+    if track_kinetic_energy {
+        kinetic_energy_history.push(kinetic_energy(mesh, &fields, config.density));
+    }
     let mut written = Vec::new();
     let diagnostic = run_incompressible_pressure_velocity_with_observer(
         &fields,
-        IncompressibleSimplecConfig {
-            mesh,
-            density: config.density,
-            kinematic_viscosity: config.kinematic_viscosity,
-            body_force: config.body_force,
-            velocity_under_relaxation: config.velocity_under_relaxation,
-            pressure_under_relaxation: config.pressure_under_relaxation,
-            pseudo_time_step,
-            convection_scheme: config.convection_scheme,
-            pressure_correctors: incompressible_pressure_correctors(case, config.piso_correctors),
-            boundary: &case.boundary,
-            max_iterations: steps as usize,
-            min_iterations: case.time.min_steps.unwrap_or(0) as usize,
-            tolerance: case.time.tolerance,
-            require_velocity_convergence: case.time.mode == CaseTimeMode::Steady,
-            convergence_window: incompressible_convergence_window(&case.time),
-            snapshot_interval: None,
-            linear_solvers: config.linear_solvers,
-        },
+        incompressible_solver_config(case, config, mesh, steps, time_marching, pseudo_time_step),
         |step| {
+            if track_kinetic_energy {
+                kinetic_energy_history.push(kinetic_energy(mesh, step.fields, config.density));
+            }
             written.extend(super::output_interval::maybe_write_incompressible_interval(
                 case, mesh, step,
             )?);
             Ok(())
         },
     )?;
-
     let completed_steps = diagnostic.simplec_iterations as u64;
     let nondimensional_time = dt * completed_steps as f64;
     let physical_time = physical_time_from_nondimensional(case, nondimensional_time);
     written.extend(write_outputs(case, mesh, &diagnostic, nondimensional_time)?);
+    let benchmark = collect_incompressible_benchmark_diagnostics(
+        &IncompressibleBenchmarkCollectContext {
+            case,
+            mesh,
+            config,
+            transient: time_marching,
+            pseudo_time_step,
+            diagnostic: &diagnostic,
+            kinetic_energy_initial,
+            kinetic_energy_history: &kinetic_energy_history,
+        },
+        written,
+    );
+    log_incompressible_completion(steps, physical_time, &diagnostic, &boundary_stats);
+    Ok(CaseRunResult {
+        name: case.name.clone(),
+        benchmark_id: case.benchmark_id.clone(),
+        kind: incompressible_run_kind(time_marching),
+        summary: incompressible_summary(steps, &diagnostic, &boundary_stats),
+        diffusion: None,
+        sod: None,
+        compressible_3d: None,
+        incompressible_3d: Some(build_run_metrics(
+            completed_steps,
+            physical_time,
+            diagnostic,
+            boundary_stats,
+            benchmark,
+        )),
+    })
+}
+
+pub(crate) fn incompressible_time_marching(case: &CaseSpec) -> bool {
+    case.time.mode == CaseTimeMode::Transient
+        && matches!(
+            case.time.resolved_time_scheme(),
+            TimeIntegrationScheme::Piso | TimeIntegrationScheme::Bdf1
+        )
+}
+
+fn incompressible_run_kind(time_marching: bool) -> CaseRunKind {
+    if time_marching {
+        CaseRunKind::Incompressible3dTransient
+    } else {
+        CaseRunKind::Incompressible3dSteady
+    }
+}
+
+fn validate_incompressible_transient_inputs(
+    case: &CaseSpec,
+    transient: bool,
+    dt: Real,
+) -> Result<()> {
+    if transient && dt <= 0.0 {
+        return Err(AsimuError::Config(
+            "不可压缩瞬态算例须设置正 [time].dt".to_string(),
+        ));
+    }
+    validate_incompressible_transient_scheme(case)
+}
+
+fn initial_incompressible_fields(
+    case: &CaseSpec,
+    mesh: &StructuredMesh3d,
+    config: &crate::io::IncompressibleCaseConfig,
+) -> Result<IncompressibleFields> {
+    let fields = match case.benchmark_id.as_deref() {
+        Some("taylor_green_3d") => taylor_green_initial_fields(mesh)?,
+        _ => IncompressibleFields::uniform(mesh.num_cells(), config.pressure, config.velocity)?,
+    };
+    fields.validate_len(mesh.num_cells())?;
+    Ok(fields)
+}
+
+fn initial_kinetic_energy(
+    case: &CaseSpec,
+    mesh: &StructuredMesh3d,
+    config: &crate::io::IncompressibleCaseConfig,
+    fields: &IncompressibleFields,
+) -> Option<Real> {
+    (case.benchmark_id.as_deref() == Some("taylor_green_3d"))
+        .then(|| kinetic_energy(mesh, fields, config.density))
+}
+
+fn incompressible_solver_config<'a>(
+    case: &'a CaseSpec,
+    config: &'a crate::io::IncompressibleCaseConfig,
+    mesh: &'a StructuredMesh3d,
+    steps: u64,
+    time_marching: bool,
+    pseudo_time_step: Real,
+) -> IncompressibleSimplecConfig<'a> {
+    let (velocity_under_relaxation, pressure_under_relaxation) = if time_marching {
+        (1.0, 1.0)
+    } else {
+        (
+            config.velocity_under_relaxation,
+            config.pressure_under_relaxation,
+        )
+    };
+    IncompressibleSimplecConfig {
+        mesh,
+        density: config.density,
+        kinematic_viscosity: config.kinematic_viscosity,
+        body_force: config.body_force,
+        velocity_under_relaxation,
+        pressure_under_relaxation,
+        pseudo_time_step,
+        convection_scheme: config.convection_scheme,
+        pressure_correctors: incompressible_pressure_correctors(case, config.piso_correctors),
+        boundary: &case.boundary,
+        max_iterations: steps as usize,
+        min_iterations: case.time.min_steps.unwrap_or(0) as usize,
+        tolerance: if time_marching {
+            None
+        } else {
+            case.time.tolerance
+        },
+        require_velocity_convergence: !time_marching,
+        convergence_window: incompressible_convergence_window(&case.time),
+        snapshot_interval: None,
+        linear_solvers: config.linear_solvers,
+        transient_mode: time_marching,
+    }
+}
+
+struct IncompressibleBenchmarkCollectContext<'a> {
+    case: &'a CaseSpec,
+    mesh: &'a StructuredMesh3d,
+    config: &'a crate::io::IncompressibleCaseConfig,
+    transient: bool,
+    pseudo_time_step: Real,
+    diagnostic: &'a IncompressibleSimplecDiagnostic,
+    kinetic_energy_initial: Option<Real>,
+    kinetic_energy_history: &'a [Real],
+}
+
+fn collect_incompressible_benchmark_diagnostics(
+    ctx: &IncompressibleBenchmarkCollectContext<'_>,
+    written: Vec<PathBuf>,
+) -> BenchmarkDiagnostics {
+    let IncompressibleBenchmarkCollectContext {
+        case,
+        mesh,
+        config,
+        transient,
+        pseudo_time_step,
+        diagnostic,
+        kinetic_energy_initial,
+        kinetic_energy_history,
+    } = *ctx;
     let centerline_profiles = incompressible_centerline_profiles(
         case,
         mesh,
@@ -170,6 +322,53 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         &diagnostic.corrected_fields,
     );
     let lid_cavity_profile_error = lid_cavity_profile_error(case, centerline_profiles.as_ref());
+    let kinetic_energy_final = kinetic_energy_initial
+        .map(|_| kinetic_energy(mesh, &diagnostic.corrected_fields, config.density));
+    let kinetic_energy_decay_ratio =
+        kinetic_energy_initial
+            .zip(kinetic_energy_final)
+            .map(|(initial, final_energy)| {
+                if initial > Real::EPSILON {
+                    final_energy / initial
+                } else {
+                    0.0
+                }
+            });
+    let dt = case.time.dt.unwrap_or(0.0);
+    let nondimensional_time = dt * diagnostic.simplec_iterations as f64;
+    let kinetic_energy_analytical_ratio = kinetic_energy_initial.and_then(|_| {
+        transient.then(|| {
+            analytical_kinetic_energy_ratio(config.kinematic_viscosity, nondimensional_time)
+        })
+    });
+    let track_kinetic_energy = case.benchmark_id.as_deref() == Some("taylor_green_3d");
+    let (kinetic_energy_decay_rate, kinetic_energy_analytical_decay_rate) =
+        taylor_green_decay_rates(
+            track_kinetic_energy,
+            config.kinematic_viscosity,
+            pseudo_time_step,
+            kinetic_energy_history,
+        );
+    BenchmarkDiagnostics {
+        centerline_profiles,
+        poiseuille_profile_error,
+        lid_cavity_profile_error,
+        kinetic_energy_initial,
+        kinetic_energy_final,
+        kinetic_energy_decay_ratio,
+        kinetic_energy_analytical_ratio,
+        kinetic_energy_decay_rate,
+        kinetic_energy_analytical_decay_rate,
+        written,
+    }
+}
+
+fn log_incompressible_completion(
+    steps: u64,
+    physical_time: Real,
+    diagnostic: &IncompressibleSimplecDiagnostic,
+    boundary_stats: &IncompressibleBoundaryApplyStats,
+) {
     info!(
         steps,
         t = %format_log_sci4(physical_time),
@@ -198,8 +397,10 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         max_abs_momentum_equation_residual = %format_log_sci4(diagnostic.max_abs_momentum_equation_residual),
         max_abs_predicted_velocity_delta = %format_log_sci4(diagnostic.max_abs_predicted_velocity_delta),
         max_abs_corrected_velocity_delta = %format_log_sci4(diagnostic.max_abs_corrected_velocity_delta),
-        max_abs_corrected_velocity_delta_interior = %format_log_sci4(diagnostic.max_abs_corrected_velocity_delta_interior),
-        max_abs_corrected_velocity_delta_boundary = %format_log_sci4(diagnostic.max_abs_corrected_velocity_delta_boundary),
+        max_abs_corrected_velocity_delta_interior =
+            %format_log_sci4(diagnostic.max_abs_corrected_velocity_delta_interior),
+        max_abs_corrected_velocity_delta_boundary =
+            %format_log_sci4(diagnostic.max_abs_corrected_velocity_delta_boundary),
         algorithm = diagnostic.algorithm.label(),
         pressure_correctors = diagnostic.pressure_correctors,
         simplec_iterations = diagnostic.simplec_iterations,
@@ -211,27 +412,19 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         boundary_ignored_faces = boundary_stats.ignored_faces,
         "不可压缩 3D I1 skeleton 完成"
     );
-    Ok(CaseRunResult {
-        name: case.name.clone(),
-        benchmark_id: case.benchmark_id.clone(),
-        kind: CaseRunKind::Incompressible3dSteady,
-        summary: incompressible_summary(steps, &diagnostic, &boundary_stats),
-        diffusion: None,
-        sod: None,
-        compressible_3d: None,
-        incompressible_3d: Some(build_run_metrics(
-            completed_steps,
-            physical_time,
-            diagnostic,
-            boundary_stats,
-            BenchmarkDiagnostics {
-                centerline_profiles,
-                poiseuille_profile_error,
-                lid_cavity_profile_error,
-                written,
-            },
-        )),
-    })
+}
+
+fn validate_incompressible_transient_scheme(case: &CaseSpec) -> Result<()> {
+    if case.time.mode != CaseTimeMode::Transient {
+        return Ok(());
+    }
+    match case.time.scheme {
+        None | Some(TimeIntegrationScheme::Piso) | Some(TimeIntegrationScheme::Bdf1) => Ok(()),
+        Some(other) => Err(AsimuError::Config(format!(
+            "不可压缩瞬态算例 time.scheme 须为 piso 或 bdf1（当前 \"{}\"）",
+            other.label()
+        ))),
+    }
 }
 
 fn incompressible_convergence_window(time: &CaseTimeConfig) -> usize {
@@ -245,7 +438,7 @@ fn incompressible_convergence_window(time: &CaseTimeConfig) -> usize {
 fn incompressible_pressure_correctors(case: &CaseSpec, configured: usize) -> usize {
     match case.time.scheme {
         Some(TimeIntegrationScheme::Simplec) => 1,
-        Some(TimeIntegrationScheme::Piso) => configured.max(1),
+        Some(TimeIntegrationScheme::Piso) | Some(TimeIntegrationScheme::Bdf1) => configured.max(1),
         _ => configured.max(1),
     }
 }
@@ -303,6 +496,12 @@ struct BenchmarkDiagnostics {
     centerline_profiles: Option<IncompressibleCenterlineProfiles>,
     poiseuille_profile_error: Option<IncompressibleProfileError>,
     lid_cavity_profile_error: Option<IncompressibleCenterlineProfileError>,
+    kinetic_energy_initial: Option<Real>,
+    kinetic_energy_final: Option<Real>,
+    kinetic_energy_decay_ratio: Option<Real>,
+    kinetic_energy_analytical_ratio: Option<Real>,
+    kinetic_energy_decay_rate: Option<Real>,
+    kinetic_energy_analytical_decay_rate: Option<Real>,
     written: Vec<PathBuf>,
 }
 
@@ -366,6 +565,12 @@ fn build_run_metrics(
         centerline_profiles: benchmark.centerline_profiles,
         poiseuille_profile_error: benchmark.poiseuille_profile_error,
         lid_cavity_profile_error: benchmark.lid_cavity_profile_error,
+        kinetic_energy_initial: benchmark.kinetic_energy_initial,
+        kinetic_energy_final: benchmark.kinetic_energy_final,
+        kinetic_energy_decay_ratio: benchmark.kinetic_energy_decay_ratio,
+        kinetic_energy_analytical_ratio: benchmark.kinetic_energy_analytical_ratio,
+        kinetic_energy_decay_rate: benchmark.kinetic_energy_decay_rate,
+        kinetic_energy_analytical_decay_rate: benchmark.kinetic_energy_analytical_decay_rate,
         written: benchmark.written,
     }
 }

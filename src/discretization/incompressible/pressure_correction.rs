@@ -4,6 +4,7 @@ use super::face_boundary::incompressible_pressure_correction_dirichlet;
 use super::{IncompressiblePressureCorrectionConfig, IncompressiblePressureCorrectionSystem};
 use crate::boundary::{BoundaryKind, BoundarySet};
 use crate::core::Real;
+use crate::discretization::periodic::StructuredPeriodic3d;
 use crate::error::{AsimuError, Result};
 use crate::field::ScalarField;
 use crate::linalg::CsrMatrix;
@@ -26,7 +27,7 @@ pub fn assemble_incompressible_pressure_correction_3d(
     validate_d_coefficient(n, d_coefficient)?;
     let correction_dirichlet = pressure_correction_dirichlet_cells(mesh, boundary)?;
     let has_correction_dirichlet = correction_dirichlet.iter().any(|value| *value);
-    let periodic_x = boundary.has_periodic_pair("i_min", "i_max");
+    let periodic = StructuredPeriodic3d::from_boundary(boundary);
     let mut rows = (0..n).map(|_| Vec::with_capacity(7)).collect::<Vec<_>>();
     let mut rhs = pressure_correction_integrated_rhs(mesh, divergence, config.density);
     let fixed_pressure = correction_dirichlet.clone();
@@ -42,7 +43,7 @@ pub fn assemble_incompressible_pressure_correction_3d(
         d: d_coefficient.values(),
         fixed_pressure: &fixed_pressure,
         fixed_values: &fixed_values,
-        periodic_x,
+        periodic,
     };
     for k in 0..mesh.nz {
         for j in 0..mesh.ny {
@@ -70,7 +71,7 @@ struct PressureCorrectionCtx<'a> {
     d: &'a [Real],
     fixed_pressure: &'a [bool],
     fixed_values: &'a [Real],
-    periodic_x: bool,
+    periodic: StructuredPeriodic3d,
 }
 
 fn add_pressure_correction_neighbors(
@@ -105,7 +106,7 @@ fn add_x_neighbors(
         neighbor_with_coeff(i > 0, || (i - 1, j, k), || face_coeff_x(ctx, i - 1, j, k)).or_else(
             || {
                 neighbor_with_coeff(
-                    ctx.periodic_x && i == 0,
+                    ctx.periodic.x && i == 0,
                     || (ctx.mesh.nx - 1, j, k),
                     || face_coeff_x(ctx, 0, j, k),
                 )
@@ -125,7 +126,7 @@ fn add_x_neighbors(
         )
         .or_else(|| {
             neighbor_with_coeff(
-                ctx.periodic_x && i + 1 == ctx.mesh.nx,
+                ctx.periodic.x && i + 1 == ctx.mesh.nx,
                 || (0, j, k),
                 || face_coeff_x(ctx, ctx.mesh.nx - 2, j, k),
             )
@@ -148,7 +149,15 @@ fn add_y_neighbors(
         rhs,
         diag,
         center,
-        neighbor_with_coeff(j > 0, || (i, j - 1, k), || face_coeff_y(ctx, i, j - 1, k)),
+        neighbor_with_coeff(j > 0, || (i, j - 1, k), || face_coeff_y(ctx, i, j - 1, k)).or_else(
+            || {
+                neighbor_with_coeff(
+                    ctx.periodic.y && j == 0,
+                    || (i, ctx.mesh.ny - 1, k),
+                    || face_coeff_y(ctx, i, 0, k),
+                )
+            },
+        ),
     );
     add_d_neighbor(
         ctx,
@@ -160,7 +169,14 @@ fn add_y_neighbors(
             j + 1 < ctx.mesh.ny,
             || (i, j + 1, k),
             || face_coeff_y(ctx, i, j, k),
-        ),
+        )
+        .or_else(|| {
+            neighbor_with_coeff(
+                ctx.periodic.y && j + 1 == ctx.mesh.ny,
+                || (i, 0, k),
+                || face_coeff_y(ctx, i, ctx.mesh.ny - 2, k),
+            )
+        }),
     );
 }
 

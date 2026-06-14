@@ -13,6 +13,7 @@ mod manifest;
 mod output_3d;
 mod output_interval;
 mod sod;
+mod taylor_green;
 mod validate;
 
 use std::path::Path;
@@ -38,6 +39,7 @@ pub enum CaseRunKind {
     Sod1dTransient,
     Compressible3dTransient,
     Incompressible3dSteady,
+    Incompressible3dTransient,
 }
 
 /// 算例运行结果摘要（写入日志 / 后续 manifest）。
@@ -98,7 +100,9 @@ fn dispatch_case(case: &CaseSpec) -> Result<CaseRunResult> {
             CaseMesh::Unstructured3d(_) => compressible_unstructured_3d::run(case),
             _ => compressible_3d::run(case),
         },
-        CaseRunKind::Incompressible3dSteady => incompressible_3d::run(case),
+        CaseRunKind::Incompressible3dSteady | CaseRunKind::Incompressible3dTransient => {
+            incompressible_3d::run(case)
+        }
     }
 }
 
@@ -121,7 +125,11 @@ fn detect_run_kind(case: &CaseSpec) -> Result<CaseRunKind> {
     }
     if case.incompressible.is_some() {
         case.mesh.as_3d()?;
-        return Ok(CaseRunKind::Incompressible3dSteady);
+        return Ok(if incompressible_3d::incompressible_time_marching(case) {
+            CaseRunKind::Incompressible3dTransient
+        } else {
+            CaseRunKind::Incompressible3dSteady
+        });
     }
     case.mesh.as_1d()?;
     if case.time.mode == crate::io::CaseTimeMode::Transient {

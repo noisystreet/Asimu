@@ -69,6 +69,7 @@ fn kind_label(kind: CaseRunKind) -> &'static str {
         CaseRunKind::Sod1dTransient => "sod_1d_transient",
         CaseRunKind::Compressible3dTransient => "compressible_3d_transient",
         CaseRunKind::Incompressible3dSteady => "incompressible_3d_steady",
+        CaseRunKind::Incompressible3dTransient => "incompressible_3d_transient",
     }
 }
 

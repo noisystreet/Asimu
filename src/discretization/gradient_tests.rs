@@ -5,6 +5,7 @@ use super::gradient::{
 use crate::boundary::BoundarySet;
 use crate::core::Real;
 use crate::discretization::BoundaryGhostBuffer;
+use crate::discretization::periodic::StructuredPeriodic3d;
 use crate::field::PrimitiveFields;
 use crate::mesh::StructuredMesh3d;
 use crate::physics::IdealGasEoS;
@@ -95,7 +96,8 @@ fn scalar_gradient_recovers_linear_field_on_sheared_mesh() {
         }
     }
 
-    let gradients = compute_structured_scalar_gradients_3d(&mesh, &values, false);
+    let gradients =
+        compute_structured_scalar_gradients_3d(&mesh, &values, StructuredPeriodic3d::default());
 
     for grad in gradients {
         assert!((grad.x - 2.0).abs() < 1.0e-10);

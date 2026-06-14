@@ -16,8 +16,10 @@ pub enum TimeIntegrationScheme {
     Gmres,
     /// 不可压缩 SIMPLEC 稳态 pressure-velocity 路径（可压缩求解器不支持）。
     Simplec,
-    /// 不可压缩 PISO smoke 路径（可压缩求解器不支持）。
+    /// 不可压缩 PISO/BDF1 瞬态 pressure-velocity 路径（可压缩求解器不支持）。
     Piso,
+    /// 不可压缩 BDF1 瞬态动量离散（case 层映射到 PISO 压力-速度耦合）。
+    Bdf1,
 }
 
 impl TimeIntegrationScheme {
@@ -29,6 +31,7 @@ impl TimeIntegrationScheme {
             "gmres" | "jfnk" | "matrix_free_gmres" | "matrix-free-gmres" => Ok(Self::Gmres),
             "simplec" => Ok(Self::Simplec),
             "piso" => Ok(Self::Piso),
+            "bdf1" | "backward_euler" | "implicit_euler" => Ok(Self::Bdf1),
             other => Err(AsimuError::Config(format!(
                 "不支持的 time.scheme \"{other}\"（可用 rk4、euler、lu_sgs、gmres、simplec、piso）"
             ))),
@@ -44,6 +47,7 @@ impl TimeIntegrationScheme {
             Self::Gmres => "gmres",
             Self::Simplec => "simplec",
             Self::Piso => "piso",
+            Self::Bdf1 => "bdf1",
         }
     }
 
@@ -78,6 +82,14 @@ mod tests {
         assert_eq!(
             TimeIntegrationScheme::parse("piso").expect("piso"),
             TimeIntegrationScheme::Piso
+        );
+    }
+
+    #[test]
+    fn parses_bdf1_alias() {
+        assert_eq!(
+            TimeIntegrationScheme::parse("bdf1").expect("bdf1"),
+            TimeIntegrationScheme::Bdf1
         );
     }
 

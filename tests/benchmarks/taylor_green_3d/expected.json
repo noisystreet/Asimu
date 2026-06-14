@@ -1,0 +1,12 @@
+{
+  "benchmark_id": "taylor_green_3d",
+  "asimu_min_version": "0.3.0",
+  "status": "i3_piso_bdf1_kinetic_decay",
+  "quantities": [
+    {
+      "name": "kinetic_energy_decay_rate_order_of_magnitude",
+      "tolerance_abs": 50.0,
+      "source": "spin-up window ln(E) slope vs 4 nu* (coarse FVM smoke)"
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+name = "taylor_green_3d"
+benchmark_id = "taylor_green_3d"
+
+[mesh]
+kind = "structured_3d"
+nx = 16
+ny = 16
+nz = 1
+lx = 6.283185307179586
+ly = 6.283185307179586
+lz = 0.1
+
+[physics]
+
+[incompressible]
+pressure = 0.0
+velocity = [0.0, 0.0, 0.0]
+density = 1.0
+kinematic_viscosity = 0.1
+convection_scheme = "central"
+piso_correctors = 2
+
+[incompressible.linear.momentum]
+solver = "gmres"
+restart = 32
+max_iters = 80
+tolerance = 1.0e-9
+
+[incompressible.linear.pressure]
+solver = "pcg"
+max_iters = 500
+tolerance = 1.0e-10
+
+[incompressible.reference]
+length = 6.283185307179586
+velocity = 1.0
+
+[boundary.i_min]
+kind = "periodic"
+partner = "i_max"
+
+[boundary.i_max]
+kind = "periodic"
+partner = "i_min"
+
+[boundary.j_min]
+kind = "periodic"
+partner = "j_max"
+
+[boundary.j_max]
+kind = "periodic"
+partner = "j_min"
+
+[boundary.k_min]
+kind = "symmetry"
+
+[boundary.k_max]
+kind = "symmetry"
+
+[time]
+mode = "transient"
+scheme = "bdf1"
+max_steps = 40
+dt = 0.05
+
+[output]
+dir = "out"
+residual_csv = "residual.csv"

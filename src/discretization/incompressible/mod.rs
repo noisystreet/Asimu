@@ -8,6 +8,7 @@ pub mod boundary_flux;
 pub mod face_boundary;
 pub mod face_flux;
 pub mod momentum;
+mod momentum_convection;
 mod momentum_geometry;
 #[cfg(test)]
 mod momentum_tests;

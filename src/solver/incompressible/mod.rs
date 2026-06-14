@@ -53,6 +53,8 @@ pub struct IncompressiblePressureVelocityConfig<'a> {
     pub convergence_window: usize,
     pub snapshot_interval: Option<usize>,
     pub linear_solvers: IncompressibleLinearSolverConfig,
+    /// 物理时间步进：每个外层步推进 \(t+\Delta t\)，不因 coupling 收敛提前退出。
+    pub transient_mode: bool,
 }
 
 pub type IncompressibleSimplecConfig<'a> = IncompressiblePressureVelocityConfig<'a>;
@@ -237,7 +239,7 @@ pub fn run_incompressible_pressure_velocity_with_observer(
             converged,
             is_final,
         });
-        if converged {
+        if converged && !config.transient_mode {
             return Ok(diagnostic);
         }
         last = Some(diagnostic);

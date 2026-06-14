@@ -7,6 +7,7 @@ use super::boundary_flux::interior_face_velocity;
 use super::face_boundary::incompressible_boundary_mass_flux;
 use crate::boundary::{BoundaryKind, BoundarySet};
 use crate::core::Real;
+use crate::discretization::periodic::StructuredPeriodic3d;
 use crate::error::{AsimuError, Result};
 use crate::field::{IncompressibleFields, ScalarField};
 use crate::mesh::{BoundaryMesh, BoundaryMesh3d, StructuredMesh3d};
@@ -16,6 +17,7 @@ pub struct IncompressibleFaceFluxField {
     phi_x: Vec<Real>,
     phi_x_periodic: Option<Vec<Real>>,
     phi_y: Vec<Real>,
+    phi_y_periodic: Option<Vec<Real>>,
     phi_z: Vec<Real>,
     boundary_net: Vec<Real>,
 }
@@ -33,8 +35,8 @@ impl IncompressibleFaceFluxField {
                 "面通量 d_P 长度与网格单元数不一致".to_string(),
             ));
         }
-        let periodic_x = boundary.has_periodic_pair("i_min", "i_max");
-        let mut flux = Self::zeros(mesh, periodic_x);
+        let periodic = StructuredPeriodic3d::from_boundary(boundary);
+        let mut flux = Self::zeros(mesh, periodic);
         fill_internal_rhie_chow_fluxes(mesh, fields, d_coefficient.values(), &mut flux);
         fill_boundary_net(mesh, fields, boundary, &mut flux.boundary_net)?;
         Ok(flux)
@@ -95,18 +97,27 @@ impl IncompressibleFaceFluxField {
                 .as_ref()
                 .map(|values| -values[x_periodic_index(mesh, j, k)]),
             (1, true) if j + 1 < mesh.ny => Some(self.phi_y[y_index(mesh, i, j, k)]),
+            (1, true) => self
+                .phi_y_periodic
+                .as_ref()
+                .map(|values| values[y_periodic_index(mesh, i, k)]),
             (1, false) if j > 0 => Some(-self.phi_y[y_index(mesh, i, j - 1, k)]),
+            (1, false) => self
+                .phi_y_periodic
+                .as_ref()
+                .map(|values| -values[y_periodic_index(mesh, i, k)]),
             (2, true) if k + 1 < mesh.nz => Some(self.phi_z[z_index(mesh, i, j, k)]),
             (2, false) if k > 0 => Some(-self.phi_z[z_index(mesh, i, j, k - 1)]),
             _ => None,
         }
     }
 
-    fn zeros(mesh: &StructuredMesh3d, periodic_x: bool) -> Self {
+    fn zeros(mesh: &StructuredMesh3d, periodic: StructuredPeriodic3d) -> Self {
         Self {
             phi_x: vec![0.0; mesh.nx.saturating_sub(1) * mesh.ny * mesh.nz],
-            phi_x_periodic: periodic_x.then(|| vec![0.0; mesh.ny * mesh.nz]),
+            phi_x_periodic: periodic.x.then(|| vec![0.0; mesh.ny * mesh.nz]),
             phi_y: vec![0.0; mesh.nx * mesh.ny.saturating_sub(1) * mesh.nz],
+            phi_y_periodic: periodic.y.then(|| vec![0.0; mesh.nx * mesh.nz]),
             phi_z: vec![0.0; mesh.nx * mesh.ny * mesh.nz.saturating_sub(1)],
             boundary_net: vec![0.0; mesh.num_cells()],
         }
@@ -148,6 +159,17 @@ fn fill_internal_rhie_chow_fluxes(
                 let metric = mesh.j_face_metric(i, j, k);
                 let spacing = owner_neighbor_distance(mesh, (i, j, k), (i, j + 1, k), &metric);
                 flux.phi_y[y_index(mesh, i, j, k)] =
+                    rhie_chow_face_flux(fields, d, left, right, spacing, &metric) * metric.area;
+            }
+        }
+        if let Some(phi_y_periodic) = flux.phi_y_periodic.as_mut() {
+            for i in 0..mesh.nx {
+                let left = mesh.cell_index(i, mesh.ny - 1, k);
+                let right = mesh.cell_index(i, 0, k);
+                let metric = mesh.j_face_metric(i, mesh.ny.saturating_sub(2), k);
+                let spacing =
+                    owner_neighbor_distance(mesh, (i, mesh.ny - 1, k), (i, 0, k), &metric);
+                phi_y_periodic[y_periodic_index(mesh, i, k)] =
                     rhie_chow_face_flux(fields, d, left, right, spacing, &metric) * metric.area;
             }
         }
@@ -258,6 +280,18 @@ fn update_y_fluxes(
                     pressure_flux_delta(d, p_corr, left, right, spacing) * metric.area * scale;
             }
         }
+        if let Some(phi_y_periodic) = flux.phi_y_periodic.as_mut() {
+            for i in 0..mesh.nx {
+                let left = mesh.cell_index(i, mesh.ny - 1, k);
+                let right = mesh.cell_index(i, 0, k);
+                let idx = y_periodic_index(mesh, i, k);
+                let metric = mesh.j_face_metric(i, mesh.ny.saturating_sub(2), k);
+                let spacing =
+                    owner_neighbor_distance(mesh, (i, mesh.ny - 1, k), (i, 0, k), &metric);
+                phi_y_periodic[idx] +=
+                    pressure_flux_delta(d, p_corr, left, right, spacing) * metric.area * scale;
+            }
+        }
     }
 }
 
@@ -343,6 +377,16 @@ fn scatter_y_fluxes(mesh: &StructuredMesh3d, flux: &IncompressibleFaceFluxField,
                 );
             }
         }
+        if let Some(phi_y_periodic) = &flux.phi_y_periodic {
+            for i in 0..mesh.nx {
+                scatter_pair(
+                    net,
+                    mesh.cell_index(i, mesh.ny - 1, k),
+                    mesh.cell_index(i, 0, k),
+                    phi_y_periodic[y_periodic_index(mesh, i, k)],
+                );
+            }
+        }
     }
 }
 
@@ -376,6 +420,10 @@ fn x_periodic_index(mesh: &StructuredMesh3d, j: usize, k: usize) -> usize {
 
 fn y_index(mesh: &StructuredMesh3d, i: usize, j: usize, k: usize) -> usize {
     (k * mesh.ny.saturating_sub(1) + j) * mesh.nx + i
+}
+
+fn y_periodic_index(mesh: &StructuredMesh3d, i: usize, k: usize) -> usize {
+    k * mesh.nx + i
 }
 
 fn z_index(mesh: &StructuredMesh3d, i: usize, j: usize, k: usize) -> usize {

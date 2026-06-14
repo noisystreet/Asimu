@@ -4,6 +4,7 @@ use super::boundary_flux::interior_face_velocity;
 use super::face_boundary::incompressible_boundary_mass_flux;
 use crate::boundary::{BoundaryKind, BoundarySet};
 use crate::core::Real;
+use crate::discretization::periodic::StructuredPeriodic3d;
 use crate::error::Result;
 use crate::field::{IncompressibleFields, ScalarField};
 use crate::mesh::{BoundaryMesh, BoundaryMesh3d, StructuredMesh3d};
@@ -19,8 +20,8 @@ pub fn compute_incompressible_face_flux_divergence_3d(
 ) -> Result<ScalarField> {
     fields.validate_len(mesh.num_cells())?;
     let mut net = vec![0.0; mesh.num_cells()];
-    let periodic_x = boundary.has_periodic_pair("i_min", "i_max");
-    add_internal_fluxes(mesh, fields, periodic_x, &mut net);
+    let periodic = StructuredPeriodic3d::from_boundary(boundary);
+    add_internal_fluxes(mesh, fields, periodic, &mut net);
     add_boundary_fluxes(mesh, fields, boundary, &mut net)?;
     for k in 0..mesh.nz {
         for j in 0..mesh.ny {
@@ -36,11 +37,11 @@ pub fn compute_incompressible_face_flux_divergence_3d(
 fn add_internal_fluxes(
     mesh: &StructuredMesh3d,
     fields: &IncompressibleFields,
-    periodic_x: bool,
+    periodic: StructuredPeriodic3d,
     net: &mut [Real],
 ) {
-    add_x_fluxes(mesh, fields, periodic_x, net);
-    add_y_fluxes(mesh, fields, net);
+    add_x_fluxes(mesh, fields, periodic.x, net);
+    add_y_fluxes(mesh, fields, periodic.y, net);
     add_z_fluxes(mesh, fields, net);
 }
 
@@ -74,13 +75,29 @@ fn add_x_fluxes(
     }
 }
 
-fn add_y_fluxes(mesh: &StructuredMesh3d, fields: &IncompressibleFields, net: &mut [Real]) {
+fn add_y_fluxes(
+    mesh: &StructuredMesh3d,
+    fields: &IncompressibleFields,
+    periodic_y: bool,
+    net: &mut [Real],
+) {
     for k in 0..mesh.nz {
         for j in 0..mesh.ny.saturating_sub(1) {
             for i in 0..mesh.nx {
                 let left = mesh.cell_index(i, j, k);
                 let right = mesh.cell_index(i, j + 1, k);
                 let metric = mesh.j_face_metric(i, j, k);
+                let flux = interior_face_normal_flux(fields, left, right, &metric);
+                scatter_flux(net, left, right, flux);
+            }
+        }
+    }
+    if periodic_y && mesh.ny > 1 {
+        for k in 0..mesh.nz {
+            for i in 0..mesh.nx {
+                let left = mesh.cell_index(i, mesh.ny - 1, k);
+                let right = mesh.cell_index(i, 0, k);
+                let metric = mesh.j_face_metric(i, mesh.ny.saturating_sub(2), k);
                 let flux = interior_face_normal_flux(fields, left, right, &metric);
                 scatter_flux(net, left, right, flux);
             }

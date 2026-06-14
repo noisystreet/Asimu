@@ -378,6 +378,7 @@ Ghost 单元距 owner 中心法向距离 \(d_f\)。
 | SIMPLEC/PISO 循环 | `solver::run_incompressible_pressure_velocity` | **已实现：外层迭代、单/多 pressure corrector、连续性/动量收敛判据与最终修正场** |
 | PISO corrector 历史 | `solver::run_incompressible_pressure_velocity` | **已实现：每个 pressure corrector 的连续性残差与最大 \(p'\) 历史** |
 | CFL / pseudo-transient | `solver/time/pseudo_transient.rs` | 规划 |
+| BDF1 瞬态 PISO | `case/incompressible_3d.rs`, `solver/incompressible` | **I3 已实现（固定 \(\Delta t\)）** |
 | CG 求解 \(p'\) | `linalg` + `solver/incompressible/linear.rs` | 规划 |
 
 ## 9. 参考文献

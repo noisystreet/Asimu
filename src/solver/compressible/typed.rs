@@ -21,9 +21,9 @@ use crate::solver::compressible::spectral_radius::{
 };
 use crate::solver::compressible::{
     CompressibleAdvanceContext3dTyped, CompressibleEulerSolver, CompressibleStepInfo,
-    positive_fixed_dt,
 };
 use crate::solver::state::SolverState;
+use crate::solver::time::positive_fixed_dt;
 use crate::solver::time::{
     Rk4StorageT, RungeKutta4Integrator, TimeIntegrationScheme, TimeIntegrator, euler_step,
     euler_step_local, min_positive_dt, rk4_step, rk4_step_local,

@@ -2,6 +2,7 @@
 
 use crate::core::{Real, Vector3};
 use crate::discretization::gradient::compute_structured_scalar_gradients_3d;
+use crate::discretization::periodic::StructuredPeriodic3d;
 use crate::mesh::{LogicalFace3d, StructuredMesh3d};
 
 pub(crate) fn owner_neighbor_distance(
@@ -23,9 +24,9 @@ pub(crate) fn owner_neighbor_distance(
 pub(crate) fn structured_scalar_gradients(
     mesh: &StructuredMesh3d,
     values: &[Real],
-    periodic_x: bool,
+    periodic: StructuredPeriodic3d,
 ) -> Vec<Vector3> {
-    compute_structured_scalar_gradients_3d(mesh, values, periodic_x)
+    compute_structured_scalar_gradients_3d(mesh, values, periodic)
 }
 
 pub(crate) fn pressure_gradient(
@@ -35,7 +36,7 @@ pub(crate) fn pressure_gradient(
     i: usize,
     j: usize,
     k: usize,
-    periodic_x: bool,
+    periodic: StructuredPeriodic3d,
 ) -> [Real; 3] {
     let center = mesh.cell_index(i, j, k);
     let p_center = pressure[center];
@@ -44,7 +45,7 @@ pub(crate) fn pressure_gradient(
         mesh,
         pressure,
         gradients,
-        periodic_x,
+        periodic,
     };
     let cell = CellCoord { i, j, k };
     add_i_faces(ctx, &mut sum, cell, p_center);
@@ -59,14 +60,14 @@ pub(crate) fn scalar_cross_diffusion_source(
     gradients: &[Vector3],
     cell: (usize, usize, usize),
     diffusivity: Real,
-    periodic_x: bool,
+    periodic: StructuredPeriodic3d,
 ) -> Real {
     let mut source = 0.0;
     let ctx = CrossDiffusionCtx {
         mesh,
         gradients,
         diffusivity,
-        periodic_x,
+        periodic,
     };
     let cell = CellCoord::from_tuple(cell);
     add_cross_x_faces(ctx, cell, &mut source);
@@ -80,7 +81,7 @@ struct PressureFaceCtx<'a> {
     mesh: &'a StructuredMesh3d,
     pressure: &'a [Real],
     gradients: &'a [Vector3],
-    periodic_x: bool,
+    periodic: StructuredPeriodic3d,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -88,7 +89,7 @@ struct CrossDiffusionCtx<'a> {
     mesh: &'a StructuredMesh3d,
     gradients: &'a [Vector3],
     diffusivity: Real,
-    periodic_x: bool,
+    periodic: StructuredPeriodic3d,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -122,7 +123,7 @@ fn add_i_faces(ctx: PressureFaceCtx<'_>, sum: &mut Vector3, cell: CellCoord, p_c
             face.center,
         );
         add_area_pressure(sum, face.area_vector, p_face);
-    } else if ctx.periodic_x && mesh.nx > 1 {
+    } else if ctx.periodic.x && mesh.nx > 1 {
         let face = mesh.i_face_metric(mesh.nx - 2, j, k);
         let p_face = reconstructed_face_value(
             mesh,
@@ -147,7 +148,7 @@ fn add_i_faces(ctx: PressureFaceCtx<'_>, sum: &mut Vector3, cell: CellCoord, p_c
             face.center,
         );
         add_area_pressure(sum, face.area_vector, -p_face);
-    } else if ctx.periodic_x && mesh.nx > 1 {
+    } else if ctx.periodic.x && mesh.nx > 1 {
         let face = mesh.i_face_metric(mesh.nx - 2, j, k);
         let p_face = reconstructed_face_value(
             mesh,
@@ -177,6 +178,17 @@ fn add_j_faces(ctx: PressureFaceCtx<'_>, sum: &mut Vector3, cell: CellCoord, p_c
             face.center,
         );
         add_area_pressure(sum, face.area_vector, p_face);
+    } else if ctx.periodic.y && mesh.ny > 1 {
+        let face = mesh.j_face_metric(i, mesh.ny - 2, k);
+        let p_face = reconstructed_face_value(
+            mesh,
+            ctx.pressure,
+            ctx.gradients,
+            mesh.cell_index(i, j, k),
+            mesh.cell_index(i, 0, k),
+            face.center,
+        );
+        add_area_pressure(sum, face.area_vector, p_face);
     } else {
         add_boundary_pressure(mesh, sum, LogicalFace3d::JMax, i, j, k, p_center);
     }
@@ -188,6 +200,17 @@ fn add_j_faces(ctx: PressureFaceCtx<'_>, sum: &mut Vector3, cell: CellCoord, p_c
             ctx.gradients,
             mesh.cell_index(i, j, k),
             mesh.cell_index(i, j - 1, k),
+            face.center,
+        );
+        add_area_pressure(sum, face.area_vector, -p_face);
+    } else if ctx.periodic.y && mesh.ny > 1 {
+        let face = mesh.j_face_metric(i, mesh.ny - 2, k);
+        let p_face = reconstructed_face_value(
+            mesh,
+            ctx.pressure,
+            ctx.gradients,
+            mesh.cell_index(i, j, k),
+            mesh.cell_index(i, mesh.ny - 1, k),
             face.center,
         );
         add_area_pressure(sum, face.area_vector, -p_face);
@@ -287,7 +310,7 @@ fn add_cross_x_faces(ctx: CrossDiffusionCtx<'_>, cell: CellCoord, source: &mut R
             mesh.i_face_metric(i, j, k),
             source,
         );
-    } else if ctx.periodic_x && mesh.nx > 1 {
+    } else if ctx.periodic.x && mesh.nx > 1 {
         add_cross_face(
             ctx,
             cell,
@@ -304,7 +327,7 @@ fn add_cross_x_faces(ctx: CrossDiffusionCtx<'_>, cell: CellCoord, source: &mut R
             reverse_face(mesh.i_face_metric(i - 1, j, k)),
             source,
         );
-    } else if ctx.periodic_x && mesh.nx > 1 {
+    } else if ctx.periodic.x && mesh.nx > 1 {
         add_cross_face(
             ctx,
             cell,
@@ -330,6 +353,14 @@ fn add_cross_y_faces(ctx: CrossDiffusionCtx<'_>, cell: CellCoord, source: &mut R
             mesh.j_face_metric(i, j, k),
             source,
         );
+    } else if ctx.periodic.y && mesh.ny > 1 {
+        add_cross_face(
+            ctx,
+            cell,
+            CellCoord { i, j: 0, k },
+            mesh.j_face_metric(i, mesh.ny - 2, k),
+            source,
+        );
     }
     if j > 0 {
         add_cross_face(
@@ -337,6 +368,18 @@ fn add_cross_y_faces(ctx: CrossDiffusionCtx<'_>, cell: CellCoord, source: &mut R
             cell,
             CellCoord { i, j: j - 1, k },
             reverse_face(mesh.j_face_metric(i, j - 1, k)),
+            source,
+        );
+    } else if ctx.periodic.y && mesh.ny > 1 {
+        add_cross_face(
+            ctx,
+            cell,
+            CellCoord {
+                i,
+                j: mesh.ny - 1,
+                k,
+            },
+            reverse_face(mesh.j_face_metric(i, mesh.ny - 2, k)),
             source,
         );
     }

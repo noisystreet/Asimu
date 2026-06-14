@@ -12,6 +12,7 @@ pub use crate::discretization::gradient_typed::{
 use crate::boundary::BoundarySet;
 use crate::core::{Real, Vector3};
 use crate::discretization::BoundaryGhostBuffer;
+use crate::discretization::periodic::StructuredPeriodic3d;
 use crate::error::{AsimuError, Result};
 use crate::field::{PrimitiveFields, primitive_from_conserved_relaxed};
 use crate::mesh::{LogicalFace3d, StructuredMesh3d};
@@ -72,13 +73,13 @@ pub fn compute_structured_gradients_3d(
 pub(crate) fn compute_structured_scalar_gradients_3d(
     mesh: &StructuredMesh3d,
     values: &[Real],
-    periodic_x: bool,
+    periodic: StructuredPeriodic3d,
 ) -> Vec<Vector3> {
     let mut gradients = Vec::with_capacity(mesh.num_cells());
     for k in 0..mesh.nz {
         for j in 0..mesh.ny {
             for i in 0..mesh.nx {
-                gradients.push(scalar_cell_lsq_gradient(mesh, values, i, j, k, periodic_x));
+                gradients.push(scalar_cell_lsq_gradient(mesh, values, i, j, k, periodic));
             }
         }
     }
@@ -91,7 +92,7 @@ fn scalar_cell_lsq_gradient(
     i: usize,
     j: usize,
     k: usize,
-    periodic_x: bool,
+    periodic: StructuredPeriodic3d,
 ) -> Vector3 {
     let center = mesh.cell_index(i, j, k);
     let center_point = mesh.cell_metric(i, j, k).center;
@@ -102,7 +103,7 @@ fn scalar_cell_lsq_gradient(
         values,
         center,
         center_point,
-        scalar_neighbor_i(mesh, i, j, k, false, periodic_x),
+        scalar_neighbor_i(mesh, i, j, k, false, periodic.x),
         &mut normal,
         &mut rhs,
     );
@@ -111,7 +112,7 @@ fn scalar_cell_lsq_gradient(
         values,
         center,
         center_point,
-        scalar_neighbor_i(mesh, i, j, k, true, periodic_x),
+        scalar_neighbor_i(mesh, i, j, k, true, periodic.x),
         &mut normal,
         &mut rhs,
     );
@@ -120,7 +121,7 @@ fn scalar_cell_lsq_gradient(
         values,
         center,
         center_point,
-        scalar_neighbor(j > 0, || (i, j - 1, k)),
+        scalar_neighbor_j(mesh, i, j, k, false, periodic.y),
         &mut normal,
         &mut rhs,
     );
@@ -129,7 +130,7 @@ fn scalar_cell_lsq_gradient(
         values,
         center,
         center_point,
-        scalar_neighbor(j + 1 < mesh.ny, || (i, j + 1, k)),
+        scalar_neighbor_j(mesh, i, j, k, true, periodic.y),
         &mut normal,
         &mut rhs,
     );
@@ -175,6 +176,24 @@ fn scalar_neighbor_i(
         (false, _) => Some((i - 1, j, k)),
         (true, _) if i + 1 < mesh.nx => Some((i + 1, j, k)),
         (true, _) if periodic_x && mesh.nx > 1 => Some((0, j, k)),
+        _ => None,
+    }
+}
+
+fn scalar_neighbor_j(
+    mesh: &StructuredMesh3d,
+    i: usize,
+    j: usize,
+    k: usize,
+    upper: bool,
+    periodic_y: bool,
+) -> Option<(usize, usize, usize)> {
+    match (upper, j) {
+        (false, 0) if periodic_y && mesh.ny > 1 => Some((i, mesh.ny - 1, k)),
+        (false, 0) => None,
+        (false, _) => Some((i, j - 1, k)),
+        (true, _) if j + 1 < mesh.ny => Some((i, j + 1, k)),
+        (true, _) if periodic_y && mesh.ny > 1 => Some((i, 0, k)),
         _ => None,
     }
 }

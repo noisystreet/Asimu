@@ -70,7 +70,7 @@ use crate::solver::state::SolverState;
 use crate::solver::time::{
     CflSchedule, LuSgsConfig, ResidualSmoothingConfig, Rk4Storage, RungeKutta4Config,
     RungeKutta4Integrator, TimeIntegrationScheme, TimeIntegrator, euler_step, euler_step_local,
-    min_positive_dt, rk4_step, rk4_step_local, smooth_residual_3d_limited,
+    min_positive_dt, positive_fixed_dt, rk4_step, rk4_step_local, smooth_residual_3d_limited,
 };
 use helpers::{
     RefreshCompressibleStateInput, finalize_cell_dts_from_sigma,
@@ -684,9 +684,11 @@ impl CompressibleEulerSolver {
             (TimeIntegrationScheme::Simplec, _) => Err(crate::error::AsimuError::Solver(
                 "advance_explicit_step 不支持 simplec".to_string(),
             )),
-            (TimeIntegrationScheme::Piso, _) => Err(crate::error::AsimuError::Solver(
-                "advance_explicit_step 不支持 piso".to_string(),
-            )),
+            (TimeIntegrationScheme::Piso | TimeIntegrationScheme::Bdf1, _) => {
+                Err(crate::error::AsimuError::Solver(
+                    "advance_explicit_step 不支持 piso/bdf1".to_string(),
+                ))
+            }
         }
     }
 
@@ -788,10 +790,6 @@ impl CompressibleEulerSolver {
             viscous: ctx.viscous,
         }
     }
-}
-
-pub(crate) fn positive_fixed_dt(dt: Real) -> Option<Real> {
-    if dt > 0.0 { Some(dt) } else { None }
 }
 
 #[cfg(test)]

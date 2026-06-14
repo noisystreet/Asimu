@@ -23,6 +23,7 @@ pub mod gradient_unstructured_f32;
 mod gradient_unstructured_f32_cuda;
 pub mod gradient_unstructured_inviscid_f32;
 pub mod incompressible;
+pub mod periodic;
 #[cfg(feature = "cuda")]
 pub mod unstructured_boundary_exec_topo;
 pub mod unstructured_face_cache;

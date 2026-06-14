@@ -135,6 +135,12 @@ pub fn min_positive_dt(dt: &[Real]) -> Real {
         .unwrap_or(0.0)
 }
 
+/// 配置中显式给定的正时间步（`dt > 0`），否则 `None`。
+#[must_use]
+pub fn positive_fixed_dt(dt: Real) -> Option<Real> {
+    if dt > 0.0 { Some(dt) } else { None }
+}
+
 /// f32 时间步数组最小值（日志/伪时间累积用）。
 #[must_use]
 pub fn min_positive_dt_f32(dt: &[f32]) -> f32 {
