@@ -26,4 +26,14 @@ asimu --case output/case_dualellipsoid/case.toml --log-level info --chrome-trace
 2. **性能**：相对 P9 基线（或上一 release tag）LU-SGS 步 `profile_time_integration_ms` **回归 < 5%**
 3. **Trace 阶段**：Perfetto 中 `unstructured_lusgs_rhs` / `unstructured_viscous_interior_flux_fused` 占步耗时主导；**不应**出现百万级 `exec_colored_bucket_scatter`（每色桶 1 次，默认 trace 级）
 
+## G2 CUDA smoke（ADR 0017）
+
+`case_cuda_f32.toml`：`backend = cuda`、`compute_precision = f32`、显式 Euler 短步（2 步）。需 `cargo build --features cuda,io-cgns` 与 GPU。
+
+```bash
+asimu --case tests/benchmarks/dual_ellipsoid/case_cuda_f32.toml --log-level info
+```
+
+集成测试 `dual_ellipsoid_cuda_smoke_when_cgns_present`（`#[ignore = gpu]` + `slow-tests`）在 CGNS 可用时比对 CPU/CUDA 残差趋势。
+
 日志字段见算例步末 `非结构时间步 profiling`（`profile_time_integration_ms` 等）。

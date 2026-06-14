@@ -146,7 +146,7 @@ impl ExecutionContext {
             "exec_scatter_mode_resolved"
         );
         if config.device == ExecDevice::GpuCuda {
-            info!("cuda_backend_g1: 一阶无粘内面走 device kernel（边界仍 CPU）");
+            info!("cuda_backend_g1_g2: 一阶无粘/粘性内面走 device kernel（边界与梯度仍 CPU）");
         }
         Ok(Self {
             device: config.device,
@@ -200,6 +200,21 @@ impl ExecutionContext {
         self.backend_state
             .cuda_mut()?
             .assemble_first_order_inviscid_interior(residual, primitives, topo, topo_key, params)
+    }
+
+    /// CUDA G2：粘性内面着色桶 flux + scatter（仅动量/能量；梯度 CPU 计算）。
+    #[cfg(feature = "cuda")]
+    pub fn cuda_assemble_viscous_interior(
+        &mut self,
+        residual: &mut crate::field::ConservedResidualT<f32>,
+        primitives: &crate::field::PrimitiveFieldsT<f32>,
+        gradients: &crate::discretization::gradient_typed::GradientFieldsT<f32>,
+        topo: &crate::exec::gpu::cuda::ExecViscousInteriorTopology,
+        topo_key: usize,
+    ) -> Result<()> {
+        self.backend_state
+            .cuda_mut()?
+            .assemble_viscous_interior(residual, primitives, gradients, topo, topo_key)
     }
 
     /// 单元测试：重置本 context 的 scatter 调用计数。

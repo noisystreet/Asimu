@@ -7,8 +7,10 @@ use tracing::info_span;
 
 use super::buffers::CudaFieldBuffers;
 use super::face_geom::ExecInteriorFaceTopology;
+use super::gradient_buffers::CudaGradientBuffers;
 use super::mesh_cache::CudaMeshDeviceCache;
-use super::module::CudaInviscidModule;
+use super::module::{CudaInviscidModule, CudaViscousModule};
+use super::viscous_mesh_cache::{CudaViscousBucketCache, CudaViscousFaceGeomBuffer};
 use crate::error::{AsimuError, Result};
 use crate::field::{ConservedResidualT, PrimitiveFieldsT};
 
@@ -26,14 +28,19 @@ pub struct CudaFirstOrderInviscidParams {
     pub roe_entropy_fix: bool,
 }
 
-/// G1 CUDA 后端：模块、网格缓存、场缓冲。
+/// G1+G2 CUDA 后端：模块、网格缓存、场缓冲。
 pub struct CudaBackendState {
     context: Arc<CudaContext>,
     stream: Arc<CudaStream>,
     module: CudaInviscidModule,
+    pub(crate) viscous_module: CudaViscousModule,
     mesh: Option<CudaMeshDeviceCache>,
     fields: Option<CudaFieldBuffers>,
     mesh_topo_key: Option<usize>,
+    viscous_buckets: Option<CudaViscousBucketCache>,
+    viscous_face_geom: Option<CudaViscousFaceGeomBuffer>,
+    viscous_bucket_key: Option<usize>,
+    gradients: Option<CudaGradientBuffers>,
     /// host 侧 primitive 自上次 H2D 后是否已更新。
     primitives_dirty: bool,
 }
@@ -44,13 +51,19 @@ impl CudaBackendState {
             .map_err(|e| AsimuError::Exec(format!("CUDA 设备初始化失败: {e:?}")))?;
         let stream = context.default_stream();
         let module = CudaInviscidModule::try_load(&context)?;
+        let viscous_module = CudaViscousModule::try_load(&context)?;
         Ok(Self {
             context,
             stream,
             module,
+            viscous_module,
             mesh: None,
             fields: None,
             mesh_topo_key: None,
+            viscous_buckets: None,
+            viscous_face_geom: None,
+            viscous_bucket_key: None,
+            gradients: None,
             primitives_dirty: true,
         })
     }
@@ -159,6 +172,103 @@ impl CudaBackendState {
     pub fn sync_to_device(&mut self, primitives: Option<&PrimitiveFieldsT<f32>>) -> Result<()> {
         if let Some(prim) = primitives {
             self.sync_primitives_to_device(prim)?;
+        }
+        Ok(())
+    }
+
+    pub fn assemble_viscous_interior(
+        &mut self,
+        residual: &mut ConservedResidualT<f32>,
+        primitives: &PrimitiveFieldsT<f32>,
+        gradients: &crate::discretization::gradient_typed::GradientFieldsT<f32>,
+        topo: &super::viscous_face_geom::ExecViscousInteriorTopology,
+        topo_key: usize,
+    ) -> Result<()> {
+        self.ensure_viscous_resources(topo, topo_key)?;
+        self.ensure_fields(primitives.num_cells())?;
+        self.ensure_gradient_buffers(primitives.num_cells())?;
+        let fields = self.fields.as_mut().expect("field buffers after ensure");
+        let gradients_buf = self
+            .gradients
+            .as_mut()
+            .expect("gradient buffers after ensure");
+        let buckets = self
+            .viscous_buckets
+            .as_ref()
+            .expect("viscous buckets after ensure");
+        let face_geom = self
+            .viscous_face_geom
+            .as_mut()
+            .expect("viscous face geom after ensure");
+
+        if self.primitives_dirty {
+            fields.upload_primitives(&self.stream, primitives)?;
+            self.primitives_dirty = false;
+        }
+        gradients_buf.upload(&self.stream, gradients)?;
+        face_geom.refresh(&self.stream, &topo.faces)?;
+        fields.upload_momentum_energy_residual(&self.stream, residual)?;
+
+        let _span = info_span!(
+            "cuda_viscous_interior",
+            faces = topo.num_interior_faces(),
+            colors = topo.num_colors(),
+        )
+        .entered();
+
+        for color in 0..buckets.num_colors() {
+            let num_faces = buckets.bucket_len(color)?;
+            if num_faces == 0 {
+                continue;
+            }
+            let bucket = buckets.bucket_faces(color)?;
+            super::viscous::launch_viscous_bucket(
+                &self.stream,
+                &self.viscous_module.function,
+                bucket,
+                num_faces,
+                face_geom.face_geom(),
+                fields,
+                gradients_buf,
+            )?;
+        }
+
+        fields.download_momentum_energy_residual(&self.stream, residual)?;
+        Ok(())
+    }
+
+    fn ensure_viscous_resources(
+        &mut self,
+        topo: &super::viscous_face_geom::ExecViscousInteriorTopology,
+        topo_key: usize,
+    ) -> Result<()> {
+        let need_buckets = self
+            .viscous_bucket_key
+            .is_none_or(|k| k != topo_key || self.viscous_buckets.is_none());
+        if need_buckets {
+            self.viscous_buckets = Some(CudaViscousBucketCache::try_upload(&self.stream, topo)?);
+            self.viscous_bucket_key = Some(topo_key);
+        }
+        let need_geom = self
+            .viscous_face_geom
+            .as_ref()
+            .is_none_or(|g| g.face_geom().len() != topo.faces.len());
+        if need_geom {
+            self.viscous_face_geom = Some(CudaViscousFaceGeomBuffer::try_upload(
+                &self.stream,
+                &topo.faces,
+            )?);
+        }
+        Ok(())
+    }
+
+    fn ensure_gradient_buffers(&mut self, num_cells: usize) -> Result<()> {
+        let need_alloc = self
+            .gradients
+            .as_ref()
+            .is_none_or(|g| g.num_cells() != num_cells);
+        if need_alloc {
+            self.gradients = Some(CudaGradientBuffers::try_new(&self.stream, num_cells)?);
         }
         Ok(())
     }

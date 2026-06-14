@@ -1,6 +1,6 @@
-//! 构建脚本：`io-cgns` 链接 CGNS；`cuda` 用 `nvcc` 预编译 PTX（ADR 0017 G1）。
+//! 构建脚本：`io-cgns` 链接 CGNS；`cuda` 用 `nvcc` 预编译 PTX（ADR 0017 G1+G2）。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn main() {
@@ -32,13 +32,36 @@ fn build_cuda_kernels() {
     }
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_CUDA");
     println!("cargo:rerun-if-changed=kernels/cuda/inviscid_first_order_f32.cu");
+    println!("cargo:rerun-if-changed=kernels/cuda/viscous_interior_f32.cu");
 
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
-    let ptx_path = out_dir.join("inviscid_first_order_f32.ptx");
-    let src = "kernels/cuda/inviscid_first_order_f32.cu";
-
     let nvcc = std::env::var("CUDA_NVCC").unwrap_or_else(|_| "nvcc".to_string());
-    let status = Command::new(&nvcc)
+
+    let inviscid_ok = compile_cuda_ptx(
+        &nvcc,
+        &out_dir,
+        "kernels/cuda/inviscid_first_order_f32.cu",
+        "inviscid_first_order_f32.ptx",
+        "CUDA_PTX_INVISCID_F32",
+    );
+    let viscous_ok = compile_cuda_ptx(
+        &nvcc,
+        &out_dir,
+        "kernels/cuda/viscous_interior_f32.cu",
+        "viscous_interior_f32.ptx",
+        "CUDA_PTX_VISCOUS_F32",
+    );
+
+    if inviscid_ok && viscous_ok {
+        println!("cargo:rustc-cfg=cuda_kernels_built");
+    } else {
+        println!("cargo:rustc-cfg=cuda_kernels_disabled");
+    }
+}
+
+fn compile_cuda_ptx(nvcc: &str, out_dir: &Path, src: &str, ptx_name: &str, env_key: &str) -> bool {
+    let ptx_path = out_dir.join(ptx_name);
+    let status = Command::new(nvcc)
         .args(["--ptx", "-O3", "--use_fast_math", "-o"])
         .arg(&ptx_path)
         .arg(src)
@@ -46,22 +69,19 @@ fn build_cuda_kernels() {
 
     match status {
         Ok(s) if s.success() => {
-            println!(
-                "cargo:rustc-env=CUDA_PTX_INVISCID_F32={}",
-                ptx_path.display()
-            );
-            println!("cargo:rustc-cfg=cuda_kernels_built");
+            println!("cargo:rustc-env={env_key}={}", ptx_path.display());
+            true
         }
         Ok(s) => {
             println!(
-                "cargo:warning=CUDA kernel 编译失败（exit={}）；GPU 热路径不可用",
+                "cargo:warning=CUDA kernel 编译失败 {src}（exit={}）",
                 s.code().unwrap_or(-1)
             );
-            println!("cargo:rustc-cfg=cuda_kernels_disabled");
+            false
         }
         Err(e) => {
-            println!("cargo:warning=未找到 nvcc（{e}）；GPU 热路径不可用");
-            println!("cargo:rustc-cfg=cuda_kernels_disabled");
+            println!("cargo:warning=未找到 nvcc（{e}）；跳过 {src}");
+            false
         }
     }
 }

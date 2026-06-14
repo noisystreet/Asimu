@@ -61,9 +61,6 @@ fn validate_gpu_cuda_backend_enabled(case: &CaseSpec) -> Result<()> {
             "cuda 首版（G1）仅支持 reconstruction = first_order",
         ));
     }
-    if case.physics.viscous.is_some() || case.navier_stokes.is_some() {
-        return Err(gpu_cuda_unsupported("cuda 首版不支持粘性 / Navier-Stokes"));
-    }
     match case.time.resolved_time_scheme() {
         TimeIntegrationScheme::Rk4 | TimeIntegrationScheme::Euler => {}
         scheme => {

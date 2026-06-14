@@ -117,6 +117,44 @@ impl CudaFieldBuffers {
         dtoh_into(stream, &self.res_e, residual.total_energy.values_mut())?;
         Ok(())
     }
+
+    pub fn upload_momentum_energy_residual(
+        &mut self,
+        stream: &Arc<CudaStream>,
+        residual: &ConservedResidualT<f32>,
+    ) -> Result<()> {
+        let n = residual.num_cells();
+        if n != self.num_cells {
+            return Err(AsimuError::Field(format!(
+                "残差长度 {n} 与 device 缓冲 {} 不一致",
+                self.num_cells
+            )));
+        }
+        htod(stream, &mut self.res_mx, residual.momentum_x.values())?;
+        htod(stream, &mut self.res_my, residual.momentum_y.values())?;
+        htod(stream, &mut self.res_mz, residual.momentum_z.values())?;
+        htod(stream, &mut self.res_e, residual.total_energy.values())?;
+        Ok(())
+    }
+
+    pub fn download_momentum_energy_residual(
+        &self,
+        stream: &Arc<CudaStream>,
+        residual: &mut ConservedResidualT<f32>,
+    ) -> Result<()> {
+        let n = residual.num_cells();
+        if n != self.num_cells {
+            return Err(AsimuError::Field(format!(
+                "残差长度 {n} 与 device 缓冲 {} 不一致",
+                self.num_cells
+            )));
+        }
+        dtoh_into(stream, &self.res_mx, residual.momentum_x.values_mut())?;
+        dtoh_into(stream, &self.res_my, residual.momentum_y.values_mut())?;
+        dtoh_into(stream, &self.res_mz, residual.momentum_z.values_mut())?;
+        dtoh_into(stream, &self.res_e, residual.total_energy.values_mut())?;
+        Ok(())
+    }
 }
 
 fn htod(stream: &Arc<CudaStream>, dst: &mut CudaSlice<f32>, src: &[f32]) -> Result<()> {

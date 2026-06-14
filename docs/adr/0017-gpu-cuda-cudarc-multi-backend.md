@@ -200,7 +200,7 @@ NVRTC 输入为 **CUDA C++ 字符串**，不是 Rust。禁止首版仅依赖 NVR
 | 无粘一阶内面通量 compute | ✓ 着色桶 kernel | BC、MUSCL 梯度 |
 | 无粘内面 scatter → residual | ✓ device atomic 或桶内直写 | — |
 | 边界通量 | ✗ 首版 CPU | 不规则访问 |
-| 粘性通量 / IDWLS | G2+ | — |
+| 粘性通量 / IDWLS | G2 内面 CUDA / G2+ IDWLS device | G2 内面已实现 |
 | CSR SpMV | G3+（`cusparse`） | — |
 | 收敛 / CFL / I/O | ✗ CPU | ADR 0003 |
 
@@ -344,6 +344,6 @@ Manifest 记录：`exec_device`、`cuda_device_name`、`kernel_ptx_arch`（Run M
 | ADR 0017 文本 | **已接受（规划）** |
 | **G0** feature + 配置 + 多 Backend 类型 | **2026-06-13 已实现** |
 | **G1** 一阶无粘 CUDA kernel | **2026-06-13 已实现**（Roe/HVL + 着色桶 scatter；边界仍 CPU；含 Makefile/benchmark/sync/端到端 smoke） |
-| **G2** dual_ellipsoid GPU smoke | 规划 |
+| **G2** dual_ellipsoid GPU smoke | **2026-06-13 已实现**（粘性内面 f32 CUDA kernel + device scatter；IDWLS/边界面仍 CPU；`case_cuda_f32.toml` + CPU≈CUDA 单 tet） |
 | **G3** cuSPARSE SpMV | 规划 |
 | **G4** 性能与 manifest 字段 | 规划 |

@@ -27,6 +27,8 @@ mod idwls;
 #[cfg(feature = "cuda")]
 pub mod inviscid;
 mod spmv;
+#[cfg(feature = "cuda")]
+pub mod viscous;
 
 pub use batch::ExecFaceBatchStatic4;
 pub use context::{

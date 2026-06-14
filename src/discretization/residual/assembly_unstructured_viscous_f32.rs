@@ -1,5 +1,9 @@
 //! 非结构 3D 粘性残差 f32 装配（梯度、内面与边界面通量均为 f32）。
 
+#[cfg(feature = "cuda")]
+#[path = "assembly_unstructured_viscous_f32_cuda.rs"]
+mod assembly_unstructured_viscous_f32_cuda;
+
 use tracing::info_span;
 
 use crate::boundary::BoundarySet;
@@ -38,7 +42,7 @@ use super::assembly_unstructured_viscous::{
 };
 use crate::discretization::viscous_boundary_f32::ViscousBoundaryFluxParamsF32;
 
-struct ViscousInteriorAssemblyF32<'a> {
+pub(super) struct ViscousInteriorAssemblyF32<'a> {
     face_topology: &'a UnstructuredFaceTopologyF32,
     transport_topology: &'a UnstructuredFaceTopology,
     eos: &'a IdealGasEoS,
@@ -46,7 +50,7 @@ struct ViscousInteriorAssemblyF32<'a> {
     primitives: &'a PrimitiveFieldsT<f32>,
     gradients: &'a GradientFieldsT<f32>,
     temperatures: &'a [f32],
-    exec: &'a ExecutionContext,
+    exec: &'a mut ExecutionContext,
 }
 
 /// f32 非结构粘性装配输入。
@@ -93,7 +97,7 @@ pub fn compute_gradients_and_assemble_viscous_unstructured_f32(
     }
     assemble_viscous_residual_f32_interior(
         residual,
-        &ViscousInteriorAssemblyF32 {
+        &mut ViscousInteriorAssemblyF32 {
             face_topology: &input.mesh_cache.face_topology_f32,
             transport_topology: &input.mesh_cache.face_topology,
             eos: input.eos,
@@ -123,9 +127,18 @@ pub fn compute_gradients_and_assemble_viscous_unstructured_f32(
 
 fn assemble_viscous_residual_f32_interior(
     residual: &mut ConservedResidualT<f32>,
-    params: &ViscousInteriorAssemblyF32<'_>,
+    params: &mut ViscousInteriorAssemblyF32<'_>,
     scratch: &mut ViscousAssemblyUnstructuredScratch,
 ) -> Result<()> {
+    #[cfg(feature = "cuda")]
+    {
+        if assembly_unstructured_viscous_f32_cuda::cuda_viscous_f32_interior(
+            residual, params, scratch,
+        )? {
+            return Ok(());
+        }
+    }
+
     let constant = prepare_unstructured_viscous_transport_f32(
         params.transport_topology,
         params.primitives.num_cells(),
