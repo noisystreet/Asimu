@@ -2,8 +2,9 @@
 
 use std::sync::Arc;
 
-use cudarc::driver::{CudaSlice, CudaStream, DeviceRepr};
+use cudarc::driver::{CudaSlice, CudaStream};
 
+use super::transfer::{clone_htod, memcpy_htod};
 use super::viscous_face_geom::{DeviceViscousFaceGeom, ExecViscousInteriorTopology};
 use crate::error::{AsimuError, Result};
 
@@ -22,7 +23,11 @@ impl CudaViscousBucketCache {
         let mut bucket_lens = Vec::with_capacity(topo.color_buckets.len());
         for bucket in &topo.color_buckets {
             bucket_lens.push(bucket.face_indices.len() as u32);
-            bucket_faces.push(upload_slice(stream, &bucket.face_indices)?);
+            bucket_faces.push(clone_htod(
+                stream,
+                "init_viscous_color_bucket",
+                &bucket.face_indices,
+            )?);
         }
         Ok(Self {
             bucket_faces,
@@ -56,7 +61,7 @@ pub struct CudaViscousFaceGeomBuffer {
 impl CudaViscousFaceGeomBuffer {
     pub fn try_upload(stream: &Arc<CudaStream>, faces: &[DeviceViscousFaceGeom]) -> Result<Self> {
         Ok(Self {
-            face_geom: upload_slice(stream, faces)?,
+            face_geom: clone_htod(stream, "init_viscous_face_geom", faces)?,
         })
     }
 
@@ -66,25 +71,14 @@ impl CudaViscousFaceGeomBuffer {
         faces: &[DeviceViscousFaceGeom],
     ) -> Result<()> {
         if self.face_geom.len() == faces.len() {
-            stream
-                .memcpy_htod(faces, &mut self.face_geom)
-                .map_err(|e| AsimuError::Exec(format!("CUDA 粘性 face_geom H2D 失败: {e:?}")))?;
+            memcpy_htod(stream, "viscous_face_geom", faces, &mut self.face_geom)?;
             return Ok(());
         }
-        self.face_geom = upload_slice(stream, faces)?;
+        self.face_geom = clone_htod(stream, "viscous_face_geom_resize", faces)?;
         Ok(())
     }
 
     pub fn face_geom(&self) -> &CudaSlice<DeviceViscousFaceGeom> {
         &self.face_geom
     }
-}
-
-fn upload_slice<T: DeviceRepr + Clone>(
-    stream: &Arc<CudaStream>,
-    host: &[T],
-) -> Result<CudaSlice<T>> {
-    stream
-        .clone_htod(host)
-        .map_err(|e| AsimuError::Exec(format!("CUDA 粘性 mesh H2D 失败: {e:?}")))
 }

@@ -1,9 +1,11 @@
 //! 设备侧场缓冲（原始变量 SoA + 残差 SoA）。
 
+use std::mem::size_of;
 use std::sync::Arc;
 
 use cudarc::driver::{CudaSlice, CudaStream, DeviceRepr};
 
+use super::transfer::{clone_dtoh_unchecked, d2h_batch, h2d_batch, memcpy_htod_unchecked};
 use crate::error::{AsimuError, Result};
 use crate::field::{ConservedResidualT, PrimitiveFieldsT};
 
@@ -81,12 +83,14 @@ impl CudaFieldBuffers {
                 self.num_cells
             )));
         }
-        htod(stream, &mut self.prim_rho, primitives.density.values())?;
-        htod(stream, &mut self.prim_p, primitives.pressure.values())?;
-        htod(stream, &mut self.prim_ux, primitives.velocity_x.values())?;
-        htod(stream, &mut self.prim_uy, primitives.velocity_y.values())?;
-        htod(stream, &mut self.prim_uz, primitives.velocity_z.values())?;
-        Ok(())
+        h2d_batch("field_primitives", n * 5 * size_of::<f32>(), n, || {
+            memcpy_htod_unchecked(stream, primitives.density.values(), &mut self.prim_rho)?;
+            memcpy_htod_unchecked(stream, primitives.pressure.values(), &mut self.prim_p)?;
+            memcpy_htod_unchecked(stream, primitives.velocity_x.values(), &mut self.prim_ux)?;
+            memcpy_htod_unchecked(stream, primitives.velocity_y.values(), &mut self.prim_uy)?;
+            memcpy_htod_unchecked(stream, primitives.velocity_z.values(), &mut self.prim_uz)?;
+            Ok(())
+        })
     }
 
     pub fn zero_residual(&mut self, stream: &Arc<CudaStream>) -> Result<()> {
@@ -110,12 +114,36 @@ impl CudaFieldBuffers {
                 self.num_cells
             )));
         }
-        dtoh_into(stream, &self.res_rho, residual.density.values_mut())?;
-        dtoh_into(stream, &self.res_mx, residual.momentum_x.values_mut())?;
-        dtoh_into(stream, &self.res_my, residual.momentum_y.values_mut())?;
-        dtoh_into(stream, &self.res_mz, residual.momentum_z.values_mut())?;
-        dtoh_into(stream, &self.res_e, residual.total_energy.values_mut())?;
-        Ok(())
+        d2h_batch("field_residual", n * 5 * size_of::<f32>(), n, || {
+            dtoh_into_unchecked(stream, &self.res_rho, residual.density.values_mut())?;
+            dtoh_into_unchecked(stream, &self.res_mx, residual.momentum_x.values_mut())?;
+            dtoh_into_unchecked(stream, &self.res_my, residual.momentum_y.values_mut())?;
+            dtoh_into_unchecked(stream, &self.res_mz, residual.momentum_z.values_mut())?;
+            dtoh_into_unchecked(stream, &self.res_e, residual.total_energy.values_mut())?;
+            Ok(())
+        })
+    }
+
+    pub fn upload_full_residual(
+        &mut self,
+        stream: &Arc<CudaStream>,
+        residual: &ConservedResidualT<f32>,
+    ) -> Result<()> {
+        let n = residual.num_cells();
+        if n != self.num_cells {
+            return Err(AsimuError::Field(format!(
+                "残差长度 {n} 与 device 缓冲 {} 不一致",
+                self.num_cells
+            )));
+        }
+        h2d_batch("field_residual_full", n * 5 * size_of::<f32>(), n, || {
+            memcpy_htod_unchecked(stream, residual.density.values(), &mut self.res_rho)?;
+            memcpy_htod_unchecked(stream, residual.momentum_x.values(), &mut self.res_mx)?;
+            memcpy_htod_unchecked(stream, residual.momentum_y.values(), &mut self.res_my)?;
+            memcpy_htod_unchecked(stream, residual.momentum_z.values(), &mut self.res_mz)?;
+            memcpy_htod_unchecked(stream, residual.total_energy.values(), &mut self.res_e)?;
+            Ok(())
+        })
     }
 
     pub fn upload_momentum_energy_residual(
@@ -130,11 +158,18 @@ impl CudaFieldBuffers {
                 self.num_cells
             )));
         }
-        htod(stream, &mut self.res_mx, residual.momentum_x.values())?;
-        htod(stream, &mut self.res_my, residual.momentum_y.values())?;
-        htod(stream, &mut self.res_mz, residual.momentum_z.values())?;
-        htod(stream, &mut self.res_e, residual.total_energy.values())?;
-        Ok(())
+        h2d_batch(
+            "field_residual_momentum_energy",
+            n * 4 * size_of::<f32>(),
+            n,
+            || {
+                memcpy_htod_unchecked(stream, residual.momentum_x.values(), &mut self.res_mx)?;
+                memcpy_htod_unchecked(stream, residual.momentum_y.values(), &mut self.res_my)?;
+                memcpy_htod_unchecked(stream, residual.momentum_z.values(), &mut self.res_mz)?;
+                memcpy_htod_unchecked(stream, residual.total_energy.values(), &mut self.res_e)?;
+                Ok(())
+            },
+        )
     }
 
     pub fn download_momentum_energy_residual(
@@ -149,24 +184,27 @@ impl CudaFieldBuffers {
                 self.num_cells
             )));
         }
-        dtoh_into(stream, &self.res_mx, residual.momentum_x.values_mut())?;
-        dtoh_into(stream, &self.res_my, residual.momentum_y.values_mut())?;
-        dtoh_into(stream, &self.res_mz, residual.momentum_z.values_mut())?;
-        dtoh_into(stream, &self.res_e, residual.total_energy.values_mut())?;
-        Ok(())
+        d2h_batch(
+            "field_residual_momentum_energy",
+            n * 4 * size_of::<f32>(),
+            n,
+            || {
+                dtoh_into_unchecked(stream, &self.res_mx, residual.momentum_x.values_mut())?;
+                dtoh_into_unchecked(stream, &self.res_my, residual.momentum_y.values_mut())?;
+                dtoh_into_unchecked(stream, &self.res_mz, residual.momentum_z.values_mut())?;
+                dtoh_into_unchecked(stream, &self.res_e, residual.total_energy.values_mut())?;
+                Ok(())
+            },
+        )
     }
 }
 
-fn htod(stream: &Arc<CudaStream>, dst: &mut CudaSlice<f32>, src: &[f32]) -> Result<()> {
-    stream
-        .memcpy_htod(src, dst)
-        .map_err(|e| AsimuError::Exec(format!("CUDA H2D 失败: {e:?}")))
-}
-
-fn dtoh_into(stream: &Arc<CudaStream>, src: &CudaSlice<f32>, dst: &mut [f32]) -> Result<()> {
-    let host = stream
-        .clone_dtoh(src)
-        .map_err(|e| AsimuError::Exec(format!("CUDA D2H 失败: {e:?}")))?;
+fn dtoh_into_unchecked(
+    stream: &Arc<CudaStream>,
+    src: &CudaSlice<f32>,
+    dst: &mut [f32],
+) -> Result<()> {
+    let host = clone_dtoh_unchecked(stream, src)?;
     dst.copy_from_slice(host.as_slice());
     Ok(())
 }

@@ -262,6 +262,15 @@ fn assemble_first_order_typed<T: InviscidTypedScatterBackend + InviscidFirstOrde
     params: &mut InviscidAssemblyUnstructuredTypedParams<'_, T>,
     topology: &UnstructuredFaceTopology,
 ) -> Result<()> {
+    #[cfg(feature = "cuda")]
+    let cuda_pipeline = params.exec.cuda_rhs_pipeline_active();
+    #[cfg(not(feature = "cuda"))]
+    let cuda_pipeline = false;
+
+    if cuda_pipeline {
+        T::prepare_cuda_rhs_before_interior(residual, params, topology)?;
+    }
+
     {
         let _span = info_span!(
             "unstructured_inviscid_interior_faces_typed",
@@ -278,7 +287,8 @@ fn assemble_first_order_typed<T: InviscidTypedScatterBackend + InviscidFirstOrde
             }
         }
     }
-    {
+
+    if !cuda_pipeline {
         let _span = info_span!(
             "unstructured_inviscid_boundary_faces_typed",
             faces = topology.boundary.len(),
@@ -392,6 +402,15 @@ trait InviscidFirstOrderInterior: InviscidTypedScatterBackend + InviscidFirstOrd
     ) -> Result<bool> {
         Ok(false)
     }
+
+    /// CUDA RHS 管线：边界面 CPU scatter 后上传残差（默认无操作）。
+    fn prepare_cuda_rhs_before_interior(
+        _residual: &mut ConservedResidualT<Self>,
+        _params: &mut InviscidAssemblyUnstructuredTypedParams<'_, Self>,
+        _topology: &UnstructuredFaceTopology,
+    ) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl InviscidFirstOrderInterior for f32 {
@@ -416,6 +435,30 @@ impl InviscidFirstOrderInterior for f32 {
         _topology: &UnstructuredFaceTopology,
     ) -> Result<()> {
         assemble_boundary_faces_first_order_f32(residual, params)
+    }
+
+    fn prepare_cuda_rhs_before_interior(
+        residual: &mut ConservedResidualT<f32>,
+        params: &mut InviscidAssemblyUnstructuredTypedParams<'_, f32>,
+        topology: &UnstructuredFaceTopology,
+    ) -> Result<()> {
+        #[cfg(feature = "cuda")]
+        if params.exec.cuda_rhs_pipeline_active() {
+            let _span = info_span!(
+                "unstructured_inviscid_boundary_faces_typed",
+                faces = topology.boundary.len(),
+                precision = "f32",
+                order = "before_interior_cuda",
+            )
+            .entered();
+            Self::assemble_first_order_boundary_faces(residual, params, topology)?;
+            params.exec.cuda_upload_residual_for_rhs(residual)?;
+        }
+        #[cfg(not(feature = "cuda"))]
+        {
+            let _ = (residual, params, topology);
+        }
+        Ok(())
     }
 
     #[cfg(feature = "simd-fvm")]

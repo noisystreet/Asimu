@@ -25,7 +25,11 @@ pub mod scatter;
 
 mod idwls;
 #[cfg(feature = "cuda")]
+pub(crate) mod idwls_cuda;
+#[cfg(feature = "cuda")]
 pub mod inviscid;
+#[cfg(feature = "cuda")]
+pub(crate) mod spectral_radius_cuda;
 mod spmv;
 #[cfg(feature = "cuda")]
 pub mod viscous;

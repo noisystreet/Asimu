@@ -85,6 +85,10 @@ pub fn compute_unstructured_gradients_idw_lsq_f32(
     }
     {
         let _span = info_span!("unstructured_idw_lsq_solve_gradients_f32", cells = n).entered();
+        #[cfg(feature = "cuda")]
+        if exec.cuda_rhs_pipeline_active() {
+            return Ok(());
+        }
         write_lsq_gradients_f32(input.mesh_cache, exec, out)
     }
 }
@@ -114,6 +118,25 @@ fn cell_temperatures_f32_into(
 }
 
 fn accumulate_lsq_rhs_f32(
+    input: &UnstructuredGradientLsqInputF32<'_>,
+    scratch: &UnstructuredGradientScratchF32,
+    exec: &mut ExecutionContext,
+) -> Result<()> {
+    #[cfg(feature = "cuda")]
+    {
+        if super::gradient_unstructured_f32_cuda::try_accumulate_lsq_rhs_f32_cuda(
+            input,
+            &scratch.temperatures,
+            exec,
+        )? {
+            return Ok(());
+        }
+    }
+    accumulate_lsq_rhs_f32_cpu_serial(input, scratch, exec)
+}
+
+/// CPU 串行累加（CUDA 不可用或对照测试用）。
+pub(crate) fn accumulate_lsq_rhs_f32_cpu_serial(
     input: &UnstructuredGradientLsqInputF32<'_>,
     scratch: &UnstructuredGradientScratchF32,
     exec: &mut ExecutionContext,

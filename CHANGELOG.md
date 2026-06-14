@@ -11,6 +11,8 @@
 
 ### Added
 
+- **ADR 0017 谱半径 CUDA**：非结构 f32 单元并行谱半径 kernel（`kernels/cuda/spectral_radius_unstructured_f32.cu`）；`UnstructuredSolverMeshCache::spectral_radius_topo` 静态 CSR + device 缓存；prepare 步 `backend=cuda` 时 CUDA 优先、CPU 串行回退；`cuda_spectral_radius_matches_cpu_on_uniform_tet`（`#[ignore=gpu]`）。
+- **ADR 0017 P4**：非结构 f32 粘性 IDWLS RHS CUDA 单元并行累加（`kernels/cuda/idwls_viscous_rhs_f32.cu`）；`UnstructuredSolverMeshCache::idwls_viscous_topo` 静态 CSR；`ExecutionContext::cuda_accumulate_idwls_viscous_rhs`；`gradient_unstructured_f32` CUDA 优先、CPU 串行回退；`cuda_idwls_rhs_matches_cpu_serial_on_uniform_tet`（`#[ignore=gpu]`）。
 - **ADR 0017 CUDA + LU-SGS**：`case/validate` 允许 `backend=cuda` + `time.scheme=lu_sgs`（须 `local_time_step=true`）；LU-SGS 步末 `mark_cuda_primitives_stale`；benchmark `dual_ellipsoid/case_cuda_lusgs_f32.toml`；单 tet validate 与 GPU smoke（`#[ignore=gpu]`）。
 - **ADR 0017 G3 完成**：cuSPARSE CSR SpMV 经 `ExecutionContext::csr_spmv` 分发（f64）；CUDA 侧 CSR 结构缓存与 workspace；`cpu_csr_spmv_matches_cuda_csr_spmv`（`#[ignore=gpu]`）。
 - **ADR 0017 G2 完成**：非结构 f32 CUDA 粘性内面着色桶 kernel（`viscous_interior_f32.cu`）；梯度 H2D + 动量/能量残差累加 scatter；`case/validate` 允许 `backend=cuda` + 粘性/Navier-Stokes（`rk4`/`euler`）；benchmark `dual_ellipsoid/case_cuda_f32.toml`；单 tet CPU≈CUDA 粘性单测与 case GPU smoke（`#[ignore=gpu]`）。

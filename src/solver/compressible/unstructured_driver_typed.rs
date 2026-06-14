@@ -4,12 +4,18 @@
 mod unstructured_explicit_typed;
 #[path = "unstructured_lusgs_typed.rs"]
 mod unstructured_lusgs_typed;
+#[path = "unstructured_prepare_timestep_typed.rs"]
+mod unstructured_prepare_timestep_typed;
 
 use unstructured_explicit_typed::{
     UnstructuredExplicitTimeAdvance, advance_unstructured_explicit_typed,
 };
 use unstructured_lusgs_typed::{
     UnstructuredLusgsDiagonalUpdate, UnstructuredLusgsSweep, UnstructuredLusgsSweepContext,
+};
+use unstructured_prepare_timestep_typed::{
+    UnstructuredCudaPrepareSync, UnstructuredSpectralRadiusAtPrepare,
+    UnstructuredTimestepFromSigma, prepare_unstructured_timestep_typed,
 };
 
 use std::time::Instant;
@@ -41,18 +47,14 @@ use crate::field::{
     ConservedFields, ConservedFieldsT, ConservedResidualT, LusgsDiagonalUpdateBackend,
     PrimitiveFieldsT, PrimitiveFillFromConserved,
 };
-use crate::solver::compressible::spectral_radius_unstructured::{
-    SpectralRadiusUnstructuredTypedParams, UnstructuredSpectralRadiusTyped,
-};
 use crate::solver::time::{
     Rk4StorageT, RungeKutta4Config, RungeKutta4Integrator, TimeIntegrationScheme, TimeIntegrator,
-    TransientStepControl, min_positive_dt, min_positive_dt_f32,
+    TransientStepControl,
 };
 use crate::solver::{
     CompressibleStepInfo, CompressibleUnstructuredStepView, LuSgsUnstructuredCouplings,
     LuSgsUnstructuredSweepTyped, RefreshCompressibleStateTypedInput, SolverState,
-    UnstructuredDriverConfig, finalize_cell_dts_from_sigma, finalize_cell_dts_from_sigma_f32,
-    refresh_compressible_ghosts_and_primitives_typed,
+    UnstructuredDriverConfig, refresh_compressible_ghosts_and_primitives_typed,
 };
 
 /// 非结构时间步缓冲（f64 与 f32 热路径分离）。
@@ -180,13 +182,22 @@ pub fn run_unstructured_typed_with_observer<T: UnstructuredComputeBackend>(
             cfl = %format_log_fixed5(step.cfl),
         );
         history.push(step);
-        work.exec.sync_to_host()?;
-        let fields_real = fields.cast_real()?;
-        observe_step(CompressibleUnstructuredStepView {
-            info: history.last().expect("history"),
-            history: &history,
-            fields: &fields_real,
-        })?;
+        let posted_step = history.last().expect("history").step;
+        {
+            let _span = info_span!(
+                "unstructured_step_post_typed",
+                step = posted_step,
+                precision = T::PRECISION.label(),
+            )
+            .entered();
+            work.exec.sync_to_host()?;
+            let fields_real = fields.cast_real()?;
+            observe_step(CompressibleUnstructuredStepView {
+                info: history.last().expect("history"),
+                history: &history,
+                fields: &fields_real,
+            })?;
+        }
         if stop {
             break;
         }
@@ -194,7 +205,7 @@ pub fn run_unstructured_typed_with_observer<T: UnstructuredComputeBackend>(
     Ok((history, fields.cast_real()?))
 }
 
-fn advance_unstructured_step_typed<T: UnstructuredComputeBackend>(
+fn advance_unstructured_step_typed<T: UnstructuredComputeBackend + UnstructuredCudaPrepareSync>(
     env: &mut UnstructuredRunEnvTyped<'_>,
     fields: &mut ConservedFieldsT<T>,
     work: &mut UnstructuredStepWorkTyped<T>,
@@ -376,6 +387,10 @@ impl UnstructuredRhsDispatchImpl for f32 {
         refresh_state: bool,
         p_floor: Real,
     ) -> Result<()> {
+        #[cfg(feature = "cuda")]
+        let cuda_viscous_pipeline = f32_cuda_viscous_rhs_pipeline(env, work.exec);
+        #[cfg(feature = "cuda")]
+        begin_f32_cuda_viscous_rhs_pipeline(work.exec, cuda_viscous_pipeline)?;
         if refresh_state {
             refresh_compressible_ghosts_and_primitives_typed(RefreshCompressibleStateTypedInput {
                 boundary_mesh: env.config.mesh,
@@ -389,7 +404,21 @@ impl UnstructuredRhsDispatchImpl for f32 {
                 min_pressure: p_floor,
                 primitives: work.primitives,
             })?;
-            work.exec.mark_cuda_primitives_stale();
+            sync_f32_rhs_primitives_after_refresh(
+                work.exec,
+                work.primitives,
+                refresh_state,
+                #[cfg(feature = "cuda")]
+                cuda_viscous_pipeline,
+            )?;
+        } else {
+            sync_f32_rhs_primitives_after_refresh(
+                work.exec,
+                work.primitives,
+                refresh_state,
+                #[cfg(feature = "cuda")]
+                cuda_viscous_pipeline,
+            )?;
         }
         if env.config.inviscid.reconstruction == ReconstructionKind::Muscl {
             let grad_input = UnstructuredGradientLsqInputF32 {
@@ -528,100 +557,6 @@ impl UnstructuredRhsDispatchImpl for f64 {
     }
 }
 
-fn prepare_unstructured_timestep_typed<
-    T: ComputeFloat
-        + UnstructuredSpectralRadiusTyped
-        + UnstructuredTimestepFromSigma
-        + PrimitiveFillFromConserved,
->(
-    env: &UnstructuredRunEnvTyped<'_>,
-    fields: &mut ConservedFieldsT<T>,
-    work: &mut UnstructuredStepWorkTyped<T>,
-    cfl: Real,
-    p_floor: Real,
-) -> Result<Real> {
-    fields.enforce_positivity(env.config.eos, p_floor);
-    work.ghosts
-        .ensure_face_capacity(env.config.mesh.num_faces());
-    refresh_compressible_ghosts_and_primitives_typed(RefreshCompressibleStateTypedInput {
-        boundary_mesh: env.config.mesh,
-        patches: env.config.patches,
-        fields,
-        ghosts: &mut work.ghosts,
-        eos: env.config.eos,
-        freestream: env.config.freestream,
-        reference: env.config.reference,
-        viscous: env.config.viscous,
-        min_pressure: p_floor,
-        primitives: &mut work.primitives,
-    })?;
-    work.exec.mark_cuda_primitives_stale();
-    let sigma =
-        T::cell_spectral_radius_unstructured_typed(&SpectralRadiusUnstructuredTypedParams {
-            mesh: env.config.mesh,
-            mesh_cache: &work.mesh_cache,
-            boundaries: env.config.patches,
-            ghosts: &work.ghosts,
-            primitives: &work.primitives,
-            eos: env.config.eos,
-            min_pressure: p_floor,
-            viscous: env.config.viscous,
-        })?;
-    let fixed_dt = env.config.fixed_dt.filter(|dt| *dt > 0.0 && dt.is_finite());
-    T::store_sigma_and_cell_dts(work, sigma, cfl, fixed_dt, env.config.local_time_step)
-}
-
-/// 谱半径结果写入时间步缓冲（f32 原生 \(\sigma_i\)，无 prepare 边界转换）。
-pub(crate) trait UnstructuredTimestepFromSigma: UnstructuredSpectralRadiusTyped {
-    fn store_sigma_and_cell_dts(
-        work: &mut UnstructuredStepWorkTyped<Self>,
-        sigma: Self::Sigma,
-        cfl: Real,
-        fixed_dt: Option<Real>,
-        local_time_step: bool,
-    ) -> Result<Real>;
-}
-
-impl UnstructuredTimestepFromSigma for f32 {
-    fn store_sigma_and_cell_dts(
-        work: &mut UnstructuredStepWorkTyped<f32>,
-        sigma: Vec<f32>,
-        cfl: Real,
-        fixed_dt: Option<Real>,
-        local_time_step: bool,
-    ) -> Result<Real> {
-        work.timestep.sigma_f32 = sigma;
-        work.timestep.cell_dts_f32 = finalize_cell_dts_from_sigma_f32(
-            &work.volumes_f32,
-            &work.timestep.sigma_f32,
-            cfl as f32,
-            fixed_dt.map(|d| d as f32),
-            local_time_step,
-        )?;
-        Ok(min_positive_dt_f32(&work.timestep.cell_dts_f32) as Real)
-    }
-}
-
-impl UnstructuredTimestepFromSigma for f64 {
-    fn store_sigma_and_cell_dts(
-        work: &mut UnstructuredStepWorkTyped<f64>,
-        sigma: Vec<Real>,
-        cfl: Real,
-        fixed_dt: Option<Real>,
-        local_time_step: bool,
-    ) -> Result<Real> {
-        work.timestep.sigma = sigma;
-        work.timestep.cell_dts = finalize_cell_dts_from_sigma(
-            &work.volumes,
-            &work.timestep.sigma,
-            cfl,
-            fixed_dt,
-            local_time_step,
-        )?;
-        Ok(min_positive_dt(&work.timestep.cell_dts))
-    }
-}
-
 /// 非结构可压缩求解热路径所需精度后端（ADR 0018；密封于 f32 / f64）。
 pub(crate) trait UnstructuredComputeBackend:
     ComputeFloat
@@ -629,8 +564,9 @@ pub(crate) trait UnstructuredComputeBackend:
     + InviscidFaceFluxTyped
     + InviscidTypedScatterBackend
     + ViscousTypedScatterBackend
-    + UnstructuredSpectralRadiusTyped
+    + UnstructuredSpectralRadiusAtPrepare
     + UnstructuredTimestepFromSigma
+    + UnstructuredCudaPrepareSync
     + LuSgsUnstructuredSweepTyped
     + UnstructuredRhsDispatchImpl
     + UnstructuredLusgsDiagonalUpdate
@@ -642,6 +578,54 @@ pub(crate) trait UnstructuredComputeBackend:
 
 impl UnstructuredComputeBackend for f32 {}
 impl UnstructuredComputeBackend for f64 {}
+
+#[cfg(feature = "cuda")]
+fn f32_cuda_viscous_rhs_pipeline(
+    env: &UnstructuredRunEnvTyped<'_>,
+    exec: &ExecutionContext,
+) -> bool {
+    env.config.viscous.is_some() && exec.device() == ExecDevice::GpuCuda
+}
+
+#[cfg(feature = "cuda")]
+fn begin_f32_cuda_viscous_rhs_pipeline(
+    exec: &mut ExecutionContext,
+    cuda_viscous_pipeline: bool,
+) -> Result<()> {
+    if cuda_viscous_pipeline {
+        exec.cuda_reset_pipeline_step()?;
+        exec.cuda_enable_rhs_device_pipeline()?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "cuda")]
+fn sync_f32_rhs_primitives_after_refresh(
+    exec: &mut ExecutionContext,
+    primitives: &crate::field::PrimitiveFieldsT<f32>,
+    refresh_state: bool,
+    cuda_viscous_pipeline: bool,
+) -> Result<()> {
+    if cuda_viscous_pipeline {
+        return exec.sync_cuda_primitives_to_device(primitives);
+    }
+    if refresh_state {
+        exec.mark_cuda_primitives_stale();
+    }
+    Ok(())
+}
+
+#[cfg(not(feature = "cuda"))]
+fn sync_f32_rhs_primitives_after_refresh(
+    exec: &mut ExecutionContext,
+    _primitives: &crate::field::PrimitiveFieldsT<f32>,
+    refresh_state: bool,
+) -> Result<()> {
+    if refresh_state {
+        exec.mark_cuda_primitives_stale();
+    }
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests {

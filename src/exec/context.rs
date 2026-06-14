@@ -147,7 +147,7 @@ impl ExecutionContext {
         );
         if config.device == ExecDevice::GpuCuda {
             info!(
-                "cuda_backend_g1_g2_g3: 无粘/粘性内面 kernel + cuSPARSE SpMV（边界与梯度仍 CPU）"
+                "cuda_backend_g1_g2_g3_p4: 无粘/粘性内面 kernel + IDWLS RHS device + cuSPARSE SpMV"
             );
         }
         Ok(Self {
@@ -180,6 +180,75 @@ impl ExecutionContext {
         self.backend_state.mark_cuda_primitives_stale();
     }
 
+    /// CUDA P1：步初重置 device 管线状态。
+    #[cfg(feature = "cuda")]
+    pub fn cuda_reset_pipeline_step(&mut self) -> Result<()> {
+        self.backend_state.cuda_mut()?.reset_pipeline_step();
+        Ok(())
+    }
+
+    /// CUDA P1：启用 RHS device 管线（粘性链）。
+    #[cfg(feature = "cuda")]
+    pub fn cuda_enable_rhs_device_pipeline(&mut self) -> Result<()> {
+        self.backend_state.cuda_mut()?.enable_rhs_device_pipeline();
+        Ok(())
+    }
+
+    #[cfg(feature = "cuda")]
+    #[must_use]
+    pub fn cuda_rhs_pipeline_active(&self) -> bool {
+        self.backend_state
+            .cuda_rhs_pipeline_active()
+            .unwrap_or(false)
+    }
+
+    #[cfg(feature = "cuda")]
+    #[must_use]
+    pub fn cuda_timestep_on_device(&self) -> bool {
+        self.backend_state
+            .cuda_timestep_on_device()
+            .unwrap_or(false)
+    }
+
+    /// CUDA P1：边界面 CPU scatter 后上传残差至 device。
+    #[cfg(feature = "cuda")]
+    pub fn cuda_upload_residual_for_rhs(
+        &mut self,
+        residual: &crate::field::ConservedResidualT<f32>,
+    ) -> Result<()> {
+        self.backend_state
+            .cuda_mut()?
+            .upload_residual_from_host(residual)
+    }
+
+    /// CUDA P1：批量 D2H \(\sigma_i\) + `cell_dts`。
+    #[cfg(feature = "cuda")]
+    pub fn cuda_download_timestep_f32(
+        &mut self,
+        sigma_out: &mut [f32],
+        cell_dts_out: &mut [f32],
+        local_time_step: bool,
+    ) -> Result<()> {
+        self.backend_state.cuda_mut()?.download_timestep_f32(
+            sigma_out,
+            cell_dts_out,
+            local_time_step,
+        )
+    }
+
+    /// CUDA P1：RHS 管线结束，残差/梯度 D2H。
+    #[cfg(feature = "cuda")]
+    pub fn cuda_flush_rhs_pipeline(
+        &mut self,
+        residual: &mut crate::field::ConservedResidualT<f32>,
+        gradients: &mut crate::discretization::gradient_typed::GradientFieldsT<f32>,
+    ) -> Result<()> {
+        let cuda = self.backend_state.cuda_mut()?;
+        cuda.flush_residual_to_host(residual)?;
+        cuda.flush_gradients_to_host(gradients)?;
+        Ok(())
+    }
+
     /// CUDA：将 host primitive 上传 device（仅当已标记过期）。
     pub fn sync_cuda_primitives_to_device(
         &mut self,
@@ -199,12 +268,18 @@ impl ExecutionContext {
         topo_key: usize,
         params: crate::exec::gpu::cuda::CudaFirstOrderInviscidParams,
     ) -> Result<()> {
+        let defer = self
+            .backend_state
+            .cuda_rhs_pipeline_active()
+            .unwrap_or(false);
         self.backend_state
             .cuda_mut()?
-            .assemble_first_order_inviscid_interior(residual, primitives, topo, topo_key, params)
+            .assemble_first_order_inviscid_interior(
+                residual, primitives, topo, topo_key, params, defer,
+            )
     }
 
-    /// CUDA G2：粘性内面着色桶 flux + scatter（仅动量/能量；梯度 CPU 计算）。
+    /// CUDA G2：粘性内面着色桶 flux + scatter（仅动量/能量）。
     #[cfg(feature = "cuda")]
     pub fn cuda_assemble_viscous_interior(
         &mut self,
@@ -214,9 +289,69 @@ impl ExecutionContext {
         topo: &crate::exec::gpu::cuda::ExecViscousInteriorTopology,
         topo_key: usize,
     ) -> Result<()> {
+        let defer = self
+            .backend_state
+            .cuda_rhs_pipeline_active()
+            .unwrap_or(false);
         self.backend_state
             .cuda_mut()?
-            .assemble_viscous_interior(residual, primitives, gradients, topo, topo_key)
+            .assemble_viscous_interior(residual, primitives, gradients, topo, topo_key, defer)
+    }
+
+    /// CUDA P1：IDWLS RHS 累加 + device 3×3 求解梯度。
+    #[cfg(feature = "cuda")]
+    pub fn cuda_accumulate_and_solve_idwls_viscous_gradients(
+        &mut self,
+        primitives: &crate::field::PrimitiveFieldsT<f32>,
+        topo: &crate::exec::gpu::cuda::ExecIdwlsViscousTopology,
+        topo_key: usize,
+        lsq_geometry: &[crate::discretization::unstructured_face_cache_f32::LsqPrecomputedCellF32],
+        temperatures: &[f32],
+        boundary_ghosts: &[crate::discretization::unstructured_idwls_exec_topo::IdwlsGhostSampleHost],
+    ) -> Result<()> {
+        self.backend_state
+            .cuda_mut()?
+            .accumulate_and_solve_idwls_viscous_gradients(
+                primitives,
+                topo,
+                topo_key,
+                lsq_geometry,
+                temperatures,
+                boundary_ghosts,
+            )
+    }
+
+    /// CUDA P4：粘性 IDWLS RHS 单元并行累加（CPU solve 回退路径）。
+    #[cfg(feature = "cuda")]
+    pub fn cuda_accumulate_idwls_viscous_rhs(
+        &mut self,
+        primitives: &crate::field::PrimitiveFieldsT<f32>,
+        topo: &crate::exec::gpu::cuda::ExecIdwlsViscousTopology,
+        topo_key: usize,
+        temperatures: &[f32],
+        boundary_ghosts: &[crate::discretization::unstructured_idwls_exec_topo::IdwlsGhostSampleHost],
+    ) -> Result<()> {
+        let (bu, bv, bw, bt) = self.scratch.idwls_mut().viscous_arrays_mut_f32();
+        self.backend_state.cuda_mut()?.accumulate_idwls_viscous_rhs(
+            primitives,
+            topo,
+            topo_key,
+            temperatures,
+            boundary_ghosts,
+            super::gpu::cuda::IdwlsViscousRhsHostOut { bu, bv, bw, bt },
+        )
+    }
+
+    /// CUDA：非结构 f32 单元谱半径（单元并行 kernel）。
+    #[cfg(feature = "cuda")]
+    pub fn cuda_compute_spectral_radius_unstructured_f32(
+        &mut self,
+        input: &super::spectral_radius_cuda::SpectralRadiusCudaInput<'_>,
+        sigma_out: &mut [f32],
+    ) -> Result<()> {
+        self.backend_state
+            .cuda_mut()?
+            .compute_spectral_radius_unstructured_f32(input, sigma_out)
     }
 
     /// CUDA G3：cuSPARSE CSR SpMV（f64）。

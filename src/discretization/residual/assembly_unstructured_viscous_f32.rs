@@ -109,6 +109,12 @@ pub fn compute_gradients_and_assemble_viscous_unstructured_f32(
         },
         scratch,
     )?;
+    #[cfg(feature = "cuda")]
+    if input.exec.cuda_rhs_pipeline_active() {
+        input
+            .exec
+            .cuda_flush_rhs_pipeline(residual, input.gradient_scratch)?;
+    }
     let boundary_params = ViscousBoundaryFluxParamsF32 {
         eos: input.eos,
         viscous: input.viscous,

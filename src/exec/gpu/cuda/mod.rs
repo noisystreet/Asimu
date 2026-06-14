@@ -3,16 +3,27 @@
 mod buffers;
 mod face_geom;
 mod gradient_buffers;
+mod idwls;
+mod idwls_mesh_cache;
+mod idwls_topology;
 mod inviscid;
 mod mesh_cache;
 mod module;
+mod pipeline;
+mod spectral_radius;
+mod spectral_radius_mesh_cache;
+mod spectral_radius_topology;
 mod spmv;
+mod transfer;
 mod viscous;
 mod viscous_face_geom;
 mod viscous_mesh_cache;
 
 pub use face_geom::{ExecInteriorColorBucket, ExecInteriorFaceStatic, ExecInteriorFaceTopology};
+pub use idwls_mesh_cache::IdwlsViscousRhsHostOut;
+pub use idwls_topology::{DeviceIdwlsGhostSample, ExecIdwlsViscousTopology};
 pub use inviscid::{
     CUDA_FLUX_SCHEME_HVL, CUDA_FLUX_SCHEME_ROE, CudaBackendState, CudaFirstOrderInviscidParams,
 };
+pub use spectral_radius_topology::ExecSpectralRadiusTopology;
 pub use viscous_face_geom::{DeviceViscousFaceGeom, ExecViscousInteriorTopology};

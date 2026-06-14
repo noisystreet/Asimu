@@ -18,6 +18,18 @@ pub struct CudaViscousModule {
     pub(crate) function: CudaFunction,
 }
 
+/// 已加载的 IDWLS 粘性 RHS kernel。
+pub struct CudaIdwlsModule {
+    pub(crate) accumulate: CudaFunction,
+    pub(crate) solve_gradient: CudaFunction,
+}
+
+/// 已加载的非结构谱半径 kernel。
+pub struct CudaSpectralRadiusModule {
+    pub(crate) accumulate: CudaFunction,
+    pub(crate) finalize_dts: CudaFunction,
+}
+
 impl CudaInviscidModule {
     pub fn try_load(ctx: &Arc<CudaContext>) -> Result<Self> {
         #[cfg(cuda_kernels_built)]
@@ -55,6 +67,68 @@ impl CudaViscousModule {
                 .map_err(|e| AsimuError::Exec(format!("CUDA 粘性 kernel 符号未找到: {e:?}")))?;
             info!("cuda_viscous_module_loaded");
             Ok(Self { function })
+        }
+        #[cfg(cuda_kernels_disabled)]
+        {
+            let _ = ctx;
+            Err(AsimuError::Exec(
+                "CUDA kernel 未编译（缺少 nvcc）；请安装 CUDA toolkit 后重新构建".to_string(),
+            ))
+        }
+    }
+}
+
+impl CudaIdwlsModule {
+    pub fn try_load(ctx: &Arc<CudaContext>) -> Result<Self> {
+        #[cfg(cuda_kernels_built)]
+        {
+            let ptx_src = include_str!(env!("CUDA_PTX_IDWLS_F32"));
+            let module: Arc<CudaModule> = ctx
+                .load_module(Ptx::from_src(ptx_src))
+                .map_err(|e| AsimuError::Exec(format!("CUDA IDWLS 模块加载失败: {e:?}")))?;
+            let accumulate = module
+                .load_function("idwls_viscous_accumulate_cell_f32")
+                .map_err(|e| AsimuError::Exec(format!("CUDA IDWLS kernel 符号未找到: {e:?}")))?;
+            let solve_gradient = module
+                .load_function("idwls_solve_gradient_cell_f32")
+                .map_err(|e| {
+                    AsimuError::Exec(format!("CUDA IDWLS solve kernel 符号未找到: {e:?}"))
+                })?;
+            info!("cuda_idwls_module_loaded");
+            Ok(Self {
+                accumulate,
+                solve_gradient,
+            })
+        }
+        #[cfg(cuda_kernels_disabled)]
+        {
+            let _ = ctx;
+            Err(AsimuError::Exec(
+                "CUDA kernel 未编译（缺少 nvcc）；请安装 CUDA toolkit 后重新构建".to_string(),
+            ))
+        }
+    }
+}
+
+impl CudaSpectralRadiusModule {
+    pub fn try_load(ctx: &Arc<CudaContext>) -> Result<Self> {
+        #[cfg(cuda_kernels_built)]
+        {
+            let ptx_src = include_str!(env!("CUDA_PTX_SPECTRAL_RADIUS_F32"));
+            let module: Arc<CudaModule> = ctx
+                .load_module(Ptx::from_src(ptx_src))
+                .map_err(|e| AsimuError::Exec(format!("CUDA 谱半径模块加载失败: {e:?}")))?;
+            let accumulate = module
+                .load_function("spectral_radius_accumulate_cell_f32")
+                .map_err(|e| AsimuError::Exec(format!("CUDA 谱半径 kernel 符号未找到: {e:?}")))?;
+            let finalize_dts = module.load_function("finalize_cell_dts_f32").map_err(|e| {
+                AsimuError::Exec(format!("CUDA finalize_cell_dts 符号未找到: {e:?}"))
+            })?;
+            info!("cuda_spectral_radius_module_loaded");
+            Ok(Self {
+                accumulate,
+                finalize_dts,
+            })
         }
         #[cfg(cuda_kernels_disabled)]
         {

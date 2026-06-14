@@ -1,5 +1,7 @@
 //! 非结构 f32 粘性内面 CUDA 分支（ADR 0017 G2）。
 
+use tracing::info_span;
+
 use crate::core::Real;
 use crate::discretization::unstructured_face_cache::UnstructuredFaceTopology;
 use crate::discretization::unstructured_face_cache_f32::UnstructuredFaceTopologyF32;
@@ -18,20 +20,36 @@ pub(super) fn cuda_viscous_f32_interior(
     params: &mut ViscousInteriorAssemblyF32<'_>,
     scratch: &mut ViscousAssemblyUnstructuredScratch,
 ) -> Result<bool> {
-    let constant = prepare_unstructured_viscous_transport_f32(
-        params.transport_topology,
-        params.primitives.num_cells(),
-        params.viscous,
-        params.eos,
-        params.temperatures,
-        scratch,
-    )?;
-    let exec_topo = build_exec_viscous_topology(
-        params.face_topology,
-        params.transport_topology,
-        constant,
-        scratch,
-    );
+    let constant = {
+        let _span = info_span!(
+            "unstructured_viscous_prepare_transport_f32",
+            cells = params.primitives.num_cells(),
+            interior_faces = params.face_topology.interior.len(),
+        )
+        .entered();
+        prepare_unstructured_viscous_transport_f32(
+            params.transport_topology,
+            params.primitives.num_cells(),
+            params.viscous,
+            params.eos,
+            params.temperatures,
+            scratch,
+        )?
+    };
+    let exec_topo = {
+        let _span = info_span!(
+            "unstructured_viscous_build_exec_topo_f32",
+            interior_faces = params.face_topology.interior.len(),
+            colors = params.transport_topology.interior_coloring.buckets.len(),
+        )
+        .entered();
+        build_exec_viscous_topology(
+            params.face_topology,
+            params.transport_topology,
+            constant,
+            scratch,
+        )
+    };
     let topo_key = std::ptr::from_ref(params.transport_topology).addr();
     crate::exec::viscous::try_assemble_viscous_interior_f32(
         params.exec,

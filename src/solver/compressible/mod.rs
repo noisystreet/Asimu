@@ -1,8 +1,5 @@
 //! 可压缩无粘 Euler 显式求解（RK4 / 一阶 Euler + FVM 残差）。
-//!
-//! 理论：[`docs/theory/time_integration.md`](../../docs/theory/time_integration.md)、
-//! [`inviscid_flux.md`](../../docs/theory/inviscid_flux.md)
-
+//! 理论：[`time_integration.md`](../../docs/theory/time_integration.md)、[`inviscid_flux.md`](../../docs/theory/inviscid_flux.md);
 use std::time::Instant;
 
 mod context;
@@ -28,6 +25,8 @@ pub mod spectral_radius;
 pub mod spectral_radius_f32;
 pub mod spectral_radius_unstructured;
 mod spectral_radius_unstructured_f32;
+#[cfg(feature = "cuda")]
+mod spectral_radius_unstructured_f32_cuda;
 pub mod wave_speed;
 
 pub use context::CompressibleAdvanceContext3dTyped;

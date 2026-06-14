@@ -15,6 +15,8 @@ use crate::discretization::unstructured_face_cache_f32::{
     LuSgsUnstructuredCouplingsF32, UnstructuredFaceTopologyF32, build_cell_gradient_samples_f32,
     lsq_geometry_f32_from_f64,
 };
+use crate::discretization::unstructured_idwls_exec_topo::build_idwls_viscous_host_topology;
+use crate::discretization::unstructured_spectral_exec_topo::build_spectral_radius_host_topology;
 use crate::error::Result;
 use crate::mesh::UnstructuredMesh3d;
 
@@ -197,6 +199,12 @@ pub struct UnstructuredSolverMeshCache {
     pub cell_gradient_samples: Vec<Vec<GradientLimiterSample>>,
     /// IDWLS RHS 单元–面关联（`parallel-fvm` 单元并行累加用）。
     pub lsq_rhs_incidence: LsqRhsCellIncidence,
+    /// IDWLS 粘性 RHS 静态拓扑（init 一次；CUDA 路径 H2D）。
+    pub idwls_viscous_topo:
+        crate::discretization::unstructured_idwls_exec_topo::IdwlsViscousHostTopology,
+    /// 谱半径静态拓扑（init 一次；CUDA 单元并行 kernel）。
+    pub spectral_radius_topo:
+        crate::discretization::unstructured_spectral_exec_topo::SpectralRadiusHostTopology,
 }
 
 impl UnstructuredSolverMeshCache {
@@ -213,6 +221,10 @@ impl UnstructuredSolverMeshCache {
             LuSgsUnstructuredCouplingsF32::from_topology_f32(num_cells, &face_topology_f32);
         let cell_gradient_samples = build_cell_gradient_samples(num_cells, &face_topology);
         let lsq_rhs_incidence = build_lsq_rhs_cell_incidence(num_cells, &face_topology);
+        let exec_idwls_viscous_topo =
+            build_idwls_viscous_host_topology(&face_topology_f32, &lsq_rhs_incidence, num_cells);
+        let spectral_radius_topo =
+            build_spectral_radius_host_topology(&face_topology_f32, &lsq_rhs_incidence, num_cells);
         Ok(Self {
             face_topology,
             face_topology_f32,
@@ -222,6 +234,8 @@ impl UnstructuredSolverMeshCache {
             lusgs_couplings_f32,
             cell_gradient_samples,
             lsq_rhs_incidence,
+            idwls_viscous_topo: exec_idwls_viscous_topo,
+            spectral_radius_topo,
         })
     }
 }

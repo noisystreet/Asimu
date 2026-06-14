@@ -18,6 +18,9 @@ mod gradient_tests;
 pub mod gradient_typed;
 pub mod gradient_unstructured;
 pub mod gradient_unstructured_f32;
+#[cfg(feature = "cuda")]
+#[path = "gradient_unstructured_f32_cuda.rs"]
+mod gradient_unstructured_f32_cuda;
 pub mod gradient_unstructured_inviscid_f32;
 pub mod hllc;
 pub mod hllc_f32;
@@ -46,7 +49,9 @@ pub mod slau2;
 pub mod slau2_f32;
 pub mod unstructured_face_cache;
 pub mod unstructured_face_cache_f32;
+pub mod unstructured_idwls_exec_topo;
 pub mod unstructured_limiter;
+pub mod unstructured_spectral_exec_topo;
 pub mod van_leer;
 pub mod van_leer_f32;
 pub mod viscous;

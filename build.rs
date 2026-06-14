@@ -33,6 +33,9 @@ fn build_cuda_kernels() {
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_CUDA");
     println!("cargo:rerun-if-changed=kernels/cuda/inviscid_first_order_f32.cu");
     println!("cargo:rerun-if-changed=kernels/cuda/viscous_interior_f32.cu");
+    println!("cargo:rerun-if-changed=kernels/cuda/idwls_viscous_rhs_f32.cu");
+
+    println!("cargo:rerun-if-changed=kernels/cuda/spectral_radius_unstructured_f32.cu");
 
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
     let nvcc = std::env::var("CUDA_NVCC").unwrap_or_else(|_| "nvcc".to_string());
@@ -51,8 +54,22 @@ fn build_cuda_kernels() {
         "viscous_interior_f32.ptx",
         "CUDA_PTX_VISCOUS_F32",
     );
+    let idwls_ok = compile_cuda_ptx(
+        &nvcc,
+        &out_dir,
+        "kernels/cuda/idwls_viscous_rhs_f32.cu",
+        "idwls_viscous_rhs_f32.ptx",
+        "CUDA_PTX_IDWLS_F32",
+    );
+    let spectral_ok = compile_cuda_ptx(
+        &nvcc,
+        &out_dir,
+        "kernels/cuda/spectral_radius_unstructured_f32.cu",
+        "spectral_radius_unstructured_f32.ptx",
+        "CUDA_PTX_SPECTRAL_RADIUS_F32",
+    );
 
-    if inviscid_ok && viscous_ok {
+    if inviscid_ok && viscous_ok && idwls_ok && spectral_ok {
         println!("cargo:rustc-cfg=cuda_kernels_built");
     } else {
         println!("cargo:rustc-cfg=cuda_kernels_disabled");

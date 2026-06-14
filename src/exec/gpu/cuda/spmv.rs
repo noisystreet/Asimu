@@ -7,6 +7,7 @@ use cudarc::cusparse::{result as cusparse_result, sys as cusparse_sys};
 use cudarc::driver::{CudaSlice, CudaStream, DevicePtr, DevicePtrMut};
 use tracing::info_span;
 
+use super::transfer::{clone_dtoh, clone_htod, memcpy_htod};
 use crate::core::Real;
 use crate::error::{AsimuError, Result};
 use crate::exec::CsrSpmvView;
@@ -88,9 +89,7 @@ pub fn csr_spmv_f64(
     ensure_csr_structure(stream, handle, cache, matrix)?;
 
     let d_values = cache.d_values.as_mut().expect("values after ensure");
-    stream
-        .memcpy_htod(matrix.values, d_values)
-        .map_err(|e| AsimuError::Exec(format!("CUDA CSR values H2D 失败: {e:?}")))?;
+    memcpy_htod(stream, "spmv_csr_values", matrix.values, d_values)?;
     {
         let sp_mat = cache
             .sp_mat
@@ -105,18 +104,14 @@ pub fn csr_spmv_f64(
         }
     }
 
-    let d_x = stream
-        .clone_htod(x)
-        .map_err(|e| AsimuError::Exec(format!("CUDA SpMV x H2D 失败: {e:?}")))?;
+    let d_x = clone_htod(stream, "spmv_x", x)?;
     let mut d_y = stream
         .alloc_zeros::<f64>(matrix.nrows)
         .map_err(|e| AsimuError::Exec(format!("CUDA SpMV y 分配失败: {e:?}")))?;
 
     run_cusparse_spmv(stream, handle, cache, &d_x, &mut d_y)?;
 
-    let host_y = stream
-        .clone_dtoh(&d_y)
-        .map_err(|e| AsimuError::Exec(format!("CUDA SpMV y D2H 失败: {e:?}")))?;
+    let host_y = clone_dtoh(stream, "spmv_y", &d_y)?;
     y.copy_from_slice(host_y.as_slice());
     Ok(())
 }
@@ -163,16 +158,8 @@ fn ensure_csr_structure(
 
     let row_ptr_i32 = usize_to_i32(matrix.row_ptr, "row_ptr")?;
     let col_idx_i32 = usize_to_i32(matrix.col_idx, "col_idx")?;
-    cache.d_row_ptr = Some(
-        stream
-            .clone_htod(&row_ptr_i32)
-            .map_err(|e| AsimuError::Exec(format!("CUDA CSR row_ptr H2D 失败: {e:?}")))?,
-    );
-    cache.d_col_idx = Some(
-        stream
-            .clone_htod(&col_idx_i32)
-            .map_err(|e| AsimuError::Exec(format!("CUDA CSR col_idx H2D 失败: {e:?}")))?,
-    );
+    cache.d_row_ptr = Some(clone_htod(stream, "init_spmv_csr_row_ptr", &row_ptr_i32)?);
+    cache.d_col_idx = Some(clone_htod(stream, "init_spmv_csr_col_idx", &col_idx_i32)?);
     cache.d_values = Some(
         stream
             .alloc_zeros::<f64>(cache.nnz)
