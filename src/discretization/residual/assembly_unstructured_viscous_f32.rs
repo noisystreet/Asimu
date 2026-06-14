@@ -14,11 +14,10 @@ use crate::discretization::unstructured_face_cache::{
 };
 use crate::discretization::unstructured_face_cache_f32::UnstructuredFaceTopologyF32;
 use crate::discretization::viscous_f32::{
-    average_face_lane_f32, fused_interior_viscous_face_flux_averaged_f32,
-    scatter_fused_interior_viscous_face_f32,
+    InteriorViscousScatterGeomF32, average_face_lane_f32,
+    fused_interior_viscous_face_flux_averaged_f32, scatter_fused_interior_viscous_face_f32,
 };
 use crate::error::Result;
-use crate::exec::ColoredViscousFaceGeom;
 use crate::exec::ExecutionContext;
 use crate::field::{ConservedResidualT, PrimitiveFieldsT};
 use crate::mesh::UnstructuredMesh3d;
@@ -141,16 +140,16 @@ fn assemble_viscous_residual_f32_interior(
             (m as f32, l as f32)
         };
         let normal = face.normal;
-        let geom = ColoredViscousFaceGeom {
+        let geom = InteriorViscousScatterGeomF32 {
             owner: face.owner,
             neighbor: face.neighbor,
-            nx: normal[0] as Real,
-            ny: normal[1] as Real,
-            nz: normal[2] as Real,
-            mu: mu as Real,
-            lambda: lambda as Real,
-            owner_scale: face.owner_rhs_scale as Real,
-            neighbor_scale: face.neighbor_rhs_scale as Real,
+            nx: normal[0],
+            ny: normal[1],
+            nz: normal[2],
+            mu,
+            lambda,
+            owner_scale: face.owner_rhs_scale,
+            neighbor_scale: face.neighbor_rhs_scale,
         };
         let lane =
             average_face_lane_f32(face.owner, face.neighbor, params.primitives, &grad_slices);

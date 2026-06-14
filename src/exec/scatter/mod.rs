@@ -13,7 +13,8 @@ mod viscous_f32;
 pub use contribution::{
     InviscidPairScatter, InviscidPairScatterF32, InviscidResidualMut, InviscidResidualMutF32,
     InviscidScatterOp, InviscidScatterOpF32, ViscousRangeScatter, ViscousResidualMut,
-    ViscousResidualMutF32, ViscousScatterOp, ViscousValidSlotScatter, ViscousValidSlotScatterF32,
+    ViscousResidualMutF32, ViscousScatterOp, ViscousScatterOpF32, ViscousValidSlotScatter,
+    ViscousValidSlotScatterF32,
 };
 pub use inviscid::scatter_inviscid_pairs;
 pub use inviscid_f32::scatter_inviscid_pairs_f32;

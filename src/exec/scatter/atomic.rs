@@ -6,7 +6,9 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use crate::core::Real;
 
-use super::contribution::{InviscidScatterOp, InviscidScatterOpF32, ViscousScatterOp};
+use super::contribution::{
+    InviscidScatterOp, InviscidScatterOpF32, ViscousScatterOp, ViscousScatterOpF32,
+};
 use super::ptr::SendMutPtr;
 
 #[inline]
@@ -190,42 +192,31 @@ pub(super) unsafe fn scatter_viscous_op_atomic(op: ViscousScatterOp, ptrs: Visco
 
 #[inline]
 pub(super) unsafe fn scatter_viscous_op_atomic_f32(
-    op: ViscousScatterOp,
+    op: ViscousScatterOpF32,
     ptrs: ViscousResidualPtrsF32,
 ) {
-    let owner_scale = op.owner_scale as f32;
-    let neighbor_scale = op.neighbor_scale as f32;
-    fetch_add_f32(
-        ptrs.mx.as_ptr().add(op.owner),
-        owner_scale * op.flux_mx as f32,
-    );
-    fetch_add_f32(
-        ptrs.my.as_ptr().add(op.owner),
-        owner_scale * op.flux_my as f32,
-    );
-    fetch_add_f32(
-        ptrs.mz.as_ptr().add(op.owner),
-        owner_scale * op.flux_mz as f32,
-    );
+    fetch_add_f32(ptrs.mx.as_ptr().add(op.owner), op.owner_scale * op.flux_mx);
+    fetch_add_f32(ptrs.my.as_ptr().add(op.owner), op.owner_scale * op.flux_my);
+    fetch_add_f32(ptrs.mz.as_ptr().add(op.owner), op.owner_scale * op.flux_mz);
     fetch_add_f32(
         ptrs.energy.as_ptr().add(op.owner),
-        owner_scale * op.flux_energy as f32,
+        op.owner_scale * op.flux_energy,
     );
     fetch_add_f32(
         ptrs.mx.as_ptr().add(op.neighbor),
-        neighbor_scale * op.flux_mx as f32,
+        op.neighbor_scale * op.flux_mx,
     );
     fetch_add_f32(
         ptrs.my.as_ptr().add(op.neighbor),
-        neighbor_scale * op.flux_my as f32,
+        op.neighbor_scale * op.flux_my,
     );
     fetch_add_f32(
         ptrs.mz.as_ptr().add(op.neighbor),
-        neighbor_scale * op.flux_mz as f32,
+        op.neighbor_scale * op.flux_mz,
     );
     fetch_add_f32(
         ptrs.energy.as_ptr().add(op.neighbor),
-        neighbor_scale * op.flux_energy as f32,
+        op.neighbor_scale * op.flux_energy,
     );
 }
 

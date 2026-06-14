@@ -18,6 +18,19 @@ pub struct ViscousScatterOp {
     pub flux_energy: Real,
 }
 
+/// 单面粘性 scatter 贡献（全 f32，无 Real 桥接）。
+#[derive(Debug, Clone, Copy)]
+pub struct ViscousScatterOpF32 {
+    pub owner: usize,
+    pub neighbor: usize,
+    pub owner_scale: f32,
+    pub neighbor_scale: f32,
+    pub flux_mx: f32,
+    pub flux_my: f32,
+    pub flux_mz: f32,
+    pub flux_energy: f32,
+}
+
 /// 单面无粘 scatter 贡献。
 #[derive(Debug, Clone, Copy)]
 pub struct InviscidScatterOp {

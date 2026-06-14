@@ -20,8 +20,9 @@ use crate::discretization::viscous::{
 use crate::error::{AsimuError, Result};
 use crate::exec::ExecutionContext;
 use crate::exec::scatter::{
-    ViscousResidualMut, ViscousResidualMutF32, ViscousScatterOp, ViscousValidSlotScatter,
-    ViscousValidSlotScatterF32, scatter_viscous_valid_slots, scatter_viscous_valid_slots_f32,
+    ViscousResidualMut, ViscousResidualMutF32, ViscousScatterOp, ViscousScatterOpF32,
+    ViscousValidSlotScatter, ViscousValidSlotScatterF32, scatter_viscous_valid_slots,
+    scatter_viscous_valid_slots_f32,
 };
 use crate::field::{ConservedResidualT, PrimitiveFields};
 use crate::mesh::UnstructuredMesh3d;
@@ -121,7 +122,7 @@ impl ViscousTypedScatterBackend for f32 {
                     energy: residual.total_energy.values_mut(),
                 },
             },
-            extract,
+            |g, f| viscous_scatter_op_f32_from_real(extract(g, f)),
         );
     }
 
@@ -131,6 +132,19 @@ impl ViscousTypedScatterBackend for f32 {
         flux: &InteriorViscousFaceFlux,
     ) {
         scatter_fused_interior_viscous_face_typed(residual, geom, flux);
+    }
+}
+
+fn viscous_scatter_op_f32_from_real(op: ViscousScatterOp) -> ViscousScatterOpF32 {
+    ViscousScatterOpF32 {
+        owner: op.owner,
+        neighbor: op.neighbor,
+        owner_scale: op.owner_scale as f32,
+        neighbor_scale: op.neighbor_scale as f32,
+        flux_mx: op.flux_mx as f32,
+        flux_my: op.flux_my as f32,
+        flux_mz: op.flux_mz as f32,
+        flux_energy: op.flux_energy as f32,
     }
 }
 

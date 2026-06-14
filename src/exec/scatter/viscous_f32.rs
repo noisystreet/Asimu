@@ -3,21 +3,22 @@
 use crate::exec::context::{ExecutionContext, ResolvedScatterMode};
 
 use super::atomic::{ViscousResidualPtrsF32, scatter_viscous_op_atomic_f32};
-use super::contribution::{ViscousResidualMutF32, ViscousScatterOp, ViscousValidSlotScatterF32};
+use super::contribution::{ViscousResidualMutF32, ViscousScatterOpF32, ViscousValidSlotScatterF32};
 use super::span::enter_scatter_span;
 
 #[inline]
-fn scatter_viscous_op_serial_f32(op: ViscousScatterOp, residual: &mut ViscousResidualMutF32<'_>) {
-    let owner_scale = op.owner_scale as f32;
-    let neighbor_scale = op.neighbor_scale as f32;
-    residual.mx[op.owner] += owner_scale * op.flux_mx as f32;
-    residual.my[op.owner] += owner_scale * op.flux_my as f32;
-    residual.mz[op.owner] += owner_scale * op.flux_mz as f32;
-    residual.energy[op.owner] += owner_scale * op.flux_energy as f32;
-    residual.mx[op.neighbor] += neighbor_scale * op.flux_mx as f32;
-    residual.my[op.neighbor] += neighbor_scale * op.flux_my as f32;
-    residual.mz[op.neighbor] += neighbor_scale * op.flux_mz as f32;
-    residual.energy[op.neighbor] += neighbor_scale * op.flux_energy as f32;
+fn scatter_viscous_op_serial_f32(
+    op: ViscousScatterOpF32,
+    residual: &mut ViscousResidualMutF32<'_>,
+) {
+    residual.mx[op.owner] += op.owner_scale * op.flux_mx;
+    residual.my[op.owner] += op.owner_scale * op.flux_my;
+    residual.mz[op.owner] += op.owner_scale * op.flux_mz;
+    residual.energy[op.owner] += op.owner_scale * op.flux_energy;
+    residual.mx[op.neighbor] += op.neighbor_scale * op.flux_mx;
+    residual.my[op.neighbor] += op.neighbor_scale * op.flux_my;
+    residual.mz[op.neighbor] += op.neighbor_scale * op.flux_mz;
+    residual.energy[op.neighbor] += op.neighbor_scale * op.flux_energy;
 }
 
 fn bucket_uses_atomic_scatter(ctx: &ExecutionContext, bucket_len: usize) -> bool {
@@ -30,7 +31,7 @@ fn bucket_uses_atomic_scatter(ctx: &ExecutionContext, bucket_len: usize) -> bool
 /// 按 `valid` 掩码 scatter 粘性内面至 `f32` 残差。
 pub fn scatter_viscous_valid_slots_f32<G, F>(
     scatter: ViscousValidSlotScatterF32<'_, G, F>,
-    extract: impl Fn(&G, &F) -> ViscousScatterOp + Sync,
+    extract: impl Fn(&G, &F) -> ViscousScatterOpF32 + Sync,
 ) where
     G: Sync,
     F: Sync,

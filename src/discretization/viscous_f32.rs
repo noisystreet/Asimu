@@ -1,8 +1,6 @@
 //! f32 粘性面通量 compute + scatter（非 SIMD 串行路径）。
 
-use crate::core::{ComputeFloat, Real};
 use crate::discretization::gradient_typed::VelocityGradientSlicesT;
-use crate::exec::ColoredViscousFaceGeom;
 use crate::field::{ConservedResidualT, PrimitiveFieldsT};
 
 /// f32 单面粘性动量/能量通量。
@@ -12,6 +10,20 @@ pub struct ColoredViscousFaceFluxF32 {
     pub my: f32,
     pub mz: f32,
     pub energy: f32,
+}
+
+/// f32 粘性内面 scatter 几何（预存 RHS 缩放与法向）。
+#[derive(Debug, Clone, Copy)]
+pub struct InteriorViscousScatterGeomF32 {
+    pub owner: usize,
+    pub neighbor: usize,
+    pub nx: f32,
+    pub ny: f32,
+    pub nz: f32,
+    pub mu: f32,
+    pub lambda: f32,
+    pub owner_scale: f32,
+    pub neighbor_scale: f32,
 }
 
 /// 面心预平均速度与梯度（f32）。
@@ -70,29 +82,21 @@ pub fn fused_interior_viscous_face_flux_averaged_f32(
 #[inline(always)]
 pub fn scatter_fused_interior_viscous_face_f32(
     residual: &mut ConservedResidualT<f32>,
-    geom: &ColoredViscousFaceGeom,
+    geom: &InteriorViscousScatterGeomF32,
     flux: &ColoredViscousFaceFluxF32,
 ) {
     let owner = geom.owner;
     let neighbor = geom.neighbor;
-    let owner_scale = geom.owner_scale as f32;
-    let neighbor_scale = geom.neighbor_scale as f32;
-    residual.momentum_x.values_mut()[owner] =
-        residual.momentum_x.values()[owner].add_mul_real(flux.mx, owner_scale as Real);
-    residual.momentum_y.values_mut()[owner] =
-        residual.momentum_y.values()[owner].add_mul_real(flux.my, owner_scale as Real);
-    residual.momentum_z.values_mut()[owner] =
-        residual.momentum_z.values()[owner].add_mul_real(flux.mz, owner_scale as Real);
-    residual.total_energy.values_mut()[owner] =
-        residual.total_energy.values()[owner].add_mul_real(flux.energy, owner_scale as Real);
-    residual.momentum_x.values_mut()[neighbor] =
-        residual.momentum_x.values()[neighbor].add_mul_real(flux.mx, neighbor_scale as Real);
-    residual.momentum_y.values_mut()[neighbor] =
-        residual.momentum_y.values()[neighbor].add_mul_real(flux.my, neighbor_scale as Real);
-    residual.momentum_z.values_mut()[neighbor] =
-        residual.momentum_z.values()[neighbor].add_mul_real(flux.mz, neighbor_scale as Real);
-    residual.total_energy.values_mut()[neighbor] =
-        residual.total_energy.values()[neighbor].add_mul_real(flux.energy, neighbor_scale as Real);
+    let os = geom.owner_scale;
+    let ns = geom.neighbor_scale;
+    residual.momentum_x.values_mut()[owner] += os * flux.mx;
+    residual.momentum_y.values_mut()[owner] += os * flux.my;
+    residual.momentum_z.values_mut()[owner] += os * flux.mz;
+    residual.total_energy.values_mut()[owner] += os * flux.energy;
+    residual.momentum_x.values_mut()[neighbor] += ns * flux.mx;
+    residual.momentum_y.values_mut()[neighbor] += ns * flux.my;
+    residual.momentum_z.values_mut()[neighbor] += ns * flux.mz;
+    residual.total_energy.values_mut()[neighbor] += ns * flux.energy;
 }
 
 pub fn average_face_lane_f32(
