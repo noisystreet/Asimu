@@ -1,4 +1,4 @@
-//! 非结构 3D 粘性残差 f32 装配（梯度、内面与边界面通量均为 f32；串行路径）。
+//! 非结构 3D 粘性残差 f32 装配（梯度、内面与边界面通量均为 f32）。
 
 use tracing::info_span;
 
@@ -12,13 +12,22 @@ use crate::discretization::gradient_unstructured_f32::{
 use crate::discretization::unstructured_face_cache::{
     UnstructuredFaceTopology, UnstructuredSolverMeshCache,
 };
-use crate::discretization::unstructured_face_cache_f32::UnstructuredFaceTopologyF32;
+use crate::discretization::unstructured_face_cache_f32::{
+    UnstructuredFaceTopologyF32, UnstructuredInteriorFaceF32,
+};
+#[cfg(not(feature = "parallel-fvm"))]
+use crate::discretization::viscous_f32::scatter_fused_interior_viscous_face_f32;
 use crate::discretization::viscous_f32::{
-    InteriorViscousScatterGeomF32, average_face_lane_f32,
-    fused_interior_viscous_face_flux_averaged_f32, scatter_fused_interior_viscous_face_f32,
+    ColoredViscousFaceFluxF32, InteriorViscousScatterGeomF32, average_face_lane_f32,
+    fused_interior_viscous_face_flux_averaged_f32,
 };
 use crate::error::Result;
 use crate::exec::ExecutionContext;
+#[cfg(feature = "parallel-fvm")]
+use crate::exec::scatter::{
+    ViscousResidualMutF32, ViscousScatterOpF32, ViscousValidSlotScatterF32,
+    scatter_viscous_valid_slots_f32,
+};
 use crate::field::{ConservedResidualT, PrimitiveFieldsT};
 use crate::mesh::UnstructuredMesh3d;
 use crate::physics::{IdealGasEoS, ViscousPhysicsConfig};
@@ -37,6 +46,7 @@ struct ViscousInteriorAssemblyF32<'a> {
     primitives: &'a PrimitiveFieldsT<f32>,
     gradients: &'a GradientFieldsT<f32>,
     temperatures: &'a [f32],
+    exec: &'a ExecutionContext,
 }
 
 /// f32 非结构粘性装配输入。
@@ -91,6 +101,7 @@ pub fn compute_gradients_and_assemble_viscous_unstructured_f32(
             primitives: input.primitives,
             gradients: input.gradient_scratch,
             temperatures: &grad_scratch.temperatures,
+            exec: input.exec,
         },
         scratch,
     )?;
@@ -124,41 +135,136 @@ fn assemble_viscous_residual_f32_interior(
         scratch,
     )?;
     let grad_slices = params.gradients.velocity_gradient_slices();
-    let _span = info_span!(
-        "unstructured_viscous_interior_flux_f32",
-        faces = params.face_topology.interior.len(),
-    )
-    .entered();
-    for (i, face) in params.face_topology.interior.iter().enumerate() {
-        if face.owner_rhs_scale == 0.0 && face.neighbor_rhs_scale == 0.0 {
-            continue;
+    let coloring = &params.transport_topology.interior_coloring;
+
+    #[cfg(not(feature = "parallel-fvm"))]
+    {
+        let _span = info_span!(
+            "unstructured_viscous_interior_flux_f32",
+            path = "colored_serial",
+            faces = params.face_topology.interior.len(),
+            colors = coloring.num_colors,
+        )
+        .entered();
+        for bucket in &coloring.buckets {
+            for &face_idx in bucket {
+                if let Some((geom, flux)) = compute_interior_viscous_face_contribution_f32(
+                    face_idx,
+                    &params.face_topology.interior,
+                    constant,
+                    scratch,
+                    params,
+                    &grad_slices,
+                )? {
+                    scatter_fused_interior_viscous_face_f32(residual, &geom, &flux);
+                }
+            }
         }
-        let (mu, lambda) = if let Some(c) = constant {
-            (c.0 as f32, c.1 as f32)
-        } else {
-            let (m, l) = scratch.face_transport_at(i);
-            (m as f32, l as f32)
-        };
-        let normal = face.normal;
-        let geom = InteriorViscousScatterGeomF32 {
-            owner: face.owner,
-            neighbor: face.neighbor,
-            nx: normal[0],
-            ny: normal[1],
-            nz: normal[2],
-            mu,
-            lambda,
-            owner_scale: face.owner_rhs_scale,
-            neighbor_scale: face.neighbor_rhs_scale,
-        };
-        let lane =
-            average_face_lane_f32(face.owner, face.neighbor, params.primitives, &grad_slices);
-        let flux = fused_interior_viscous_face_flux_averaged_f32(
-            lane, normal[0], normal[1], normal[2], mu, lambda,
-        );
-        scatter_fused_interior_viscous_face_f32(residual, &geom, &flux);
+        return Ok(());
     }
-    Ok(())
+
+    #[cfg(feature = "parallel-fvm")]
+    {
+        use crate::exec::parallel::par_try_map_face_indices;
+
+        let _span = info_span!(
+            "unstructured_viscous_interior_flux_f32",
+            path = "parallel_bucket",
+            faces = params.face_topology.interior.len(),
+            colors = coloring.num_colors,
+        )
+        .entered();
+        for bucket in &coloring.buckets {
+            let contributions = par_try_map_face_indices(bucket, 1024, |face_idx| {
+                compute_interior_viscous_face_contribution_f32(
+                    face_idx,
+                    &params.face_topology.interior,
+                    constant,
+                    scratch,
+                    params,
+                    &grad_slices,
+                )
+            })?;
+            let pairs: Vec<_> = contributions.into_iter().flatten().collect();
+            if pairs.is_empty() {
+                continue;
+            }
+            let geoms: Vec<InteriorViscousScatterGeomF32> = pairs.iter().map(|(g, _)| *g).collect();
+            let fluxes: Vec<ColoredViscousFaceFluxF32> = pairs.iter().map(|(_, f)| *f).collect();
+            let valid = vec![true; pairs.len()];
+            scatter_viscous_valid_slots_f32(
+                ViscousValidSlotScatterF32 {
+                    ctx: params.exec,
+                    bucket_len: bucket.len(),
+                    geoms: &geoms,
+                    fluxes: &fluxes,
+                    valid: &valid,
+                    residual: ViscousResidualMutF32 {
+                        mx: residual.momentum_x.values_mut(),
+                        my: residual.momentum_y.values_mut(),
+                        mz: residual.momentum_z.values_mut(),
+                        energy: residual.total_energy.values_mut(),
+                    },
+                },
+                viscous_scatter_extract_f32,
+            );
+        }
+        Ok(())
+    }
+}
+
+#[cfg(feature = "parallel-fvm")]
+fn viscous_scatter_extract_f32(
+    g: &InteriorViscousScatterGeomF32,
+    f: &ColoredViscousFaceFluxF32,
+) -> ViscousScatterOpF32 {
+    ViscousScatterOpF32 {
+        owner: g.owner,
+        neighbor: g.neighbor,
+        owner_scale: g.owner_scale,
+        neighbor_scale: g.neighbor_scale,
+        flux_mx: f.mx,
+        flux_my: f.my,
+        flux_mz: f.mz,
+        flux_energy: f.energy,
+    }
+}
+
+fn compute_interior_viscous_face_contribution_f32(
+    face_idx: usize,
+    interior: &[UnstructuredInteriorFaceF32],
+    constant: Option<(Real, Real)>,
+    scratch: &ViscousAssemblyUnstructuredScratch,
+    params: &ViscousInteriorAssemblyF32<'_>,
+    grad_slices: &crate::discretization::gradient_typed::VelocityGradientSlicesT<'_, f32>,
+) -> Result<Option<(InteriorViscousScatterGeomF32, ColoredViscousFaceFluxF32)>> {
+    let face = &interior[face_idx];
+    if face.owner_rhs_scale == 0.0 && face.neighbor_rhs_scale == 0.0 {
+        return Ok(None);
+    }
+    let (mu, lambda) = if let Some(c) = constant {
+        (c.0 as f32, c.1 as f32)
+    } else {
+        let (m, l) = scratch.face_transport_at(face_idx);
+        (m as f32, l as f32)
+    };
+    let normal = face.normal;
+    let geom = InteriorViscousScatterGeomF32 {
+        owner: face.owner,
+        neighbor: face.neighbor,
+        nx: normal[0],
+        ny: normal[1],
+        nz: normal[2],
+        mu,
+        lambda,
+        owner_scale: face.owner_rhs_scale,
+        neighbor_scale: face.neighbor_rhs_scale,
+    };
+    let lane = average_face_lane_f32(face.owner, face.neighbor, params.primitives, grad_slices);
+    let flux = fused_interior_viscous_face_flux_averaged_f32(
+        lane, normal[0], normal[1], normal[2], mu, lambda,
+    );
+    Ok(Some((geom, flux)))
 }
 
 #[cfg(test)]
