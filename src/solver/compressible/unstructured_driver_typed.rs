@@ -250,7 +250,7 @@ fn advance_unstructured_step_typed<T: UnstructuredComputeBackend + UnstructuredC
     }
     let time_integration_ms = elapsed_ms(time_integration_start);
     fields.enforce_positivity(env.config.eos, p_floor);
-    let residual = work.storage.k1.density_rms_norm();
+    let residual = T::step_density_residual_rms(work)?;
     let time_info = work.integrator.advance(&mut work.state)?;
     let step_total_ms = elapsed_ms(step_start);
     #[cfg(feature = "cuda")]
@@ -401,7 +401,11 @@ impl UnstructuredRhsDispatchImpl for f32 {
         let cuda_viscous_pipeline = f32_cuda_viscous_rhs_pipeline(env, work.exec);
         #[cfg(feature = "cuda")]
         begin_f32_cuda_viscous_rhs_pipeline(work.exec, cuda_viscous_pipeline)?;
-        if refresh_state {
+        #[cfg(feature = "cuda")]
+        let skip_rhs_refresh = cuda_viscous_pipeline && work.exec.cuda_host_bc_primitives_synced();
+        #[cfg(not(feature = "cuda"))]
+        let skip_rhs_refresh = false;
+        if refresh_state && !skip_rhs_refresh {
             refresh_compressible_ghosts_and_primitives_typed(RefreshCompressibleStateTypedInput {
                 boundary_mesh: env.config.mesh,
                 patches: env.config.patches,

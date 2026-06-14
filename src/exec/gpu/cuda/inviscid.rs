@@ -43,6 +43,8 @@ mod cuda_lusgs_timestep;
 #[path = "inviscid_launch.rs"]
 mod inviscid_launch;
 
+pub use cuda_boundary_assembly::CudaPrepareRhsDeviceInput;
+
 const BLOCK_THREADS: u32 = 256;
 
 /// CUDA 一阶无粘通量格式（与 `inviscid_first_order_f32.cu` 一致）。
@@ -91,6 +93,7 @@ pub struct CudaBackendState {
     inviscid_boundary_topo_key: Option<usize>,
     viscous_boundary_mesh: Option<super::boundary_mesh_cache::CudaViscousBoundaryMeshCache>,
     viscous_boundary_topo_key: Option<usize>,
+    residual_sum_sq_scratch: Option<cudarc::driver::CudaSlice<f32>>,
 }
 
 impl CudaBackendState {
@@ -136,12 +139,21 @@ impl CudaBackendState {
             inviscid_boundary_topo_key: None,
             viscous_boundary_mesh: None,
             viscous_boundary_topo_key: None,
+            residual_sum_sq_scratch: None,
         })
     }
 
     /// BC / 守恒场刷新后调用：下一步 RHS 前将 primitive 上传 device。
     pub fn mark_host_primitives_updated(&mut self) {
         self.primitives_dirty = true;
+        self.pipeline.host_bc_primitives_synced = false;
+        self.pipeline.boundary_ghosts_on_device = false;
+        self.pipeline.cell_temps_on_device = false;
+    }
+
+    #[must_use]
+    pub(crate) fn host_bc_primitives_synced(&self) -> bool {
+        self.pipeline.host_bc_primitives_synced
     }
 
     pub(crate) fn reset_pipeline_step(&mut self) {
@@ -325,6 +337,7 @@ impl CudaBackendState {
         let fields = self.fields.as_mut().expect("field buffers after ensure");
         fields.upload_primitives(&self.stream, primitives)?;
         self.primitives_dirty = false;
+        self.pipeline.host_bc_primitives_synced = true;
         Ok(())
     }
 
@@ -414,6 +427,11 @@ impl CudaBackendState {
         self.ensure_viscous_resources(topo, topo_key)?;
         let num_cells = temperatures.len();
         self.upload_viscous_transport_temps(temperatures)?;
+        let temps = CudaBackendState::viscous_transport_temps_slice(
+            &self.pipeline,
+            self.idwls_mesh.as_ref(),
+            self.viscous_transport_temps.as_ref(),
+        )?;
         let face_geom_buf = self
             .viscous_face_geom
             .as_mut()
@@ -426,10 +444,6 @@ impl CudaBackendState {
             model_kind = params.model_kind,
         )
         .entered();
-        let temps = self
-            .viscous_transport_temps
-            .as_ref()
-            .expect("temps on device");
         super::viscous::launch_viscous_face_transport(
             &self.stream,
             &self.viscous_module.face_transport,
@@ -456,7 +470,7 @@ impl CudaBackendState {
         Ok(())
     }
 
-    fn ensure_idwls_mesh(
+    pub(crate) fn ensure_idwls_mesh(
         &mut self,
         topo: &ExecIdwlsViscousTopology,
         topo_key: usize,
@@ -494,8 +508,13 @@ impl CudaBackendState {
             self.primitives_dirty = false;
         }
         let mesh = self.idwls_mesh.as_mut().expect("idwls mesh after ensure");
-        mesh.upload_temperature(&self.stream, temperatures)?;
-        mesh.upload_boundary_ghosts(&self.stream, boundary_ghosts)?;
+        if !self.pipeline.cell_temps_on_device {
+            mesh.upload_temperature(&self.stream, temperatures)?;
+            self.pipeline.cell_temps_on_device = true;
+        }
+        if !self.pipeline.boundary_ghosts_on_device {
+            mesh.upload_boundary_ghosts(&self.stream, boundary_ghosts)?;
+        }
         let rhs = self.idwls_rhs.as_mut().expect("idwls rhs after ensure");
         launch_idwls_viscous_accumulate(
             &self.stream,
@@ -535,8 +554,13 @@ impl CudaBackendState {
             self.primitives_dirty = false;
         }
         let mesh = self.idwls_mesh.as_mut().expect("idwls mesh after ensure");
-        mesh.upload_temperature(&self.stream, temperatures)?;
-        mesh.upload_boundary_ghosts(&self.stream, boundary_ghosts)?;
+        if !self.pipeline.cell_temps_on_device {
+            mesh.upload_temperature(&self.stream, temperatures)?;
+            self.pipeline.cell_temps_on_device = true;
+        }
+        if !self.pipeline.boundary_ghosts_on_device {
+            mesh.upload_boundary_ghosts(&self.stream, boundary_ghosts)?;
+        }
         let rhs = self.idwls_rhs.as_mut().expect("idwls rhs after ensure");
         launch_idwls_viscous_accumulate(
             &self.stream,

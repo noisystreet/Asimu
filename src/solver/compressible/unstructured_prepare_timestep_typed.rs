@@ -65,6 +65,7 @@ pub(crate) fn prepare_unstructured_timestep_typed<
             primitives: &mut work.primitives,
         })?;
         T::sync_primitives_after_refresh(work)?;
+        T::maybe_prepare_cuda_rhs_device_state(env, work, p_floor)?;
     }
     let fixed_dt = env.config.fixed_dt.filter(|dt| *dt > 0.0 && dt.is_finite());
     let prepared = compute_spectral_radius_at_prepare(env, work, p_floor, cfl, fixed_dt)?;
@@ -103,17 +104,68 @@ fn compute_spectral_radius_at_prepare<
 /// BC/原变量刷新后同步 device primitive（f32 CUDA 单步一次 H2D）。
 pub(crate) trait UnstructuredCudaPrepareSync: UnstructuredSpectralRadiusTyped {
     fn sync_primitives_after_refresh(work: &mut UnstructuredStepWorkTyped<Self>) -> Result<()>;
+
+    fn maybe_prepare_cuda_rhs_device_state(
+        env: &UnstructuredRunEnvTyped<'_>,
+        work: &mut UnstructuredStepWorkTyped<Self>,
+        p_floor: Real,
+    ) -> Result<()> {
+        let _ = (env, work, p_floor);
+        Ok(())
+    }
+
+    fn step_density_residual_rms(work: &mut UnstructuredStepWorkTyped<Self>) -> Result<Real>;
 }
 
 impl UnstructuredCudaPrepareSync for f32 {
     fn sync_primitives_after_refresh(work: &mut UnstructuredStepWorkTyped<f32>) -> Result<()> {
         work.exec.sync_cuda_primitives_to_device(&work.primitives)
     }
+
+    fn maybe_prepare_cuda_rhs_device_state(
+        env: &UnstructuredRunEnvTyped<'_>,
+        work: &mut UnstructuredStepWorkTyped<f32>,
+        p_floor: Real,
+    ) -> Result<()> {
+        #[cfg(feature = "cuda")]
+        {
+            if work.exec.device() != ExecDevice::GpuCuda {
+                return Ok(());
+            }
+            let Some(viscous) = env.config.viscous else {
+                return Ok(());
+            };
+            work.exec.cuda_prepare_rhs_device_state(
+                crate::exec::gpu::cuda::CudaPrepareRhsDeviceInput {
+                    mesh_cache: &work.mesh_cache,
+                    ghosts: &work.ghosts,
+                    primitives: &work.primitives,
+                    eos: env.config.eos,
+                    viscous,
+                    min_pressure: p_floor,
+                },
+            )?;
+        }
+        let _ = (env, work, p_floor);
+        Ok(())
+    }
+
+    fn step_density_residual_rms(work: &mut UnstructuredStepWorkTyped<f32>) -> Result<Real> {
+        #[cfg(feature = "cuda")]
+        if work.exec.device() == ExecDevice::GpuCuda && work.exec.cuda_residual_on_device() {
+            return Ok(work.exec.cuda_density_residual_rms_f32()? as Real);
+        }
+        Ok(work.storage.k1.density_rms_norm())
+    }
 }
 
 impl UnstructuredCudaPrepareSync for f64 {
     fn sync_primitives_after_refresh(_work: &mut UnstructuredStepWorkTyped<f64>) -> Result<()> {
         Ok(())
+    }
+
+    fn step_density_residual_rms(work: &mut UnstructuredStepWorkTyped<f64>) -> Result<Real> {
+        Ok(work.storage.k1.density_rms_norm())
     }
 }
 

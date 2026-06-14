@@ -1,6 +1,6 @@
 //! LU-SGS 对角更新与 device timestep 下载（`inviscid` 子模块，可访问私有字段）。
 
-use super::super::lusgs_diagonal::launch_lusgs_diagonal_update;
+use super::super::lusgs_diagonal::{launch_lusgs_diagonal_update, launch_residual_density_sum_sq};
 use super::CudaBackendState;
 use crate::error::{AsimuError, Result};
 use crate::field::{ConservedFieldsT, ConservedResidualT};
@@ -74,5 +74,48 @@ impl CudaBackendState {
         self.pipeline.residual_on_device = true;
         self.pipeline.timestep_on_device = false;
         Ok(())
+    }
+
+    /// device 密度残差 RMS（单 float D2H；替代全量残差 D2H）。
+    pub fn density_residual_rms_f32(&mut self) -> Result<f32> {
+        if !self.pipeline.residual_on_device {
+            return Err(AsimuError::Exec(
+                "CUDA 密度残差 RMS 需要 residual 在 device 上".to_string(),
+            ));
+        }
+        let fields = self.fields.as_ref().expect("field buffers");
+        let n = fields.num_cells();
+        if n == 0 {
+            return Ok(0.0);
+        }
+        if self
+            .residual_sum_sq_scratch
+            .as_ref()
+            .is_none_or(|s| s.len() != 1)
+        {
+            self.residual_sum_sq_scratch = Some(
+                self.stream
+                    .alloc_zeros::<f32>(1)
+                    .map_err(|e| AsimuError::Exec(format!("CUDA sum_sq 分配失败: {e:?}")))?,
+            );
+        }
+        let sum_buf = self
+            .residual_sum_sq_scratch
+            .as_mut()
+            .expect("sum_sq scratch after ensure");
+        launch_residual_density_sum_sq(
+            &self.stream,
+            &self.lusgs_module.residual_density_sum_sq,
+            &fields.res_rho,
+            n as u32,
+            sum_buf,
+        )?;
+        self.stream
+            .synchronize()
+            .map_err(|e| AsimuError::Exec(format!("CUDA 同步失败: {e:?}")))?;
+        let sum_sq =
+            super::super::transfer::clone_dtoh(&self.stream, "residual_density_sum_sq", sum_buf)?;
+        let rms = (sum_sq[0] / n as f32).sqrt();
+        Ok(rms)
     }
 }

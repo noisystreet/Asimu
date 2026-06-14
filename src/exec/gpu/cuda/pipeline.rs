@@ -13,6 +13,12 @@ pub(crate) struct CudaPipelineState {
     pub rhs_pipeline_active: bool,
     /// 面 \(\mu,\lambda\) 已在 device `CudaViscousFaceGeomBuffer` 上刷新（跳过 H2D refresh）。
     pub viscous_transport_on_device: bool,
+    /// 本步 prepare 已刷新 BC/原变量并 H2D；RHS 可跳过重复 refresh。
+    pub host_bc_primitives_synced: bool,
+    /// 边界面 ghost 已上传至 IDWLS/无粘/粘性 boundary device 缓冲。
+    pub boundary_ghosts_on_device: bool,
+    /// 单元静温已在 device（与 IDWLS `temperature` 缓冲一致）。
+    pub cell_temps_on_device: bool,
 }
 
 impl CudaPipelineState {

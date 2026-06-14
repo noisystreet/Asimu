@@ -53,3 +53,32 @@ pub fn launch_lusgs_diagonal_update(
     }
     Ok(())
 }
+
+pub fn launch_residual_density_sum_sq(
+    stream: &Arc<CudaStream>,
+    function: &cudarc::driver::CudaFunction,
+    res_rho: &CudaSlice<f32>,
+    num_cells: u32,
+    sum_sq_out: &mut CudaSlice<f32>,
+) -> Result<()> {
+    let _span = info_span!("cuda_residual_density_sum_sq", cells = num_cells).entered();
+    stream
+        .memset_zeros(sum_sq_out)
+        .map_err(|e| AsimuError::Exec(format!("CUDA memset sum_sq 失败: {e:?}")))?;
+    let num_blocks = num_cells.div_ceil(BLOCK_THREADS);
+    let cfg = LaunchConfig {
+        grid_dim: (num_blocks, 1, 1),
+        block_dim: (BLOCK_THREADS, 1, 1),
+        shared_mem_bytes: 0,
+    };
+    let mut builder = stream.launch_builder(function);
+    builder.arg(res_rho);
+    builder.arg(&num_cells);
+    builder.arg(sum_sq_out);
+    unsafe {
+        builder.launch(cfg).map_err(|e| {
+            AsimuError::Exec(format!("CUDA 密度残差 RMS kernel launch 失败: {e:?}"))
+        })?;
+    }
+    Ok(())
+}

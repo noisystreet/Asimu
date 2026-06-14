@@ -32,6 +32,7 @@ pub use idwls_mesh_cache::IdwlsViscousRhsHostOut;
 pub use idwls_topology::{DeviceIdwlsGhostSample, ExecIdwlsViscousTopology};
 pub use inviscid::{
     CUDA_FLUX_SCHEME_HVL, CUDA_FLUX_SCHEME_ROE, CudaBackendState, CudaFirstOrderInviscidParams,
+    CudaPrepareRhsDeviceInput,
 };
 pub use spectral_radius_topology::ExecSpectralRadiusTopology;
 pub use viscous_face_geom::{DeviceViscousFaceGeom, ExecViscousInteriorTopology};

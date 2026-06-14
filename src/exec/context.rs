@@ -234,6 +234,32 @@ impl ExecutionContext {
             .unwrap_or(false)
     }
 
+    /// CUDA P3：prepare 已刷新 BC/原变量并 H2D primitive。
+    #[cfg(feature = "cuda")]
+    #[must_use]
+    pub fn cuda_host_bc_primitives_synced(&self) -> bool {
+        self.backend_state
+            .cuda_host_bc_primitives_synced()
+            .unwrap_or(false)
+    }
+
+    /// CUDA P3：prepare 后一次性上传 RHS boundary ghost / 单元温度。
+    #[cfg(feature = "cuda")]
+    pub fn cuda_prepare_rhs_device_state(
+        &mut self,
+        input: super::gpu::cuda::CudaPrepareRhsDeviceInput<'_>,
+    ) -> Result<()> {
+        self.backend_state
+            .cuda_mut()?
+            .prepare_rhs_device_state(input)
+    }
+
+    /// CUDA P3：device 密度残差 RMS（单 float D2H）。
+    #[cfg(feature = "cuda")]
+    pub fn cuda_density_residual_rms_f32(&mut self) -> Result<f32> {
+        self.backend_state.cuda_mut()?.density_residual_rms_f32()
+    }
+
     /// CUDA P1：边界面 CPU scatter 后上传残差至 device。
     #[cfg(feature = "cuda")]
     pub fn cuda_upload_residual_for_rhs(

@@ -37,6 +37,7 @@ pub struct CudaSpectralRadiusModule {
 /// 已加载的 LU-SGS 对角 kernel。
 pub struct CudaLusgsModule {
     pub(crate) diagonal_update: CudaFunction,
+    pub(crate) residual_density_sum_sq: CudaFunction,
 }
 
 impl CudaInviscidModule {
@@ -188,8 +189,16 @@ impl CudaLusgsModule {
                     .map_err(|e| {
                         AsimuError::Exec(format!("CUDA LU-SGS 对角 kernel 符号未找到: {e:?}"))
                     })?;
+            let residual_density_sum_sq = module
+                .load_function("residual_density_sum_sq_f32")
+                .map_err(|e| {
+                    AsimuError::Exec(format!("CUDA 密度残差 RMS kernel 符号未找到: {e:?}"))
+                })?;
             info!("cuda_lusgs_module_loaded");
-            Ok(Self { diagonal_update })
+            Ok(Self {
+                diagonal_update,
+                residual_density_sum_sq,
+            })
         }
         #[cfg(cuda_kernels_disabled)]
         {

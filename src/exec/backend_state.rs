@@ -95,6 +95,14 @@ impl BackendState {
     }
 
     #[cfg(feature = "cuda")]
+    pub(crate) fn cuda_host_bc_primitives_synced(&self) -> Option<bool> {
+        match self {
+            Self::Cuda(state) => Some(state.host_bc_primitives_synced()),
+            Self::Cpu => None,
+        }
+    }
+
+    #[cfg(feature = "cuda")]
     pub(crate) fn cuda_mut(&mut self) -> Result<&mut super::gpu::cuda::CudaBackendState> {
         match self {
             Self::Cuda(state) => Ok(state.as_mut()),

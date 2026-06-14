@@ -172,3 +172,34 @@ pub fn prepare_viscous_boundary_ghost_prims_f32(
     }
     Ok(out)
 }
+
+/// IDWLS 粘性边界面 ghost 样本（每步 H2D；与 `gradient_unstructured_f32_cuda` 一致）。
+#[cfg(feature = "cuda")]
+pub fn prepare_idwls_boundary_ghost_samples_f32(
+    topology_f32: &UnstructuredFaceTopologyF32,
+    ghosts: &BoundaryGhostBuffer,
+    eos: &IdealGasEoS,
+    viscous: &ViscousPhysicsConfig,
+    min_pressure: Real,
+) -> Result<Vec<crate::discretization::unstructured_idwls_exec_topo::IdwlsGhostSampleHost>> {
+    use crate::discretization::unstructured_idwls_exec_topo::IdwlsGhostSampleHost;
+    let mut out = Vec::with_capacity(topology_f32.boundary.len());
+    for face in &topology_f32.boundary {
+        let ghost = ghosts.get_face(face.face).ok_or_else(|| {
+            AsimuError::Boundary(format!(
+                "IDWLS 边界面 CUDA FaceId({}) 缺少 ghost",
+                face.face.index()
+            ))
+        })?;
+        let prim =
+            primitive_from_conserved_relaxed_f32_from_state(eos, &ghost.conserved, min_pressure)?;
+        let t = viscous.static_temperature_f32(prim.pressure, prim.density.max(1.0e-30_f32), eos);
+        out.push(IdwlsGhostSampleHost {
+            u: prim.velocity[0],
+            v: prim.velocity[1],
+            w: prim.velocity[2],
+            t,
+        });
+    }
+    Ok(out)
+}

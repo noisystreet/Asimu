@@ -117,6 +117,17 @@ fn cell_temperatures_f32_into(
     Ok(())
 }
 
+/// 粘性单元静温（f32）；供 CUDA prepare RHS device 状态复用。
+#[cfg(feature = "cuda")]
+pub(crate) fn cell_static_temperatures_f32(
+    primitives: &PrimitiveFieldsT<f32>,
+    eos: &IdealGasEoS,
+    viscous: &ViscousPhysicsConfig,
+    out: &mut Vec<f32>,
+) -> Result<()> {
+    cell_temperatures_f32_into(primitives, eos, Some(viscous), out)
+}
+
 fn accumulate_lsq_rhs_f32(
     input: &UnstructuredGradientLsqInputF32<'_>,
     scratch: &UnstructuredGradientScratchF32,

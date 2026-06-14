@@ -34,3 +34,15 @@ extern "C" __global__ void lusgs_diagonal_update_f32(uint32_t num_cells, float o
     out_mz[i] = base_mz[i] + res_mz[i] * scale;
     out_e[i] = base_e[i] + res_e[i] * scale;
 }
+
+// 密度残差 RMS：sum_sq = Σ ρ̇²，host 侧 sqrt(sum_sq / n)。
+extern "C" __global__ void residual_density_sum_sq_f32(const float *__restrict__ res_rho,
+                                                       uint32_t num_cells,
+                                                       float *__restrict__ sum_sq_out) {
+    uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= num_cells) {
+        return;
+    }
+    float r = res_rho[i];
+    atomicAdd(sum_sq_out, r * r);
+}

@@ -117,9 +117,6 @@ impl UnstructuredLusgsDiagonalUpdate for f32 {
     ) -> Result<()> {
         #[cfg(feature = "cuda")]
         if try_cuda_lusgs_diagonal_update_f32(work, omega)? {
-            if work.exec.cuda_residual_on_device() {
-                work.exec.cuda_flush_rhs_residual(&mut work.storage.k1)?;
-            }
             return Ok(());
         }
         #[cfg(feature = "cuda")]
