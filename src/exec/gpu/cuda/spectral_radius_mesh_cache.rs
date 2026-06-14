@@ -171,10 +171,9 @@ impl CudaSpectralMeshDeviceCache {
         stream: &Arc<CudaStream>,
         spectral_module: &super::module::CudaSpectralRadiusModule,
     ) -> Result<f32> {
-        super::transfer::memcpy_htod(
+        super::spectral_radius::launch_init_min_positive_scratch(
             stream,
-            "spectral_min_dt_init",
-            &[f32::MAX],
+            &spectral_module.init_min_positive_scratch,
             &mut self.min_dt_scratch,
         )?;
         let num_cells = self.num_cells as u32;

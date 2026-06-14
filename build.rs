@@ -38,6 +38,7 @@ fn build_cuda_kernels() {
     println!("cargo:rerun-if-changed=kernels/cuda/spectral_radius_unstructured_f32.cu");
     println!("cargo:rerun-if-changed=kernels/cuda/lusgs_diagonal_f32.cu");
     println!("cargo:rerun-if-changed=kernels/cuda/field_f32.cu");
+    println!("cargo:rerun-if-changed=kernels/cuda/boundary_bc_f32.cu");
 
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
     let nvcc = std::env::var("CUDA_NVCC").unwrap_or_else(|_| "nvcc".to_string());
@@ -84,8 +85,15 @@ fn build_cuda_kernels() {
         "field_f32.ptx",
         "CUDA_PTX_FIELD_F32",
     );
+    let bc_ok = compile_cuda_ptx(
+        &nvcc,
+        &out_dir,
+        "kernels/cuda/boundary_bc_f32.cu",
+        "boundary_bc_f32.ptx",
+        "CUDA_PTX_BOUNDARY_BC_F32",
+    );
 
-    if inviscid_ok && viscous_ok && idwls_ok && spectral_ok && lusgs_ok && field_ok {
+    if inviscid_ok && viscous_ok && idwls_ok && spectral_ok && lusgs_ok && field_ok && bc_ok {
         println!("cargo:rustc-cfg=cuda_kernels_built");
     } else {
         println!("cargo:rustc-cfg=cuda_kernels_disabled");

@@ -106,6 +106,40 @@ pub fn launch_fill_primitives_from_conserved(
     Ok(())
 }
 
+pub fn launch_enforce_conserved_positivity_f32(
+    stream: &Arc<CudaStream>,
+    function: &cudarc::driver::CudaFunction,
+    num_cells: u32,
+    gamma: f32,
+    min_pressure: f32,
+    conserved: &FieldConservedSlices<'_>,
+) -> Result<()> {
+    let _span = info_span!("cuda_enforce_conserved_positivity", cells = num_cells).entered();
+    let num_blocks = num_cells.div_ceil(BLOCK_THREADS);
+    let cfg = LaunchConfig {
+        grid_dim: (num_blocks, 1, 1),
+        block_dim: (BLOCK_THREADS, 1, 1),
+        shared_mem_bytes: 0,
+    };
+    let mut builder = stream.launch_builder(function);
+    builder.arg(&num_cells);
+    builder.arg(&gamma);
+    builder.arg(&min_pressure);
+    builder.arg(conserved.rho);
+    builder.arg(conserved.mx);
+    builder.arg(conserved.my);
+    builder.arg(conserved.mz);
+    builder.arg(conserved.e);
+    unsafe {
+        builder.launch(cfg).map_err(|e| {
+            AsimuError::Exec(format!(
+                "CUDA enforce_conserved_positivity launch 失败: {e:?}"
+            ))
+        })?;
+    }
+    Ok(())
+}
+
 pub fn launch_fill_boundary_ghost_buffers_from_conserved(
     stream: &Arc<CudaStream>,
     function: &cudarc::driver::CudaFunction,

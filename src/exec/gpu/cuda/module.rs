@@ -32,6 +32,7 @@ pub struct CudaSpectralRadiusModule {
     pub(crate) accumulate: CudaFunction,
     pub(crate) finalize_dts: CudaFunction,
     pub(crate) min_positive_dt: CudaFunction,
+    pub(crate) init_min_positive_scratch: CudaFunction,
 }
 
 /// 已加载的 LU-SGS 对角 kernel。
@@ -40,12 +41,18 @@ pub struct CudaLusgsModule {
     pub(crate) residual_density_sum_sq: CudaFunction,
 }
 
+/// 已加载的可压缩 BC kernel。
+pub struct CudaBcModule {
+    pub(crate) apply_boundary_ghosts: CudaFunction,
+}
+
 /// 已加载的场恢复 / 扩散系数 kernel（P5）。
 pub struct CudaFieldModule {
     pub(crate) fill_primitives: CudaFunction,
     pub(crate) cell_static_temperature: CudaFunction,
     pub(crate) viscous_diffusivity_max: CudaFunction,
     pub(crate) fill_boundary_ghost_buffers: CudaFunction,
+    pub(crate) enforce_conserved_positivity: CudaFunction,
 }
 
 impl CudaInviscidModule {
@@ -166,11 +173,17 @@ impl CudaSpectralRadiusModule {
                     .map_err(|e| {
                         AsimuError::Exec(format!("CUDA min_positive_cell_dt 符号未找到: {e:?}"))
                     })?;
+            let init_min_positive_scratch = module
+                .load_function("init_min_positive_scratch_f32")
+                .map_err(|e| {
+                AsimuError::Exec(format!("CUDA init_min_positive_scratch 符号未找到: {e:?}"))
+            })?;
             info!("cuda_spectral_radius_module_loaded");
             Ok(Self {
                 accumulate,
                 finalize_dts,
                 min_positive_dt,
+                init_min_positive_scratch,
             })
         }
         #[cfg(cuda_kernels_disabled)]
@@ -218,6 +231,34 @@ impl CudaLusgsModule {
     }
 }
 
+impl CudaBcModule {
+    pub fn try_load(ctx: &Arc<CudaContext>) -> Result<Self> {
+        #[cfg(cuda_kernels_built)]
+        {
+            let ptx_src = include_str!(env!("CUDA_PTX_BOUNDARY_BC_F32"));
+            let module: Arc<CudaModule> = ctx
+                .load_module(Ptx::from_src(ptx_src))
+                .map_err(|e| AsimuError::Exec(format!("CUDA BC 模块加载失败: {e:?}")))?;
+            let apply_boundary_ghosts = module
+                .load_function("apply_compressible_boundary_ghosts_f32")
+                .map_err(|e| {
+                    AsimuError::Exec(format!("CUDA apply_boundary_ghosts 符号未找到: {e:?}"))
+                })?;
+            info!("cuda_bc_module_loaded");
+            Ok(Self {
+                apply_boundary_ghosts,
+            })
+        }
+        #[cfg(cuda_kernels_disabled)]
+        {
+            let _ = ctx;
+            Err(AsimuError::Exec(
+                "CUDA kernel 未编译（缺少 nvcc）；请安装 CUDA toolkit 后重新构建".to_string(),
+            ))
+        }
+    }
+}
+
 impl CudaFieldModule {
     pub fn try_load(ctx: &Arc<CudaContext>) -> Result<Self> {
         #[cfg(cuda_kernels_built)]
@@ -250,12 +291,20 @@ impl CudaFieldModule {
                         "CUDA fill_boundary_ghost_buffers kernel 符号未找到: {e:?}"
                     ))
                 })?;
+            let enforce_conserved_positivity = module
+                .load_function("enforce_conserved_positivity_f32")
+                .map_err(|e| {
+                    AsimuError::Exec(format!(
+                        "CUDA enforce_conserved_positivity kernel 符号未找到: {e:?}"
+                    ))
+                })?;
             info!("cuda_field_module_loaded");
             Ok(Self {
                 fill_primitives,
                 cell_static_temperature,
                 viscous_diffusivity_max,
                 fill_boundary_ghost_buffers,
+                enforce_conserved_positivity,
             })
         }
         #[cfg(cuda_kernels_disabled)]

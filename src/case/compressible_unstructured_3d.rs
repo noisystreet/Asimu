@@ -120,6 +120,7 @@ fn run_compressible_unstructured_3d_typed<T: UnstructuredComputeBackend>(
         max_steps: driver_time.max_steps,
         residual_tolerance: driver_time.residual_tolerance,
         exec_config: ExecConfig::from_numerics(&case.numerics),
+        observer_field_sync_interval: case.output.as_ref().and_then(|o| o.solution_every),
     };
     let mut fields_t = ConservedFieldsT::<T>::from_real_fields(&fields)?;
     let mut interval_paths = Vec::new();

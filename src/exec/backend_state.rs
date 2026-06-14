@@ -118,6 +118,14 @@ impl BackendState {
     }
 
     #[cfg(feature = "cuda")]
+    pub(crate) fn cuda_boundary_ghosts_on_device(&self) -> Option<bool> {
+        match self {
+            Self::Cuda(state) => Some(state.boundary_ghosts_on_device()),
+            Self::Cpu => None,
+        }
+    }
+
+    #[cfg(feature = "cuda")]
     pub(crate) fn cuda_spectral_diffusivity_on_device(&self) -> Option<bool> {
         match self {
             Self::Cuda(state) => Some(state.spectral_diffusivity_on_device()),

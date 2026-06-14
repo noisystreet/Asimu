@@ -197,3 +197,33 @@ extern "C" __global__ void fill_boundary_ghost_buffers_from_conserved_f32(
     viscous_out[i].w = uz;
     viscous_out[i].temperature = t;
 }
+
+extern "C" __global__ void enforce_conserved_positivity_f32(uint32_t num_cells, float gamma,
+                                                            float min_pressure,
+                                                            float *__restrict__ cons_rho,
+                                                            float *__restrict__ cons_mx,
+                                                            float *__restrict__ cons_my,
+                                                            float *__restrict__ cons_mz,
+                                                            float *__restrict__ cons_e) {
+    uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= num_cells) {
+        return;
+    }
+    float rho = cons_rho[i];
+    if (!isfinite(rho) || rho <= 0.0f) {
+        return;
+    }
+    float mx = cons_mx[i];
+    float my = cons_my[i];
+    float mz = cons_mz[i];
+    float e = cons_e[i];
+    if (!isfinite(mx) || !isfinite(my) || !isfinite(mz) || !isfinite(e)) {
+        return;
+    }
+    float ke = 0.5f * (mx * mx + my * my + mz * mz) / rho;
+    float min_internal = min_pressure > 0.0f ? min_pressure / (gamma - 1.0f) : 0.0f;
+    float e_min = ke + min_internal;
+    if (e < e_min) {
+        cons_e[i] = e_min;
+    }
+}

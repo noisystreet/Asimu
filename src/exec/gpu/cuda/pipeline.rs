@@ -47,7 +47,7 @@ impl CudaPipelineState {
         self.boundary_ghosts_on_device = false;
         self.cell_temps_on_device = false;
         self.spectral_diffusivity_on_device = false;
-        // 保留 conserved_on_device / host_bc_primitives_synced（步末 D2H 后与 host 一致）。
+        // 保留 conserved_on_device；间隔输出前再 D2H。
     }
 }
 

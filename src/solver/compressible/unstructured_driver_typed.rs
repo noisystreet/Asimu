@@ -1,5 +1,7 @@
 //! 非结构 3D 可压缩 typed 时间推进驱动（ADR 0016 P3）。
 
+#[path = "unstructured_cuda_prepare_f32.rs"]
+mod unstructured_cuda_prepare_f32;
 #[path = "unstructured_explicit_typed.rs"]
 mod unstructured_explicit_typed;
 #[path = "unstructured_lusgs_typed.rs"]
@@ -13,7 +15,7 @@ use unstructured_explicit_typed::{
 use unstructured_lusgs_typed::{
     UnstructuredLusgsDiagonalUpdate, UnstructuredLusgsSweep, UnstructuredLusgsSweepContext,
 };
-use unstructured_prepare_timestep_typed::{
+pub(crate) use unstructured_prepare_timestep_typed::{
     UnstructuredCudaPrepareSync, UnstructuredSpectralRadiusAtPrepare,
     UnstructuredTimestepFromSigma, prepare_unstructured_timestep_typed,
 };
@@ -49,14 +51,15 @@ use crate::field::{
     ConservedFields, ConservedFieldsT, ConservedResidualT, LusgsDiagonalUpdateBackend,
     PrimitiveFieldsT, PrimitiveFillFromConserved,
 };
+use crate::solver::compressible::unstructured_driver::CompressibleUnstructuredStepView;
 use crate::solver::time::{
     Rk4StorageT, RungeKutta4Config, RungeKutta4Integrator, TimeIntegrationScheme, TimeIntegrator,
     TransientStepControl,
 };
 use crate::solver::{
-    CompressibleStepInfo, CompressibleUnstructuredStepView, LuSgsUnstructuredCouplings,
-    LuSgsUnstructuredSweepTyped, RefreshCompressibleStateTypedInput, SolverState,
-    UnstructuredDriverConfig, refresh_compressible_ghosts_and_primitives_typed,
+    CompressibleStepInfo, LuSgsUnstructuredCouplings, LuSgsUnstructuredSweepTyped,
+    RefreshCompressibleStateTypedInput, SolverState, UnstructuredDriverConfig,
+    refresh_compressible_ghosts_and_primitives_typed,
 };
 
 /// 非结构时间步缓冲（f64 与 f32 热路径分离）。
@@ -98,6 +101,91 @@ pub(crate) struct UnstructuredRunEnvTyped<'a> {
     config: &'a UnstructuredDriverConfig<'a>,
 }
 
+fn allocate_unstructured_step_work_typed<T: ComputeFloat>(
+    env: &UnstructuredRunEnvTyped<'_>,
+) -> Result<UnstructuredStepWorkTyped<T>> {
+    let n = env.config.mesh.num_cells();
+    let _span = info_span!(
+        "allocate_unstructured_work_typed",
+        cells = n,
+        precision = T::PRECISION.label(),
+    )
+    .entered();
+    let mesh_cache = UnstructuredSolverMeshCache::from_mesh(env.config.mesh, env.config.patches)?;
+    let interior_faces = mesh_cache.face_topology.interior.len();
+    let max_bucket_faces = mesh_cache
+        .face_topology
+        .interior_coloring
+        .max_bucket_faces();
+    let mut exec_config = env.config.exec_config.clone();
+    exec_config.compute_precision = T::PRECISION;
+    let exec = ExecutionContext::new(
+        exec_config,
+        MeshExecMetrics::new(n, interior_faces, max_bucket_faces),
+    )?;
+    info!(
+        compute_precision = ?exec.compute_precision(),
+        exec_device = exec.device().label(),
+        "unstructured_typed_exec_context"
+    );
+    Ok(UnstructuredStepWorkTyped {
+        storage: Rk4StorageT::new(n)?,
+        state: SolverState::default(),
+        integrator: RungeKutta4Integrator::new(RungeKutta4Config {
+            dt: env.config.fixed_dt.unwrap_or(0.0),
+            max_steps: env.config.max_steps,
+        }),
+        ghosts: BoundaryGhostBuffer::with_face_capacity(env.config.mesh.num_faces()),
+        primitives: PrimitiveFieldsT::zeros(n)?,
+        gradients: GradientFieldsT::<T>::zeros(n)?,
+        viscous_scratch: ViscousAssemblyUnstructuredScratch::new(n),
+        viscous_grad_scratch_f32: UnstructuredGradientScratchF32::new(n),
+        mesh_cache,
+        exec,
+        volumes: env.config.mesh.cell_volumes(),
+        volumes_f32: env
+            .config
+            .mesh
+            .cell_volumes()
+            .iter()
+            .map(|v| *v as f32)
+            .collect(),
+        timestep: UnstructuredTimestepBuffers {
+            sigma: Vec::new(),
+            cell_dts: Vec::new(),
+            sigma_f32: Vec::new(),
+            cell_dts_f32: Vec::new(),
+        },
+        lusgs_couplings: LuSgsUnstructuredCouplings::from_mesh(env.config.mesh)?,
+    })
+}
+
+fn unstructured_typed_observer_post_step<
+    T: UnstructuredComputeBackend + UnstructuredCudaPrepareSync,
+>(
+    env: &UnstructuredRunEnvTyped<'_>,
+    work: &mut UnstructuredStepWorkTyped<T>,
+    fields: &mut ConservedFieldsT<T>,
+    history: &[CompressibleStepInfo],
+    observe_step: &mut impl FnMut(CompressibleUnstructuredStepView<'_>) -> Result<()>,
+) -> Result<()> {
+    let posted = history.last().expect("history");
+    work.exec.sync_to_host()?;
+    if super::unstructured_driver::observer_field_sync_due(
+        env.config.observer_field_sync_interval,
+        posted.step,
+    ) {
+        T::maybe_download_conserved_for_output(work, fields)?;
+    }
+    let fields_real = fields.cast_real()?;
+    observe_step(CompressibleUnstructuredStepView {
+        info: posted,
+        history,
+        fields: &fields_real,
+    })?;
+    Ok(())
+}
+
 /// typed 非结构同步推进；结束时将场转为 `f64` 供输出。
 #[allow(private_bounds)]
 pub fn run_unstructured_typed_with_observer<T: UnstructuredComputeBackend>(
@@ -113,63 +201,7 @@ pub fn run_unstructured_typed_with_observer<T: UnstructuredComputeBackend>(
         )));
     }
     let mut env = UnstructuredRunEnvTyped { config };
-    let n = env.config.mesh.num_cells();
-    let mut work = {
-        let _span = info_span!(
-            "allocate_unstructured_work_typed",
-            cells = n,
-            precision = T::PRECISION.label(),
-        )
-        .entered();
-        let mesh_cache =
-            UnstructuredSolverMeshCache::from_mesh(env.config.mesh, env.config.patches)?;
-        let interior_faces = mesh_cache.face_topology.interior.len();
-        let max_bucket_faces = mesh_cache
-            .face_topology
-            .interior_coloring
-            .max_bucket_faces();
-        let mut exec_config = env.config.exec_config.clone();
-        exec_config.compute_precision = T::PRECISION;
-        let exec = ExecutionContext::new(
-            exec_config,
-            MeshExecMetrics::new(n, interior_faces, max_bucket_faces),
-        )?;
-        info!(
-            compute_precision = ?exec.compute_precision(),
-            exec_device = exec.device().label(),
-            "unstructured_typed_exec_context"
-        );
-        UnstructuredStepWorkTyped {
-            storage: Rk4StorageT::new(n)?,
-            state: SolverState::default(),
-            integrator: RungeKutta4Integrator::new(RungeKutta4Config {
-                dt: env.config.fixed_dt.unwrap_or(0.0),
-                max_steps: env.config.max_steps,
-            }),
-            ghosts: BoundaryGhostBuffer::with_face_capacity(env.config.mesh.num_faces()),
-            primitives: PrimitiveFieldsT::zeros(n)?,
-            gradients: GradientFieldsT::<T>::zeros(n)?,
-            viscous_scratch: ViscousAssemblyUnstructuredScratch::new(n),
-            viscous_grad_scratch_f32: UnstructuredGradientScratchF32::new(n),
-            mesh_cache,
-            exec,
-            volumes: env.config.mesh.cell_volumes(),
-            volumes_f32: env
-                .config
-                .mesh
-                .cell_volumes()
-                .iter()
-                .map(|v| *v as f32)
-                .collect(),
-            timestep: UnstructuredTimestepBuffers {
-                sigma: Vec::new(),
-                cell_dts: Vec::new(),
-                sigma_f32: Vec::new(),
-                cell_dts_f32: Vec::new(),
-            },
-            lusgs_couplings: LuSgsUnstructuredCouplings::from_mesh(env.config.mesh)?,
-        }
-    };
+    let mut work = allocate_unstructured_step_work_typed(&env)?;
     let mut history = Vec::new();
     let control = TransientStepControl::new(env.config.residual_tolerance);
     loop {
@@ -184,27 +216,21 @@ pub fn run_unstructured_typed_with_observer<T: UnstructuredComputeBackend>(
             cfl = %format_log_fixed5(step.cfl),
         );
         history.push(step);
-        let posted_step = history.last().expect("history").step;
-        {
-            let _span = info_span!(
-                "unstructured_step_post_typed",
-                step = posted_step,
-                precision = T::PRECISION.label(),
-            )
-            .entered();
-            work.exec.sync_to_host()?;
-            let fields_real = fields.cast_real()?;
-            observe_step(CompressibleUnstructuredStepView {
-                info: history.last().expect("history"),
-                history: &history,
-                fields: &fields_real,
-            })?;
-        }
+        unstructured_typed_observer_post_step(
+            &env,
+            &mut work,
+            fields,
+            &history,
+            &mut observe_step,
+        )?;
         if stop {
             break;
         }
     }
-    Ok((history, fields.cast_real()?))
+    Ok((history, {
+        T::maybe_download_conserved_for_output(&mut work, fields)?;
+        fields.cast_real()?
+    }))
 }
 
 fn advance_unstructured_step_typed<T: UnstructuredComputeBackend + UnstructuredCudaPrepareSync>(
@@ -255,7 +281,7 @@ fn advance_unstructured_step_typed<T: UnstructuredComputeBackend + UnstructuredC
         }
     }
     let time_integration_ms = elapsed_ms(time_integration_start);
-    T::maybe_download_conserved_before_positivity(work, fields)?;
+    T::maybe_enforce_conserved_after_integration(work, env.config.eos, p_floor)?;
     fields.enforce_positivity(env.config.eos, p_floor);
     let residual = T::step_density_residual_rms(work)?;
     let time_info = work.integrator.advance(&mut work.state)?;
@@ -644,155 +670,5 @@ fn sync_f32_rhs_primitives_after_refresh(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::boundary::{BoundaryKind, BoundaryPatch, BoundarySet};
-    use crate::discretization::InviscidFluxConfig;
-    use crate::discretization::freestream_pair::FreestreamPairFixture;
-    use crate::exec::ExecConfig;
-    use crate::field::ConservedFields;
-    use crate::mesh::{CellKind, UnstructuredCell, UnstructuredMesh3d};
-    use crate::physics::{FreestreamParams, IdealGasEoS, ReferenceScales};
-    use crate::solver::{
-        CflSchedule, CompressibleEulerConfig, CompressibleEulerSolver,
-        run_unstructured_with_observer,
-    };
-
-    fn single_tet_driver(
-        side: &crate::discretization::freestream_pair::UniformFarfieldSide<'_>,
-        reference: &ReferenceScales,
-    ) -> (
-        UnstructuredMesh3d,
-        BoundarySet,
-        IdealGasEoS,
-        FreestreamParams,
-        CompressibleEulerSolver,
-        InviscidFluxConfig,
-        ReferenceScales,
-    ) {
-        let mesh = UnstructuredMesh3d::new(
-            "tet",
-            vec![
-                [0.0, 0.0, 0.0],
-                [1.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0],
-                [0.0, 0.0, 1.0],
-            ],
-            vec![UnstructuredCell::new(CellKind::Tet, vec![0, 1, 2, 3]).expect("cell")],
-        )
-        .expect("mesh");
-        let faces = (0..mesh.num_faces())
-            .map(|face| crate::core::FaceId(face as u32))
-            .collect();
-        let boundary = BoundarySet::new(vec![BoundaryPatch::new(
-            "farfield",
-            faces,
-            BoundaryKind::Farfield {
-                mach: side.fs.mach,
-                pressure: side.fs.pressure,
-                temperature: side.fs.temperature,
-                alpha: 0.0,
-                beta: 0.0,
-            },
-        )]);
-        let inviscid = InviscidFluxConfig::default();
-        let solver = CompressibleEulerSolver::new(CompressibleEulerConfig::default());
-        (
-            mesh,
-            boundary,
-            *side.eos,
-            *side.fs,
-            solver,
-            inviscid,
-            reference.clone(),
-        )
-    }
-
-    #[test]
-    fn f32_unstructured_step_matches_f64_on_single_tet() {
-        let pair = FreestreamPairFixture::air_sutherland(0.2);
-        let side = pair.inviscid_side();
-        let (mesh, boundary, eos, freestream, solver, inviscid, reference) =
-            single_tet_driver(&side, &pair.reference);
-        let driver = UnstructuredDriverConfig {
-            solver: &solver,
-            mesh: &mesh,
-            eos: &eos,
-            freestream: &freestream,
-            inviscid: &inviscid,
-            patches: &boundary,
-            reference: Some(&reference),
-            viscous: None,
-            fixed_dt: Some(1.0e-4),
-            local_time_step: true,
-            time_scheme: TimeIntegrationScheme::Euler,
-            lu_sgs: Default::default(),
-            cfl_schedule: CflSchedule::constant(0.4),
-            max_steps: 1,
-            residual_tolerance: None,
-            exec_config: ExecConfig::default(),
-        };
-        let base = ConservedFields::from_freestream_context(mesh.num_cells(), &side.ctx, side.fs)
-            .expect("base fields");
-        let mut fields_f32 = ConservedFieldsT::<f32>::from_real_fields(&base).expect("f32 fields");
-        let mut fields_f64 = base;
-        let (history_f32, out_f32) =
-            run_unstructured_typed_with_observer::<f32>(&driver, &mut fields_f32, |_| Ok(()))
-                .expect("f32 run");
-        let history_f64 =
-            run_unstructured_with_observer(&driver, &mut fields_f64, |_| Ok(())).expect("f64 run");
-        assert_eq!(history_f32.len(), 1);
-        assert_eq!(history_f64.len(), 1);
-        assert!(history_f32[0].residual_rms.is_finite());
-        assert!(history_f64[0].residual_rms.is_finite());
-        let rel = (out_f32.density.values()[0] - fields_f64.density.values()[0]).abs()
-            / fields_f64.density.values()[0].max(1.0e-12);
-        assert!(rel < 1.0e-3, "rel={rel}");
-    }
-
-    #[test]
-    fn f32_unstructured_lusgs_sweep_matches_f64_on_single_tet() {
-        let pair = FreestreamPairFixture::air_sutherland(0.2);
-        let side = pair.inviscid_side();
-        let (mesh, boundary, eos, freestream, solver, inviscid, reference) =
-            single_tet_driver(&side, &pair.reference);
-        let driver = UnstructuredDriverConfig {
-            solver: &solver,
-            mesh: &mesh,
-            eos: &eos,
-            freestream: &freestream,
-            inviscid: &inviscid,
-            patches: &boundary,
-            reference: Some(&reference),
-            viscous: None,
-            fixed_dt: Some(1.0e-4),
-            local_time_step: true,
-            time_scheme: TimeIntegrationScheme::LuSgs,
-            lu_sgs: crate::solver::LuSgsConfig {
-                sweep: true,
-                omega: 1.0,
-                sweep_backward_damping: 0.5,
-            },
-            cfl_schedule: CflSchedule::constant(0.4),
-            max_steps: 1,
-            residual_tolerance: None,
-            exec_config: ExecConfig::default(),
-        };
-        let base = ConservedFields::from_freestream_context(mesh.num_cells(), &side.ctx, side.fs)
-            .expect("base fields");
-        let mut fields_f32 = ConservedFieldsT::<f32>::from_real_fields(&base).expect("f32 fields");
-        let mut fields_f64 = base;
-        let (history_f32, out_f32) =
-            run_unstructured_typed_with_observer::<f32>(&driver, &mut fields_f32, |_| Ok(()))
-                .expect("f32 run");
-        let history_f64 =
-            run_unstructured_with_observer(&driver, &mut fields_f64, |_| Ok(())).expect("f64 run");
-        assert_eq!(history_f32.len(), 1);
-        assert_eq!(history_f64.len(), 1);
-        assert!(history_f32[0].residual_rms.is_finite());
-        assert!(history_f64[0].residual_rms.is_finite());
-        let rel = (out_f32.density.values()[0] - fields_f64.density.values()[0]).abs()
-            / fields_f64.density.values()[0].max(1.0e-12);
-        assert!(rel < 1.0e-3, "rel={rel}");
-    }
-}
+#[path = "unstructured_driver_typed_tests.rs"]
+mod unstructured_driver_typed_tests;

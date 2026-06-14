@@ -1,5 +1,7 @@
 //! NVIDIA CUDA 后端（`cudarc`；ADR 0017 G0+）。
 
+mod bc_cuda;
+mod bc_cuda_topology;
 mod boundary_face_geom;
 mod boundary_mesh_cache;
 mod buffers;
@@ -24,6 +26,7 @@ mod viscous_face_geom;
 mod viscous_mesh_cache;
 mod viscous_transport_params;
 
+pub use bc_cuda_topology::{ExecCompressibleBcTopology, cuda_compressible_bc_supported};
 pub use boundary_face_geom::{
     BoundaryConservedGhostHost, CudaViscousBoundaryInput, ExecInviscidBoundaryFaceStatic,
     ExecInviscidBoundaryTopology, ExecViscousBoundaryFaceStatic, ExecViscousBoundaryTopology,

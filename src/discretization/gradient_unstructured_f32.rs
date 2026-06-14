@@ -64,14 +64,23 @@ pub fn compute_unstructured_gradients_idw_lsq_f32(
             "非结构 f32 IDWLS 几何缓存与网格单元数不一致".to_string(),
         ));
     }
+    #[cfg(feature = "cuda")]
+    let cuda_rhs_pipeline = exec.cuda_rhs_pipeline_active();
+    #[cfg(not(feature = "cuda"))]
+    let cuda_rhs_pipeline = false;
     out.clear();
-    scratch.prepare_temperatures(n);
-    cell_temperatures_f32_into(
-        input.primitives,
-        input.eos,
-        input.viscous,
-        &mut scratch.temperatures,
-    )?;
+    if cuda_rhs_pipeline {
+        // RHS device 管线下温度由 prepare 阶段写入 device，避免读取 host 侧过期 primitive。
+        scratch.temperatures.clear();
+    } else {
+        scratch.prepare_temperatures(n);
+        cell_temperatures_f32_into(
+            input.primitives,
+            input.eos,
+            input.viscous,
+            &mut scratch.temperatures,
+        )?;
+    }
     exec.idwls_prepare_viscous_f32(n);
     {
         let topology = &input.mesh_cache.face_topology_f32;
@@ -105,9 +114,9 @@ fn cell_temperatures_f32_into(
         let rho = primitives.density.values()[i].to_real();
         let p = primitives.pressure.values()[i].to_real();
         if rho <= 0.0 || p <= 0.0 {
-            return Err(AsimuError::Field(
-                "密度或压力非正，无法计算温度".to_string(),
-            ));
+            return Err(AsimuError::Field(format!(
+                "单元 {i} 密度或压力非正，无法计算温度: rho={rho:.6e}, p={p:.6e}"
+            )));
         }
         let t = viscous
             .map(|v| v.static_temperature(p, rho, eos))

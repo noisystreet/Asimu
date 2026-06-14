@@ -67,14 +67,20 @@ pub(super) fn cuda_viscous_f32_boundary(
     if input.mesh_cache.cuda_viscous_boundary_topo.num_faces() == 0 {
         return Ok(true);
     }
-    let boundary_ghosts =
-        crate::discretization::unstructured_boundary_exec_topo::prepare_viscous_boundary_ghost_prims_f32(
-            &input.mesh_cache.face_topology_f32,
-            input.ghosts,
-            input.eos,
-            input.viscous,
-            input.min_pressure,
-        )?;
+    let boundary_ghosts_storage = if input.exec.cuda_boundary_ghosts_on_device() {
+        None
+    } else {
+        Some(
+            crate::discretization::unstructured_boundary_exec_topo::prepare_viscous_boundary_ghost_prims_f32(
+                &input.mesh_cache.face_topology_f32,
+                input.ghosts,
+                input.eos,
+                input.viscous,
+                input.min_pressure,
+            )?,
+        )
+    };
+    let boundary_ghosts = boundary_ghosts_storage.as_deref().unwrap_or(&[]);
     let topo = &input.mesh_cache.cuda_viscous_boundary_topo;
     let topo_key = std::ptr::from_ref(input.mesh_cache).addr();
     crate::exec::viscous::try_assemble_viscous_boundary_f32(
@@ -85,7 +91,7 @@ pub(super) fn cuda_viscous_f32_boundary(
         crate::exec::gpu::cuda::CudaViscousBoundaryInput {
             topo,
             topo_key,
-            boundary_ghosts: &boundary_ghosts,
+            boundary_ghosts,
             temperatures: &grad_scratch.temperatures,
             viscous: input.viscous,
             eos: input.eos,

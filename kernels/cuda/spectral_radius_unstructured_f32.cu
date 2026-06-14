@@ -182,3 +182,9 @@ extern "C" __global__ void min_positive_cell_dt_f32(uint32_t num_cells,
     }
     atomic_min_positive_f32(min_out, cell_dts[i]);
 }
+
+extern "C" __global__ void init_min_positive_scratch_f32(float *__restrict__ min_out) {
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        *min_out = __int_as_float(0x7f7fffff);
+    }
+}

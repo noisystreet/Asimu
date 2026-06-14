@@ -9,8 +9,6 @@ use crate::error::Result;
 #[cfg(feature = "cuda")]
 use crate::exec::ExecutionContext;
 use crate::field::{ConservedFieldsT, PrimitiveFillFromConserved};
-#[cfg(feature = "cuda")]
-use crate::solver::compressible::helpers::refresh_compressible_ghosts_only_typed;
 use crate::solver::compressible::spectral_radius_unstructured::{
     SpectralRadiusUnstructuredTypedParams, UnstructuredSpectralRadiusTyped,
 };
@@ -137,136 +135,16 @@ pub(crate) trait UnstructuredCudaPrepareSync:
 
     fn lusgs_skip_copy_stage_after_diagonal(work: &UnstructuredStepWorkTyped<Self>) -> bool;
 
-    fn maybe_download_conserved_before_positivity(
+    fn maybe_enforce_conserved_after_integration(
+        work: &mut UnstructuredStepWorkTyped<Self>,
+        eos: &crate::physics::IdealGasEoS,
+        min_pressure: Real,
+    ) -> Result<()>;
+
+    fn maybe_download_conserved_for_output(
         work: &mut UnstructuredStepWorkTyped<Self>,
         fields: &mut ConservedFieldsT<Self>,
     ) -> Result<()>;
-}
-
-impl UnstructuredCudaPrepareSync for f32 {
-    fn sync_primitives_after_refresh(work: &mut UnstructuredStepWorkTyped<f32>) -> Result<()> {
-        work.exec.sync_cuda_primitives_to_device(&work.primitives)
-    }
-
-    fn refresh_state_for_prepare(
-        env: &UnstructuredRunEnvTyped<'_>,
-        fields: &mut ConservedFieldsT<f32>,
-        work: &mut UnstructuredStepWorkTyped<f32>,
-        p_floor: Real,
-    ) -> Result<()> {
-        #[cfg(feature = "cuda")]
-        if f32_cuda_prepare_device_refresh(env, work) {
-            refresh_compressible_ghosts_only_typed(RefreshCompressibleStateTypedInput {
-                boundary_mesh: env.config.mesh,
-                patches: env.config.patches,
-                fields,
-                ghosts: &mut work.ghosts,
-                eos: env.config.eos,
-                freestream: env.config.freestream,
-                reference: env.config.reference,
-                viscous: env.config.viscous,
-                min_pressure: p_floor,
-                primitives: &mut work.primitives,
-            })?;
-            let viscous = env.config.viscous.expect("cuda prepare 需粘性配置");
-            work.exec.cuda_fill_primitives_and_diffusivity_on_device(
-                fields,
-                &work.mesh_cache,
-                env.config.eos,
-                viscous,
-                p_floor,
-            )?;
-            // device 已填原变量；host 须与守恒场一致供温度/回退路径读取。
-            work.primitives
-                .fill_from_conserved(fields, env.config.eos, p_floor)?;
-            return Ok(());
-        }
-        refresh_compressible_ghosts_and_primitives_typed(RefreshCompressibleStateTypedInput {
-            boundary_mesh: env.config.mesh,
-            patches: env.config.patches,
-            fields,
-            ghosts: &mut work.ghosts,
-            eos: env.config.eos,
-            freestream: env.config.freestream,
-            reference: env.config.reference,
-            viscous: env.config.viscous,
-            min_pressure: p_floor,
-            primitives: &mut work.primitives,
-        })?;
-        Self::sync_primitives_after_refresh(work)
-    }
-
-    fn maybe_prepare_cuda_rhs_device_state(
-        env: &UnstructuredRunEnvTyped<'_>,
-        work: &mut UnstructuredStepWorkTyped<f32>,
-        p_floor: Real,
-    ) -> Result<()> {
-        #[cfg(feature = "cuda")]
-        {
-            if work.exec.device() != ExecDevice::GpuCuda {
-                return Ok(());
-            }
-            let Some(viscous) = env.config.viscous else {
-                return Ok(());
-            };
-            work.exec.cuda_prepare_rhs_device_state(
-                crate::exec::gpu::cuda::CudaPrepareRhsDeviceInput {
-                    mesh_cache: &work.mesh_cache,
-                    ghosts: &work.ghosts,
-                    primitives: &work.primitives,
-                    eos: env.config.eos,
-                    viscous,
-                    min_pressure: p_floor,
-                },
-            )?;
-        }
-        let _ = (env, work, p_floor);
-        Ok(())
-    }
-
-    fn step_density_residual_rms(work: &mut UnstructuredStepWorkTyped<f32>) -> Result<Real> {
-        #[cfg(feature = "cuda")]
-        if work.exec.device() == ExecDevice::GpuCuda && work.exec.cuda_residual_on_device() {
-            return Ok(work.exec.cuda_density_residual_rms_f32()? as Real);
-        }
-        Ok(work.storage.k1.density_rms_norm())
-    }
-
-    fn maybe_upload_lusgs_integration_base(
-        work: &mut UnstructuredStepWorkTyped<f32>,
-    ) -> Result<()> {
-        #[cfg(feature = "cuda")]
-        if work.exec.device() == ExecDevice::GpuCuda {
-            work.exec
-                .cuda_upload_conserved_for_integration(&work.storage.u0)?;
-        }
-        let _ = work;
-        Ok(())
-    }
-
-    fn lusgs_skip_copy_stage_after_diagonal(work: &UnstructuredStepWorkTyped<f32>) -> bool {
-        #[cfg(feature = "cuda")]
-        {
-            work.exec.device() == ExecDevice::GpuCuda && work.exec.cuda_lusgs_diagonal_on_device()
-        }
-        #[cfg(not(feature = "cuda"))]
-        {
-            let _ = work;
-            false
-        }
-    }
-
-    fn maybe_download_conserved_before_positivity(
-        work: &mut UnstructuredStepWorkTyped<f32>,
-        fields: &mut ConservedFieldsT<f32>,
-    ) -> Result<()> {
-        #[cfg(feature = "cuda")]
-        if work.exec.device() == ExecDevice::GpuCuda {
-            work.exec.cuda_download_conserved_if_on_device(fields)?;
-        }
-        let _ = (work, fields);
-        Ok(())
-    }
 }
 
 impl UnstructuredCudaPrepareSync for f64 {
@@ -288,7 +166,15 @@ impl UnstructuredCudaPrepareSync for f64 {
         false
     }
 
-    fn maybe_download_conserved_before_positivity(
+    fn maybe_enforce_conserved_after_integration(
+        _work: &mut UnstructuredStepWorkTyped<f64>,
+        _eos: &crate::physics::IdealGasEoS,
+        _min_pressure: Real,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    fn maybe_download_conserved_for_output(
         _work: &mut UnstructuredStepWorkTyped<f64>,
         _fields: &mut ConservedFieldsT<f64>,
     ) -> Result<()> {
@@ -412,6 +298,9 @@ impl UnstructuredTimestepFromSigma for f32 {
             #[cfg(feature = "cuda")]
             if work.exec.cuda_timestep_on_device() {
                 work.timestep.cell_dts_f32.clear();
+                if let Some(dt) = fixed_dt {
+                    return Ok(dt);
+                }
                 return Ok(work.exec.cuda_download_min_cell_dt_f32()? as Real);
             }
             work.timestep.cell_dts_f32 = finalize_cell_dts_from_sigma_f32(
@@ -451,7 +340,7 @@ impl UnstructuredTimestepFromSigma for f64 {
 }
 
 #[cfg(feature = "cuda")]
-fn f32_cuda_prepare_device_refresh(
+pub(crate) fn f32_cuda_prepare_device_refresh(
     env: &UnstructuredRunEnvTyped<'_>,
     work: &UnstructuredStepWorkTyped<f32>,
 ) -> bool {

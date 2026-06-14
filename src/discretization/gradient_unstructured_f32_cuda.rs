@@ -14,7 +14,12 @@ pub(super) fn try_accumulate_lsq_rhs_f32_cuda(
     if try_accumulate_and_solve_idwls_f32_cuda(input, temperatures, exec)? {
         return Ok(true);
     }
-    let boundary_ghosts = prepare_boundary_ghost_samples_f32(input)?;
+    let boundary_ghosts_storage = if exec.cuda_boundary_ghosts_on_device() {
+        None
+    } else {
+        Some(prepare_boundary_ghost_samples_f32(input)?)
+    };
+    let boundary_ghosts = boundary_ghosts_storage.as_deref().unwrap_or(&[]);
     let topo = &input.mesh_cache.idwls_viscous_topo;
     let topo_key = std::ptr::from_ref(input.mesh_cache).addr();
     crate::exec::idwls_cuda::try_accumulate_viscous_rhs_f32_cuda(
@@ -23,7 +28,7 @@ pub(super) fn try_accumulate_lsq_rhs_f32_cuda(
         topo,
         topo_key,
         temperatures,
-        &boundary_ghosts,
+        boundary_ghosts,
     )
 }
 
@@ -35,7 +40,12 @@ fn try_accumulate_and_solve_idwls_f32_cuda(
     #[cfg(feature = "cuda")]
     {
         if exec.device() == crate::core::ExecDevice::GpuCuda && exec.cuda_rhs_pipeline_active() {
-            let boundary_ghosts = prepare_boundary_ghost_samples_f32(input)?;
+            let boundary_ghosts_storage = if exec.cuda_boundary_ghosts_on_device() {
+                None
+            } else {
+                Some(prepare_boundary_ghost_samples_f32(input)?)
+            };
+            let boundary_ghosts = boundary_ghosts_storage.as_deref().unwrap_or(&[]);
             let topo = &input.mesh_cache.idwls_viscous_topo;
             let topo_key = std::ptr::from_ref(input.mesh_cache).addr();
             exec.cuda_accumulate_and_solve_idwls_viscous_gradients(
@@ -44,7 +54,7 @@ fn try_accumulate_and_solve_idwls_f32_cuda(
                 topo_key,
                 &input.mesh_cache.lsq_geometry_f32,
                 temperatures,
-                &boundary_ghosts,
+                boundary_ghosts,
             )?;
             return Ok(true);
         }

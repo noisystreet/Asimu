@@ -57,13 +57,19 @@ pub(super) fn cuda_first_order_f32_boundary(
         }
         _ => return Ok(false),
     };
-    let boundary_ghosts =
-        crate::discretization::unstructured_boundary_exec_topo::prepare_inviscid_boundary_ghost_prims_f32(
-            &params.mesh_cache.face_topology_f32,
-            params.ghosts,
-            params.eos,
-            params.min_pressure,
-        )?;
+    let boundary_ghosts_storage = if params.exec.cuda_boundary_ghosts_on_device() {
+        None
+    } else {
+        Some(
+            crate::discretization::unstructured_boundary_exec_topo::prepare_inviscid_boundary_ghost_prims_f32(
+                &params.mesh_cache.face_topology_f32,
+                params.ghosts,
+                params.eos,
+                params.min_pressure,
+            )?,
+        )
+    };
+    let boundary_ghosts = boundary_ghosts_storage.as_deref().unwrap_or(&[]);
     let topo = &params.mesh_cache.cuda_inviscid_boundary_topo;
     let topo_key = std::ptr::from_ref(params.mesh_cache).addr();
     crate::exec::inviscid::try_assemble_first_order_boundary_f32(
@@ -72,7 +78,7 @@ pub(super) fn cuda_first_order_f32_boundary(
         params.primitives,
         topo,
         topo_key,
-        &boundary_ghosts,
+        boundary_ghosts,
         CudaFirstOrderInviscidParams {
             gamma: params.eos.gamma as f32,
             flux_scheme,

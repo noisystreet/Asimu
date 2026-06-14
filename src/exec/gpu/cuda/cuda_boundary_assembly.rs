@@ -2,6 +2,12 @@
 
 use tracing::info_span;
 
+use super::super::bc_cuda::{
+    ApplyBcGhostsLaunchArgs, CudaBcMeshCache, launch_apply_compressible_boundary_ghosts_f32,
+};
+use super::super::bc_cuda_topology::{
+    ExecCompressibleBcTopology, build_cuda_compressible_bc_topology, cuda_compressible_bc_supported,
+};
 use super::super::boundary_face_geom::{
     BoundaryConservedGhostHost, CudaViscousBoundaryInput, ExecInviscidBoundaryTopology,
     ExecViscousBoundaryTopology,
@@ -17,6 +23,7 @@ use super::super::viscous::{ViscousBoundaryLaunch, launch_viscous_boundary};
 use super::super::viscous_transport_params::build_device_viscous_transport_params;
 use super::inviscid_launch::{InviscidBucketLaunchParams, launch_inviscid_boundary};
 use super::{CudaBackendState, CudaFirstOrderInviscidParams};
+use crate::boundary::BoundarySet;
 use crate::core::Real;
 use crate::discretization::gradient_typed::GradientFieldsT;
 use crate::discretization::gradient_unstructured_f32::cell_static_temperatures_f32;
@@ -25,15 +32,17 @@ use crate::discretization::unstructured_spectral_exec_topo::SpectralGhostPrimHos
 use crate::discretization::{BoundaryGhostBuffer, UnstructuredSolverMeshCache};
 use crate::error::{AsimuError, Result};
 use crate::field::{ConservedResidualT, PrimitiveFieldsT};
-use crate::physics::{IdealGasEoS, ViscousPhysicsConfig};
+use crate::physics::{FreestreamParams, IdealGasEoS, ViscousPhysicsConfig};
 
 /// prepare 后一次性上传 RHS 所需 boundary ghost / 单元温度至 device。
 pub struct CudaPrepareRhsDeviceInput<'a> {
     pub mesh_cache: &'a UnstructuredSolverMeshCache,
+    pub patches: &'a BoundarySet,
     pub ghosts: &'a BoundaryGhostBuffer,
     pub primitives: &'a PrimitiveFieldsT<f32>,
     pub eos: &'a IdealGasEoS,
     pub viscous: &'a ViscousPhysicsConfig,
+    pub freestream: &'a FreestreamParams,
     pub min_pressure: Real,
 }
 
@@ -53,8 +62,13 @@ impl CudaBackendState {
             topo_key,
         )?;
         self.ensure_viscous_boundary_mesh(&input.mesh_cache.cuda_viscous_boundary_topo, topo_key)?;
-        let conserved = pack_boundary_conserved_ghosts_f32(face_topo, input.ghosts)?;
-        self.upload_boundary_conserved_ghosts(&conserved)?;
+        let use_device_bc = cuda_compressible_bc_supported(input.patches);
+        if use_device_bc {
+            self.apply_boundary_conserved_ghosts_on_device(&input, topo_key, num_boundary)?;
+        } else {
+            let conserved = pack_boundary_conserved_ghosts_f32(face_topo, input.ghosts)?;
+            self.upload_boundary_conserved_ghosts(&conserved)?;
+        }
         self.fill_boundary_ghost_buffers_from_conserved_on_device(
             input.eos,
             input.viscous,
@@ -69,6 +83,106 @@ impl CudaBackendState {
             self.pipeline.cell_temps_on_device = true;
         }
         self.pipeline.boundary_ghosts_on_device = true;
+        Ok(())
+    }
+
+    fn apply_boundary_conserved_ghosts_on_device(
+        &mut self,
+        input: &CudaPrepareRhsDeviceInput<'_>,
+        topo_key: usize,
+        num_boundary: usize,
+    ) -> Result<()> {
+        if !self.pipeline.conserved_on_device {
+            return Err(AsimuError::Exec(
+                "device BC 需要守恒场已在 device（先 fill_primitives_on_device）".to_string(),
+            ));
+        }
+        self.ensure_fields(input.primitives.num_cells())?;
+        let bc_topo = build_cuda_compressible_bc_topology(
+            &input.mesh_cache.face_topology_f32,
+            input.patches,
+            Some(input.viscous),
+            input.eos,
+        )?;
+        self.ensure_bc_mesh(&bc_topo, topo_key)?;
+        self.ensure_boundary_conserved_ghosts_buffer(num_boundary)?;
+        let fields = self.fields.as_ref().expect("field buffers after ensure");
+        let bc_mesh = self.bc_mesh.as_ref().expect("bc mesh after ensure");
+        let ghost_out = self
+            .boundary_conserved_ghosts
+            .as_mut()
+            .expect("boundary conserved ghosts buffer");
+        let dir = input.freestream.effective_direction();
+        let nondim_flag = if input.viscous.is_nondimensional() {
+            1.0_f32
+        } else {
+            0.0_f32
+        };
+        launch_apply_compressible_boundary_ghosts_f32(
+            &self.stream,
+            &self.bc_module.apply_boundary_ghosts,
+            ApplyBcGhostsLaunchArgs {
+                num_faces: num_boundary as u32,
+                gamma: input.eos.gamma as f32,
+                gas_r: input.eos.gas_constant as f32,
+                min_pressure: input.min_pressure as f32,
+                nondim_flag,
+                fs_mach: input.freestream.mach as f32,
+                fs_pressure: input.freestream.pressure as f32,
+                fs_temperature: input.freestream.temperature as f32,
+                fs_dir_x: dir[0] as f32,
+                fs_dir_y: dir[1] as f32,
+                fs_dir_z: dir[2] as f32,
+                bc_mesh,
+                cons_rho: &fields.cons_rho,
+                cons_mx: &fields.cons_mx,
+                cons_my: &fields.cons_my,
+                cons_mz: &fields.cons_mz,
+                cons_e: &fields.cons_e,
+                ghost_out,
+            },
+        )?;
+        Ok(())
+    }
+
+    fn ensure_boundary_conserved_ghosts_buffer(
+        &mut self,
+        num_faces: usize,
+    ) -> Result<&mut cudarc::driver::CudaSlice<BoundaryConservedGhostHost>> {
+        use super::super::transfer::clone_htod;
+        let need_alloc = self
+            .boundary_conserved_ghosts
+            .as_ref()
+            .is_none_or(|buf| buf.len() != num_faces.max(1));
+        if need_alloc {
+            let pad = if num_faces == 0 {
+                vec![BoundaryConservedGhostHost::default()]
+            } else {
+                vec![BoundaryConservedGhostHost::default(); num_faces]
+            };
+            self.boundary_conserved_ghosts = Some(clone_htod(
+                &self.stream,
+                "boundary_conserved_ghosts_alloc",
+                &pad,
+            )?);
+        }
+        Ok(self
+            .boundary_conserved_ghosts
+            .as_mut()
+            .expect("boundary conserved ghosts buffer"))
+    }
+
+    pub(crate) fn ensure_bc_mesh(
+        &mut self,
+        topo: &ExecCompressibleBcTopology,
+        topo_key: usize,
+    ) -> Result<()> {
+        if self.bc_topo_key == Some(topo_key) && self.bc_mesh.is_some() {
+            return Ok(());
+        }
+        let mesh = CudaBcMeshCache::try_upload(&self.stream, topo)?;
+        self.bc_mesh = Some(mesh);
+        self.bc_topo_key = Some(topo_key);
         Ok(())
     }
 

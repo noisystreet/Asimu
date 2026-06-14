@@ -63,6 +63,7 @@ max_steps = 2
         max_steps: case.resolved_max_steps(),
         residual_tolerance: None,
         exec_config: crate::exec::ExecConfig::default(),
+        observer_field_sync_interval: None,
     };
     let history =
         run_unstructured_with_observer(&driver, &mut fields, |_| Ok(())).expect("history");

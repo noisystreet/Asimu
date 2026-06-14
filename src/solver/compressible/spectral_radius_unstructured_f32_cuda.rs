@@ -24,7 +24,12 @@ pub(crate) fn compute_spectral_radius_f32_with_exec(
     let n = params.mesh.num_cells();
     #[cfg(feature = "cuda")]
     {
-        let boundary_ghosts = prepare_boundary_ghost_prims_f32(params)?;
+        let boundary_ghosts_storage = if exec.cuda_boundary_ghosts_on_device() {
+            None
+        } else {
+            Some(prepare_boundary_ghost_prims_f32(params)?)
+        };
+        let boundary_ghosts = boundary_ghosts_storage.as_deref().unwrap_or(&[]);
         let diffusivity = if exec.cuda_spectral_diffusivity_on_device() {
             None
         } else if let Some(viscous) = params.viscous {
@@ -46,7 +51,7 @@ pub(crate) fn compute_spectral_radius_f32_with_exec(
                 topo,
                 topo_key,
                 gamma: params.eos.gamma as f32,
-                boundary_ghosts: &boundary_ghosts,
+                boundary_ghosts,
                 diffusivity: diffusivity.as_deref(),
                 cfl: cfl as f32,
                 fixed_dt: fixed_dt.map(|d| d as f32),

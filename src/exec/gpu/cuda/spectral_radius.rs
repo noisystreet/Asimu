@@ -103,6 +103,27 @@ pub fn launch_finalize_cell_dts(
     Ok(())
 }
 
+pub fn launch_init_min_positive_scratch(
+    stream: &Arc<CudaStream>,
+    function: &cudarc::driver::CudaFunction,
+    min_out: &mut cudarc::driver::CudaSlice<f32>,
+) -> Result<()> {
+    let _span = info_span!("cuda_init_min_positive_scratch").entered();
+    let cfg = LaunchConfig {
+        grid_dim: (1, 1, 1),
+        block_dim: (1, 1, 1),
+        shared_mem_bytes: 0,
+    };
+    let mut builder = stream.launch_builder(function);
+    builder.arg(min_out);
+    unsafe {
+        builder.launch(cfg).map_err(|e| {
+            AsimuError::Exec(format!("CUDA init_min_positive_scratch launch 失败: {e:?}"))
+        })?;
+    }
+    Ok(())
+}
+
 pub fn launch_min_positive_cell_dt(
     stream: &Arc<CudaStream>,
     function: &cudarc::driver::CudaFunction,

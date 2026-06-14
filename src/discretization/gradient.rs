@@ -296,9 +296,9 @@ pub(crate) fn cell_temperatures_into(
         let rho = primitives.density.values()[i];
         let p = primitives.pressure.values()[i];
         if rho <= 0.0 || p <= 0.0 {
-            return Err(AsimuError::Field(
-                "密度或压力非正，无法计算温度".to_string(),
-            ));
+            return Err(AsimuError::Field(format!(
+                "单元 {i} 密度或压力非正，无法计算温度: rho={rho:.6e}, p={p:.6e}"
+            )));
         }
         *ti = viscous
             .map(|v| v.static_temperature(p, rho, eos))

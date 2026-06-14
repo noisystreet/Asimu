@@ -103,6 +103,15 @@ impl ExecutionContext {
             .unwrap_or(false)
     }
 
+    /// CUDA P3：边界面 ghost 原变量已在 device（prepare_rhs device BC 后）。
+    #[cfg(feature = "cuda")]
+    #[must_use]
+    pub fn cuda_boundary_ghosts_on_device(&self) -> bool {
+        self.backend_state
+            .cuda_boundary_ghosts_on_device()
+            .unwrap_or(false)
+    }
+
     /// CUDA P5：谱半径粘性扩散系数已在 device。
     #[cfg(feature = "cuda")]
     #[must_use]
@@ -132,7 +141,7 @@ impl ExecutionContext {
             .upload_conserved_for_integration(conserved)
     }
 
-    /// CUDA P4：步末按需 D2H 守恒场。
+    /// CUDA P4：步末按需 D2H 守恒场（间隔输出 / 算例结束）。
     #[cfg(feature = "cuda")]
     pub fn cuda_download_conserved_if_on_device(
         &mut self,
@@ -141,6 +150,18 @@ impl ExecutionContext {
         self.backend_state
             .cuda_mut()?
             .download_conserved_if_on_device(fields)
+    }
+
+    /// CUDA P7：device 守恒场正性钳制（替代步末全表 D2H）。
+    #[cfg(feature = "cuda")]
+    pub fn cuda_enforce_conserved_positivity_on_device(
+        &mut self,
+        eos: &crate::physics::IdealGasEoS,
+        min_pressure: crate::core::Real,
+    ) -> Result<()> {
+        self.backend_state
+            .cuda_mut()?
+            .enforce_conserved_positivity_on_device(eos, min_pressure)
     }
 
     /// CUDA P5：BC 后 device 填原变量与谱半径扩散系数。

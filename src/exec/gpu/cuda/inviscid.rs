@@ -15,7 +15,7 @@ use super::idwls_mesh_cache::{
 use super::idwls_topology::ExecIdwlsViscousTopology;
 use super::mesh_cache::CudaMeshDeviceCache;
 use super::module::{
-    CudaFieldModule, CudaIdwlsModule, CudaInviscidModule, CudaLusgsModule,
+    CudaBcModule, CudaFieldModule, CudaIdwlsModule, CudaInviscidModule, CudaLusgsModule,
     CudaSpectralRadiusModule, CudaViscousModule,
 };
 use super::pipeline::CudaPipelineState;
@@ -70,6 +70,7 @@ pub struct CudaBackendState {
     idwls_module: CudaIdwlsModule,
     spectral_module: CudaSpectralRadiusModule,
     lusgs_module: CudaLusgsModule,
+    bc_module: CudaBcModule,
     field_module: CudaFieldModule,
     mesh: Option<CudaMeshDeviceCache>,
     fields: Option<CudaFieldBuffers>,
@@ -98,6 +99,8 @@ pub struct CudaBackendState {
     viscous_boundary_topo_key: Option<usize>,
     boundary_conserved_ghosts:
         Option<cudarc::driver::CudaSlice<super::boundary_face_geom::BoundaryConservedGhostHost>>,
+    bc_mesh: Option<super::bc_cuda::CudaBcMeshCache>,
+    bc_topo_key: Option<usize>,
     residual_sum_sq_scratch: Option<cudarc::driver::CudaSlice<f32>>,
 }
 
@@ -111,6 +114,7 @@ impl CudaBackendState {
         let idwls_module = CudaIdwlsModule::try_load(&context)?;
         let spectral_module = CudaSpectralRadiusModule::try_load(&context)?;
         let lusgs_module = CudaLusgsModule::try_load(&context)?;
+        let bc_module = CudaBcModule::try_load(&context)?;
         let field_module = CudaFieldModule::try_load(&context)?;
         let cusparse_handle = try_create_cusparse_handle()?;
         tracing::info!("cuda_cusparse_handle_created");
@@ -122,6 +126,7 @@ impl CudaBackendState {
             idwls_module,
             spectral_module,
             lusgs_module,
+            bc_module,
             field_module,
             mesh: None,
             fields: None,
@@ -147,6 +152,8 @@ impl CudaBackendState {
             viscous_boundary_mesh: None,
             viscous_boundary_topo_key: None,
             boundary_conserved_ghosts: None,
+            bc_mesh: None,
+            bc_topo_key: None,
             residual_sum_sq_scratch: None,
         })
     }

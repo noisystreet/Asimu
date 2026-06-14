@@ -3,7 +3,8 @@
 use super::super::field::{
     CellStaticTemperatureLaunchArgs, FieldConservedSlices, FieldPrimitiveSlices,
     ViscousDiffusivityLaunchArgs, launch_cell_static_temperature_f32,
-    launch_cell_viscous_diffusivity_max, launch_fill_primitives_from_conserved,
+    launch_cell_viscous_diffusivity_max, launch_enforce_conserved_positivity_f32,
+    launch_fill_primitives_from_conserved,
 };
 use super::super::viscous_transport_params::build_device_viscous_transport_params;
 use super::CudaBackendState;
@@ -22,6 +23,11 @@ impl CudaBackendState {
     #[must_use]
     pub(crate) fn spectral_diffusivity_on_device(&self) -> bool {
         self.pipeline.spectral_diffusivity_on_device
+    }
+
+    #[must_use]
+    pub(crate) fn boundary_ghosts_on_device(&self) -> bool {
+        self.pipeline.boundary_ghosts_on_device
     }
 
     #[must_use]
@@ -52,6 +58,38 @@ impl CudaBackendState {
         }
         let buffers = self.fields.as_ref().expect("field buffers");
         buffers.download_conserved(&self.stream, fields)?;
+        self.pipeline.conserved_on_device = false;
+        Ok(())
+    }
+
+    /// device 守恒场正性钳制（对齐 host `enforce_positivity` 语义；避免步末全表 D2H）。
+    pub fn enforce_conserved_positivity_on_device(
+        &mut self,
+        eos: &IdealGasEoS,
+        min_pressure: Real,
+    ) -> Result<()> {
+        if !self.pipeline.conserved_on_device {
+            return Ok(());
+        }
+        let n = self.fields.as_ref().map(|f| f.num_cells()).unwrap_or(0);
+        if n == 0 {
+            return Ok(());
+        }
+        let field_bufs = self.fields.as_ref().expect("field buffers");
+        launch_enforce_conserved_positivity_f32(
+            &self.stream,
+            &self.field_module.enforce_conserved_positivity,
+            n as u32,
+            eos.gamma as f32,
+            min_pressure as f32,
+            &FieldConservedSlices {
+                rho: &field_bufs.cons_rho,
+                mx: &field_bufs.cons_mx,
+                my: &field_bufs.cons_my,
+                mz: &field_bufs.cons_mz,
+                e: &field_bufs.cons_e,
+            },
+        )?;
         Ok(())
     }
 
