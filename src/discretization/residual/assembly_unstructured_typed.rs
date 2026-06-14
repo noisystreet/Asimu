@@ -13,9 +13,11 @@ mod first_order_typed;
 #[path = "assembly_unstructured_first_order_f32.rs"]
 mod first_order_f32;
 
-use first_order_f32::{
-    assemble_boundary_faces_first_order_f32, assemble_first_order_interior_faces_serial_f32,
-};
+use first_order_f32::assemble_boundary_faces_first_order_f32;
+#[cfg(feature = "parallel-fvm")]
+use first_order_f32::assemble_first_order_interior_faces_parallel_f32;
+#[cfg(not(feature = "parallel-fvm"))]
+use first_order_f32::assemble_first_order_interior_faces_serial_f32;
 use first_order_typed::InviscidFirstOrderFaceFlux;
 #[cfg(not(feature = "parallel-fvm"))]
 use first_order_typed::first_order_interior_flux;
@@ -483,9 +485,16 @@ impl InviscidFirstOrderInterior for f32 {
     fn assemble_first_order_interior_faces(
         residual: &mut ConservedResidualT<f32>,
         params: &InviscidAssemblyUnstructuredTypedParams<'_, f32>,
-        _topology: &UnstructuredFaceTopology,
+        topology: &UnstructuredFaceTopology,
     ) -> Result<()> {
-        assemble_first_order_interior_faces_serial_f32(residual, params)
+        #[cfg(feature = "parallel-fvm")]
+        {
+            assemble_first_order_interior_faces_parallel_f32(residual, params, topology)
+        }
+        #[cfg(not(feature = "parallel-fvm"))]
+        {
+            assemble_first_order_interior_faces_serial_f32(residual, params)
+        }
     }
 
     fn assemble_first_order_boundary_faces(
