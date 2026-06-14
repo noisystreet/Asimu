@@ -50,6 +50,8 @@ pub mod slau2_f32;
 pub mod unstructured_face_cache;
 pub mod unstructured_face_cache_f32;
 pub mod unstructured_idwls_exec_topo;
+#[cfg(feature = "cuda")]
+pub mod unstructured_interior_exec_topo;
 pub mod unstructured_limiter;
 pub mod unstructured_spectral_exec_topo;
 pub mod van_leer;

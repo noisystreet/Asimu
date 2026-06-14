@@ -73,6 +73,8 @@ pub struct CudaBackendState {
     pipeline: CudaPipelineState,
     idwls_lsq_geometry: Option<cudarc::driver::CudaSlice<LsqPrecomputedCellF32>>,
     idwls_lsq_key: Option<usize>,
+    /// 粘性输运 kernel 用单元静温（每步 H2D）。
+    viscous_transport_temps: Option<cudarc::driver::CudaSlice<f32>>,
 }
 
 impl CudaBackendState {
@@ -111,6 +113,7 @@ impl CudaBackendState {
             pipeline: CudaPipelineState::default(),
             idwls_lsq_geometry: None,
             idwls_lsq_key: None,
+            viscous_transport_temps: None,
         })
     }
 
@@ -320,7 +323,9 @@ impl CudaBackendState {
         if !self.pipeline.gradients_on_device {
             gradients_buf.upload(&self.stream, gradients)?;
         }
-        face_geom.refresh(&self.stream, &topo.faces)?;
+        if !self.pipeline.viscous_transport_on_device {
+            face_geom.refresh(&self.stream, &topo.faces)?;
+        }
         if !self.pipeline.residual_on_device {
             fields.upload_momentum_energy_residual(&self.stream, residual)?;
         }
@@ -349,6 +354,64 @@ impl CudaBackendState {
             fields.download_momentum_energy_residual(&self.stream, residual)?;
             self.pipeline.residual_on_device = false;
         }
+        self.pipeline.viscous_transport_on_device = false;
+        Ok(())
+    }
+
+    /// device 面 \(\mu,\lambda\)（对齐 CPU `prepare_unstructured_viscous_transport_f32`）。
+    pub fn prepare_viscous_face_transport_f32(
+        &mut self,
+        topo: &super::viscous_face_geom::ExecViscousInteriorTopology,
+        topo_key: usize,
+        temperatures: &[f32],
+        params: super::viscous_transport_params::DeviceViscousTransportParams,
+    ) -> Result<()> {
+        self.ensure_viscous_resources(topo, topo_key)?;
+        let num_cells = temperatures.len();
+        let need_temps = self
+            .viscous_transport_temps
+            .as_ref()
+            .is_none_or(|t| t.len() != num_cells);
+        if need_temps {
+            use super::transfer::clone_htod;
+            self.viscous_transport_temps = Some(clone_htod(
+                &self.stream,
+                "viscous_transport_temps_alloc",
+                temperatures,
+            )?);
+        } else {
+            use super::transfer::memcpy_htod;
+            let temps = self
+                .viscous_transport_temps
+                .as_mut()
+                .expect("viscous transport temps");
+            memcpy_htod(&self.stream, "viscous_transport_temps", temperatures, temps)?;
+        }
+        let face_geom_buf = self
+            .viscous_face_geom
+            .as_mut()
+            .expect("viscous face geom after ensure");
+        let num_faces = topo.num_interior_faces() as u32;
+        let _span = info_span!(
+            "cuda_viscous_face_transport",
+            faces = num_faces,
+            cells = num_cells,
+            model_kind = params.model_kind,
+        )
+        .entered();
+        let temps = self
+            .viscous_transport_temps
+            .as_ref()
+            .expect("temps on device");
+        super::viscous::launch_viscous_face_transport(
+            &self.stream,
+            &self.viscous_module.face_transport,
+            face_geom_buf.face_geom_mut(),
+            num_faces,
+            temps,
+            params,
+        )?;
+        self.pipeline.viscous_transport_on_device = true;
         Ok(())
     }
 

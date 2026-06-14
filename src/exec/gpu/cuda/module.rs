@@ -16,6 +16,7 @@ pub struct CudaInviscidModule {
 /// 已加载的粘性内面 kernel。
 pub struct CudaViscousModule {
     pub(crate) function: CudaFunction,
+    pub(crate) face_transport: CudaFunction,
 }
 
 /// 已加载的 IDWLS 粘性 RHS kernel。
@@ -65,8 +66,14 @@ impl CudaViscousModule {
             let function = module
                 .load_function("viscous_interior_bucket_f32")
                 .map_err(|e| AsimuError::Exec(format!("CUDA 粘性 kernel 符号未找到: {e:?}")))?;
+            let face_transport = module
+                .load_function("viscous_face_transport_f32")
+                .map_err(|e| AsimuError::Exec(format!("CUDA 粘性输运 kernel 符号未找到: {e:?}")))?;
             info!("cuda_viscous_module_loaded");
-            Ok(Self { function })
+            Ok(Self {
+                function,
+                face_transport,
+            })
         }
         #[cfg(cuda_kernels_disabled)]
         {

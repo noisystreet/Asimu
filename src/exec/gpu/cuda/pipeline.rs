@@ -11,6 +11,8 @@ pub(crate) struct CudaPipelineState {
     pub timestep_on_device: bool,
     /// RHS 粘性链：边界面先 CPU scatter，内面/粘性在 device 累加。
     pub rhs_pipeline_active: bool,
+    /// 面 \(\mu,\lambda\) 已在 device `CudaViscousFaceGeomBuffer` 上刷新（跳过 H2D refresh）。
+    pub viscous_transport_on_device: bool,
 }
 
 impl CudaPipelineState {

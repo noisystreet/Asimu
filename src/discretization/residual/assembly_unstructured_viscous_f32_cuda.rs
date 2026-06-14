@@ -2,13 +2,7 @@
 
 use tracing::info_span;
 
-use crate::core::Real;
-use crate::discretization::unstructured_face_cache::UnstructuredFaceTopology;
-use crate::discretization::unstructured_face_cache_f32::UnstructuredFaceTopologyF32;
 use crate::error::Result;
-use crate::exec::gpu::cuda::{
-    DeviceViscousFaceGeom, ExecInteriorColorBucket, ExecViscousInteriorTopology,
-};
 
 use super::super::assembly_unstructured_viscous::{
     ViscousAssemblyUnstructuredScratch, prepare_unstructured_viscous_transport_f32,
@@ -20,99 +14,48 @@ pub(super) fn cuda_viscous_f32_interior(
     params: &mut ViscousInteriorAssemblyF32<'_>,
     scratch: &mut ViscousAssemblyUnstructuredScratch,
 ) -> Result<bool> {
-    let constant = {
+    scratch.init_cuda_viscous_topo_from_mesh_cache(params.mesh_cache);
+    let topo_key = std::ptr::from_ref(params.mesh_cache).addr();
+    {
         let _span = info_span!(
             "unstructured_viscous_prepare_transport_f32",
             cells = params.primitives.num_cells(),
             interior_faces = params.face_topology.interior.len(),
         )
         .entered();
-        prepare_unstructured_viscous_transport_f32(
-            params.transport_topology,
-            params.primitives.num_cells(),
+        let topo = scratch
+            .cuda_viscous_topo_ref()
+            .expect("cuda viscous topo after init");
+        if !crate::exec::viscous::try_prepare_unstructured_viscous_transport_f32_cuda(
+            params.exec,
+            topo,
+            topo_key,
+            params.temperatures,
             params.viscous,
             params.eos,
-            params.temperatures,
-            scratch,
-        )?
-    };
-    let exec_topo = {
-        let _span = info_span!(
-            "unstructured_viscous_build_exec_topo_f32",
-            interior_faces = params.face_topology.interior.len(),
-            colors = params.transport_topology.interior_coloring.buckets.len(),
-        )
-        .entered();
-        build_exec_viscous_topology(
-            params.face_topology,
-            params.transport_topology,
-            constant,
-            scratch,
-        )
-    };
-    let topo_key = std::ptr::from_ref(params.transport_topology).addr();
+        )? {
+            let constant = prepare_unstructured_viscous_transport_f32(
+                params.transport_topology,
+                params.primitives.num_cells(),
+                params.viscous,
+                params.eos,
+                params.temperatures,
+                scratch,
+            )?;
+            scratch.apply_transport_to_cuda_viscous_topo(constant);
+        }
+    }
+    let topo = scratch
+        .cuda_viscous_topo_ref()
+        .expect("cuda viscous topo after prepare");
     crate::exec::viscous::try_assemble_viscous_interior_f32(
         params.exec,
         residual,
         params.primitives,
         params.gradients,
-        &exec_topo,
+        topo,
         topo_key,
     )
-}
-
-fn build_exec_viscous_topology(
-    topology_f32: &UnstructuredFaceTopologyF32,
-    coloring: &UnstructuredFaceTopology,
-    constant: Option<(Real, Real)>,
-    scratch: &ViscousAssemblyUnstructuredScratch,
-) -> ExecViscousInteriorTopology {
-    let faces = topology_f32
-        .interior
-        .iter()
-        .enumerate()
-        .map(|(face_idx, face)| {
-            let (mu, lambda) = if let Some((m, l)) = constant {
-                (m as f32, l as f32)
-            } else {
-                let (m, l) = scratch.face_transport_at(face_idx);
-                (m as f32, l as f32)
-            };
-            let mut nx = face.normal[0];
-            let mut ny = face.normal[1];
-            let mut nz = face.normal[2];
-            let mag = (nx * nx + ny * ny + nz * nz).sqrt();
-            if mag > 1.0e-30 {
-                let inv = 1.0 / mag;
-                nx *= inv;
-                ny *= inv;
-                nz *= inv;
-            }
-            DeviceViscousFaceGeom {
-                owner: face.owner as u32,
-                neighbor: face.neighbor as u32,
-                nx,
-                ny,
-                nz,
-                mu,
-                lambda,
-                owner_scale: face.owner_rhs_scale,
-                neighbor_scale: face.neighbor_rhs_scale,
-            }
-        })
-        .collect();
-    let color_buckets = coloring
-        .interior_coloring
-        .buckets
-        .iter()
-        .map(|bucket| ExecInteriorColorBucket {
-            face_indices: bucket.iter().map(|&i| i as u32).collect(),
-        })
-        .collect();
-    ExecViscousInteriorTopology {
-        faces,
-        color_buckets,
-    }
 }
 
 #[cfg(test)]

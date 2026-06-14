@@ -18,6 +18,7 @@ mod transfer;
 mod viscous;
 mod viscous_face_geom;
 mod viscous_mesh_cache;
+mod viscous_transport_params;
 
 pub use face_geom::{ExecInteriorColorBucket, ExecInteriorFaceStatic, ExecInteriorFaceTopology};
 pub use idwls_mesh_cache::IdwlsViscousRhsHostOut;
@@ -27,3 +28,6 @@ pub use inviscid::{
 };
 pub use spectral_radius_topology::ExecSpectralRadiusTopology;
 pub use viscous_face_geom::{DeviceViscousFaceGeom, ExecViscousInteriorTopology};
+pub use viscous_transport_params::{
+    DeviceViscousTransportParams, build_device_viscous_transport_params,
+};

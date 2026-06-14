@@ -298,6 +298,22 @@ impl ExecutionContext {
             .assemble_viscous_interior(residual, primitives, gradients, topo, topo_key, defer)
     }
 
+    /// CUDA：内面粘性输运系数 \(\mu,\lambda\) device kernel。
+    #[cfg(feature = "cuda")]
+    pub fn cuda_prepare_viscous_face_transport_f32(
+        &mut self,
+        topo: &crate::exec::gpu::cuda::ExecViscousInteriorTopology,
+        topo_key: usize,
+        temperatures: &[f32],
+        viscous: &crate::physics::ViscousPhysicsConfig,
+        eos: &crate::physics::IdealGasEoS,
+    ) -> Result<()> {
+        let params = crate::exec::gpu::cuda::build_device_viscous_transport_params(viscous, eos)?;
+        self.backend_state
+            .cuda_mut()?
+            .prepare_viscous_face_transport_f32(topo, topo_key, temperatures, params)
+    }
+
     /// CUDA P1：IDWLS RHS 累加 + device 3×3 求解梯度。
     #[cfg(feature = "cuda")]
     pub fn cuda_accumulate_and_solve_idwls_viscous_gradients(

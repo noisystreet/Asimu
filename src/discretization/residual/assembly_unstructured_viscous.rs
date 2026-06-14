@@ -7,6 +7,9 @@ mod face_avg;
 #[cfg(feature = "parallel-fvm")]
 #[path = "assembly_unstructured_viscous_parallel.rs"]
 mod parallel;
+#[cfg(feature = "cuda")]
+#[path = "assembly_unstructured_viscous_scratch_cuda.rs"]
+mod viscous_scratch_cuda;
 
 use tracing::info_span;
 
@@ -129,6 +132,8 @@ pub struct ViscousAssemblyUnstructuredScratch {
     face_mu: Vec<Real>,
     face_lambda: Vec<Real>,
     constant_transport: Option<(Real, Real)>,
+    #[cfg(feature = "cuda")]
+    cuda_viscous_topo: Option<crate::exec::gpu::cuda::ExecViscousInteriorTopology>,
 }
 
 impl ViscousAssemblyUnstructuredScratch {
@@ -143,6 +148,8 @@ impl ViscousAssemblyUnstructuredScratch {
             face_mu: Vec::new(),
             face_lambda: Vec::new(),
             constant_transport: None,
+            #[cfg(feature = "cuda")]
+            cuda_viscous_topo: None,
         }
     }
 

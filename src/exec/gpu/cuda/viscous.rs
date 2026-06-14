@@ -56,3 +56,31 @@ pub(super) fn launch_viscous_bucket(
     }
     Ok(())
 }
+
+pub(super) fn launch_viscous_face_transport(
+    stream: &Arc<CudaStream>,
+    function: &cudarc::driver::CudaFunction,
+    face_geom: &mut cudarc::driver::CudaSlice<super::viscous_face_geom::DeviceViscousFaceGeom>,
+    num_faces: u32,
+    temperatures: &cudarc::driver::CudaSlice<f32>,
+    params: super::viscous_transport_params::DeviceViscousTransportParams,
+) -> Result<()> {
+    let num_blocks = num_faces.div_ceil(BLOCK_THREADS);
+    let cfg = LaunchConfig {
+        grid_dim: (num_blocks, 1, 1),
+        block_dim: (BLOCK_THREADS, 1, 1),
+        shared_mem_bytes: 0,
+    };
+    let mut builder = stream.launch_builder(function);
+    builder.arg(face_geom);
+    builder.arg(&num_faces);
+    builder.arg(temperatures);
+    builder.arg(&params);
+    // SAFETY: 每面独立写 `mu/lambda`；布局与 `viscous_face_transport_f32` 一致。
+    unsafe {
+        builder
+            .launch(cfg)
+            .map_err(|e| AsimuError::Exec(format!("CUDA 粘性输运 kernel launch 失败: {e:?}")))?;
+    }
+    Ok(())
+}

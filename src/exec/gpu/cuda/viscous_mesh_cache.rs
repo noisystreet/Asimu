@@ -81,4 +81,8 @@ impl CudaViscousFaceGeomBuffer {
     pub fn face_geom(&self) -> &CudaSlice<DeviceViscousFaceGeom> {
         &self.face_geom
     }
+
+    pub fn face_geom_mut(&mut self) -> &mut CudaSlice<DeviceViscousFaceGeom> {
+        &mut self.face_geom
+    }
 }

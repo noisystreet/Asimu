@@ -45,6 +45,8 @@ use crate::discretization::viscous_boundary_f32::ViscousBoundaryFluxParamsF32;
 pub(super) struct ViscousInteriorAssemblyF32<'a> {
     face_topology: &'a UnstructuredFaceTopologyF32,
     transport_topology: &'a UnstructuredFaceTopology,
+    #[cfg_attr(not(feature = "cuda"), allow(dead_code))]
+    mesh_cache: &'a UnstructuredSolverMeshCache,
     eos: &'a IdealGasEoS,
     viscous: &'a ViscousPhysicsConfig,
     primitives: &'a PrimitiveFieldsT<f32>,
@@ -100,6 +102,7 @@ pub fn compute_gradients_and_assemble_viscous_unstructured_f32(
         &mut ViscousInteriorAssemblyF32 {
             face_topology: &input.mesh_cache.face_topology_f32,
             transport_topology: &input.mesh_cache.face_topology,
+            mesh_cache: input.mesh_cache,
             eos: input.eos,
             viscous: input.viscous,
             primitives: input.primitives,

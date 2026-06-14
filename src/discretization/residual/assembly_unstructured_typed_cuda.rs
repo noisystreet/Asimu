@@ -1,34 +1,35 @@
 //! 非结构 typed 无粘装配 CUDA 分支（ADR 0017 G1）。
 
-use crate::discretization::flux_config::FluxScheme;
 use crate::discretization::unstructured_face_cache::UnstructuredFaceTopology;
-use crate::discretization::unstructured_face_cache_f32::UnstructuredFaceTopologyF32;
 use crate::error::Result;
 use crate::exec::gpu::cuda::{
     CUDA_FLUX_SCHEME_HVL, CUDA_FLUX_SCHEME_ROE, CudaFirstOrderInviscidParams,
-    ExecInteriorColorBucket, ExecInteriorFaceStatic, ExecInteriorFaceTopology,
 };
-use crate::field::ConservedResidualT;
 
 use super::InviscidAssemblyUnstructuredTypedParams;
 
 pub(super) fn cuda_first_order_f32_interior(
-    residual: &mut ConservedResidualT<f32>,
+    residual: &mut crate::field::ConservedResidualT<f32>,
     params: &mut InviscidAssemblyUnstructuredTypedParams<'_, f32>,
     topology: &UnstructuredFaceTopology,
 ) -> Result<bool> {
+    let _ = topology;
     let (flux_scheme, roe_entropy_fix) = match params.config.scheme {
-        FluxScheme::Roe(roe_cfg) => (CUDA_FLUX_SCHEME_ROE, roe_cfg.entropy_fix),
-        FluxScheme::HanelVanLeer => (CUDA_FLUX_SCHEME_HVL, false),
+        crate::discretization::flux_config::FluxScheme::Roe(roe_cfg) => {
+            (CUDA_FLUX_SCHEME_ROE, roe_cfg.entropy_fix)
+        }
+        crate::discretization::flux_config::FluxScheme::HanelVanLeer => {
+            (CUDA_FLUX_SCHEME_HVL, false)
+        }
         _ => return Ok(false),
     };
-    let exec_topo = build_exec_interior_topology(&params.mesh_cache.face_topology_f32, topology);
-    let topo_key = std::ptr::from_ref(topology).addr();
+    let exec_topo = &params.mesh_cache.cuda_inviscid_interior_topo;
+    let topo_key = std::ptr::from_ref(params.mesh_cache).addr();
     crate::exec::inviscid::try_assemble_first_order_interior_f32(
         params.exec,
         residual,
         params.primitives,
-        &exec_topo,
+        exec_topo,
         topo_key,
         CudaFirstOrderInviscidParams {
             gamma: params.eos.gamma as f32,
@@ -38,52 +39,8 @@ pub(super) fn cuda_first_order_f32_interior(
     )
 }
 
-fn build_exec_interior_topology(
-    topology_f32: &UnstructuredFaceTopologyF32,
-    coloring: &UnstructuredFaceTopology,
-) -> ExecInteriorFaceTopology {
-    let faces = topology_f32
-        .interior
-        .iter()
-        .map(|face| {
-            let mut nx = face.normal[0];
-            let mut ny = face.normal[1];
-            let mut nz = face.normal[2];
-            let mag = (nx * nx + ny * ny + nz * nz).sqrt();
-            if mag > 1.0e-30 {
-                let inv = 1.0 / mag;
-                nx *= inv;
-                ny *= inv;
-                nz *= inv;
-            }
-            ExecInteriorFaceStatic {
-                owner: face.owner as u32,
-                neighbor: face.neighbor as u32,
-                nx,
-                ny,
-                nz,
-                owner_scale: face.owner_rhs_scale,
-                neighbor_scale: face.neighbor_rhs_scale,
-            }
-        })
-        .collect();
-    let color_buckets = coloring
-        .interior_coloring
-        .buckets
-        .iter()
-        .map(|bucket| ExecInteriorColorBucket {
-            face_indices: bucket.iter().map(|&i| i as u32).collect(),
-        })
-        .collect();
-    ExecInteriorFaceTopology {
-        faces,
-        color_buckets,
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::boundary::{BoundaryKind, BoundaryPatch, BoundarySet};
     use crate::core::ComputeFloat;
     use crate::core::ExecDevice;
@@ -94,7 +51,7 @@ mod tests {
         apply_compressible_boundary_conditions_typed,
     };
     use crate::exec::{ExecConfig, ExecutionContext, MeshExecMetrics};
-    use crate::field::{ConservedFieldsT, PrimitiveFieldsT};
+    use crate::field::{ConservedFieldsT, ConservedResidualT, PrimitiveFieldsT};
     use crate::mesh::{CellKind, UnstructuredCell, UnstructuredMesh3d};
 
     use super::super::{

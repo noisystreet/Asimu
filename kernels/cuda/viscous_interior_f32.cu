@@ -119,3 +119,72 @@ extern "C" __global__ void viscous_interior_bucket_f32(
         dt_dx_a, dt_dy_a, dt_dz_a, nx, ny, nz, g.mu, g.lambda);
     scatter_viscous(res_mx, res_my, res_mz, res_e, o, n, g.owner_scale, g.neighbor_scale, flux);
 }
+
+// 数值语义对齐 prepare_unstructured_viscous_transport_f32 + fill_face_transport_coefficients_for_topology。
+struct ViscousTransportParams {
+    uint32_t model_kind;
+    float mu_const;
+    float lambda_const;
+    float mu_ref;
+    float t_ref;
+    float sutherland_s;
+    float prandtl;
+    float viscosity_ref_scale;
+    float temperature_ref;
+    float cp;
+};
+
+__device__ inline float dimensional_temperature_f32(float t_static, float temperature_ref) {
+    return temperature_ref > 0.0f ? t_static * temperature_ref : t_static;
+}
+
+__device__ inline float dynamic_viscosity_sutherland_f32(float t_dim, float mu_ref, float t_ref,
+                                                         float sutherland_s) {
+    float tr = t_dim / t_ref;
+    return mu_ref * powf(tr, 1.5f) * (t_ref + sutherland_s) / (t_dim + sutherland_s);
+}
+
+__device__ inline void cell_transport_f32(float t_static, const ViscousTransportParams &p, float &mu,
+                                          float &lambda) {
+    if (p.model_kind == 0u) {
+        mu = p.mu_const;
+        lambda = p.lambda_const;
+        return;
+    }
+    float t_dim = dimensional_temperature_f32(t_static, p.temperature_ref);
+    float mu_cell = dynamic_viscosity_sutherland_f32(t_dim, p.mu_ref, p.t_ref, p.sutherland_s);
+    mu = mu_cell;
+    lambda = mu_cell * p.cp / p.prandtl;
+    if (p.viscosity_ref_scale > 0.0f) {
+        mu *= p.viscosity_ref_scale;
+        lambda *= p.viscosity_ref_scale;
+    }
+}
+
+extern "C" __global__ void viscous_face_transport_f32(
+    ViscousFaceGeom *__restrict__ face_geom, uint32_t num_faces,
+    const float *__restrict__ temperatures, ViscousTransportParams params) {
+    uint32_t face_idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (face_idx >= num_faces) {
+        return;
+    }
+    ViscousFaceGeom g = face_geom[face_idx];
+    if (g.owner_scale == 0.0f && g.neighbor_scale == 0.0f) {
+        return;
+    }
+    if (params.model_kind == 0u) {
+        g.mu = params.mu_const;
+        g.lambda = params.lambda_const;
+        face_geom[face_idx] = g;
+        return;
+    }
+    float mu_o = 0.0f;
+    float lambda_o = 0.0f;
+    float mu_n = 0.0f;
+    float lambda_n = 0.0f;
+    cell_transport_f32(temperatures[g.owner], params, mu_o, lambda_o);
+    cell_transport_f32(temperatures[g.neighbor], params, mu_n, lambda_n);
+    g.mu = 0.5f * (mu_o + mu_n);
+    g.lambda = 0.5f * (lambda_o + lambda_n);
+    face_geom[face_idx] = g;
+}
