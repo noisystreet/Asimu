@@ -11,7 +11,10 @@
 - f32 Riemann 求解器法向 API：`FaceNormalF32`（`[f32; 3]`）；一阶/MUSCL 装配直接传 `face_topology_f32.normal`，消除 `vec3_from_f32`→`Vector3` 往返。
 - f32 Sutherland 输运系数：`ViscousPhysicsConfig::face_transport_coefficients_f32`、`static_temperature_f32`；粘性装配/谱半径/边界面通量全 f32 温度链。
 - 非结构 f32 谱半径：面循环 f32 原变量与法向；单元 \(\sigma\) Real 累加（粘性抛物项精度）；`cell_viscous_diffusivity_max_f32` 返回 `Vec<f32>`。
-- 非结构 f32 LU-SGS 扫掠 `source` / 耦合差分全 f32（`residual_cell_vector_f32`、`conserved_vector_f32`）；正性限制边界一次性 `increment_real_from_f32`。
+- 非结构 f32 CFL / 当地时间步：`UnstructuredTimestepBuffers`（`sigma_f32` / `cell_dts_f32` / `volumes_f32`）；`finalize_cell_dts_from_sigma_f32`、`min_positive_dt_f32`；显式推进 `euler_step_local_f32` / `rk4_step_local_f32`；LU-SGS 对角更新 `assign_lusgs_diagonal_update_f32` 与 `UnstructuredLusgsDiagonalUpdate` 精度分发。
+- 非结构 f32 LU-SGS 正性限制：`field::positivity` 新增 `state_after_increment_f32`、`is_physical_conserved_f32`、`max_physical_increment_scale_f32`；扫掠/稳定化全 f32 增量（`apply_limited_cell_increment_f32`、`stabilize_sweep_update_f32`），消除 `increment_real_from_f32` 往返。
+- 非结构 f32 粘性边界面法向：`viscous_boundary_f32` / 装配层使用 `FaceNormalF32`（`[f32; 3]`），直接传 `face_topology_f32.normal`。
+- 非结构 f32 LU-SGS 扫掠 `source` / 耦合差分全 f32（`residual_cell_vector_f32`、`conserved_vector_f32`）；`LuSgsSweepUnstructuredF32Input` 预打包 \(\sigma,\Delta t_i,\omega,\gamma\)。
 - 非结构 f32 MUSCL 内面在 `parallel-fvm` 下走着色桶 `scatter_inviscid_pairs_f32`；粘性 f32 内面 scatter 改为 `InteriorViscousScatterGeomF32` / `ViscousScatterOpF32` 原生热路径。
 - 非结构 f32 MUSCL 限制器样本（`cell_gradient_samples_f32`）、LU-SGS 预打包耦合（`lusgs_couplings_f32`）与无粘 scatter 原生热路径（`InviscidFluxF32` / `InviscidScatterOpF32`）；新增 `lu_sgs_sweep_unstructured_f32` 与驱动层 `compressible_unstructured_lusgs_typed` 精度分发。
 - 非结构 f32 面几何预打包缓存：`UnstructuredSolverMeshCache::face_topology_f32`（法向、面积、体积、rhs_scale、`dr_*`、`lsq_dr`/`lsq_w` 等）+ `lsq_geometry_f32`；f32 无粘/粘性/谱半径/IDWLS 梯度热路径不再逐面读取 f64 `Vector3`。
