@@ -36,7 +36,7 @@ cargo test runs_single_tet_unstructured -- --nocapture
 
 ## f32 计算精度（ADR 0016 P5）
 
-非结构 typed 路径在 `parallel-fvm` 下使用 exec **着色桶 + atomic scatter**；`f32` 残差经 `AtomicU32` CAS 累加（禁止扩成 `f64` residual）。
+非结构 typed 路径在 `parallel-fvm` 下使用 exec **着色桶 + atomic scatter**；`f32` 残差经 `AtomicU32` CAS 累加（禁止扩成 `f64` residual）。一阶无粘、MUSCL 无粘与粘性内面均已接着色桶并行；LU-SGS 扫掠 source/耦合差分为原生 f32。
 
 ### 运行对比
 

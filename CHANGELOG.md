@@ -7,6 +7,8 @@
 
 ### Added
 
+- 非结构 f32 一阶无粘内面与粘性内面在 `parallel-fvm` 下均走着色桶并行 compute + f32 scatter（`scatter_inviscid_pairs_f32` / `scatter_viscous_valid_slots_f32`）；粘性边界面 `scatter_viscous_boundary_f32` 改为原生 f32 `+=`。
+- 非结构 f32 LU-SGS 扫掠 `source` / 耦合差分全 f32（`residual_cell_vector_f32`、`conserved_vector_f32`）；正性限制边界一次性 `increment_real_from_f32`。
 - 非结构 f32 MUSCL 内面在 `parallel-fvm` 下走着色桶 `scatter_inviscid_pairs_f32`；粘性 f32 内面 scatter 改为 `InteriorViscousScatterGeomF32` / `ViscousScatterOpF32` 原生热路径。
 - 非结构 f32 MUSCL 限制器样本（`cell_gradient_samples_f32`）、LU-SGS 预打包耦合（`lusgs_couplings_f32`）与无粘 scatter 原生热路径（`InviscidFluxF32` / `InviscidScatterOpF32`）；新增 `lu_sgs_sweep_unstructured_f32` 与驱动层 `compressible_unstructured_lusgs_typed` 精度分发。
 - 非结构 f32 面几何预打包缓存：`UnstructuredSolverMeshCache::face_topology_f32`（法向、面积、体积、rhs_scale、`dr_*`、`lsq_dr`/`lsq_w` 等）+ `lsq_geometry_f32`；f32 无粘/粘性/谱半径/IDWLS 梯度热路径不再逐面读取 f64 `Vector3`。
