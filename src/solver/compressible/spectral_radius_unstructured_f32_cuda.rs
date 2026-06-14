@@ -25,7 +25,9 @@ pub(crate) fn compute_spectral_radius_f32_with_exec(
     #[cfg(feature = "cuda")]
     {
         let boundary_ghosts = prepare_boundary_ghost_prims_f32(params)?;
-        let diffusivity = if let Some(viscous) = params.viscous {
+        let diffusivity = if exec.cuda_spectral_diffusivity_on_device() {
+            None
+        } else if let Some(viscous) = params.viscous {
             Some(cell_viscous_diffusivity_max_f32(
                 params.primitives,
                 params.eos,

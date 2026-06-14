@@ -130,8 +130,16 @@ impl CudaIdwlsMeshDeviceCache {
         &self.boundary_ghosts
     }
 
+    pub(crate) fn boundary_ghosts_mut(&mut self) -> &mut CudaSlice<IdwlsGhostSampleHost> {
+        &mut self.boundary_ghosts
+    }
+
     pub(crate) fn temperature(&self) -> &CudaSlice<f32> {
         &self.temperature
+    }
+
+    pub(crate) fn temperature_mut(&mut self) -> &mut CudaSlice<f32> {
+        &mut self.temperature
     }
 }
 

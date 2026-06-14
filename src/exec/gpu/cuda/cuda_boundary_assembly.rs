@@ -3,10 +3,14 @@
 use tracing::info_span;
 
 use super::super::boundary_face_geom::{
-    CudaViscousBoundaryInput, ExecInviscidBoundaryTopology, ExecViscousBoundaryTopology,
+    BoundaryConservedGhostHost, CudaViscousBoundaryInput, ExecInviscidBoundaryTopology,
+    ExecViscousBoundaryTopology,
 };
 use super::super::boundary_mesh_cache::{
     CudaInviscidBoundaryMeshCache, CudaViscousBoundaryMeshCache,
+};
+use super::super::field::{
+    BoundaryGhostBuffersFromConservedLaunch, launch_fill_boundary_ghost_buffers_from_conserved,
 };
 use super::super::spectral_radius_topology::DeviceSpectralGhostPrim;
 use super::super::viscous::{ViscousBoundaryLaunch, launch_viscous_boundary};
@@ -16,10 +20,7 @@ use super::{CudaBackendState, CudaFirstOrderInviscidParams};
 use crate::core::Real;
 use crate::discretization::gradient_typed::GradientFieldsT;
 use crate::discretization::gradient_unstructured_f32::cell_static_temperatures_f32;
-use crate::discretization::unstructured_boundary_exec_topo::{
-    prepare_idwls_boundary_ghost_samples_f32, prepare_inviscid_boundary_ghost_prims_f32,
-    prepare_viscous_boundary_ghost_prims_f32,
-};
+use crate::discretization::unstructured_boundary_exec_topo::pack_boundary_conserved_ghosts_f32;
 use crate::discretization::unstructured_spectral_exec_topo::SpectralGhostPrimHost;
 use crate::discretization::{BoundaryGhostBuffer, UnstructuredSolverMeshCache};
 use crate::error::{AsimuError, Result};
@@ -40,67 +41,109 @@ impl CudaBackendState {
     pub fn prepare_rhs_device_state(&mut self, input: CudaPrepareRhsDeviceInput<'_>) -> Result<()> {
         let topo_key = std::ptr::from_ref(input.mesh_cache).addr();
         let face_topo = &input.mesh_cache.face_topology_f32;
-
-        let idwls_topo = &input.mesh_cache.idwls_viscous_topo;
-        self.ensure_idwls_mesh(idwls_topo, topo_key)?;
-        let idwls_ghosts = prepare_idwls_boundary_ghost_samples_f32(
-            face_topo,
-            input.ghosts,
+        let num_boundary = face_topo.boundary.len();
+        if num_boundary == 0 {
+            self.pipeline.boundary_ghosts_on_device = true;
+            return Ok(());
+        }
+        self.ensure_idwls_mesh(&input.mesh_cache.idwls_viscous_topo, topo_key)?;
+        self.ensure_spectral_mesh(&input.mesh_cache.spectral_radius_topo, topo_key)?;
+        self.ensure_inviscid_boundary_mesh(
+            &input.mesh_cache.cuda_inviscid_boundary_topo,
+            topo_key,
+        )?;
+        self.ensure_viscous_boundary_mesh(&input.mesh_cache.cuda_viscous_boundary_topo, topo_key)?;
+        let conserved = pack_boundary_conserved_ghosts_f32(face_topo, input.ghosts)?;
+        self.upload_boundary_conserved_ghosts(&conserved)?;
+        self.fill_boundary_ghost_buffers_from_conserved_on_device(
             input.eos,
             input.viscous,
             input.min_pressure,
+            num_boundary,
         )?;
-        let idwls_mesh = self.idwls_mesh.as_mut().expect("idwls mesh after ensure");
-        idwls_mesh.upload_boundary_ghosts(&self.stream, &idwls_ghosts)?;
-        let mut temps = Vec::new();
-        cell_static_temperatures_f32(input.primitives, input.eos, input.viscous, &mut temps)?;
-        idwls_mesh.upload_temperature(&self.stream, &temps)?;
-
-        let inviscid_topo = &input.mesh_cache.cuda_inviscid_boundary_topo;
-        if inviscid_topo.num_faces() > 0 {
-            self.ensure_inviscid_boundary_mesh(inviscid_topo, topo_key)?;
-            let inv_ghosts = prepare_inviscid_boundary_ghost_prims_f32(
-                face_topo,
-                input.ghosts,
-                input.eos,
-                input.min_pressure,
-            )?;
-            let ghosts_device: Vec<DeviceSpectralGhostPrim> = inv_ghosts
-                .iter()
-                .map(|g| DeviceSpectralGhostPrim {
-                    rho: g.rho,
-                    pressure: g.pressure,
-                    u: g.u,
-                    v: g.v,
-                    w: g.w,
-                })
-                .collect();
-            let inv_mesh = self
-                .inviscid_boundary_mesh
-                .as_mut()
-                .expect("inviscid boundary mesh after ensure");
-            inv_mesh.upload_ghosts(&self.stream, &ghosts_device)?;
+        if !self.pipeline.cell_temps_on_device {
+            let mut temps = Vec::new();
+            cell_static_temperatures_f32(input.primitives, input.eos, input.viscous, &mut temps)?;
+            let idwls_mesh = self.idwls_mesh.as_mut().expect("idwls mesh after ensure");
+            idwls_mesh.upload_temperature(&self.stream, &temps)?;
+            self.pipeline.cell_temps_on_device = true;
         }
-
-        let viscous_topo = &input.mesh_cache.cuda_viscous_boundary_topo;
-        if viscous_topo.num_faces() > 0 {
-            self.ensure_viscous_boundary_mesh(viscous_topo, topo_key)?;
-            let visc_ghosts = prepare_viscous_boundary_ghost_prims_f32(
-                face_topo,
-                input.ghosts,
-                input.eos,
-                input.viscous,
-                input.min_pressure,
-            )?;
-            let visc_mesh = self
-                .viscous_boundary_mesh
-                .as_mut()
-                .expect("viscous boundary mesh after ensure");
-            visc_mesh.upload_ghosts(&self.stream, &visc_ghosts)?;
-        }
-
         self.pipeline.boundary_ghosts_on_device = true;
-        self.pipeline.cell_temps_on_device = true;
+        Ok(())
+    }
+
+    fn upload_boundary_conserved_ghosts(
+        &mut self,
+        ghosts: &[BoundaryConservedGhostHost],
+    ) -> Result<()> {
+        use super::super::transfer::{clone_htod, memcpy_htod};
+        let need_alloc = self
+            .boundary_conserved_ghosts
+            .as_ref()
+            .is_none_or(|buf| buf.len() != ghosts.len());
+        if need_alloc {
+            self.boundary_conserved_ghosts = Some(clone_htod(
+                &self.stream,
+                "boundary_conserved_ghosts_alloc",
+                ghosts,
+            )?);
+        } else {
+            let buf = self
+                .boundary_conserved_ghosts
+                .as_mut()
+                .expect("boundary conserved ghosts buffer");
+            memcpy_htod(&self.stream, "boundary_conserved_ghosts", ghosts, buf)?;
+        }
+        Ok(())
+    }
+
+    fn fill_boundary_ghost_buffers_from_conserved_on_device(
+        &mut self,
+        eos: &IdealGasEoS,
+        viscous: &ViscousPhysicsConfig,
+        min_pressure: Real,
+        num_boundary: usize,
+    ) -> Result<()> {
+        let cons_buf = self
+            .boundary_conserved_ghosts
+            .as_ref()
+            .expect("boundary conserved ghosts after upload");
+        let idwls_mesh = self.idwls_mesh.as_mut().expect("idwls mesh after ensure");
+        let spectral_mesh = self
+            .spectral_mesh
+            .as_mut()
+            .expect("spectral mesh after ensure");
+        let inviscid_out = self
+            .inviscid_boundary_mesh
+            .as_mut()
+            .expect("inviscid boundary mesh after ensure")
+            .ghosts_mut();
+        let viscous_out = self
+            .viscous_boundary_mesh
+            .as_mut()
+            .expect("viscous boundary mesh after ensure")
+            .ghosts_mut();
+        let nondim_flag = if viscous.is_nondimensional() {
+            1.0_f32
+        } else {
+            0.0_f32
+        };
+        launch_fill_boundary_ghost_buffers_from_conserved(
+            &self.stream,
+            &self.field_module.fill_boundary_ghost_buffers,
+            BoundaryGhostBuffersFromConservedLaunch {
+                num_faces: num_boundary as u32,
+                gamma: eos.gamma as f32,
+                min_pressure: min_pressure as f32,
+                gas_r: eos.gas_constant as f32,
+                nondim_flag,
+                cons_in: cons_buf,
+                idwls_out: idwls_mesh.boundary_ghosts_mut(),
+                inviscid_out,
+                spectral_out: spectral_mesh.boundary_ghosts_mut(),
+                viscous_out,
+            },
+        )?;
         Ok(())
     }
 

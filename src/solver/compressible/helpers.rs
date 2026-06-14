@@ -91,6 +91,22 @@ pub fn refresh_compressible_ghosts_and_primitives_typed<
         .fill_from_conserved(input.fields, input.eos, input.min_pressure)
 }
 
+/// 仅刷新 BC ghost（跳过 host 原变量填充；P5 CUDA prepare 用）。
+pub fn refresh_compressible_ghosts_only_typed<T: crate::core::ComputeFloat>(
+    input: RefreshCompressibleStateTypedInput<'_, T>,
+) -> Result<()> {
+    let fs_ctx = FreestreamContext::new(input.eos, input.reference, input.viscous);
+    apply_compressible_boundary_conditions_typed(
+        input.boundary_mesh,
+        input.patches,
+        input.fields,
+        input.ghosts,
+        &fs_ctx,
+        input.freestream,
+        input.viscous,
+    )
+}
+
 /// 由谱半径计算单元时间步并应用固定 dt / 全局 dt 策略。
 pub fn finalize_cell_dts_from_sigma(
     volumes: &[Real],

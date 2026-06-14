@@ -43,11 +43,11 @@ impl CudaBackendState {
         mesh.download_min_cell_dt(&self.stream, &self.spectral_module)
     }
 
+    /// LU-SGS 对角更新：守恒场已在 device 时跳过 H2D/D2H（P4）。
     pub fn lusgs_diagonal_update_f32(
         &mut self,
         base: &ConservedFieldsT<f32>,
         residual: &ConservedResidualT<f32>,
-        stage: &mut ConservedFieldsT<f32>,
         omega: f32,
     ) -> Result<()> {
         if !self.pipeline.timestep_on_device {
@@ -57,7 +57,10 @@ impl CudaBackendState {
         }
         self.ensure_fields(base.num_cells())?;
         let fields = self.fields.as_mut().expect("field buffers after ensure");
-        fields.upload_conserved(&self.stream, base)?;
+        if !self.pipeline.conserved_on_device {
+            fields.upload_conserved(&self.stream, base)?;
+            self.pipeline.conserved_on_device = true;
+        }
         if !self.pipeline.residual_on_device {
             fields.upload_full_residual(&self.stream, residual)?;
         }
@@ -70,9 +73,10 @@ impl CudaBackendState {
             mesh.cell_dts(),
             omega,
         )?;
-        fields.download_conserved(&self.stream, stage)?;
         self.pipeline.residual_on_device = true;
         self.pipeline.timestep_on_device = false;
+        self.pipeline.conserved_on_device = true;
+        self.pipeline.lusgs_diagonal_on_device = true;
         Ok(())
     }
 

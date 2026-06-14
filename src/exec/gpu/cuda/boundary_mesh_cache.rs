@@ -58,6 +58,10 @@ impl CudaInviscidBoundaryMeshCache {
         &self.ghosts
     }
 
+    pub(crate) fn ghosts_mut(&mut self) -> &mut CudaSlice<DeviceSpectralGhostPrim> {
+        &mut self.ghosts
+    }
+
     pub fn upload_ghosts(
         &mut self,
         stream: &Arc<CudaStream>,
@@ -124,6 +128,10 @@ impl CudaViscousBoundaryMeshCache {
 
     pub fn ghosts(&self) -> &CudaSlice<ViscousBoundaryGhostHost> {
         &self.ghosts
+    }
+
+    pub(crate) fn ghosts_mut(&mut self) -> &mut CudaSlice<ViscousBoundaryGhostHost> {
+        &mut self.ghosts
     }
 
     pub fn upload_ghosts(

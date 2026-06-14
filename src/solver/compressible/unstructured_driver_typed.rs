@@ -22,9 +22,11 @@ use std::time::Instant;
 
 use tracing::{debug, info, info_span};
 
+#[cfg(feature = "cuda")]
+use crate::core::ExecDevice;
 use crate::core::{
-    ComputeFloat, ExecDevice, Real, elapsed_ms, format_log_fixed4, format_log_fixed5,
-    format_log_sci4, log10_positive,
+    ComputeFloat, Real, elapsed_ms, format_log_fixed4, format_log_fixed5, format_log_sci4,
+    log10_positive,
 };
 use crate::discretization::InviscidFaceFluxTyped;
 use crate::discretization::gradient_typed::GradientFieldsT;
@@ -213,7 +215,11 @@ fn advance_unstructured_step_typed<T: UnstructuredComputeBackend + UnstructuredC
     let step_start = Instant::now();
     #[cfg(feature = "cuda")]
     if work.exec.device() == ExecDevice::GpuCuda {
-        work.exec.cuda_reset_full_pipeline_step()?;
+        if unstructured_prepare_timestep_typed::f32_cuda_viscous_rhs_pipeline(env, &work.exec) {
+            work.exec.cuda_reset_between_timesteps()?;
+        } else {
+            work.exec.cuda_reset_full_pipeline_step()?;
+        }
         work.exec.cuda_reset_step_transfer_counters()?;
     }
     let cfl = env
@@ -249,6 +255,7 @@ fn advance_unstructured_step_typed<T: UnstructuredComputeBackend + UnstructuredC
         }
     }
     let time_integration_ms = elapsed_ms(time_integration_start);
+    T::maybe_download_conserved_before_positivity(work, fields)?;
     fields.enforce_positivity(env.config.eos, p_floor);
     let residual = T::step_density_residual_rms(work)?;
     let time_info = work.integrator.advance(&mut work.state)?;
@@ -294,6 +301,7 @@ fn advance_unstructured_lusgs_typed<T: UnstructuredComputeBackend>(
         let _span = info_span!("unstructured_lusgs_copy_base_typed").entered();
         work.storage.u0.copy_from(fields)?;
     }
+    T::maybe_upload_lusgs_integration_base(work)?;
     {
         let _span = info_span!("unstructured_lusgs_rhs_typed").entered();
         let mut rhs_work = UnstructuredTypedRhsWork {
@@ -336,13 +344,14 @@ fn advance_unstructured_lusgs_typed<T: UnstructuredComputeBackend>(
             let _span = info_span!("unstructured_lusgs_diagonal_update_typed").entered();
             T::assign_lusgs_diagonal_update(work, lu_sgs.omega, env.config.eos.gamma, p_floor)?;
         }
-        {
+        if !T::lusgs_skip_copy_stage_after_diagonal(work) {
             let _span = info_span!("unstructured_lusgs_copy_stage_typed").entered();
             fields.copy_from(&work.storage.stage)?;
         }
     }
+    #[cfg(feature = "cuda")]
     if work.exec.device() == ExecDevice::GpuCuda {
-        work.exec.mark_cuda_primitives_stale();
+        work.exec.mark_cuda_primitives_stale_after_integration();
     }
     Ok(())
 }
@@ -398,7 +407,8 @@ impl UnstructuredRhsDispatchImpl for f32 {
         p_floor: Real,
     ) -> Result<()> {
         #[cfg(feature = "cuda")]
-        let cuda_viscous_pipeline = f32_cuda_viscous_rhs_pipeline(env, work.exec);
+        let cuda_viscous_pipeline =
+            unstructured_prepare_timestep_typed::f32_cuda_viscous_rhs_pipeline(env, work.exec);
         #[cfg(feature = "cuda")]
         begin_f32_cuda_viscous_rhs_pipeline(work.exec, cuda_viscous_pipeline)?;
         #[cfg(feature = "cuda")]
@@ -592,14 +602,6 @@ pub(crate) trait UnstructuredComputeBackend:
 
 impl UnstructuredComputeBackend for f32 {}
 impl UnstructuredComputeBackend for f64 {}
-
-#[cfg(feature = "cuda")]
-fn f32_cuda_viscous_rhs_pipeline(
-    env: &UnstructuredRunEnvTyped<'_>,
-    exec: &ExecutionContext,
-) -> bool {
-    env.config.viscous.is_some() && exec.device() == ExecDevice::GpuCuda
-}
 
 #[cfg(feature = "cuda")]
 fn begin_f32_cuda_viscous_rhs_pipeline(

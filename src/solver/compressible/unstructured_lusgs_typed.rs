@@ -144,12 +144,8 @@ fn try_cuda_lusgs_diagonal_update_f32(
     if work.exec.device() != ExecDevice::GpuCuda || !work.exec.cuda_timestep_on_device() {
         return Ok(false);
     }
-    work.exec.cuda_lusgs_diagonal_update_f32(
-        &work.storage.u0,
-        &work.storage.k1,
-        &mut work.storage.stage,
-        omega as f32,
-    )?;
+    work.exec
+        .cuda_lusgs_diagonal_update_f32(&work.storage.u0, &work.storage.k1, omega as f32)?;
     Ok(true)
 }
 

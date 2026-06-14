@@ -19,6 +19,12 @@ pub(crate) struct CudaPipelineState {
     pub boundary_ghosts_on_device: bool,
     /// 单元静温已在 device（与 IDWLS `temperature` 缓冲一致）。
     pub cell_temps_on_device: bool,
+    /// 守恒场在 `CudaFieldBuffers` 上有效（与最近一次 upload / 对角更新一致）。
+    pub conserved_on_device: bool,
+    /// 谱半径粘性扩散系数已在 spectral device 缓冲上（跳过 H2D）。
+    pub spectral_diffusivity_on_device: bool,
+    /// LU-SGS 对角更新已在 device 上写回守恒场（P4）。
+    pub lusgs_diagonal_on_device: bool,
 }
 
 impl CudaPipelineState {
@@ -26,10 +32,44 @@ impl CudaPipelineState {
         *self = Self::default();
     }
 
-    /// RHS 管线步初：保留谱半径 timestep device 驻留状态。
+    /// RHS 管线步初：保留谱半径 timestep / 守恒场 / 原变量 device 驻留（LU-SGS 步内）。
     pub(crate) fn reset_rhs_step(&mut self) {
         self.residual_on_device = false;
         self.gradients_on_device = false;
         self.viscous_transport_on_device = false;
+    }
+
+    /// 步间重置：保留守恒场 device 驻留；BC/积分后原变量与边界面数据失效。
+    pub(crate) fn reset_between_timesteps(&mut self) {
+        self.reset_rhs_step();
+        self.timestep_on_device = false;
+        self.lusgs_diagonal_on_device = false;
+        self.boundary_ghosts_on_device = false;
+        self.cell_temps_on_device = false;
+        self.spectral_diffusivity_on_device = false;
+        // 保留 conserved_on_device / host_bc_primitives_synced（步末 D2H 后与 host 一致）。
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CudaPipelineState;
+
+    #[test]
+    fn reset_between_timesteps_preserves_conserved_on_device() {
+        let mut p = CudaPipelineState {
+            conserved_on_device: true,
+            host_bc_primitives_synced: true,
+            residual_on_device: true,
+            gradients_on_device: true,
+            timestep_on_device: true,
+            ..CudaPipelineState::default()
+        };
+        p.reset_between_timesteps();
+        assert!(p.conserved_on_device);
+        assert!(p.host_bc_primitives_synced);
+        assert!(!p.residual_on_device);
+        assert!(!p.timestep_on_device);
+        assert!(!p.boundary_ghosts_on_device);
     }
 }

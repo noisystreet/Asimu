@@ -15,8 +15,8 @@ use crate::discretization::unstructured_spectral_exec_topo::SpectralGhostPrimHos
 use crate::error::{AsimuError, Result};
 #[cfg(feature = "cuda")]
 use crate::exec::gpu::cuda::{
-    ExecInviscidBoundaryFaceStatic, ExecInviscidBoundaryTopology, ExecViscousBoundaryFaceStatic,
-    ExecViscousBoundaryTopology, ViscousBoundaryGhostHost,
+    BoundaryConservedGhostHost, ExecInviscidBoundaryFaceStatic, ExecInviscidBoundaryTopology,
+    ExecViscousBoundaryFaceStatic, ExecViscousBoundaryTopology, ViscousBoundaryGhostHost,
 };
 #[cfg(feature = "cuda")]
 use crate::field::primitive_from_conserved_relaxed_f32_from_state;
@@ -111,6 +111,32 @@ pub fn build_cuda_viscous_boundary_topology(
     ExecViscousBoundaryTopology { faces }
 }
 
+/// 边界面守恒 ghost 打包（`face_topology_f32.boundary` 顺序；单次 H2D 输入）。
+#[cfg(feature = "cuda")]
+pub fn pack_boundary_conserved_ghosts_f32(
+    topology_f32: &UnstructuredFaceTopologyF32,
+    ghosts: &BoundaryGhostBuffer,
+) -> Result<Vec<BoundaryConservedGhostHost>> {
+    let mut out = Vec::with_capacity(topology_f32.boundary.len());
+    for face in &topology_f32.boundary {
+        let ghost = ghosts.get_face(face.face).ok_or_else(|| {
+            AsimuError::Boundary(format!(
+                "边界面 CUDA FaceId({}) 缺少 ghost",
+                face.face.index()
+            ))
+        })?;
+        let cons = &ghost.conserved;
+        out.push(BoundaryConservedGhostHost {
+            rho: cons.density as f32,
+            mx: cons.momentum[0] as f32,
+            my: cons.momentum[1] as f32,
+            mz: cons.momentum[2] as f32,
+            e: cons.total_energy as f32,
+        });
+    }
+    Ok(out)
+}
+
 /// 无粘边界面 ghost 原变量（对齐谱半径 CUDA 布局）。
 #[cfg(feature = "cuda")]
 pub fn prepare_inviscid_boundary_ghost_prims_f32(
@@ -202,4 +228,78 @@ pub fn prepare_idwls_boundary_ghost_samples_f32(
         });
     }
     Ok(out)
+}
+
+#[cfg(all(test, feature = "cuda"))]
+mod pack_tests {
+    use super::{
+        pack_boundary_conserved_ghosts_f32, prepare_inviscid_boundary_ghost_prims_f32,
+        prepare_viscous_boundary_ghost_prims_f32,
+    };
+    use crate::core::FaceId;
+    use crate::core::Real;
+    use crate::discretization::unstructured_face_cache::UnstructuredBoundaryViscousKind;
+    use crate::discretization::unstructured_face_cache_f32::UnstructuredBoundaryFaceF32;
+    use crate::discretization::unstructured_face_cache_f32::UnstructuredFaceTopologyF32;
+    use crate::discretization::{BoundaryGhostBuffer, GhostCellState};
+    use crate::field::primitive_from_conserved_relaxed_f32_from_state;
+    use crate::physics::{ConservedState, IdealGasEoS, ViscousPhysicsConfig};
+
+    fn sample_topology() -> (
+        UnstructuredFaceTopologyF32,
+        BoundaryGhostBuffer,
+        IdealGasEoS,
+    ) {
+        let eos = IdealGasEoS::AIR_STANDARD;
+        let state = ConservedState {
+            density: 1.2,
+            momentum: [0.36, 0.0, 0.0],
+            total_energy: 2.5,
+        };
+        let mut ghosts = BoundaryGhostBuffer::new();
+        let face = FaceId(0);
+        ghosts.insert_face(face, GhostCellState { conserved: state });
+        let topo = UnstructuredFaceTopologyF32 {
+            interior: vec![],
+            boundary: vec![UnstructuredBoundaryFaceF32 {
+                face,
+                owner: 0,
+                area: 1.0,
+                normal: [1.0, 0.0, 0.0],
+                owner_volume: 1.0,
+                owner_rhs_scale: 1.0,
+                spacing: 0.1,
+                viscous: UnstructuredBoundaryViscousKind {
+                    is_wall: false,
+                    no_slip: false,
+                    wall_heat: None,
+                },
+                lsq_dr: [0.1, 0.0, 0.0],
+                lsq_w: 1.0,
+                dr_owner_to_face: [0.1, 0.0, 0.0],
+            }],
+        };
+        (topo, ghosts, eos)
+    }
+
+    #[test]
+    fn pack_boundary_conserved_matches_cpu_primitive_recovery() {
+        let (topo, ghosts, eos) = sample_topology();
+        let min_pressure = Real::from(1.0e-6);
+        let viscous = ViscousPhysicsConfig::default();
+        let packed = pack_boundary_conserved_ghosts_f32(&topo, &ghosts).expect("pack");
+        assert_eq!(packed.len(), 1);
+        let cons = &ghosts.get_face(FaceId(0)).unwrap().conserved;
+        assert!((packed[0].rho - cons.density as f32).abs() < 1.0e-6);
+        let inv = prepare_inviscid_boundary_ghost_prims_f32(&topo, &ghosts, &eos, min_pressure)
+            .expect("inv");
+        let prim =
+            primitive_from_conserved_relaxed_f32_from_state(&eos, cons, min_pressure).unwrap();
+        assert!((inv[0].rho - prim.density as f32).abs() < 1.0e-5);
+        let visc =
+            prepare_viscous_boundary_ghost_prims_f32(&topo, &ghosts, &eos, &viscous, min_pressure)
+                .expect("visc");
+        let t = viscous.static_temperature_f32(prim.pressure, prim.density.max(1.0e-30_f32), &eos);
+        assert!((visc[0].temperature - t).abs() < 1.0e-5);
+    }
 }

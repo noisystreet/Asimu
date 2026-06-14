@@ -15,8 +15,8 @@ use super::idwls_mesh_cache::{
 use super::idwls_topology::ExecIdwlsViscousTopology;
 use super::mesh_cache::CudaMeshDeviceCache;
 use super::module::{
-    CudaIdwlsModule, CudaInviscidModule, CudaLusgsModule, CudaSpectralRadiusModule,
-    CudaViscousModule,
+    CudaFieldModule, CudaIdwlsModule, CudaInviscidModule, CudaLusgsModule,
+    CudaSpectralRadiusModule, CudaViscousModule,
 };
 use super::pipeline::CudaPipelineState;
 use super::spectral_radius::{launch_finalize_cell_dts, launch_spectral_radius_accumulate};
@@ -38,6 +38,8 @@ use inviscid_launch::{
 
 #[path = "cuda_boundary_assembly.rs"]
 mod cuda_boundary_assembly;
+#[path = "cuda_field.rs"]
+mod cuda_field;
 #[path = "cuda_lusgs_timestep.rs"]
 mod cuda_lusgs_timestep;
 #[path = "inviscid_launch.rs"]
@@ -68,6 +70,7 @@ pub struct CudaBackendState {
     idwls_module: CudaIdwlsModule,
     spectral_module: CudaSpectralRadiusModule,
     lusgs_module: CudaLusgsModule,
+    field_module: CudaFieldModule,
     mesh: Option<CudaMeshDeviceCache>,
     fields: Option<CudaFieldBuffers>,
     mesh_topo_key: Option<usize>,
@@ -93,6 +96,8 @@ pub struct CudaBackendState {
     inviscid_boundary_topo_key: Option<usize>,
     viscous_boundary_mesh: Option<super::boundary_mesh_cache::CudaViscousBoundaryMeshCache>,
     viscous_boundary_topo_key: Option<usize>,
+    boundary_conserved_ghosts:
+        Option<cudarc::driver::CudaSlice<super::boundary_face_geom::BoundaryConservedGhostHost>>,
     residual_sum_sq_scratch: Option<cudarc::driver::CudaSlice<f32>>,
 }
 
@@ -106,6 +111,7 @@ impl CudaBackendState {
         let idwls_module = CudaIdwlsModule::try_load(&context)?;
         let spectral_module = CudaSpectralRadiusModule::try_load(&context)?;
         let lusgs_module = CudaLusgsModule::try_load(&context)?;
+        let field_module = CudaFieldModule::try_load(&context)?;
         let cusparse_handle = try_create_cusparse_handle()?;
         tracing::info!("cuda_cusparse_handle_created");
         Ok(Self {
@@ -116,6 +122,7 @@ impl CudaBackendState {
             idwls_module,
             spectral_module,
             lusgs_module,
+            field_module,
             mesh: None,
             fields: None,
             mesh_topo_key: None,
@@ -139,16 +146,25 @@ impl CudaBackendState {
             inviscid_boundary_topo_key: None,
             viscous_boundary_mesh: None,
             viscous_boundary_topo_key: None,
+            boundary_conserved_ghosts: None,
             residual_sum_sq_scratch: None,
         })
     }
 
     /// BC / 守恒场刷新后调用：下一步 RHS 前将 primitive 上传 device。
     pub fn mark_host_primitives_updated(&mut self) {
+        self.mark_primitives_stale_after_integration();
+        self.pipeline.conserved_on_device = false;
+    }
+
+    /// 积分后原变量/BC 失效，守恒场可仍在 device（P4 步间驻留）。
+    pub(crate) fn mark_primitives_stale_after_integration(&mut self) {
         self.primitives_dirty = true;
         self.pipeline.host_bc_primitives_synced = false;
         self.pipeline.boundary_ghosts_on_device = false;
         self.pipeline.cell_temps_on_device = false;
+        self.pipeline.spectral_diffusivity_on_device = false;
+        self.pipeline.lusgs_diagonal_on_device = false;
     }
 
     #[must_use]
@@ -166,6 +182,10 @@ impl CudaBackendState {
 
     pub(crate) fn reset_full_pipeline_step(&mut self) {
         self.pipeline.reset_step();
+    }
+
+    pub(crate) fn reset_between_timesteps(&mut self) {
+        self.pipeline.reset_between_timesteps();
     }
 
     pub(crate) fn log_step_transfer_counters(&self, step: u32) {
@@ -573,7 +593,7 @@ impl CudaBackendState {
         Ok(())
     }
 
-    fn ensure_spectral_mesh(
+    pub(crate) fn ensure_spectral_mesh(
         &mut self,
         topo: &ExecSpectralRadiusTopology,
         topo_key: usize,
@@ -603,15 +623,19 @@ impl CudaBackendState {
             .spectral_mesh
             .as_mut()
             .expect("spectral mesh after ensure");
-        mesh.upload_boundary_ghosts(&self.stream, input.boundary_ghosts)?;
-        mesh.upload_diffusivity(&self.stream, input.diffusivity)?;
+        if !self.pipeline.boundary_ghosts_on_device {
+            mesh.upload_boundary_ghosts(&self.stream, input.boundary_ghosts)?;
+        }
+        if !self.pipeline.spectral_diffusivity_on_device {
+            mesh.upload_diffusivity(&self.stream, input.diffusivity)?;
+        }
         launch_spectral_radius_accumulate(
             &self.stream,
             &self.spectral_module.accumulate,
             mesh,
             fields,
             input.gamma,
-            input.diffusivity.is_some(),
+            input.diffusivity.is_some() || self.pipeline.spectral_diffusivity_on_device,
         )?;
         launch_finalize_cell_dts(
             &self.stream,

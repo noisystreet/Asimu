@@ -58,6 +58,13 @@ impl BackendState {
         }
     }
 
+    #[cfg(feature = "cuda")]
+    pub(crate) fn mark_cuda_primitives_stale_after_integration(&mut self) {
+        if let Self::Cuda(state) = self {
+            state.mark_primitives_stale_after_integration();
+        }
+    }
+
     pub(crate) fn sync_cuda_primitives_to_device(
         &mut self,
         primitives: &crate::field::PrimitiveFieldsT<f32>,
@@ -98,6 +105,30 @@ impl BackendState {
     pub(crate) fn cuda_host_bc_primitives_synced(&self) -> Option<bool> {
         match self {
             Self::Cuda(state) => Some(state.host_bc_primitives_synced()),
+            Self::Cpu => None,
+        }
+    }
+
+    #[cfg(feature = "cuda")]
+    pub(crate) fn cuda_conserved_on_device(&self) -> Option<bool> {
+        match self {
+            Self::Cuda(state) => Some(state.conserved_on_device()),
+            Self::Cpu => None,
+        }
+    }
+
+    #[cfg(feature = "cuda")]
+    pub(crate) fn cuda_spectral_diffusivity_on_device(&self) -> Option<bool> {
+        match self {
+            Self::Cuda(state) => Some(state.spectral_diffusivity_on_device()),
+            Self::Cpu => None,
+        }
+    }
+
+    #[cfg(feature = "cuda")]
+    pub(crate) fn cuda_lusgs_diagonal_on_device(&self) -> Option<bool> {
+        match self {
+            Self::Cuda(state) => Some(state.lusgs_diagonal_on_device()),
             Self::Cpu => None,
         }
     }

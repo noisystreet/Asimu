@@ -85,7 +85,7 @@ pub fn init_tracing(level: &str, chrome_trace: Option<&Path>) -> Result<TracingG
             .map_err(|err| AsimuError::Config(format!("无效的 Chrome trace filter: {err}")))?;
         let (chrome_layer, guard) = ChromeLayerBuilder::new()
             .writer(file)
-            .include_args(false)
+            .include_args(true)
             .build();
         let init_result = tracing_subscriber::registry()
             .with(filter)

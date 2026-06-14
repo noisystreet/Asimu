@@ -51,6 +51,17 @@ impl ExecViscousBoundaryTopology {
     }
 }
 
+/// 边界面守恒 ghost（每步 H2D；device kernel 填各套原变量缓冲）。
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct BoundaryConservedGhostHost {
+    pub rho: f32,
+    pub mx: f32,
+    pub my: f32,
+    pub mz: f32,
+    pub e: f32,
+}
+
 /// 粘性边界面 ghost 原变量（每步 H2D；含静温）。
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
@@ -65,6 +76,7 @@ pub struct ViscousBoundaryGhostHost {
 
 unsafe impl cudarc::driver::DeviceRepr for ExecInviscidBoundaryFaceStatic {}
 unsafe impl cudarc::driver::DeviceRepr for ExecViscousBoundaryFaceStatic {}
+unsafe impl cudarc::driver::DeviceRepr for BoundaryConservedGhostHost {}
 unsafe impl cudarc::driver::DeviceRepr for ViscousBoundaryGhostHost {}
 
 use crate::physics::{IdealGasEoS, ViscousPhysicsConfig};

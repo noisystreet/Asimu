@@ -256,8 +256,16 @@ impl CudaSpectralMeshDeviceCache {
         &self.boundary_ghosts
     }
 
+    pub(crate) fn boundary_ghosts_mut(&mut self) -> &mut CudaSlice<DeviceSpectralGhostPrim> {
+        &mut self.boundary_ghosts
+    }
+
     pub(crate) fn diffusivity(&self) -> &CudaSlice<f32> {
         &self.diffusivity
+    }
+
+    pub(crate) fn diffusivity_mut(&mut self) -> &mut CudaSlice<f32> {
+        &mut self.diffusivity
     }
 
     pub(crate) fn sigma(&self) -> &CudaSlice<f32> {

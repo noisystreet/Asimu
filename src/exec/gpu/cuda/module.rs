@@ -40,6 +40,14 @@ pub struct CudaLusgsModule {
     pub(crate) residual_density_sum_sq: CudaFunction,
 }
 
+/// 已加载的场恢复 / 扩散系数 kernel（P5）。
+pub struct CudaFieldModule {
+    pub(crate) fill_primitives: CudaFunction,
+    pub(crate) cell_static_temperature: CudaFunction,
+    pub(crate) viscous_diffusivity_max: CudaFunction,
+    pub(crate) fill_boundary_ghost_buffers: CudaFunction,
+}
+
 impl CudaInviscidModule {
     pub fn try_load(ctx: &Arc<CudaContext>) -> Result<Self> {
         #[cfg(cuda_kernels_built)]
@@ -198,6 +206,56 @@ impl CudaLusgsModule {
             Ok(Self {
                 diagonal_update,
                 residual_density_sum_sq,
+            })
+        }
+        #[cfg(cuda_kernels_disabled)]
+        {
+            let _ = ctx;
+            Err(AsimuError::Exec(
+                "CUDA kernel 未编译（缺少 nvcc）；请安装 CUDA toolkit 后重新构建".to_string(),
+            ))
+        }
+    }
+}
+
+impl CudaFieldModule {
+    pub fn try_load(ctx: &Arc<CudaContext>) -> Result<Self> {
+        #[cfg(cuda_kernels_built)]
+        {
+            let ptx_src = include_str!(env!("CUDA_PTX_FIELD_F32"));
+            let module: Arc<CudaModule> = ctx
+                .load_module(Ptx::from_src(ptx_src))
+                .map_err(|e| AsimuError::Exec(format!("CUDA 场模块加载失败: {e:?}")))?;
+            let fill_primitives = module
+                .load_function("fill_primitives_from_conserved_f32")
+                .map_err(|e| {
+                    AsimuError::Exec(format!("CUDA fill_primitives kernel 符号未找到: {e:?}"))
+                })?;
+            let viscous_diffusivity_max = module
+                .load_function("cell_viscous_diffusivity_max_f32")
+                .map_err(|e| {
+                    AsimuError::Exec(format!("CUDA diffusivity_max kernel 符号未找到: {e:?}"))
+                })?;
+            let cell_static_temperature = module
+                .load_function("cell_static_temperature_f32")
+                .map_err(|e| {
+                    AsimuError::Exec(format!(
+                        "CUDA cell_static_temperature kernel 符号未找到: {e:?}"
+                    ))
+                })?;
+            let fill_boundary_ghost_buffers = module
+                .load_function("fill_boundary_ghost_buffers_from_conserved_f32")
+                .map_err(|e| {
+                    AsimuError::Exec(format!(
+                        "CUDA fill_boundary_ghost_buffers kernel 符号未找到: {e:?}"
+                    ))
+                })?;
+            info!("cuda_field_module_loaded");
+            Ok(Self {
+                fill_primitives,
+                cell_static_temperature,
+                viscous_diffusivity_max,
+                fill_boundary_ghost_buffers,
             })
         }
         #[cfg(cuda_kernels_disabled)]
