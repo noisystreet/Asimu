@@ -1,6 +1,6 @@
 //! LU-SGS 扫掠共用辅助：正性限制、线搜索、对角回退、原始变量刷新。
 
-use crate::core::Real;
+use crate::core::{ComputeFloat, Real};
 use crate::error::Result;
 use crate::field::{
     ConservedFields, ConservedResidual, PrimitiveFields, is_physical_conserved,
@@ -216,6 +216,61 @@ pub(crate) fn conserved_vector_typed<T: crate::core::ComputeFloat>(
         fields.momentum_y.values()[cell].to_real(),
         fields.momentum_z.values()[cell].to_real(),
         fields.total_energy.values()[cell].to_real(),
+    ]
+}
+
+/// f32 残差单元向量（LU-SGS 扫掠热路径，无 Real 桥接）。
+#[inline]
+pub(crate) fn residual_cell_vector_f32(
+    residual: &crate::field::ConservedResidualT<f32>,
+    cell: usize,
+) -> [f32; 5] {
+    [
+        residual.density.values()[cell],
+        residual.momentum_x.values()[cell],
+        residual.momentum_y.values()[cell],
+        residual.momentum_z.values()[cell],
+        residual.total_energy.values()[cell],
+    ]
+}
+
+/// f32 守恒场单元向量（LU-SGS 耦合差分热路径）。
+#[inline]
+pub(crate) fn conserved_vector_f32(
+    fields: &crate::field::ConservedFieldsT<f32>,
+    cell: usize,
+) -> [f32; 5] {
+    [
+        fields.density.values()[cell],
+        fields.momentum_x.values()[cell],
+        fields.momentum_y.values()[cell],
+        fields.momentum_z.values()[cell],
+        fields.total_energy.values()[cell],
+    ]
+}
+
+/// f32 source 阻尼（backward sweep）。
+#[inline]
+pub(crate) fn scale_source_f32(source: [f32; 5], factor: Real) -> [f32; 5] {
+    let f = factor as f32;
+    [
+        source[0] * f,
+        source[1] * f,
+        source[2] * f,
+        source[3] * f,
+        source[4] * f,
+    ]
+}
+
+/// 正性限制入口：f32 增量在边界一次性转 Real。
+#[inline]
+pub(crate) fn increment_real_from_f32(increment: [f32; 5]) -> [Real; 5] {
+    [
+        increment[0].to_real(),
+        increment[1].to_real(),
+        increment[2].to_real(),
+        increment[3].to_real(),
+        increment[4].to_real(),
     ]
 }
 

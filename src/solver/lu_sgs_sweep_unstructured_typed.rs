@@ -10,9 +10,10 @@ use crate::physics::IdealGasEoS;
 
 use crate::discretization::unstructured_face_cache_f32::LuSgsCellCouplingF32;
 use crate::solver::lu_sgs_common::{
-    LuSgsSweepScalars, apply_limited_cell_increment_typed, conserved_vector_typed, implicit_scale,
-    refresh_primitive_at_cell_typed, residual_cell_vector_typed, scale_source,
-    stabilize_sweep_update_typed,
+    LuSgsSweepScalars, apply_limited_cell_increment_typed, conserved_vector_f32,
+    conserved_vector_typed, implicit_scale, increment_real_from_f32,
+    refresh_primitive_at_cell_typed, residual_cell_vector_f32, residual_cell_vector_typed,
+    scale_source, scale_source_f32, stabilize_sweep_update_typed,
 };
 use crate::solver::lu_sgs_sweep_unstructured::{
     LuSgsCellCoupling, LuSgsSweepUnstructuredInput, LuSgsUnstructuredCouplingsRef,
@@ -246,13 +247,13 @@ fn forward_sweep_f32_couplings(
 ) -> Result<()> {
     for (cell, cell_couplings) in couplings.iter().enumerate().take(fields.num_cells()) {
         let scale = implicit_scale(scalars.dt[cell], scalars.sigma[cell], scalars.omega);
-        let mut source = residual_cell_vector_typed(residual, cell);
+        let mut source = residual_cell_vector_f32(residual, cell);
         for coupling in cell_couplings.iter().filter(|c| c.neighbor < cell) {
             add_coupling_delta_f32(
                 &mut source,
                 cell,
                 *coupling,
-                scalars.volumes[cell],
+                scalars.volumes[cell] as f32,
                 fields,
                 u0,
                 params,
@@ -262,7 +263,7 @@ fn forward_sweep_f32_couplings(
             fields,
             cell,
             scale,
-            source,
+            increment_real_from_f32(source),
             scalars.gamma,
             params.min_pressure,
         )?;
@@ -280,25 +281,25 @@ fn backward_sweep_f32_couplings(
 ) -> Result<()> {
     for (cell, cell_couplings) in couplings.iter().enumerate().take(fields.num_cells()).rev() {
         let scale = implicit_scale(scalars.dt[cell], scalars.sigma[cell], scalars.omega);
-        let mut source = [0.0; 5];
+        let mut source = [0.0_f32; 5];
         for coupling in cell_couplings.iter().filter(|c| c.neighbor > cell) {
             add_coupling_delta_f32(
                 &mut source,
                 cell,
                 *coupling,
-                scalars.volumes[cell],
+                scalars.volumes[cell] as f32,
                 fields,
                 u0,
                 params,
             );
         }
-        if source.iter().any(|c| c.abs() > Real::EPSILON) {
-            let damped = scale_source(source, params.backward_damping);
+        if source.iter().any(|c| c.abs() > f32::EPSILON) {
+            let damped = scale_source_f32(source, params.backward_damping);
             apply_limited_cell_increment_typed(
                 fields,
                 cell,
                 scale,
-                damped,
+                increment_real_from_f32(damped),
                 scalars.gamma,
                 params.min_pressure,
             )?;
@@ -309,10 +310,10 @@ fn backward_sweep_f32_couplings(
 }
 
 fn add_coupling_delta_f32(
-    source: &mut [Real; 5],
+    source: &mut [f32; 5],
     cell: usize,
     coupling: LuSgsCellCouplingF32,
-    volume: Real,
+    volume: f32,
     fields: &ConservedFieldsT<f32>,
     u0: &ConservedFieldsT<f32>,
     params: &LuSgsSweepUnstructuredTypedParams<'_, f32>,
@@ -322,11 +323,10 @@ fn add_coupling_delta_f32(
         prim_lane_f32(params.primitives, coupling.neighbor),
         coupling.normal,
         params.eos.gamma as f32,
-    )
-    .to_real();
-    let coef = (coupling.area as Real) * lambda / volume.max(1.0e-30);
-    let cur = conserved_vector_typed(fields, coupling.neighbor);
-    let old = conserved_vector_typed(u0, coupling.neighbor);
+    );
+    let coef = coupling.area * lambda / volume.max(1.0e-30_f32);
+    let cur = conserved_vector_f32(fields, coupling.neighbor);
+    let old = conserved_vector_f32(u0, coupling.neighbor);
     for (s, (&c, &o)) in source.iter_mut().zip(cur.iter().zip(old.iter())) {
         *s -= coef * (c - o);
     }
