@@ -23,16 +23,21 @@ u=\sin x\cos y\cos z,\quad v=-\cos x\sin y\cos z,\quad w=0
 - `time.mode = transient`，`time.scheme = bdf1`（BDF1 动量 + PISO-2）
 - 16×16×1，双周期 + z 对称
 - 中心对流格式
+- **初场**：解析 \(u,p\) 后做 Rhie-Chow **压力投影**（固定速度、1 步 Poisson），使 `max|div phi|` \(<10^{-6}\)
 
-## 验证（I3 smoke）
+## 验证（I3 V&V）
 
-当前 16×16 collocated FVM + PISO-2 在粗网格上存在显著数值耗散，CI 断言：
+CI（`tests/case_run.rs`）在 smoke 量级约束之上收紧为：
 
-- 瞬态 PISO-2 跑满 `max_steps`
-- 动能单调衰减（\(\nu>0\)）
-- spin-up 后 \(-\mathrm{d}\ln E/\mathrm{d}t\) 与 \(4\nu^*\) **同量级**（0.05×–50×，待网格/求解器改进后收紧）
+| 量 | 判据 |
+|----|------|
+| 动能单调衰减 | \(E_{\mathrm{final}} < E_{\mathrm{initial}}\)，\(E/E_0 < 1\) |
+| \(E/E_0\) vs 解析 | \(\ge 0.35 \times \exp(-4\nu^* t^*)\)（粗网格允许超耗散） |
+| spin-up 衰减率 | \(-\mathrm{d}\ln E/\mathrm{d}t\) 在 \(0.5\times\)–\(45\times\) 的 \(4\nu^*\) 内 |
+| 连续性 | `max_abs_corrected_field_divergence_after_boundary` \(< 10^{-5}\) |
+| 压力 Poisson 残差 | `max_abs_corrected_divergence` \(< 10^{-5}\) |
 
-完整 \(E/E_0=\exp(-4\nu^* t^*)\) 对照见 ADR 0015，计划在更细网格或离散散度投影初场后启用。
+机器可读参考值见 `expected.json`（`status = i3_piso_bdf1_kinetic_decay_vv`）。
 
 ```bash
 asimu --case tests/benchmarks/taylor_green_3d/case.toml

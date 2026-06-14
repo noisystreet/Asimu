@@ -106,7 +106,7 @@ mod tests {
         assert_eq!(expected.schema_version, 1);
         assert_eq!(
             expected.status.as_deref(),
-            Some("i3_piso_bdf1_kinetic_decay")
+            Some("i3_piso_bdf1_kinetic_decay_vv")
         );
         assert!(!expected.quantity_names.is_empty());
     }

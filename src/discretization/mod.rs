@@ -82,7 +82,8 @@ pub use incompressible::{
     IncompressibleMomentumPredictorSystem, IncompressiblePressureCorrectionConfig,
     IncompressiblePressureCorrectionSystem, IncompressibleVelocityLaplacian,
     PressureCorrectedRhieChowDivergenceConfig, RhieChowVelocityCorrectionConfig,
-    apply_incompressible_boundary_conditions_3d, assemble_incompressible_momentum_predictor_3d,
+    apply_incompressible_boundary_conditions_3d, apply_pressure_correction_to_fields,
+    apply_rhie_chow_pressure_projection_to_fields, assemble_incompressible_momentum_predictor_3d,
     assemble_incompressible_momentum_predictor_with_boundary_3d,
     assemble_incompressible_momentum_predictor_with_boundary_and_flux_3d,
     assemble_incompressible_pressure_correction_3d, assemble_incompressible_pressure_poisson_3d,
@@ -91,6 +92,7 @@ pub use incompressible::{
     compute_pressure_corrected_rhie_chow_divergence_3d,
     corrected_incompressible_fields_rhie_chow_3d, incompressible_boundary_face_state,
     incompressible_boundary_face_velocity, incompressible_pressure_correction_dirichlet,
+    subtract_d_pressure_gradient_from_velocity_3d,
 };
 
 use crate::core::Real;

@@ -5,7 +5,7 @@ use crate::field::IncompressibleFields;
 use crate::io::{CaseSpec, IncompressibleCaseConfig};
 use crate::mesh::StructuredMesh3d;
 
-use super::taylor_green::taylor_green_initial_fields;
+use super::taylor_green::{taylor_green_initial_fields, taylor_green_prepare_initial_fields};
 
 /// 不可压 benchmark 目录中已知的 `benchmark_id`。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +50,22 @@ impl KnownIncompressibleBenchmark {
         match self {
             Self::TaylorGreen3d => Ok(Some(taylor_green_initial_fields(mesh)?)),
             Self::LidDrivenCavityRe100 | Self::ChannelPoiseuille => Ok(None),
+        }
+    }
+
+    /// 在 `initial_fields` 之后做 benchmark 专用预处理（如 Rhie-Chow 压力投影）。
+    pub fn prepare_initial_fields(
+        self,
+        mesh: &StructuredMesh3d,
+        config: &IncompressibleCaseConfig,
+        boundary: &crate::boundary::BoundarySet,
+        fields: IncompressibleFields,
+    ) -> Result<IncompressibleFields> {
+        match self {
+            Self::TaylorGreen3d => {
+                taylor_green_prepare_initial_fields(mesh, config, boundary, fields)
+            }
+            Self::LidDrivenCavityRe100 | Self::ChannelPoiseuille => Ok(fields),
         }
     }
 }

@@ -4,10 +4,17 @@
 
 use std::f64::consts::PI;
 
-use crate::core::Real;
+use tracing::info;
+
+use crate::boundary::BoundarySet;
+use crate::core::{Real, format_log_sci4};
 use crate::error::Result;
 use crate::field::{IncompressibleFields, ScalarField};
+use crate::io::IncompressibleCaseConfig;
 use crate::mesh::StructuredMesh3d;
+use crate::solver::{
+    IncompressibleProjectionConfig, project_incompressible_fields_divergence_free_3d,
+};
 
 const TWO_PI: Real = 2.0 * PI;
 
@@ -43,6 +50,34 @@ pub fn taylor_green_initial_fields(mesh: &StructuredMesh3d) -> Result<Incompress
         velocity_y: ScalarField::from_values(uy)?,
         velocity_z: ScalarField::from_values(uz)?,
     })
+}
+
+/// Taylor–Green 初场：Rhie-Chow 压力投影（固定解析速度，调整压力）。
+pub fn taylor_green_prepare_initial_fields(
+    mesh: &StructuredMesh3d,
+    config: &IncompressibleCaseConfig,
+    boundary: &BoundarySet,
+    fields: IncompressibleFields,
+) -> Result<IncompressibleFields> {
+    let (projected, stats) = project_incompressible_fields_divergence_free_3d(
+        fields,
+        IncompressibleProjectionConfig::rhie_chow_pressure_only(
+            mesh,
+            boundary,
+            config.density,
+            config.linear_solvers.pressure,
+            12,
+            1.0e-6,
+        ),
+    )?;
+    info!(
+        iterations = stats.iterations,
+        max_abs_divergence_before = %format_log_sci4(stats.max_abs_divergence_before),
+        max_abs_divergence_after = %format_log_sci4(stats.max_abs_divergence_after),
+        pressure_converged = stats.pressure_solve_converged,
+        "Taylor–Green 初场 Rhie-Chow 散度投影"
+    );
+    Ok(projected)
 }
 
 /// 体积平均 kinetic energy \(E=\frac{1}{V}\int \frac{1}{2}\rho|\mathbf{u}|^2\,\mathrm{d}V\)。
@@ -130,5 +165,107 @@ mod tests {
         let dt = 0.1;
         let ratio = analytical_kinetic_energy_ratio(inv_re, dt);
         assert!(approx_eq(ratio, (-0.004_f64).exp(), 1.0e-12));
+    }
+
+    #[test]
+    fn rhie_chow_projection_reduces_initial_divergence() {
+        use crate::discretization::compute_incompressible_rhie_chow_divergence_3d;
+        use crate::field::ScalarField;
+        use crate::io::parse_case_str;
+        use crate::solver::{
+            IncompressibleProjectionConfig, project_incompressible_fields_divergence_free_3d,
+        };
+
+        let case = parse_case_str(
+            r#"
+name = "tg_projection"
+benchmark_id = "taylor_green_3d"
+
+[mesh]
+kind = "structured_3d"
+nx = 8
+ny = 8
+nz = 1
+lx = 6.283185307179586
+ly = 6.283185307179586
+lz = 0.1
+
+[physics]
+
+[incompressible]
+pressure = 0.0
+velocity = [0.0, 0.0, 0.0]
+density = 1.0
+kinematic_viscosity = 0.1
+
+[incompressible.reference]
+length = 6.283185307179586
+velocity = 1.0
+
+[boundary.i_min]
+kind = "periodic"
+partner = "i_max"
+
+[boundary.i_max]
+kind = "periodic"
+partner = "i_min"
+
+[boundary.j_min]
+kind = "periodic"
+partner = "j_max"
+
+[boundary.j_max]
+kind = "periodic"
+partner = "j_min"
+
+[boundary.k_min]
+kind = "symmetry"
+
+[boundary.k_max]
+kind = "symmetry"
+"#,
+        )
+        .expect("parse");
+        let mesh = case.mesh.as_3d().expect("mesh");
+        let config = case.incompressible.expect("inc");
+        let fields = taylor_green_initial_fields(mesh).expect("fields");
+        let d = ScalarField::uniform(mesh.num_cells(), 1.0).expect("d");
+        let div_before =
+            compute_incompressible_rhie_chow_divergence_3d(mesh, &fields, &d, &case.boundary)
+                .expect("div");
+        let max_before = div_before
+            .values()
+            .iter()
+            .fold(0.0_f64, |acc, value| acc.max(value.abs()));
+        assert!(max_before > 1.0e-4, "max_before={max_before}");
+
+        let (projected, stats) = project_incompressible_fields_divergence_free_3d(
+            fields,
+            IncompressibleProjectionConfig::rhie_chow_pressure_only(
+                mesh,
+                &case.boundary,
+                config.density,
+                config.linear_solvers.pressure,
+                12,
+                1.0e-6,
+            ),
+        )
+        .expect("project");
+        assert!(stats.iterations >= 1);
+        assert!(stats.max_abs_divergence_after < max_before * 0.01);
+        assert!(stats.max_abs_divergence_after < 1.0e-3);
+        assert!(stats.pressure_solve_converged);
+        let div_after =
+            compute_incompressible_rhie_chow_divergence_3d(mesh, &projected, &d, &case.boundary)
+                .expect("div after");
+        let max_after = div_after
+            .values()
+            .iter()
+            .fold(0.0_f64, |acc, value| acc.max(value.abs()));
+        assert!(approx_eq(
+            stats.max_abs_divergence_after,
+            max_after,
+            1.0e-12
+        ));
     }
 }

@@ -1,5 +1,4 @@
 //! 不可压缩 3D I0 占位求解器：初始化字段并写出流场。
-
 use std::path::PathBuf;
 
 #[cfg(not(feature = "io-cgns"))]
@@ -134,7 +133,7 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
     let time_marching = incompressible_physical_transient(time_advance);
     let known_benchmark = KnownIncompressibleBenchmark::from_case(case);
     validate_incompressible_transient_inputs(case, transient, dt, time_advance)?;
-    let mut fields = initial_incompressible_fields(known_benchmark, mesh, config)?;
+    let mut fields = initial_incompressible_fields(known_benchmark, mesh, config, &case.boundary)?;
     let kinetic_energy_initial = initial_kinetic_energy(known_benchmark, mesh, config, &fields);
     let boundary_stats =
         apply_incompressible_boundary_conditions_3d(mesh, &mut fields, &case.boundary)?;
@@ -222,10 +221,11 @@ fn initial_incompressible_fields(
     benchmark: Option<KnownIncompressibleBenchmark>,
     mesh: &StructuredMesh3d,
     config: &crate::io::IncompressibleCaseConfig,
+    boundary: &crate::boundary::BoundarySet,
 ) -> Result<IncompressibleFields> {
     let fields = if let Some(benchmark) = benchmark {
         if let Some(fields) = benchmark.initial_fields(mesh, config)? {
-            fields
+            benchmark.prepare_initial_fields(mesh, config, boundary, fields)?
         } else {
             IncompressibleFields::uniform(mesh.num_cells(), config.pressure, config.velocity)?
         }
@@ -736,7 +736,7 @@ fn write_incompressible_cgns(
     _fields: &IncompressibleFields,
     _physical_time: f64,
 ) -> Result<()> {
-    let _span = info_span!("write_incompressible_cgns", path = %path.display()).entered();
+    let _ = path;
     warn!("solution_cgns 须启用 feature io-cgns");
     Ok(())
 }

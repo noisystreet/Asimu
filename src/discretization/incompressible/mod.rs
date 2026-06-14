@@ -14,6 +14,7 @@ mod momentum_geometry;
 mod momentum_tests;
 pub mod phi;
 pub mod pressure_correction;
+pub mod projection;
 pub mod rhie_chow;
 pub mod velocity_correction;
 
@@ -32,6 +33,10 @@ pub use momentum::{
 };
 pub use phi::IncompressibleFaceFluxField;
 pub use pressure_correction::assemble_incompressible_pressure_correction_3d;
+pub use projection::{
+    apply_pressure_correction_to_fields, apply_rhie_chow_pressure_projection_to_fields,
+    subtract_d_pressure_gradient_from_velocity_3d,
+};
 pub use rhie_chow::{
     PressureCorrectedRhieChowDivergenceConfig, compute_incompressible_rhie_chow_divergence_3d,
     compute_pressure_corrected_rhie_chow_divergence_3d,

@@ -1,6 +1,7 @@
 mod diagnostics;
 mod linear;
 mod pressure_reference;
+mod projection;
 use crate::boundary::BoundarySet;
 use crate::core::{Real, elapsed_ms};
 use crate::discretization::{
@@ -32,6 +33,10 @@ use tracing::debug;
 pub use linear::{
     IncompressibleLinearSolverConfig, IncompressiblePressureLinearSolverConfig,
     IncompressiblePressureLinearSolverKind,
+};
+pub use projection::{
+    IncompressibleProjectionConfig, IncompressibleProjectionMode, IncompressibleProjectionStats,
+    project_incompressible_fields_divergence_free_3d,
 };
 
 #[derive(Debug, Clone, Copy)]

@@ -94,9 +94,11 @@ pub use incompressible::{
     IncompressiblePressureLinearSolverKind, IncompressiblePressureVelocityAlgorithm,
     IncompressiblePressureVelocityConfig, IncompressiblePressureVelocityDiagnostic,
     IncompressiblePressureVelocitySnapshot, IncompressiblePressureVelocityStepInfo,
-    IncompressiblePressureVelocityStepView, IncompressibleSimplecConfig,
-    IncompressibleSimplecDiagnostic, run_incompressible_pressure_velocity,
-    run_incompressible_pressure_velocity_with_observer, run_incompressible_simplec,
+    IncompressiblePressureVelocityStepView, IncompressibleProjectionConfig,
+    IncompressibleProjectionMode, IncompressibleProjectionStats, IncompressibleSimplecConfig,
+    IncompressibleSimplecDiagnostic, project_incompressible_fields_divergence_free_3d,
+    run_incompressible_pressure_velocity, run_incompressible_pressure_velocity_with_observer,
+    run_incompressible_simplec,
 };
 pub use state::SolverState;
 pub use time::{

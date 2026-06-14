@@ -184,14 +184,35 @@ fn taylor_green_3d_incompressible_benchmark_runs() {
         .expect("kinetic energy analytical decay rate");
     assert!(decay_rate > 0.0, "decay_rate={decay_rate}");
     assert!(analytical_rate > 0.0);
-    // 粗网格 collocated PISO 当前显著超耗散；先约束量级与单调衰减，待网格/求解器收紧后再比 4ν*。
+    let analytical_ratio = metrics
+        .kinetic_energy_analytical_ratio
+        .expect("kinetic energy analytical ratio");
     assert!(
-        decay_rate > analytical_rate * 0.05,
+        final_energy < initial,
+        "kinetic energy must decay: initial={initial} final={final_energy}"
+    );
+    assert!(decay < 1.0, "decay ratio must stay below unity: {decay}");
+    assert!(
+        decay >= analytical_ratio * 0.35,
+        "decay={decay} analytical_ratio={analytical_ratio}"
+    );
+    assert!(
+        decay_rate >= analytical_rate * 0.5,
         "decay_rate={decay_rate} analytical={analytical_rate}"
     );
     assert!(
-        decay_rate < analytical_rate * 50.0,
+        decay_rate <= analytical_rate * 45.0,
         "decay_rate={decay_rate} analytical={analytical_rate}"
+    );
+    assert!(
+        metrics.max_abs_corrected_field_divergence_after_boundary < 1.0e-5,
+        "face flux divergence={}",
+        metrics.max_abs_corrected_field_divergence_after_boundary
+    );
+    assert!(
+        metrics.max_abs_corrected_divergence < 1.0e-5,
+        "pressure correction residual={}",
+        metrics.max_abs_corrected_divergence
     );
 }
 

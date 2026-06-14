@@ -178,7 +178,7 @@ mod tests {
         });
         run_case_with_manifest(&case).expect("run");
         let text = std::fs::read_to_string(dir.join("run-manifest.json")).expect("read");
-        assert!(text.contains("\"benchmark_status\": \"i3_piso_bdf1_kinetic_decay\""));
+        assert!(text.contains("\"benchmark_status\": \"i3_piso_bdf1_kinetic_decay_vv\""));
         assert!(text.contains("\"incompressible_advance\": \"physical_transient\""));
         assert_eq!(
             incompressible_time_advance_from_config(&case.time),
