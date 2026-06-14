@@ -15,10 +15,10 @@ use crate::discretization::{
 use crate::error::{AsimuError, Result};
 use crate::field::ConservedResidualT;
 
+use super::is_degenerate_volume;
 #[cfg(not(feature = "parallel-fvm"))]
 use super::scatter_fused_interior_face_f64;
 use super::{InviscidAssemblyUnstructuredTypedParams, scatter_inviscid_interior_pairs_f64};
-use crate::discretization::residual::is_degenerate_volume;
 
 /// f64 非结构 MUSCL 无粘残差装配（typed 参数直达重构与 Riemann）。
 pub(super) fn assemble_inviscid_muscl_unstructured_f64(

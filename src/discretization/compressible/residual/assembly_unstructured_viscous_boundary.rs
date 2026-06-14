@@ -16,7 +16,7 @@ use crate::field::{
 
 use super::{ViscousAssemblyUnstructuredParams, ViscousAssemblyUnstructuredScratch};
 
-use crate::discretization::residual::is_degenerate_volume;
+use super::super::is_degenerate_volume;
 
 pub(super) fn assemble_boundary_faces(
     residual: &mut ConservedResidual,

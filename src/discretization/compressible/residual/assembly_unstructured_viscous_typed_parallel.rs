@@ -1,6 +1,6 @@
 //! 非结构 typed 粘性内面并行桶 scatter（P5：复用 `scatter_viscous_valid_slots_f32`）。
 
-use crate::discretization::residual::assembly_unstructured_viscous::{
+use super::super::assembly_unstructured_viscous::{
     ViscousAssemblyUnstructuredParams, ViscousAssemblyUnstructuredScratch,
     interior_viscous_face_geom_and_flux,
 };
@@ -10,7 +10,7 @@ use crate::exec::scatter::ViscousScatterOp;
 use super::ViscousTypedScatterBackend;
 
 #[cfg(feature = "simd-fvm")]
-use crate::discretization::residual::assembly_unstructured_viscous::compute_viscous_batch4_into;
+use super::super::assembly_unstructured_viscous::compute_viscous_batch4_into;
 
 #[inline]
 fn viscous_scatter_extract(

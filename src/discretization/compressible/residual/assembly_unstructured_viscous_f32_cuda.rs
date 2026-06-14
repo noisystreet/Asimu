@@ -113,7 +113,7 @@ mod tests {
     use crate::mesh::{CellKind, UnstructuredCell, UnstructuredMesh3d};
     use crate::physics::{FreestreamParams, IdealGasEoS, ViscosityModel, ViscousPhysicsConfig};
 
-    use crate::discretization::residual::{
+    use super::{
         ViscousAssemblyUnstructuredF32Input, ViscousAssemblyUnstructuredScratch,
         compute_gradients_and_assemble_viscous_unstructured_f32,
     };

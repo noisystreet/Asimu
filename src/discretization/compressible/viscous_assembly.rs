@@ -3,10 +3,10 @@
 use crate::boundary::WallHeat;
 use crate::core::{ComputeFloat, Real, Vector3};
 use crate::discretization::InviscidFlux;
-use crate::discretization::gradient::{GradientFields, VelocityGradient};
-use crate::discretization::residual::{
+use crate::discretization::compressible::residual::{
     accumulate_boundary_face, accumulate_boundary_face_typed, accumulate_interior_face,
 };
+use crate::discretization::gradient::{GradientFields, VelocityGradient};
 use crate::discretization::viscous::{
     ViscousFlux, average_gradient_for_wall, face_transport_coefficients, viscous_face_flux,
 };

@@ -412,15 +412,16 @@ fn cylinder_uniform_freestream_interior_only_advance_when_present() {
         let cell_dts = cell_local_dt_spectral(&mesh.cell_volumes(), &sigma, cfl).expect("dt");
         let evaluate = |u: &ConservedFields, r: &mut ConservedResidual| {
             primitives.fill_from_conserved(u, &eos, p_floor)?;
-            let assembly = crate::discretization::residual::InviscidAssembly3dParams {
-                mesh,
-                eos: &eos,
-                config: &inviscid,
-                boundaries: &empty_bc,
-                ghosts: &ghosts,
-                primitives: &primitives,
-                min_pressure: p_floor,
-            };
+            let assembly =
+                crate::discretization::compressible::residual::InviscidAssembly3dParams {
+                    mesh,
+                    eos: &eos,
+                    config: &inviscid,
+                    boundaries: &empty_bc,
+                    ghosts: &ghosts,
+                    primitives: &primitives,
+                    min_pressure: p_floor,
+                };
             assemble_inviscid_residual_3d(u, r, &assembly)?;
             zero_residual_on_cells(r, &boundary_cells);
             Ok(())
@@ -452,15 +453,16 @@ fn cylinder_uniform_freestream_interior_only_advance_when_present() {
             primitives
                 .fill_from_conserved(&fields, &eos, p_floor)
                 .expect("fill");
-            let assembly = crate::discretization::residual::InviscidAssembly3dParams {
-                mesh,
-                eos: &eos,
-                config: &inviscid,
-                boundaries: &empty_bc,
-                ghosts: &ghosts,
-                primitives: &primitives,
-                min_pressure: p_floor,
-            };
+            let assembly =
+                crate::discretization::compressible::residual::InviscidAssembly3dParams {
+                    mesh,
+                    eos: &eos,
+                    config: &inviscid,
+                    boundaries: &empty_bc,
+                    ghosts: &ghosts,
+                    primitives: &primitives,
+                    min_pressure: p_floor,
+                };
             assemble_inviscid_residual_3d(&fields, &mut storage.k1, &assembly).expect("rhs");
             zero_residual_on_cells(&mut storage.k1, &boundary_cells);
             let int_res = interior_density_rms(&storage.k1, &boundary_set);

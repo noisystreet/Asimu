@@ -1,7 +1,7 @@
 //! GMRES 单元块对角预条件器的局部 Jacobian 构造。
 
 use crate::core::Real;
-use crate::discretization::residual::{
+use crate::discretization::compressible::residual::{
     BoundaryInviscidFluxInput, InviscidAssembly3dParams, inviscid_boundary_face_flux,
     inviscid_i_face_flux, inviscid_j_face_flux, inviscid_k_face_flux, is_degenerate_volume,
 };

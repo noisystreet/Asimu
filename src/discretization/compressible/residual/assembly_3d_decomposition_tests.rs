@@ -1,12 +1,10 @@
 //! 圆柱边界面通量分解诊断（独立测试模块，满足复杂度门禁）。
 
+use super::super::muscl_stencil_3d::{BoundaryFaceFlux3d, flux_at_boundary_face};
+use super::super::{accumulate_boundary_face, is_degenerate_volume};
 use super::assemble_inviscid_residual_3d;
 use crate::core::Vector3;
 use crate::discretization::InviscidFluxConfig;
-use crate::discretization::residual::muscl_stencil_3d::{
-    BoundaryFaceFlux3d, flux_at_boundary_face,
-};
-use crate::discretization::residual::{accumulate_boundary_face, is_degenerate_volume};
 use crate::discretization::{BoundaryGhostBuffer, apply_compressible_boundary_conditions};
 use crate::field::{ConservedFields, ConservedResidual};
 use crate::io::load_case;

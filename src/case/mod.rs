@@ -523,7 +523,7 @@ max_steps = 1
             )
             .expect("fill");
         let p_floor = crate::field::positivity_pressure_floor(fs.pressure);
-        let assembly = crate::discretization::residual::InviscidAssembly3dParams {
+        let assembly = crate::discretization::compressible::residual::InviscidAssembly3dParams {
             mesh,
             eos: &eos,
             config: &inviscid,

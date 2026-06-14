@@ -5,7 +5,7 @@ use tracing::info_span;
 use super::ResidualCorrection3dHandle;
 use crate::boundary::BoundarySet;
 use crate::core::Real;
-use crate::discretization::residual::InviscidAssembly3dParams;
+use crate::discretization::compressible::residual::InviscidAssembly3dParams;
 use crate::discretization::{
     BoundaryGhostBuffer, GradientFields, InviscidFluxConfig, assemble_inviscid_residual_3d,
     compute_gradients_and_assemble_viscous_3d,

@@ -5,7 +5,7 @@ use tracing::info_span;
 use crate::boundary::BoundarySet;
 use crate::core::ComputeFloat;
 use crate::core::Real;
-use crate::discretization::residual::InviscidAssembly3dTypedParams;
+use crate::discretization::compressible::residual::InviscidAssembly3dTypedParams;
 use crate::discretization::{
     BoundaryGhostBuffer, GradientFields, InviscidFaceFluxTyped, InviscidFluxConfig,
     assemble_inviscid_residual_3d_typed,

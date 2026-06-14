@@ -168,7 +168,7 @@ pub fn velocity_dot_normal(velocity: [Real; 3], normal: Vector3) -> Real {
 mod tests {
     use super::*;
     use crate::core::approx_eq;
-    use crate::discretization::residual::accumulate_interior_face;
+    use crate::discretization::compressible::residual::accumulate_interior_face;
     use crate::field::ConservedResidual;
     use crate::physics::{ConservedState, IdealGasEoS};
 

@@ -21,8 +21,8 @@ use crate::exec::scatter::{
 };
 use crate::field::ConservedResidualT;
 
+use super::super::is_degenerate_volume_f32;
 use super::InviscidAssemblyUnstructuredTypedParams;
-use crate::discretization::residual::is_degenerate_volume_f32;
 
 /// f32 非结构 MUSCL 无粘残差装配（重构与 Riemann 均为原生 f32）。
 pub(super) fn assemble_inviscid_muscl_unstructured_f32(

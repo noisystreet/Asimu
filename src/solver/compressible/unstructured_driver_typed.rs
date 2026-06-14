@@ -31,10 +31,12 @@ use crate::core::{
     log10_positive,
 };
 use crate::discretization::InviscidFaceFluxTyped;
+use crate::discretization::compressible::residual::InviscidAssemblyUnstructuredTypedParams;
+use crate::discretization::compressible::residual::{
+    InviscidTypedScatterBackend, ViscousTypedScatterBackend,
+};
 use crate::discretization::gradient_typed::GradientFieldsT;
 use crate::discretization::gradient_unstructured_f32::UnstructuredGradientLsqInputF32;
-use crate::discretization::residual::InviscidAssemblyUnstructuredTypedParams;
-use crate::discretization::residual::{InviscidTypedScatterBackend, ViscousTypedScatterBackend};
 use crate::discretization::{
     BoundaryGhostBuffer, ReconstructionKind, UnstructuredGradientLsqInput,
     UnstructuredGradientScratchF32, UnstructuredSolverMeshCache,

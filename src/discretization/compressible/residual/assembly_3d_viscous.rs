@@ -1,12 +1,12 @@
 //! 3D 结构化网格粘性残差装配。
 
+use super::is_degenerate_volume;
 use crate::boundary::{BoundaryKind, BoundarySet};
 use crate::core::Real;
 use crate::discretization::BoundaryGhostBuffer;
 use crate::discretization::gradient::{
     GradientFields, cell_temperatures_into, compute_structured_gradients_3d,
 };
-use crate::discretization::residual::is_degenerate_volume;
 use crate::discretization::viscous::{
     InteriorViscousFaceGeom, InteriorViscousFaceInputs, InteriorViscousResidualMut,
     accumulate_fused_interior_viscous_face, face_transport_coefficients,

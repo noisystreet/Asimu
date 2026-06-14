@@ -3,7 +3,7 @@
 use tracing::info_span;
 
 use crate::core::Real;
-use crate::discretization::residual::inviscid_boundary_face_flux_with_normal;
+use crate::discretization::compressible::residual::inviscid_boundary_face_flux_with_normal;
 use crate::discretization::{BoundaryInviscidFluxInput, InviscidFlux};
 use crate::error::Result;
 use crate::field::{ConservedFields, ConservedResidual, PrimitiveFields};

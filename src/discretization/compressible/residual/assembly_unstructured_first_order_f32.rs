@@ -2,6 +2,7 @@
 
 use tracing::info_span;
 
+use super::super::is_degenerate_volume_f32;
 use crate::discretization::face_flux_typed::{
     face_inviscid_flux_first_order_boundary_soa_f32,
     face_inviscid_flux_first_order_interior_soa_f32,
@@ -11,7 +12,6 @@ use crate::discretization::inviscid_f32::scatter_fused_interior_inviscid_face_f3
 use crate::discretization::inviscid_f32::{
     InteriorInviscidScatterGeomF32, InviscidFluxF32, scatter_fused_boundary_inviscid_face_f32,
 };
-use crate::discretization::residual::is_degenerate_volume_f32;
 use crate::discretization::unstructured_face_cache::UnstructuredFaceTopology;
 use crate::discretization::unstructured_face_cache_f32::UnstructuredInteriorFaceF32;
 use crate::error::{AsimuError, Result};

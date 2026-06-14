@@ -34,30 +34,7 @@ pub mod unstructured_interior_exec_topo;
 pub mod unstructured_limiter;
 pub mod unstructured_spectral_exec_topo;
 
-// 向后兼容：顶层路径继续指向 regime 子模块。
-#[cfg(test)]
-pub(crate) use compressible::freestream_pair;
-pub use compressible::{
-    bc_compressible, face_flux, face_flux_f32, face_flux_typed, hllc, hllc_f32, inviscid,
-    inviscid_f32, reconstruction, reconstruction_unstructured, reconstruction_unstructured_f32,
-    residual, roe, roe_f32, slau2, slau2_f32, van_leer, van_leer_f32, viscous, viscous_assembly,
-    viscous_boundary_f32, viscous_f32, wall_thermal,
-};
-pub use incompressible::{
-    bc as incompressible_bc, boundary_flux as incompressible_boundary_flux,
-    face_boundary as incompressible_face_boundary, face_flux as incompressible_face_flux,
-    momentum as incompressible_momentum, phi as incompressible_phi,
-    pressure_correction as incompressible_pressure, rhie_chow as incompressible_rhie_chow,
-    velocity_correction as incompressible_velocity_correction,
-};
-
-use crate::core::Real;
-use crate::error::Result;
-use crate::field::ScalarField;
-use crate::linalg::LinearSystem;
-use crate::mesh::Mesh;
-
-pub use bc::{apply_boundary_conditions, apply_dirichlet, apply_dirichlet_face, apply_neumann};
+// --- 可压 FVM：稳定库 API（类型与函数）---
 pub use compressible::{
     BoundaryGhostBuffer, BoundaryGhosts1d, BoundaryInviscidFluxInput, FaceFluxInput,
     GhostCellState, InterfacePrimitiveStates, InviscidAssemblyUnstructuredParams,
@@ -85,22 +62,19 @@ pub use compressible::{
     viscous_face_flux, wall_face_conduction, wall_ghost, wall_ghost_temperature,
     zero_gradient_ghosts_1d,
 };
-pub use diffusion_1d::assemble_diffusion_1d;
-pub use flux_config::{FluxScheme, InviscidFluxConfig, ReconstructionKind, SlopeLimiter};
-pub use gradient::{
-    GradientFields, GradientFieldsT, InviscidPrimitiveGradients, VelocityGradient,
-    compute_structured_gradients_3d,
+
+/// 可压子模块路径别名（新代码请优先 `compressible::…`；`discretization::residual` 等保留兼容）。
+pub use compressible::{
+    bc_compressible, face_flux, face_flux_f32, face_flux_typed, hllc, hllc_f32, inviscid,
+    inviscid_f32, reconstruction, reconstruction_unstructured, reconstruction_unstructured_f32,
+    residual, roe, roe_f32, slau2, slau2_f32, van_leer, van_leer_f32, viscous, viscous_assembly,
+    viscous_boundary_f32, viscous_f32, wall_thermal,
 };
-pub use gradient_unstructured::{
-    UnstructuredGradientLsqInput, UnstructuredGradientScratch,
-    compute_unstructured_gradients_idw_lsq, compute_unstructured_gradients_idw_lsq_with_scratch,
-    compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq,
-};
-pub use gradient_unstructured_f32::{
-    UnstructuredGradientLsqInputF32, UnstructuredGradientScratchF32,
-    compute_unstructured_gradients_idw_lsq_f32,
-};
-pub use gradient_unstructured_inviscid_f32::compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq_f32;
+
+#[cfg(test)]
+pub(crate) use compressible::freestream_pair;
+
+// --- 不可压 FVM ---
 pub use incompressible::{
     IncompressibleBoundaryApplyStats, IncompressibleBoundaryFaceState,
     IncompressibleConvectionScheme, IncompressibleFaceFluxField,
@@ -118,6 +92,30 @@ pub use incompressible::{
     corrected_incompressible_fields_rhie_chow_3d, incompressible_boundary_face_state,
     incompressible_boundary_face_velocity, incompressible_pressure_correction_dirichlet,
 };
+
+use crate::core::Real;
+use crate::error::Result;
+use crate::field::ScalarField;
+use crate::linalg::LinearSystem;
+use crate::mesh::Mesh;
+
+pub use bc::{apply_boundary_conditions, apply_dirichlet, apply_dirichlet_face, apply_neumann};
+pub use diffusion_1d::assemble_diffusion_1d;
+pub use flux_config::{FluxScheme, InviscidFluxConfig, ReconstructionKind, SlopeLimiter};
+pub use gradient::{
+    GradientFields, GradientFieldsT, InviscidPrimitiveGradients, VelocityGradient,
+    compute_structured_gradients_3d,
+};
+pub use gradient_unstructured::{
+    UnstructuredGradientLsqInput, UnstructuredGradientScratch,
+    compute_unstructured_gradients_idw_lsq, compute_unstructured_gradients_idw_lsq_with_scratch,
+    compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq,
+};
+pub use gradient_unstructured_f32::{
+    UnstructuredGradientLsqInputF32, UnstructuredGradientScratchF32,
+    compute_unstructured_gradients_idw_lsq_f32,
+};
+pub use gradient_unstructured_inviscid_f32::compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq_f32;
 pub use unstructured_face_cache::{
     InteriorFaceBatchStatic4, InteriorFaceBucketBatchLayout, InteriorFaceColoring,
     LsqPrecomputedCell, UnstructuredFaceTopology, UnstructuredInteriorFace,
