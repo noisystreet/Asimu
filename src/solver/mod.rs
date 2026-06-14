@@ -47,7 +47,9 @@ pub use compressible_multiblock_driver_typed::run_multiblock_structured_typed_wi
 pub use compressible_unstructured_driver::{
     CompressibleUnstructuredStepView, UnstructuredDriverConfig, run_unstructured_with_observer,
 };
-pub use compressible_unstructured_driver_typed::run_unstructured_typed_with_observer;
+pub use compressible_unstructured_driver_typed::{
+    UnstructuredTypedRhsDispatch, run_unstructured_typed_with_observer,
+};
 pub use incompressible::{
     IncompressibleLinearSolverConfig, IncompressiblePressureLinearSolverConfig,
     IncompressiblePressureLinearSolverKind, IncompressiblePressureVelocityAlgorithm,

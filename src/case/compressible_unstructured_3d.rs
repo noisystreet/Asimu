@@ -23,7 +23,7 @@ pub(super) fn run(case: &CaseSpec) -> Result<CaseRunResult> {
     let mesh = case.mesh.as_unstructured_3d()?;
     match case.numerics.compute_precision {
         ComputePrecision::F64 => run_compressible_unstructured_3d(case, mesh),
-        ComputePrecision::F32 => run_compressible_unstructured_3d_typed::<f32>(case, mesh),
+        ComputePrecision::F32 => run_compressible_unstructured_3d_typed_f32(case, mesh),
     }
 }
 
@@ -163,12 +163,7 @@ fn run_compressible_unstructured_3d(
     ))
 }
 
-fn run_compressible_unstructured_3d_typed<
-    T: crate::core::ComputeFloat
-        + crate::field::LusgsDiagonalUpdateBackend
-        + crate::discretization::residual::InviscidTypedScatterBackend
-        + crate::discretization::residual::ViscousTypedScatterBackend,
->(
+fn run_compressible_unstructured_3d_typed_f32(
     case: &CaseSpec,
     mesh: &UnstructuredMesh3d,
 ) -> Result<CaseRunResult> {
@@ -190,7 +185,7 @@ fn run_compressible_unstructured_3d_typed<
         &inviscid,
         &driver_time,
         equation_label,
-        Some(T::PRECISION.label()),
+        Some(ComputePrecision::F32.label()),
     );
     let driver = UnstructuredDriverConfig {
         solver: &solver,
@@ -210,10 +205,10 @@ fn run_compressible_unstructured_3d_typed<
         residual_tolerance: driver_time.residual_tolerance,
         exec_config: ExecConfig::from_numerics(&case.numerics),
     };
-    let mut fields_t = crate::field::ConservedFieldsT::<T>::from_real_fields(&fields)?;
+    let mut fields_t = crate::field::ConservedFieldsT::<f32>::from_real_fields(&fields)?;
     let mut interval_paths = Vec::new();
     let (history, fields) =
-        run_unstructured_typed_with_observer::<T>(&driver, &mut fields_t, |step| {
+        run_unstructured_typed_with_observer::<f32>(&driver, &mut fields_t, |step| {
             interval_paths.extend(
                 super::output_interval::maybe_write_compressible_unstructured_interval(
                     case, mesh, step,

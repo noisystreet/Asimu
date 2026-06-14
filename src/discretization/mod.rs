@@ -13,7 +13,10 @@ pub mod flux_config;
 pub mod gradient;
 #[cfg(test)]
 mod gradient_tests;
+pub mod gradient_typed;
 pub mod gradient_unstructured;
+pub mod gradient_unstructured_f32;
+pub mod gradient_unstructured_inviscid_f32;
 pub mod hllc;
 pub mod incompressible;
 pub mod incompressible_bc;
@@ -39,6 +42,7 @@ pub mod unstructured_limiter;
 pub mod van_leer;
 pub mod viscous;
 pub mod viscous_assembly;
+pub mod viscous_f32;
 pub mod wall_thermal;
 
 #[cfg(test)]
@@ -62,13 +66,19 @@ pub use face_flux::{
 };
 pub use flux_config::{FluxScheme, InviscidFluxConfig, ReconstructionKind, SlopeLimiter};
 pub use gradient::{
-    GradientFields, InviscidPrimitiveGradients, VelocityGradient, compute_structured_gradients_3d,
+    GradientFields, GradientFieldsT, InviscidPrimitiveGradients, VelocityGradient,
+    compute_structured_gradients_3d,
 };
 pub use gradient_unstructured::{
     UnstructuredGradientLsqInput, UnstructuredGradientScratch,
     compute_unstructured_gradients_idw_lsq, compute_unstructured_gradients_idw_lsq_with_scratch,
     compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq,
 };
+pub use gradient_unstructured_f32::{
+    UnstructuredGradientLsqInputF32, UnstructuredGradientScratchF32,
+    compute_unstructured_gradients_idw_lsq_f32,
+};
+pub use gradient_unstructured_inviscid_f32::compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq_f32;
 pub use hllc::hllc_flux;
 pub use incompressible::{
     IncompressiblePressureCorrectionConfig, IncompressiblePressureCorrectionSystem,
@@ -111,13 +121,14 @@ pub use reconstruction_unstructured::{
 pub use residual::{
     BoundaryGhosts1d, BoundaryInviscidFluxInput, InviscidAssemblyUnstructuredParams,
     InviscidBoundary1d, ViscousAssembly3dInput, ViscousAssembly3dParams,
-    ViscousAssemblyUnstructuredInput, ViscousAssemblyUnstructuredParams,
-    ViscousAssemblyUnstructuredScratch, ViscousAssemblyUnstructuredTypedInput,
-    accumulate_boundary_face, accumulate_interior_face, assemble_inviscid_residual_1d,
-    assemble_inviscid_residual_3d, assemble_inviscid_residual_3d_typed,
-    assemble_inviscid_residual_unstructured, assemble_inviscid_residual_unstructured_typed,
-    assemble_viscous_residual_3d, assemble_viscous_residual_unstructured,
-    compute_gradients_and_assemble_viscous_3d,
+    ViscousAssemblyUnstructuredF32Input, ViscousAssemblyUnstructuredInput,
+    ViscousAssemblyUnstructuredParams, ViscousAssemblyUnstructuredScratch,
+    ViscousAssemblyUnstructuredTypedInput, accumulate_boundary_face, accumulate_interior_face,
+    assemble_inviscid_residual_1d, assemble_inviscid_residual_3d,
+    assemble_inviscid_residual_3d_typed, assemble_inviscid_residual_unstructured,
+    assemble_inviscid_residual_unstructured_typed, assemble_viscous_residual_3d,
+    assemble_viscous_residual_unstructured, compute_gradients_and_assemble_viscous_3d,
+    compute_gradients_and_assemble_viscous_unstructured_f32,
     compute_gradients_and_assemble_viscous_unstructured_typed,
     compute_gradients_and_assemble_viscous_unstructured_with_scratch, zero_gradient_ghosts_1d,
 };

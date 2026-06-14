@@ -2,15 +2,19 @@
 
 use crate::boundary::BoundarySet;
 use crate::core::Real;
+use crate::discretization::gradient_unstructured_f32::UnstructuredGradientLsqInputF32;
 use crate::discretization::residual::InviscidAssemblyUnstructuredTypedParams;
 use crate::discretization::residual::InviscidTypedScatterBackend;
 use crate::discretization::residual::ViscousTypedScatterBackend;
 use crate::discretization::{
-    BoundaryGhostBuffer, GradientFields, InviscidFluxConfig, ReconstructionKind,
-    UnstructuredGradientLsqInput, UnstructuredSolverMeshCache, ViscousAssemblyUnstructuredScratch,
+    BoundaryGhostBuffer, GradientFields, GradientFieldsT, InviscidFluxConfig, ReconstructionKind,
+    UnstructuredGradientLsqInput, UnstructuredGradientScratchF32, UnstructuredSolverMeshCache,
+    ViscousAssemblyUnstructuredF32Input, ViscousAssemblyUnstructuredScratch,
     ViscousAssemblyUnstructuredTypedInput, assemble_inviscid_residual_unstructured_typed,
+    compute_gradients_and_assemble_viscous_unstructured_f32,
     compute_gradients_and_assemble_viscous_unstructured_typed,
     compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq,
+    compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq_f32,
 };
 use crate::error::Result;
 use crate::field::{ConservedFieldsT, ConservedResidualT, PrimitiveFields, PrimitiveFieldsT};
@@ -39,25 +43,21 @@ pub(crate) struct EvaluateRhsUnstructuredTyped<
     pub min_pressure: Real,
     pub primitives: &'a mut PrimitiveFieldsT<T>,
     pub spectral_primitives: &'a mut PrimitiveFields,
-    pub gradient_scratch: &'a mut GradientFields,
+    pub gradient_scratch: &'a mut GradientFieldsT<T>,
+    pub muscl_gradient_bridge: &'a mut GradientFields,
     pub viscous_scratch: &'a mut ViscousAssemblyUnstructuredScratch,
+    pub viscous_grad_scratch_f32: &'a mut UnstructuredGradientScratchF32,
     pub exec: &'a mut crate::exec::ExecutionContext,
 }
 
-impl<T: InviscidTypedScatterBackend + ViscousTypedScatterBackend>
-    EvaluateRhsUnstructuredTyped<'_, T>
-{
-    #[allow(dead_code)]
+#[allow(dead_code)]
+impl EvaluateRhsUnstructuredTyped<'_, f32> {
     pub fn run(
         &mut self,
-        fields: &ConservedFieldsT<T>,
-        residual: &mut ConservedResidualT<T>,
+        fields: &ConservedFieldsT<f32>,
+        residual: &mut ConservedResidualT<f32>,
     ) -> Result<()> {
-        let _span = info_span!(
-            "evaluate_rhs_unstructured_typed",
-            precision = T::PRECISION.label()
-        )
-        .entered();
+        let _span = info_span!("evaluate_rhs_unstructured_typed", precision = "f32").entered();
         refresh_compressible_ghosts_and_primitives_typed(RefreshCompressibleStateTypedInput {
             boundary_mesh: self.mesh,
             patches: self.patches,
@@ -74,12 +74,98 @@ impl<T: InviscidTypedScatterBackend + ViscousTypedScatterBackend>
         self.assemble_from_current_state(fields, residual)
     }
 
-    /// ghost/primitive 已由调用方刷新时，装配无粘 + 粘性残差。
-    #[allow(dead_code)]
     pub fn assemble_from_current_state(
         &mut self,
-        fields: &ConservedFieldsT<T>,
-        residual: &mut ConservedResidualT<T>,
+        fields: &ConservedFieldsT<f32>,
+        residual: &mut ConservedResidualT<f32>,
+    ) -> Result<()> {
+        if self.inviscid.reconstruction == ReconstructionKind::Muscl {
+            let grad_input = UnstructuredGradientLsqInputF32 {
+                mesh: self.mesh,
+                mesh_cache: self.mesh_cache,
+                primitives: self.primitives,
+                eos: self.eos,
+                ghosts: self.ghosts,
+                min_pressure: self.min_pressure,
+                viscous: self.viscous,
+            };
+            compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq_f32(
+                grad_input,
+                self.gradient_scratch,
+                self.exec,
+            )?;
+            *self.muscl_gradient_bridge = self.gradient_scratch.to_real_fields()?;
+        }
+        let gradients = match self.inviscid.reconstruction {
+            ReconstructionKind::Muscl => Some(&*self.muscl_gradient_bridge),
+            ReconstructionKind::FirstOrder => None,
+        };
+        let mut assembly = InviscidAssemblyUnstructuredTypedParams {
+            mesh: self.mesh,
+            eos: self.eos,
+            config: self.inviscid,
+            boundaries: self.patches,
+            ghosts: self.ghosts,
+            primitives: self.primitives,
+            spectral_primitives: self.spectral_primitives,
+            mesh_cache: self.mesh_cache,
+            gradients,
+            min_pressure: self.min_pressure,
+            exec: self.exec,
+        };
+        assemble_inviscid_residual_unstructured_typed(fields, residual, &mut assembly)?;
+        if let Some(viscous) = self.viscous {
+            let mut input = ViscousAssemblyUnstructuredF32Input {
+                mesh: self.mesh,
+                mesh_cache: self.mesh_cache,
+                eos: self.eos,
+                viscous,
+                boundaries: self.patches,
+                ghosts: self.ghosts,
+                primitives: self.primitives,
+                min_pressure: self.min_pressure,
+                gradient_scratch: self.gradient_scratch,
+                exec: self.exec,
+            };
+            compute_gradients_and_assemble_viscous_unstructured_f32(
+                residual,
+                &mut input,
+                self.viscous_scratch,
+                self.viscous_grad_scratch_f32,
+            )?;
+        }
+        Ok(())
+    }
+}
+
+#[allow(dead_code)]
+impl EvaluateRhsUnstructuredTyped<'_, f64> {
+    pub fn run(
+        &mut self,
+        fields: &ConservedFieldsT<f64>,
+        residual: &mut ConservedResidualT<f64>,
+    ) -> Result<()> {
+        let _span = info_span!("evaluate_rhs_unstructured_typed", precision = "f64").entered();
+        refresh_compressible_ghosts_and_primitives_typed(RefreshCompressibleStateTypedInput {
+            boundary_mesh: self.mesh,
+            patches: self.patches,
+            fields,
+            ghosts: self.ghosts,
+            eos: self.eos,
+            freestream: self.freestream,
+            reference: self.reference,
+            viscous: self.viscous,
+            min_pressure: self.min_pressure,
+            primitives: self.primitives,
+            spectral_primitives: self.spectral_primitives,
+        })?;
+        self.assemble_from_current_state(fields, residual)
+    }
+
+    pub fn assemble_from_current_state(
+        &mut self,
+        fields: &ConservedFieldsT<f64>,
+        residual: &mut ConservedResidualT<f64>,
     ) -> Result<()> {
         if self.inviscid.reconstruction == ReconstructionKind::Muscl {
             let grad_input = UnstructuredGradientLsqInput {
@@ -115,10 +201,7 @@ impl<T: InviscidTypedScatterBackend + ViscousTypedScatterBackend>
             min_pressure: self.min_pressure,
             exec: self.exec,
         };
-        {
-            let _span = info_span!("assemble_unstructured_inviscid_residual_typed").entered();
-            assemble_inviscid_residual_unstructured_typed(fields, residual, &mut assembly)?;
-        }
+        assemble_inviscid_residual_unstructured_typed(fields, residual, &mut assembly)?;
         if let Some(viscous) = self.viscous {
             let mut input = ViscousAssemblyUnstructuredTypedInput {
                 mesh: self.mesh,

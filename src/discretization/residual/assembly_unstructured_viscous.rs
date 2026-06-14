@@ -160,6 +160,10 @@ impl ViscousAssemblyUnstructuredScratch {
         self.face_mu.resize(num_faces, 0.0);
         self.face_lambda.resize(num_faces, 0.0);
     }
+
+    pub(crate) fn face_transport_at(&self, face_idx: usize) -> (Real, Real) {
+        (self.face_mu[face_idx], self.face_lambda[face_idx])
+    }
 }
 
 /// 计算非结构 IDWLS 梯度并装配粘性残差。

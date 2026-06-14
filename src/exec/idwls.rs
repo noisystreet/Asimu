@@ -18,8 +18,27 @@ impl ExecutionContext {
         self.scratch_mut().idwls_mut().prepare_inviscid(num_cells);
     }
 
+    /// 清零粘性 IDWLS RHS 槽（f32）。
+    pub fn idwls_prepare_viscous_f32(&mut self, num_cells: usize) {
+        self.scratch_mut()
+            .idwls_mut()
+            .prepare_viscous_f32(num_cells);
+    }
+
+    /// 清零无粘二阶 IDWLS RHS 槽（f32）。
+    pub fn idwls_prepare_inviscid_f32(&mut self, num_cells: usize) {
+        self.scratch_mut()
+            .idwls_mut()
+            .prepare_inviscid_f32(num_cells);
+    }
+
     #[must_use]
     pub fn idwls_rhs(&self) -> &IdwlsRhsBuffer {
+        self.scratch().idwls()
+    }
+
+    #[must_use]
+    pub fn idwls_rhs_f32(&self) -> &IdwlsRhsBuffer {
         self.scratch().idwls()
     }
 

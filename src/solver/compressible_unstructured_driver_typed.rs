@@ -8,16 +8,21 @@ use crate::core::{
     ComputeFloat, Real, elapsed_ms, format_log_fixed4, format_log_fixed5, format_log_sci4,
     log10_positive,
 };
+use crate::discretization::gradient_typed::GradientFieldsT;
+use crate::discretization::gradient_unstructured_f32::UnstructuredGradientLsqInputF32;
 use crate::discretization::residual::{
     InviscidAssemblyUnstructuredTypedParams, InviscidTypedScatterBackend,
     ViscousTypedScatterBackend,
 };
 use crate::discretization::{
     BoundaryGhostBuffer, GradientFields, ReconstructionKind, UnstructuredGradientLsqInput,
-    UnstructuredSolverMeshCache, ViscousAssemblyUnstructuredScratch,
+    UnstructuredGradientScratchF32, UnstructuredSolverMeshCache,
+    ViscousAssemblyUnstructuredF32Input, ViscousAssemblyUnstructuredScratch,
     ViscousAssemblyUnstructuredTypedInput, assemble_inviscid_residual_unstructured_typed,
+    compute_gradients_and_assemble_viscous_unstructured_f32,
     compute_gradients_and_assemble_viscous_unstructured_typed,
     compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq,
+    compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq_f32,
 };
 use crate::error::{AsimuError, Result};
 use crate::exec::{ExecutionContext, MeshExecMetrics};
@@ -38,12 +43,14 @@ use crate::solver::{
     refresh_compressible_ghosts_and_primitives_typed,
 };
 
-struct UnstructuredTypedRhsWork<'a, T: ComputeFloat> {
+pub(crate) struct UnstructuredTypedRhsWork<'a, T: ComputeFloat> {
     ghosts: &'a mut BoundaryGhostBuffer,
     primitives: &'a mut PrimitiveFieldsT<T>,
     spectral_primitives: &'a mut PrimitiveFields,
-    gradients: &'a mut GradientFields,
+    gradients: &'a mut GradientFieldsT<T>,
+    muscl_gradient_bridge: &'a mut GradientFields,
     viscous_scratch: &'a mut ViscousAssemblyUnstructuredScratch,
+    viscous_grad_scratch_f32: &'a mut UnstructuredGradientScratchF32,
     mesh_cache: &'a UnstructuredSolverMeshCache,
     exec: &'a mut ExecutionContext,
 }
@@ -55,23 +62,28 @@ struct UnstructuredStepWorkTyped<T: ComputeFloat> {
     ghosts: BoundaryGhostBuffer,
     primitives: PrimitiveFieldsT<T>,
     spectral_primitives: PrimitiveFields,
-    gradients: GradientFields,
+    gradients: GradientFieldsT<T>,
+    muscl_gradient_bridge: GradientFields,
     viscous_scratch: ViscousAssemblyUnstructuredScratch,
+    viscous_grad_scratch_f32: UnstructuredGradientScratchF32,
     mesh_cache: UnstructuredSolverMeshCache,
     exec: ExecutionContext,
     volumes: Vec<Real>,
 }
 
-struct UnstructuredRunEnvTyped<'a> {
+pub(crate) struct UnstructuredRunEnvTyped<'a> {
     config: &'a UnstructuredDriverConfig<'a>,
 }
 
 /// typed 非结构同步推进；结束时将场转为 `f64` 供输出。
+#[allow(private_bounds)]
 pub fn run_unstructured_typed_with_observer<
     T: ComputeFloat
         + crate::field::LusgsDiagonalUpdateBackend
         + InviscidTypedScatterBackend
-        + ViscousTypedScatterBackend,
+        + ViscousTypedScatterBackend
+        + UnstructuredTypedRhsDispatch
+        + rhs_dispatch::DispatchImpl,
 >(
     config: &UnstructuredDriverConfig<'_>,
     fields: &mut ConservedFieldsT<T>,
@@ -121,8 +133,10 @@ pub fn run_unstructured_typed_with_observer<
             ghosts: BoundaryGhostBuffer::with_face_capacity(env.config.mesh.num_faces()),
             primitives: PrimitiveFieldsT::zeros(n)?,
             spectral_primitives: PrimitiveFields::zeros(n)?,
-            gradients: GradientFields::zeros(n)?,
+            gradients: GradientFieldsT::<T>::zeros(n)?,
+            muscl_gradient_bridge: GradientFields::zeros(n)?,
             viscous_scratch: ViscousAssemblyUnstructuredScratch::new(n),
+            viscous_grad_scratch_f32: UnstructuredGradientScratchF32::new(n),
             mesh_cache,
             exec,
             volumes: env.config.mesh.cell_volumes(),
@@ -159,7 +173,8 @@ fn advance_unstructured_step_typed<
     T: ComputeFloat
         + crate::field::LusgsDiagonalUpdateBackend
         + InviscidTypedScatterBackend
-        + ViscousTypedScatterBackend,
+        + ViscousTypedScatterBackend
+        + rhs_dispatch::DispatchImpl,
 >(
     env: &mut UnstructuredRunEnvTyped<'_>,
     fields: &mut ConservedFieldsT<T>,
@@ -228,7 +243,8 @@ fn advance_unstructured_lusgs_typed<
     T: ComputeFloat
         + crate::field::LusgsDiagonalUpdateBackend
         + InviscidTypedScatterBackend
-        + ViscousTypedScatterBackend,
+        + ViscousTypedScatterBackend
+        + rhs_dispatch::DispatchImpl,
 >(
     env: &UnstructuredRunEnvTyped<'_>,
     fields: &mut ConservedFieldsT<T>,
@@ -259,7 +275,9 @@ fn advance_unstructured_lusgs_typed<
             primitives: &mut work.primitives,
             spectral_primitives: &mut work.spectral_primitives,
             gradients: &mut work.gradients,
+            muscl_gradient_bridge: &mut work.muscl_gradient_bridge,
             viscous_scratch: &mut work.viscous_scratch,
+            viscous_grad_scratch_f32: &mut work.viscous_grad_scratch_f32,
             mesh_cache: &work.mesh_cache,
             exec: &mut work.exec,
         };
@@ -292,7 +310,7 @@ fn advance_unstructured_lusgs_typed<
 }
 
 fn advance_unstructured_explicit_typed<
-    T: InviscidTypedScatterBackend + ViscousTypedScatterBackend,
+    T: InviscidTypedScatterBackend + ViscousTypedScatterBackend + rhs_dispatch::DispatchImpl,
 >(
     env: &UnstructuredRunEnvTyped<'_>,
     fields: &mut ConservedFieldsT<T>,
@@ -310,7 +328,9 @@ fn advance_unstructured_explicit_typed<
         primitives: &mut work.primitives,
         spectral_primitives: &mut work.spectral_primitives,
         gradients: &mut work.gradients,
+        muscl_gradient_bridge: &mut work.muscl_gradient_bridge,
         viscous_scratch: &mut work.viscous_scratch,
+        viscous_grad_scratch_f32: &mut work.viscous_grad_scratch_f32,
         mesh_cache: &work.mesh_cache,
         exec: &mut work.exec,
     };
@@ -346,83 +366,215 @@ fn advance_unstructured_explicit_typed<
     }
 }
 
-fn assemble_unstructured_typed_rhs<T: InviscidTypedScatterBackend + ViscousTypedScatterBackend>(
+fn assemble_unstructured_typed_rhs<T>(
     env: &UnstructuredRunEnvTyped<'_>,
     work: &mut UnstructuredTypedRhsWork<'_, T>,
     fields: &ConservedFieldsT<T>,
     residual: &mut ConservedResidualT<T>,
     refresh_state: bool,
     p_floor: Real,
-) -> Result<()> {
-    if refresh_state {
-        refresh_compressible_ghosts_and_primitives_typed(RefreshCompressibleStateTypedInput {
-            boundary_mesh: env.config.mesh,
-            patches: env.config.patches,
-            fields,
-            ghosts: work.ghosts,
-            eos: env.config.eos,
-            freestream: env.config.freestream,
-            reference: env.config.reference,
-            viscous: env.config.viscous,
-            min_pressure: p_floor,
-            primitives: work.primitives,
-            spectral_primitives: work.spectral_primitives,
-        })?;
+) -> Result<()>
+where
+    T: InviscidTypedScatterBackend + ViscousTypedScatterBackend + rhs_dispatch::DispatchImpl,
+{
+    rhs_dispatch::DispatchImpl::assemble_unstructured_rhs(
+        env,
+        work,
+        fields,
+        residual,
+        refresh_state,
+        p_floor,
+    )
+}
+
+mod rhs_dispatch {
+    use super::*;
+
+    pub trait Sealed {}
+    impl Sealed for f32 {}
+    impl Sealed for f64 {}
+
+    pub(crate) trait DispatchImpl: ComputeFloat + Sealed + Sized {
+        fn assemble_unstructured_rhs(
+            env: &UnstructuredRunEnvTyped<'_>,
+            work: &mut UnstructuredTypedRhsWork<'_, Self>,
+            fields: &ConservedFieldsT<Self>,
+            residual: &mut ConservedResidualT<Self>,
+            refresh_state: bool,
+            p_floor: Real,
+        ) -> Result<()>;
     }
-    if env.config.inviscid.reconstruction == ReconstructionKind::Muscl {
-        let grad_input = UnstructuredGradientLsqInput {
-            mesh: env.config.mesh,
-            mesh_cache: work.mesh_cache,
-            primitives: work.spectral_primitives,
-            eos: env.config.eos,
-            ghosts: work.ghosts,
-            min_pressure: p_floor,
-            viscous: env.config.viscous,
-        };
-        compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq(
-            grad_input,
-            work.gradients,
-            &mut work.viscous_scratch.gradient,
-            work.exec,
-        )?;
-    }
-    let mut assembly = InviscidAssemblyUnstructuredTypedParams {
-        mesh: env.config.mesh,
-        eos: env.config.eos,
-        config: env.config.inviscid,
-        boundaries: env.config.patches,
-        ghosts: work.ghosts,
-        primitives: work.primitives,
-        spectral_primitives: work.spectral_primitives,
-        mesh_cache: work.mesh_cache,
-        gradients: match env.config.inviscid.reconstruction {
-            ReconstructionKind::Muscl => Some(&*work.gradients),
+}
+
+/// 非结构 typed RHS 装配分发标记（sealed，仅 f32 / f64）。
+pub trait UnstructuredTypedRhsDispatch: ComputeFloat + rhs_dispatch::Sealed + Sized {}
+
+impl UnstructuredTypedRhsDispatch for f32 {}
+impl UnstructuredTypedRhsDispatch for f64 {}
+
+impl rhs_dispatch::DispatchImpl for f32 {
+    fn assemble_unstructured_rhs(
+        env: &UnstructuredRunEnvTyped<'_>,
+        work: &mut UnstructuredTypedRhsWork<'_, f32>,
+        fields: &ConservedFieldsT<f32>,
+        residual: &mut ConservedResidualT<f32>,
+        refresh_state: bool,
+        p_floor: Real,
+    ) -> Result<()> {
+        if refresh_state {
+            refresh_compressible_ghosts_and_primitives_typed(RefreshCompressibleStateTypedInput {
+                boundary_mesh: env.config.mesh,
+                patches: env.config.patches,
+                fields,
+                ghosts: work.ghosts,
+                eos: env.config.eos,
+                freestream: env.config.freestream,
+                reference: env.config.reference,
+                viscous: env.config.viscous,
+                min_pressure: p_floor,
+                primitives: work.primitives,
+                spectral_primitives: work.spectral_primitives,
+            })?;
+        }
+        if env.config.inviscid.reconstruction == ReconstructionKind::Muscl {
+            let grad_input = UnstructuredGradientLsqInputF32 {
+                mesh: env.config.mesh,
+                mesh_cache: work.mesh_cache,
+                primitives: work.primitives,
+                eos: env.config.eos,
+                ghosts: work.ghosts,
+                min_pressure: p_floor,
+                viscous: env.config.viscous,
+            };
+            compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq_f32(
+                grad_input,
+                work.gradients,
+                work.exec,
+            )?;
+            *work.muscl_gradient_bridge = work.gradients.to_real_fields()?;
+        }
+        let muscl_gradients = match env.config.inviscid.reconstruction {
+            ReconstructionKind::Muscl => Some(&*work.muscl_gradient_bridge),
             ReconstructionKind::FirstOrder => None,
-        },
-        min_pressure: p_floor,
-        exec: work.exec,
-    };
-    assemble_inviscid_residual_unstructured_typed(fields, residual, &mut assembly)?;
-    if let Some(viscous) = env.config.viscous {
-        let mut input = ViscousAssemblyUnstructuredTypedInput {
+        };
+        let mut assembly = InviscidAssemblyUnstructuredTypedParams {
             mesh: env.config.mesh,
-            mesh_cache: work.mesh_cache,
             eos: env.config.eos,
-            viscous,
+            config: env.config.inviscid,
             boundaries: env.config.patches,
             ghosts: work.ghosts,
-            primitives: work.spectral_primitives,
+            primitives: work.primitives,
+            spectral_primitives: work.spectral_primitives,
+            mesh_cache: work.mesh_cache,
+            gradients: muscl_gradients,
             min_pressure: p_floor,
-            gradient_scratch: work.gradients,
             exec: work.exec,
         };
-        compute_gradients_and_assemble_viscous_unstructured_typed(
-            residual,
-            &mut input,
-            work.viscous_scratch,
-        )?;
+        assemble_inviscid_residual_unstructured_typed(fields, residual, &mut assembly)?;
+        if let Some(viscous) = env.config.viscous {
+            let mut input = ViscousAssemblyUnstructuredF32Input {
+                mesh: env.config.mesh,
+                mesh_cache: work.mesh_cache,
+                eos: env.config.eos,
+                viscous,
+                boundaries: env.config.patches,
+                ghosts: work.ghosts,
+                primitives: work.primitives,
+                min_pressure: p_floor,
+                gradient_scratch: work.gradients,
+                exec: work.exec,
+            };
+            compute_gradients_and_assemble_viscous_unstructured_f32(
+                residual,
+                &mut input,
+                work.viscous_scratch,
+                work.viscous_grad_scratch_f32,
+            )?;
+        }
+        Ok(())
     }
-    Ok(())
+}
+
+impl rhs_dispatch::DispatchImpl for f64 {
+    fn assemble_unstructured_rhs(
+        env: &UnstructuredRunEnvTyped<'_>,
+        work: &mut UnstructuredTypedRhsWork<'_, f64>,
+        fields: &ConservedFieldsT<f64>,
+        residual: &mut ConservedResidualT<f64>,
+        refresh_state: bool,
+        p_floor: Real,
+    ) -> Result<()> {
+        if refresh_state {
+            refresh_compressible_ghosts_and_primitives_typed(RefreshCompressibleStateTypedInput {
+                boundary_mesh: env.config.mesh,
+                patches: env.config.patches,
+                fields,
+                ghosts: work.ghosts,
+                eos: env.config.eos,
+                freestream: env.config.freestream,
+                reference: env.config.reference,
+                viscous: env.config.viscous,
+                min_pressure: p_floor,
+                primitives: work.primitives,
+                spectral_primitives: work.spectral_primitives,
+            })?;
+        }
+        if env.config.inviscid.reconstruction == ReconstructionKind::Muscl {
+            let grad_input = UnstructuredGradientLsqInput {
+                mesh: env.config.mesh,
+                mesh_cache: work.mesh_cache,
+                primitives: work.spectral_primitives,
+                eos: env.config.eos,
+                ghosts: work.ghosts,
+                min_pressure: p_floor,
+                viscous: env.config.viscous,
+            };
+            compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq(
+                grad_input,
+                work.gradients,
+                &mut work.viscous_scratch.gradient,
+                work.exec,
+            )?;
+        }
+        let muscl_gradients = match env.config.inviscid.reconstruction {
+            ReconstructionKind::Muscl => Some(&*work.gradients),
+            ReconstructionKind::FirstOrder => None,
+        };
+        let mut assembly = InviscidAssemblyUnstructuredTypedParams {
+            mesh: env.config.mesh,
+            eos: env.config.eos,
+            config: env.config.inviscid,
+            boundaries: env.config.patches,
+            ghosts: work.ghosts,
+            primitives: work.primitives,
+            spectral_primitives: work.spectral_primitives,
+            mesh_cache: work.mesh_cache,
+            gradients: muscl_gradients,
+            min_pressure: p_floor,
+            exec: work.exec,
+        };
+        assemble_inviscid_residual_unstructured_typed(fields, residual, &mut assembly)?;
+        if let Some(viscous) = env.config.viscous {
+            let mut input = ViscousAssemblyUnstructuredTypedInput {
+                mesh: env.config.mesh,
+                mesh_cache: work.mesh_cache,
+                eos: env.config.eos,
+                viscous,
+                boundaries: env.config.patches,
+                ghosts: work.ghosts,
+                primitives: work.spectral_primitives,
+                min_pressure: p_floor,
+                gradient_scratch: work.gradients,
+                exec: work.exec,
+            };
+            compute_gradients_and_assemble_viscous_unstructured_typed(
+                residual,
+                &mut input,
+                work.viscous_scratch,
+            )?;
+        }
+        Ok(())
+    }
 }
 
 fn prepare_unstructured_timestep_typed<T: ComputeFloat>(
