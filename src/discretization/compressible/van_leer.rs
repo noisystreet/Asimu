@@ -7,8 +7,8 @@ use crate::core::{Real, Vector3};
 use crate::error::{AsimuError, Result};
 use crate::physics::{ConservedState, IdealGasEoS};
 
-use super::flux_common::{face_tangent_basis, normalize_face_normal};
 use super::inviscid::InviscidFlux;
+use crate::discretization::flux_common::{face_tangent_basis, normalize_face_normal};
 
 /// Van Leer FVS 数值通量 \(\hat{\mathbf{F}} \cdot \mathbf{n}\)（理想气体 Euler）。
 pub fn van_leer_flux(

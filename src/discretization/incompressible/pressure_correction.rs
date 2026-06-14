@@ -1,11 +1,9 @@
 //! 不可压缩结构化 3D 压力校正装配。
 
+use super::face_boundary::incompressible_pressure_correction_dirichlet;
+use super::{IncompressiblePressureCorrectionConfig, IncompressiblePressureCorrectionSystem};
 use crate::boundary::{BoundaryKind, BoundarySet};
 use crate::core::Real;
-use crate::discretization::incompressible_face_boundary::incompressible_pressure_correction_dirichlet;
-use crate::discretization::{
-    IncompressiblePressureCorrectionConfig, IncompressiblePressureCorrectionSystem,
-};
 use crate::error::{AsimuError, Result};
 use crate::field::ScalarField;
 use crate::linalg::CsrMatrix;

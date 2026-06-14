@@ -6,8 +6,8 @@ use crate::core::Real;
 use crate::error::Result;
 use crate::physics::{ConservedState, IdealGasEoS, PrimitiveState};
 
-use super::flux_common::limited_slope;
-use super::flux_config::{ReconstructionKind, SlopeLimiter};
+use crate::discretization::flux_common::limited_slope;
+use crate::discretization::flux_config::{ReconstructionKind, SlopeLimiter};
 
 /// 面左右原始变量态。
 #[derive(Debug, Clone, Copy, PartialEq)]

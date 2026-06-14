@@ -5,7 +5,6 @@ use crate::error::Result;
 use crate::field::PrimitiveFields;
 use crate::physics::{ConservedState, IdealGasEoS, PrimitiveState};
 
-use super::flux_config::{FluxScheme, InviscidFluxConfig};
 use super::hllc::hllc_flux_with_primitives;
 use super::inviscid::InviscidFlux;
 use super::reconstruction::{
@@ -15,6 +14,7 @@ use super::reconstruction::{
 use super::roe::roe_flux_with_primitives;
 use super::slau2::slau2_flux;
 use super::van_leer::{hanel_van_leer_flux, van_leer_flux};
+use crate::discretization::flux_config::{FluxScheme, InviscidFluxConfig};
 
 /// 面通量输入：owner/neighbor 及可选 MUSCL 原始变量模板点。
 #[derive(Debug, Clone, Copy)]

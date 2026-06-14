@@ -1,9 +1,9 @@
 //! 不可压缩结构化 3D 边界感知 face-flux 散度诊断。
 
+use super::boundary_flux::interior_face_velocity;
+use super::face_boundary::incompressible_boundary_mass_flux;
 use crate::boundary::{BoundaryKind, BoundarySet};
 use crate::core::Real;
-use crate::discretization::incompressible_boundary_flux::interior_face_velocity;
-use crate::discretization::incompressible_face_boundary::incompressible_boundary_mass_flux;
 use crate::error::Result;
 use crate::field::{IncompressibleFields, ScalarField};
 use crate::mesh::{BoundaryMesh, BoundaryMesh3d, StructuredMesh3d};

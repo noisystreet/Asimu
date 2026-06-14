@@ -3,10 +3,10 @@
 //! 参考 OpenFOAM 的 `phiHbyA -> pEqn -> phi -= pEqn.flux()` 流程，本模块在
 //! 结构化网格上保存内部面体积通量，并在压力校正后直接更新面通量。
 
+use super::boundary_flux::interior_face_velocity;
+use super::face_boundary::incompressible_boundary_mass_flux;
 use crate::boundary::{BoundaryKind, BoundarySet};
 use crate::core::Real;
-use crate::discretization::incompressible_boundary_flux::interior_face_velocity;
-use crate::discretization::incompressible_face_boundary::incompressible_boundary_mass_flux;
 use crate::error::{AsimuError, Result};
 use crate::field::{IncompressibleFields, ScalarField};
 use crate::mesh::{BoundaryMesh, BoundaryMesh3d, StructuredMesh3d};

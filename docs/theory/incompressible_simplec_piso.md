@@ -1,6 +1,6 @@
 # 三维不可压缩 NS：SIMPLEC 与 PISO
 
-> 模块：`src/discretization/incompressible.rs` · `src/case/incompressible_3d.rs` · 版本：v0.3+ · 状态：I1 pressure-velocity coupling 已实现（ADR 0015）
+> 模块：`src/discretization/incompressible/` · `src/case/incompressible_3d.rs` · 版本：v0.3+ · 状态：I1 pressure-velocity coupling 已实现（ADR 0015）
 > ADR：[adr/0015-incompressible-navier-stokes-simplec-piso.md](../adr/0015-incompressible-navier-stokes-simplec-piso.md)
 
 ## 1. 控制方程

@@ -3,9 +3,9 @@
 //! I2 首版把边界条件施加到边界 owner 单元，供结构化 skeleton runner 使用；
 //! 后续完整 FVM 会把同一语义下沉为面 ghost / 面通量。
 
+use super::face_boundary::tangential_velocity;
 use crate::boundary::{BoundaryKind, BoundarySet};
 use crate::core::{FaceId, Real};
-use crate::discretization::incompressible_face_boundary::tangential_velocity;
 use crate::error::{AsimuError, Result};
 use crate::field::IncompressibleFields;
 use crate::mesh::{BoundaryMesh, BoundaryMesh3d, LogicalFace3d, StructuredMesh3d};

@@ -1,4 +1,4 @@
-use super::incompressible_momentum::{
+use super::momentum::{
     IncompressibleConvectionScheme, IncompressibleMomentumPredictorConfig,
     assemble_incompressible_momentum_predictor_with_boundary_3d,
 };

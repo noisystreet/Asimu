@@ -1,8 +1,8 @@
 //! 不可压缩结构化 3D Rhie-Chow 面质量通量。
 
+use super::phi::IncompressibleFaceFluxField;
 use crate::boundary::BoundarySet;
 use crate::core::Real;
-use crate::discretization::incompressible_phi::IncompressibleFaceFluxField;
 use crate::error::{AsimuError, Result};
 use crate::field::{IncompressibleFields, ScalarField};
 use crate::mesh::StructuredMesh3d;

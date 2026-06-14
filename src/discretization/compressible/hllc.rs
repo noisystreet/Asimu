@@ -9,8 +9,8 @@ use crate::physics::{
     ConservedState, IdealGasEoS, RiemannPrimitive1d, solve_star_pressure_velocity,
 };
 
-use super::flux_common::{face_tangent_basis, normalize_face_normal};
 use super::inviscid::InviscidFlux;
+use crate::discretization::flux_common::{face_tangent_basis, normalize_face_normal};
 
 /// HLLC 数值通量 \(\hat{\mathbf{F}} \cdot \mathbf{n}\)（理想气体 Euler）。
 pub fn hllc_flux(

@@ -2,17 +2,15 @@
 //!
 //! 理论映射：`docs/theory/incompressible_simplec_piso.md` 式 (8a)–(10)。
 
-use crate::boundary::{BoundaryKind, BoundarySet};
-use crate::core::Real;
-use crate::discretization::incompressible_bc::{
-    incompressible_boundary_owner_velocity_target, interior_neighbor_index,
-};
-use crate::discretization::incompressible_boundary_flux::interior_face_velocity;
-use crate::discretization::incompressible_momentum_geometry::{
+use super::bc::{incompressible_boundary_owner_velocity_target, interior_neighbor_index};
+use super::boundary_flux::interior_face_velocity;
+use super::momentum_geometry::{
     owner_neighbor_distance, pressure_gradient, scalar_cross_diffusion_source,
     structured_scalar_gradients,
 };
-use crate::discretization::incompressible_phi::IncompressibleFaceFluxField;
+use super::phi::IncompressibleFaceFluxField;
+use crate::boundary::{BoundaryKind, BoundarySet};
+use crate::core::Real;
 use crate::error::{AsimuError, Result};
 use crate::field::{IncompressibleFields, ScalarField};
 use crate::linalg::CsrMatrix;

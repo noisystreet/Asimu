@@ -1,8 +1,43 @@
-//! 不可压缩结构化 3D 基础算子。
+//! 不可压缩结构化 3D FVM 离散（SIMPLEC / PISO 算子层）。
 //!
-//! 理论映射：[`docs/theory/incompressible_simplec_piso.md`](../../docs/theory/incompressible_simplec_piso.md)
-//! §1–§3。I1 阶段仅覆盖 cell-centered、Cartesian 结构化网格上的连续性残差与速度
-//! Laplacian 骨架。
+//! 理论映射：[`docs/theory/incompressible_simplec_piso.md`](../../../docs/theory/incompressible_simplec_piso.md)
+//! §1–§3。I1 阶段覆盖 cell-centered 结构化网格上的连续性、动量预测、Rhie-Chow 与压力校正。
+
+pub mod bc;
+pub mod boundary_flux;
+pub mod face_boundary;
+pub mod face_flux;
+pub mod momentum;
+mod momentum_geometry;
+#[cfg(test)]
+mod momentum_tests;
+pub mod phi;
+pub mod pressure_correction;
+pub mod rhie_chow;
+pub mod velocity_correction;
+
+pub use bc::{IncompressibleBoundaryApplyStats, apply_incompressible_boundary_conditions_3d};
+pub use face_boundary::{
+    IncompressibleBoundaryFaceState, IncompressibleMassFluxBoundaryKind,
+    incompressible_boundary_face_state, incompressible_boundary_face_velocity,
+    incompressible_pressure_correction_dirichlet,
+};
+pub use face_flux::compute_incompressible_face_flux_divergence_3d;
+pub use momentum::{
+    IncompressibleConvectionScheme, IncompressibleMomentumPredictorConfig,
+    IncompressibleMomentumPredictorSystem, assemble_incompressible_momentum_predictor_3d,
+    assemble_incompressible_momentum_predictor_with_boundary_3d,
+    assemble_incompressible_momentum_predictor_with_boundary_and_flux_3d,
+};
+pub use phi::IncompressibleFaceFluxField;
+pub use pressure_correction::assemble_incompressible_pressure_correction_3d;
+pub use rhie_chow::{
+    PressureCorrectedRhieChowDivergenceConfig, compute_incompressible_rhie_chow_divergence_3d,
+    compute_pressure_corrected_rhie_chow_divergence_3d,
+};
+pub use velocity_correction::{
+    RhieChowVelocityCorrectionConfig, corrected_incompressible_fields_rhie_chow_3d,
+};
 
 use crate::core::Real;
 use crate::error::{AsimuError, Result};
@@ -358,12 +393,12 @@ fn top(k: usize, nz: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::boundary::{BoundaryKind, BoundaryPatch, BoundarySet};
-    use crate::core::approx_eq;
-    use crate::discretization::{
+    use super::{
         IncompressibleMomentumPredictorConfig, assemble_incompressible_momentum_predictor_3d,
         assemble_incompressible_pressure_correction_3d,
     };
+    use crate::boundary::{BoundaryKind, BoundaryPatch, BoundarySet};
+    use crate::core::approx_eq;
     use crate::mesh::BoundaryMesh;
 
     fn mesh_3x3x3() -> StructuredMesh3d {
