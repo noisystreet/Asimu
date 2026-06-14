@@ -1,15 +1,14 @@
 //! 非结构 3D 可压缩 typed 时间推进驱动（ADR 0016 P3）。
 
-#[path = "compressible_unstructured_lusgs_typed.rs"]
-mod compressible_unstructured_lusgs_typed;
+#[path = "unstructured_explicit_typed.rs"]
+mod unstructured_explicit_typed;
+#[path = "unstructured_lusgs_typed.rs"]
+mod unstructured_lusgs_typed;
 
-#[path = "compressible_unstructured_explicit_typed.rs"]
-mod compressible_unstructured_explicit_typed;
-
-use compressible_unstructured_explicit_typed::{
+use unstructured_explicit_typed::{
     UnstructuredExplicitTimeAdvance, advance_unstructured_explicit_typed,
 };
-use compressible_unstructured_lusgs_typed::{
+use unstructured_lusgs_typed::{
     UnstructuredLusgsDiagonalUpdate, UnstructuredLusgsSweep, UnstructuredLusgsSweepContext,
 };
 
@@ -42,7 +41,7 @@ use crate::field::{
     ConservedFields, ConservedFieldsT, ConservedResidualT, LusgsDiagonalUpdateBackend,
     PrimitiveFieldsT, PrimitiveFillFromConserved,
 };
-use crate::solver::spectral_radius_unstructured::{
+use crate::solver::compressible::spectral_radius_unstructured::{
     SpectralRadiusUnstructuredTypedParams, UnstructuredSpectralRadiusTyped,
 };
 use crate::solver::time::{

@@ -106,8 +106,9 @@ mod tests {
             [1.0_f32, 0.0, 0.0],
             gamma,
         );
-        let f64_val =
-            crate::solver::spectral_radius::face_spectral_radius(&prim_l, &prim_r, normal_f64, 1.4);
+        let f64_val = crate::solver::compressible::spectral_radius::face_spectral_radius(
+            &prim_l, &prim_r, normal_f64, 1.4,
+        );
         assert!(approx_eq(f32_val as f64, f64_val, 1.0e-3));
     }
 }

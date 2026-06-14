@@ -12,10 +12,10 @@ use crate::field::{ConservedFields, PrimitiveFields};
 use crate::mesh::{MultiBlockStructuredMesh3d, StructuredBlock3d};
 use crate::physics::{FreestreamParams, IdealGasEoS, ReferenceScales};
 use crate::solver::compressible::ResidualCorrection3d;
-use crate::solver::compressible_multiblock::{
+use crate::solver::compressible::multiblock::{
     BlockInterfaceLink, SharedInterfaceFace, build_multiblock_interface_metadata,
 };
-use crate::solver::compressible_multiblock_interface::{
+use crate::solver::compressible::multiblock_interface::{
     InterfaceResidualContribution, SharedInterfaceResidualParams, apply_interface_residuals,
     compute_shared_interface_residuals,
 };

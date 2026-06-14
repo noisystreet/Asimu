@@ -9,19 +9,21 @@ use crate::mesh::UnstructuredMesh3d;
 use crate::physics::IdealGasEoS;
 
 use crate::discretization::unstructured_face_cache_f32::LuSgsCellCouplingF32;
-use crate::solver::lu_sgs_common::{
+use crate::solver::compressible::lu_sgs_common::{
     LuSgsSweepScalars, LuSgsSweepScalarsF32, PrimitiveRefreshLane,
     apply_limited_cell_increment_f32, apply_limited_cell_increment_typed, conserved_vector_f32,
     conserved_vector_typed, implicit_scale, implicit_scale_f32, refresh_primitive_at_cell_typed,
     residual_cell_vector_f32, residual_cell_vector_typed, scale_source, scale_source_f32,
     stabilize_sweep_update_f32, stabilize_sweep_update_typed,
 };
-use crate::solver::lu_sgs_sweep_unstructured::{
+use crate::solver::compressible::lu_sgs_sweep_unstructured::{
     LuSgsCellCoupling, LuSgsSweepUnstructuredF32Input, LuSgsSweepUnstructuredInput,
     LuSgsUnstructuredCouplingsRef,
 };
-use crate::solver::spectral_radius::face_spectral_radius;
-use crate::solver::spectral_radius_f32::{FacePrimitiveLaneF32, face_spectral_radius_f32};
+use crate::solver::compressible::spectral_radius::face_spectral_radius;
+use crate::solver::compressible::spectral_radius_f32::{
+    FacePrimitiveLaneF32, face_spectral_radius_f32,
+};
 
 /// typed 非结构 LU-SGS 扫掠参数。
 pub struct LuSgsSweepUnstructuredTypedParams<'a, T: ComputeFloat> {
@@ -421,8 +423,8 @@ mod tests {
     use crate::field::ConservedFieldsT;
     use crate::mesh::{CellKind, UnstructuredCell};
     use crate::physics::FreestreamParams;
-    use crate::solver::lu_sgs_common::fields_are_physical_f32;
-    use crate::solver::lu_sgs_sweep_unstructured::{
+    use crate::solver::compressible::lu_sgs_common::fields_are_physical_f32;
+    use crate::solver::compressible::lu_sgs_sweep_unstructured::{
         LuSgsSweepUnstructuredF32Input, LuSgsUnstructuredCouplingsRef,
     };
 

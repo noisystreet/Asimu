@@ -50,7 +50,7 @@ pub struct CompressibleAdvanceContext3dTyped<'a, T: crate::core::ComputeFloat> {
     pub viscous: Option<&'a ViscousPhysicsConfig>,
     /// 多块 1-to-1 共享接口残差修正（单块路径保持 `None`）。
     pub(crate) interface_residual: Option<
-        &'a [crate::solver::compressible_multiblock_interface::InterfaceResidualContribution],
+        &'a [crate::solver::compressible::multiblock_interface::InterfaceResidualContribution],
     >,
 }
 

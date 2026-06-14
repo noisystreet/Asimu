@@ -9,7 +9,7 @@ use crate::error::Result;
 use crate::field::{ConservedFields, ConservedResidual, PrimitiveFields};
 use crate::mesh::StructuredBlock3d;
 use crate::physics::{FreestreamParams, IdealGasEoS};
-use crate::solver::compressible_multiblock::SharedInterfaceFace;
+use crate::solver::compressible::multiblock::SharedInterfaceFace;
 
 #[derive(Debug, Clone)]
 pub(crate) struct InterfaceResidualContribution {

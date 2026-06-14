@@ -297,7 +297,7 @@ mod tests {
     use crate::field::ConservedFields;
     use crate::mesh::{CellKind, UnstructuredCell};
     use crate::physics::{FreestreamParams, ViscousPhysicsConfig};
-    use crate::solver::spectral_radius::cell_local_dt_spectral;
+    use crate::solver::compressible::spectral_radius::cell_local_dt_spectral;
 
     fn tet_mesh_and_boundary() -> (UnstructuredMesh3d, BoundarySet) {
         let mesh = UnstructuredMesh3d::new(

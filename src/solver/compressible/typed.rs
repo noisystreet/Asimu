@@ -4,24 +4,24 @@ use std::time::Instant;
 
 use tracing::info_span;
 
-use super::compressible_rhs_typed::EvaluateRhs3dTyped;
 use super::gmres_implicit_3d::{GmresStepLog, GmresStepTiming, log_gmres_step_diagnostics};
+use super::rhs_typed::EvaluateRhs3dTyped;
 use crate::core::{ComputeFloat, Real, elapsed_ms, log10_positive};
 use crate::discretization::{InviscidFaceFluxTyped, InviscidFluxConfig};
 use crate::error::{AsimuError, Result};
 use crate::field::PrimitiveFillFromConserved;
 use crate::field::{ConservedFieldsT, ConservedResidualT};
 use crate::physics::IdealGasEoS;
-use crate::solver::compressible::{
-    CompressibleAdvanceContext3dTyped, CompressibleEulerSolver, CompressibleStepInfo,
-    positive_fixed_dt,
-};
-use crate::solver::compressible_helpers::{
+use crate::solver::compressible::helpers::{
     RefreshCompressibleStateTypedInput, finalize_cell_dts_from_sigma,
     refresh_compressible_ghosts_and_primitives_typed,
 };
-use crate::solver::spectral_radius::{
+use crate::solver::compressible::spectral_radius::{
     SpectralRadius3dParams, cell_local_dt_spectral, cell_spectral_radius_3d,
+};
+use crate::solver::compressible::{
+    CompressibleAdvanceContext3dTyped, CompressibleEulerSolver, CompressibleStepInfo,
+    positive_fixed_dt,
 };
 use crate::solver::state::SolverState;
 use crate::solver::time::{

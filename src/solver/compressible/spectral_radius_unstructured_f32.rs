@@ -301,20 +301,19 @@ mod tests {
         prim_f32
             .fill_from_conserved(&fields_f32, &eos, 1.0e-8)
             .expect("fill f32");
-        let sigma_f64 =
-            super::super::spectral_radius_unstructured::cell_spectral_radius_unstructured(
-                &super::super::spectral_radius_unstructured::SpectralRadiusUnstructuredParams {
-                    mesh: &mesh,
-                    mesh_cache: &mesh_cache,
-                    boundaries: &boundary,
-                    ghosts: &ghosts_f64,
-                    primitives: &prim_f64,
-                    eos: &eos,
-                    min_pressure: 1.0e-8,
-                    viscous: None,
-                },
-            )
-            .expect("sigma f64");
+        let sigma_f64 = crate::solver::compressible::spectral_radius_unstructured::cell_spectral_radius_unstructured(
+            &crate::solver::compressible::spectral_radius_unstructured::SpectralRadiusUnstructuredParams {
+                mesh: &mesh,
+                mesh_cache: &mesh_cache,
+                boundaries: &boundary,
+                ghosts: &ghosts_f64,
+                primitives: &prim_f64,
+                eos: &eos,
+                min_pressure: 1.0e-8,
+                viscous: None,
+            },
+        )
+        .expect("sigma f64");
         let sigma_f32 =
             cell_spectral_radius_unstructured_f32(&SpectralRadiusUnstructuredF32Params {
                 mesh: &mesh,

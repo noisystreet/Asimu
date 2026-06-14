@@ -18,7 +18,9 @@ use crate::mesh::{BoundaryMesh3d, UnstructuredMesh3d};
 use crate::physics::{
     FreestreamContext, FreestreamParams, IdealGasEoS, ReferenceScales, ViscousPhysicsConfig,
 };
-use crate::solver::spectral_radius::{cell_local_dt_spectral, cell_local_dt_spectral_f32};
+use crate::solver::compressible::spectral_radius::{
+    cell_local_dt_spectral, cell_local_dt_spectral_f32,
+};
 use crate::solver::time::{min_positive_dt, min_positive_dt_f32};
 
 /// BC + 原始变量刷新输入（结构/非结构共用）。

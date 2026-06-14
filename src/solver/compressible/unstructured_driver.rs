@@ -2,7 +2,7 @@
 
 use crate::error::Result;
 use crate::field::ConservedFields;
-use crate::solver::compressible_unstructured_driver_typed::run_unstructured_typed_with_observer;
+use crate::solver::compressible::unstructured_driver_typed::run_unstructured_typed_with_observer;
 
 /// 非结构可压缩外层步只读视图（observer 回调参数）。
 #[derive(Debug, Clone, Copy)]

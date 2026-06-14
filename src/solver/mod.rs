@@ -1,28 +1,42 @@
 //! CFD 求解器入口（占位实现：返回收敛占位结果）。
 
 pub mod compressible;
-pub mod compressible_helpers;
-mod compressible_multiblock;
-mod compressible_multiblock_driver;
-mod compressible_multiblock_driver_typed;
-mod compressible_multiblock_interface;
-mod compressible_unstructured_driver;
-mod compressible_unstructured_driver_typed;
 pub mod incompressible;
-mod incompressible_diagnostics;
-mod incompressible_linear;
-mod incompressible_pressure_reference;
-pub mod lu_sgs_common;
-pub mod lu_sgs_sweep_unstructured;
-mod lu_sgs_sweep_unstructured_typed;
-pub mod sod;
-pub mod spectral_radius;
-pub mod spectral_radius_f32;
-pub mod spectral_radius_unstructured;
-mod spectral_radius_unstructured_f32;
 pub mod state;
 pub mod time;
-pub mod wave_speed;
+
+/// API 稳定别名：原 `solver::compressible_helpers`。
+pub mod compressible_helpers {
+    pub use super::compressible::helpers::*;
+}
+/// API 稳定别名：原 `solver::lu_sgs_common`。
+pub mod lu_sgs_common {
+    pub use super::compressible::lu_sgs_common::*;
+}
+/// API 稳定别名：原 `solver::lu_sgs_sweep_unstructured`。
+pub mod lu_sgs_sweep_unstructured {
+    pub use super::compressible::lu_sgs_sweep_unstructured::*;
+}
+/// API 稳定别名：原 `solver::sod`。
+pub mod sod {
+    pub use super::compressible::sod::*;
+}
+/// API 稳定别名：原 `solver::spectral_radius`。
+pub mod spectral_radius {
+    pub use super::compressible::spectral_radius::*;
+}
+/// API 稳定别名：原 `solver::spectral_radius_f32`。
+pub mod spectral_radius_f32 {
+    pub use super::compressible::spectral_radius_f32::*;
+}
+/// API 稳定别名：原 `solver::spectral_radius_unstructured`。
+pub mod spectral_radius_unstructured {
+    pub use super::compressible::spectral_radius_unstructured::*;
+}
+/// API 稳定别名：原 `solver::wave_speed`。
+pub mod wave_speed {
+    pub use super::compressible::wave_speed::*;
+}
 
 use tracing::{info, instrument};
 
@@ -31,26 +45,50 @@ use crate::core::Real;
 use crate::error::Result;
 use crate::mesh::Mesh;
 
+pub(crate) use compressible::UnstructuredComputeBackend;
+pub use compressible::helpers::{
+    EvaluateRhsUnstructured, RefreshCompressibleStateInput, RefreshCompressibleStateTypedInput,
+    finalize_cell_dts_from_sigma, finalize_cell_dts_from_sigma_f32,
+    refresh_compressible_ghosts_and_primitives, refresh_compressible_ghosts_and_primitives_typed,
+};
+pub use compressible::lu_sgs_sweep_unstructured::{
+    LuSgsSweepUnstructuredF32Input, LuSgsSweepUnstructuredInput, LuSgsSweepUnstructuredParams,
+    LuSgsUnstructuredCouplings, LuSgsUnstructuredCouplingsRef, lu_sgs_sweep_unstructured,
+};
+pub use compressible::run_multiblock_structured_typed_with_observer;
+pub use compressible::run_unstructured_typed_with_observer;
+pub use compressible::sod::{
+    SodBenchmarkConfig, SodBenchmarkResult, run_sod_benchmark, sod_initial_fields,
+    write_sod_compare_profile, write_sod_profile,
+};
+pub use compressible::spectral_radius::{
+    SpectralRadius3dParams, cell_local_dt_cfl_3d, cell_local_dt_spectral, cell_spectral_radius_3d,
+    cell_viscous_diffusivity_max, local_pseudo_dt_lusgs,
+};
+pub use compressible::spectral_radius_unstructured::{
+    SpectralRadiusUnstructuredParams, SpectralRadiusUnstructuredTypedParams,
+    UnstructuredSpectralRadiusTyped, cell_spectral_radius_unstructured,
+};
+pub use compressible::wave_speed::max_wave_speed;
 pub use compressible::{
     CompressibleAdvanceContext1d, CompressibleAdvanceContext3d, CompressibleAdvanceContext3dTyped,
     CompressibleEulerConfig, CompressibleEulerSolver, CompressibleStepInfo, CompressibleTimeMode,
     GmresImplicitConfig, GmresImplicitDelta, GmresPreconditionerKind,
 };
-pub use compressible_helpers::{
-    EvaluateRhsUnstructured, RefreshCompressibleStateInput, RefreshCompressibleStateTypedInput,
-    finalize_cell_dts_from_sigma, finalize_cell_dts_from_sigma_f32,
-    refresh_compressible_ghosts_and_primitives, refresh_compressible_ghosts_and_primitives_typed,
-};
-pub use compressible_multiblock_driver::{
+pub use compressible::{
     CompressibleMultiblockStepView, MultiblockStructuredDriverInput,
     run_multiblock_structured_with_observer,
 };
-pub use compressible_multiblock_driver_typed::run_multiblock_structured_typed_with_observer;
-pub use compressible_unstructured_driver::{
+pub use compressible::{
     CompressibleUnstructuredStepView, UnstructuredDriverConfig, run_unstructured_with_observer,
 };
-pub(crate) use compressible_unstructured_driver_typed::UnstructuredComputeBackend;
-pub use compressible_unstructured_driver_typed::run_unstructured_typed_with_observer;
+pub use compressible::{
+    LuSgsSweepUnstructuredTypedParams, LuSgsUnstructuredSweepTyped, lu_sgs_sweep_unstructured_f32,
+    lu_sgs_sweep_unstructured_typed,
+};
+pub use compressible::{
+    SpectralRadiusUnstructuredF32Params, cell_spectral_radius_unstructured_f32,
+};
 pub use incompressible::{
     IncompressibleLinearSolverConfig, IncompressiblePressureLinearSolverConfig,
     IncompressiblePressureLinearSolverKind, IncompressiblePressureVelocityAlgorithm,
@@ -60,29 +98,6 @@ pub use incompressible::{
     IncompressibleSimplecDiagnostic, run_incompressible_pressure_velocity,
     run_incompressible_pressure_velocity_with_observer, run_incompressible_simplec,
 };
-pub use lu_sgs_sweep_unstructured::{
-    LuSgsSweepUnstructuredF32Input, LuSgsSweepUnstructuredInput, LuSgsSweepUnstructuredParams,
-    LuSgsUnstructuredCouplings, LuSgsUnstructuredCouplingsRef, lu_sgs_sweep_unstructured,
-};
-pub use lu_sgs_sweep_unstructured_typed::{
-    LuSgsSweepUnstructuredTypedParams, LuSgsUnstructuredSweepTyped, lu_sgs_sweep_unstructured_f32,
-    lu_sgs_sweep_unstructured_typed,
-};
-pub use sod::{
-    SodBenchmarkConfig, SodBenchmarkResult, run_sod_benchmark, sod_initial_fields,
-    write_sod_compare_profile, write_sod_profile,
-};
-pub use spectral_radius::{
-    SpectralRadius3dParams, cell_local_dt_cfl_3d, cell_local_dt_spectral, cell_spectral_radius_3d,
-    cell_viscous_diffusivity_max, local_pseudo_dt_lusgs,
-};
-pub use spectral_radius_unstructured::{
-    SpectralRadiusUnstructuredParams, SpectralRadiusUnstructuredTypedParams,
-    UnstructuredSpectralRadiusTyped, cell_spectral_radius_unstructured,
-};
-pub use spectral_radius_unstructured_f32::{
-    SpectralRadiusUnstructuredF32Params, cell_spectral_radius_unstructured_f32,
-};
 pub use state::SolverState;
 pub use time::{
     CflSchedule, LuSgsConfig, Rk4Storage, Rk4StorageT, RungeKutta4Config, RungeKutta4Integrator,
@@ -91,7 +106,6 @@ pub use time::{
     lu_sgs_step_local, min_positive_dt, min_positive_dt_f32, rk4_step, rk4_step_local,
     rk4_step_local_f32,
 };
-pub use wave_speed::max_wave_speed;
 
 /// 求解结果摘要。
 #[derive(Debug, Clone, PartialEq)]

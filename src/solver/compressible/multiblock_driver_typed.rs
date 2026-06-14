@@ -11,11 +11,11 @@ use crate::field::{ConservedFields, ConservedFieldsT, PrimitiveFields, Primitive
 use crate::mesh::{MultiBlockStructuredMesh3d, StructuredBlock3d};
 use crate::physics::{FreestreamParams, IdealGasEoS, ReferenceScales};
 use crate::solver::compressible::CompressibleAdvanceContext3dTyped;
-use crate::solver::compressible_multiblock::{
+use crate::solver::compressible::multiblock::{
     BlockInterfaceLink, SharedInterfaceFace, build_multiblock_interface_metadata,
     fill_interface_ghosts,
 };
-use crate::solver::compressible_multiblock_interface::{
+use crate::solver::compressible::multiblock_interface::{
     SharedInterfaceResidualParams, compute_shared_interface_residuals,
 };
 use crate::solver::time::TransientStepControl;

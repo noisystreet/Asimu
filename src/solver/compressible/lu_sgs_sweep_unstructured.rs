@@ -10,11 +10,11 @@ use crate::field::{ConservedFields, ConservedResidual, PrimitiveFields};
 use crate::mesh::UnstructuredMesh3d;
 use crate::physics::IdealGasEoS;
 
-use crate::solver::lu_sgs_common::{
+use crate::solver::compressible::lu_sgs_common::{
     LuSgsSweepScalars, apply_limited_cell_increment, conserved_vector, implicit_scale,
     refresh_primitive_at_cell, residual_cell_vector, scale_source, stabilize_sweep_update,
 };
-use crate::solver::spectral_radius::face_spectral_radius;
+use crate::solver::compressible::spectral_radius::face_spectral_radius;
 
 /// 非结构 LU-SGS 扫掠参数。
 pub struct LuSgsSweepUnstructuredParams<'a> {
@@ -290,7 +290,7 @@ mod tests {
     use crate::field::ConservedFields;
     use crate::mesh::{CellKind, UnstructuredCell};
     use crate::physics::FreestreamParams;
-    use crate::solver::lu_sgs_common::fields_are_physical;
+    use crate::solver::compressible::lu_sgs_common::fields_are_physical;
 
     #[test]
     fn sweep_keeps_uniform_unstructured_freestream_physical() {

@@ -14,7 +14,7 @@ use crate::error::Result;
 use crate::field::{ConservedFields, ConservedResidual, PrimitiveFields};
 use crate::mesh::{BoundaryMesh3d, StructuredMesh3d};
 use crate::physics::{FreestreamParams, IdealGasEoS, ReferenceScales, ViscousPhysicsConfig};
-use crate::solver::compressible_helpers::{
+use crate::solver::compressible::helpers::{
     RefreshCompressibleStateInput, refresh_compressible_ghosts_and_primitives,
 };
 

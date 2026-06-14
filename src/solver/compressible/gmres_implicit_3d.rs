@@ -705,4 +705,4 @@ fn zero_conserved_fields(num_cells: usize) -> Result<ConservedFields> {
 
 #[cfg(test)]
 #[path = "gmres_implicit_3d_tests.rs"]
-mod tests;
+mod gmres_implicit_3d_tests;

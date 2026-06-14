@@ -1,3 +1,6 @@
+mod diagnostics;
+mod linear;
+mod pressure_reference;
 use crate::boundary::BoundarySet;
 use crate::core::{Real, elapsed_ms};
 use crate::discretization::{
@@ -12,21 +15,21 @@ use crate::error::{AsimuError, Result};
 use crate::field::{IncompressibleFields, ScalarField};
 use crate::linalg::CsrMatrix;
 use crate::mesh::StructuredMesh3d;
-pub use crate::solver::incompressible_diagnostics::IncompressiblePressureVelocityAlgorithm;
-use crate::solver::incompressible_diagnostics::{
+pub use diagnostics::IncompressiblePressureVelocityAlgorithm;
+use diagnostics::{
     PressureCouplingLog, SimplecConvergenceCheck, SimplecStepLog, SimplecStepTiming,
-    log_simplec_step, max_velocity_delta_by_region, pressure_velocity_algorithm, simplec_converged,
-    validate_simplec_step,
+    log_simplec_step, max_abs_field_divergence, max_abs_scalar_field, max_velocity_delta_by_region,
+    pressure_velocity_algorithm, simplec_converged, validate_simplec_step,
 };
-use crate::solver::incompressible_linear::{
+use linear::{
     MomentumPredictorSolveDiagnostic, PressureCorrectionSolveDiagnostic, solve_momentum_predictor,
     solve_pressure_correction,
 };
-use crate::solver::incompressible_pressure_reference::volume_weighted_pressure_mean;
+use pressure_reference::volume_weighted_pressure_mean;
 use std::time::Instant;
 use tracing::debug;
 
-pub use crate::solver::incompressible_linear::{
+pub use linear::{
     IncompressibleLinearSolverConfig, IncompressiblePressureLinearSolverConfig,
     IncompressiblePressureLinearSolverKind,
 };
@@ -777,22 +780,6 @@ fn is_identity_constraint_row(matrix: &CsrMatrix, row: usize) -> bool {
     entries.next().is_none() && col == row && (value - 1.0).abs() <= Real::EPSILON
 }
 
-fn max_abs_field_divergence(
-    mesh: &StructuredMesh3d,
-    fields: &IncompressibleFields,
-    boundary: &BoundarySet,
-) -> Result<Real> {
-    let divergence = compute_incompressible_face_flux_divergence_3d(mesh, fields, boundary)?;
-    Ok(max_abs_scalar_field(&divergence))
-}
-
-fn max_abs_scalar_field(field: &ScalarField) -> Real {
-    field
-        .values()
-        .iter()
-        .fold(0.0, |acc: Real, value| acc.max(value.abs()))
-}
-
 #[cfg(test)]
-#[path = "incompressible_tests.rs"]
+#[path = "tests_main.rs"]
 mod tests;

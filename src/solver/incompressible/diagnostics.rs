@@ -2,8 +2,9 @@ use tracing::info;
 
 use crate::boundary::{BoundaryKind, BoundarySet};
 use crate::core::{Real, format_log_fixed4, format_log_sci4, log10_positive};
+use crate::discretization::compute_incompressible_face_flux_divergence_3d;
 use crate::error::{AsimuError, Result};
-use crate::field::IncompressibleFields;
+use crate::field::{IncompressibleFields, ScalarField};
 use crate::mesh::{BoundaryMesh, StructuredMesh3d};
 
 const SIMPLEC_DIVERGENCE_LIMIT: Real = 1.0e50;
@@ -210,6 +211,22 @@ fn is_velocity_constrained_kind(kind: &BoundaryKind) -> bool {
             | BoundaryKind::IncompressibleVelocityInlet { .. }
             | BoundaryKind::Inlet { .. }
     )
+}
+
+pub(crate) fn max_abs_scalar_field(field: &ScalarField) -> Real {
+    field
+        .values()
+        .iter()
+        .fold(0.0, |acc: Real, value| acc.max(value.abs()))
+}
+
+pub(crate) fn max_abs_field_divergence(
+    mesh: &StructuredMesh3d,
+    fields: &IncompressibleFields,
+    boundary: &BoundarySet,
+) -> Result<Real> {
+    let divergence = compute_incompressible_face_flux_divergence_3d(mesh, fields, boundary)?;
+    Ok(max_abs_scalar_field(&divergence))
 }
 
 #[cfg(test)]

@@ -5,36 +5,61 @@
 
 use std::time::Instant;
 
-#[path = "compressible_context.rs"]
-mod compressible_context;
-#[path = "compressible_rhs.rs"]
-mod compressible_rhs;
-#[path = "compressible_rhs_typed.rs"]
-mod compressible_rhs_typed;
-#[path = "compressible_typed.rs"]
-mod compressible_typed;
-#[path = "gmres_block_preconditioner_3d.rs"]
+mod context;
 mod gmres_block_preconditioner_3d;
-#[path = "gmres_implicit_3d.rs"]
 mod gmres_implicit_3d;
-#[path = "lu_sgs_sweep_3d.rs"]
 mod lu_sgs_sweep_3d;
+mod multiblock;
+mod multiblock_driver;
+mod multiblock_driver_typed;
+mod multiblock_interface;
+mod rhs;
+mod rhs_typed;
+mod typed;
+mod unstructured_driver;
+mod unstructured_driver_typed;
 
-pub use compressible_context::CompressibleAdvanceContext3dTyped;
+pub mod helpers;
+pub mod lu_sgs_common;
+pub mod lu_sgs_sweep_unstructured;
+mod lu_sgs_sweep_unstructured_typed;
+pub mod sod;
+pub mod spectral_radius;
+pub mod spectral_radius_f32;
+pub mod spectral_radius_unstructured;
+mod spectral_radius_unstructured_f32;
+pub mod wave_speed;
 
-use crate::solver::spectral_radius::{
-    SpectralRadius3dParams, cell_local_dt_spectral, cell_spectral_radius_3d,
+pub use context::CompressibleAdvanceContext3dTyped;
+pub use lu_sgs_sweep_unstructured_typed::{
+    LuSgsSweepUnstructuredTypedParams, LuSgsUnstructuredSweepTyped, lu_sgs_sweep_unstructured_f32,
+    lu_sgs_sweep_unstructured_typed,
 };
-pub use compressible_context::{
+pub use multiblock_driver::{
+    CompressibleMultiblockStepView, MultiblockStructuredDriverInput,
+    run_multiblock_structured_with_observer,
+};
+pub use multiblock_driver_typed::run_multiblock_structured_typed_with_observer;
+pub use spectral_radius_unstructured_f32::{
+    SpectralRadiusUnstructuredF32Params, cell_spectral_radius_unstructured_f32,
+};
+pub use unstructured_driver::{
+    CompressibleUnstructuredStepView, UnstructuredDriverConfig, run_unstructured_with_observer,
+};
+pub(crate) use unstructured_driver_typed::UnstructuredComputeBackend;
+pub use unstructured_driver_typed::run_unstructured_typed_with_observer;
+
+pub use context::{
     CompressibleAdvanceContext1d, CompressibleAdvanceContext3d, ResidualCorrection3d,
     ResidualCorrection3dHandle,
 };
-use compressible_rhs::EvaluateRhs3d;
 pub use gmres_implicit_3d::{GmresImplicitConfig, GmresImplicitDelta, GmresPreconditionerKind};
 use gmres_implicit_3d::{
     GmresStepLog, GmresStepTiming, apply_delta_with_line_search, log_gmres_step_diagnostics,
 };
 use lu_sgs_sweep_3d::{LuSgsSweep3dParams, lu_sgs_sweep_3d};
+use rhs::EvaluateRhs3d;
+use spectral_radius::{SpectralRadius3dParams, cell_local_dt_spectral, cell_spectral_radius_3d};
 
 use crate::core::{Real, elapsed_ms, format_log_fixed4, format_log_sci4, log10_positive};
 use crate::discretization::assemble_inviscid_residual_1d;
@@ -42,18 +67,18 @@ use crate::error::Result;
 use crate::field::{ConservedFields, ConservedResidual};
 use crate::mesh::{StructuredMesh1d, StructuredMesh3d};
 use crate::physics::{FreestreamParams, IdealGasEoS, ViscousPhysicsConfig};
-use crate::solver::compressible_helpers::{
-    RefreshCompressibleStateInput, finalize_cell_dts_from_sigma,
-    refresh_compressible_ghosts_and_primitives,
-};
 use crate::solver::state::SolverState;
 use crate::solver::time::{
     CflSchedule, LuSgsConfig, ResidualSmoothingConfig, Rk4Storage, RungeKutta4Config,
     RungeKutta4Integrator, TimeIntegrationScheme, TimeIntegrator, euler_step, euler_step_local,
     min_positive_dt, rk4_step, rk4_step_local, smooth_residual_3d_limited,
 };
-use crate::solver::wave_speed::max_wave_speed;
+use helpers::{
+    RefreshCompressibleStateInput, finalize_cell_dts_from_sigma,
+    refresh_compressible_ghosts_and_primitives,
+};
 use tracing::{info, info_span, instrument};
+use wave_speed::max_wave_speed;
 
 /// 稳态伪时间 / 瞬态物理时间。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -771,5 +796,5 @@ pub(crate) fn positive_fixed_dt(dt: Real) -> Option<Real> {
 }
 
 #[cfg(test)]
-#[path = "compressible_tests.rs"]
+#[path = "tests_main.rs"]
 mod tests;

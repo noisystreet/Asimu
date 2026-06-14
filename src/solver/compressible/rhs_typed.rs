@@ -15,7 +15,7 @@ use crate::field::PrimitiveFillFromConserved;
 use crate::field::{ConservedFieldsT, ConservedResidualT, PrimitiveFieldsT};
 use crate::mesh::{BoundaryMesh3d, StructuredMesh3d};
 use crate::physics::{FreestreamParams, IdealGasEoS, ReferenceScales, ViscousPhysicsConfig};
-use crate::solver::compressible_helpers::{
+use crate::solver::compressible::helpers::{
     RefreshCompressibleStateTypedInput, refresh_compressible_ghosts_and_primitives_typed,
 };
 
@@ -34,7 +34,7 @@ pub(crate) struct EvaluateRhs3dTyped<'a, T: ComputeFloat> {
     pub primitive_scratch: &'a mut PrimitiveFieldsT<T>,
     pub gradient_scratch: &'a mut GradientFields,
     pub interface_residual: Option<
-        &'a [crate::solver::compressible_multiblock_interface::InterfaceResidualContribution],
+        &'a [crate::solver::compressible::multiblock_interface::InterfaceResidualContribution],
     >,
 }
 
@@ -70,7 +70,7 @@ impl<T: ComputeFloat + InviscidFaceFluxTyped + PrimitiveFillFromConserved>
         };
         assemble_inviscid_residual_3d_typed(fields, residual, &assembly)?;
         if let Some(contributions) = self.interface_residual {
-            crate::solver::compressible_multiblock_interface::apply_interface_residuals_typed(
+            crate::solver::compressible::multiblock_interface::apply_interface_residuals_typed(
                 residual,
                 contributions,
             )?;
