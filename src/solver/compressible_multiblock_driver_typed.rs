@@ -6,6 +6,7 @@ use crate::boundary::{BoundaryPatch, BoundarySet};
 use crate::core::{ComputeFloat, Real, format_log_fixed4, format_log_sci4, log10_positive};
 use crate::discretization::{BoundaryGhostBuffer, GradientFields, InviscidFaceFluxTyped};
 use crate::error::{AsimuError, Result};
+use crate::field::PrimitiveFillFromConserved;
 use crate::field::{ConservedFields, ConservedFieldsT, PrimitiveFields, PrimitiveFieldsT};
 use crate::mesh::{MultiBlockStructuredMesh3d, StructuredBlock3d};
 use crate::physics::{FreestreamParams, IdealGasEoS, ReferenceScales};
@@ -41,7 +42,10 @@ struct BlockAdvanceEnvTyped<'a> {
 
 /// typed 多块 structured 同步推进（P2 仅支持无 1-to-1 接口）。
 pub fn run_multiblock_structured_typed_with_observer<
-    T: ComputeFloat + crate::field::LusgsDiagonalUpdateBackend + InviscidFaceFluxTyped,
+    T: ComputeFloat
+        + crate::field::LusgsDiagonalUpdateBackend
+        + InviscidFaceFluxTyped
+        + PrimitiveFillFromConserved,
 >(
     input: MultiblockStructuredDriverInput<'_>,
     mut observe_step: impl FnMut(CompressibleMultiblockStepView<'_>) -> Result<()>,
@@ -77,7 +81,10 @@ pub fn run_multiblock_structured_typed_with_observer<
 }
 
 fn build_block_run_states_typed<
-    T: ComputeFloat + crate::field::LusgsDiagonalUpdateBackend + InviscidFaceFluxTyped,
+    T: ComputeFloat
+        + crate::field::LusgsDiagonalUpdateBackend
+        + InviscidFaceFluxTyped
+        + PrimitiveFillFromConserved,
 >(
     blocks: &[StructuredBlock3d],
     interface_patches: &[Vec<BoundaryPatch>],
@@ -116,7 +123,10 @@ fn build_block_run_states_typed<
 }
 
 fn advance_block_history_typed<
-    T: ComputeFloat + crate::field::LusgsDiagonalUpdateBackend + InviscidFaceFluxTyped,
+    T: ComputeFloat
+        + crate::field::LusgsDiagonalUpdateBackend
+        + InviscidFaceFluxTyped
+        + PrimitiveFillFromConserved,
 >(
     env: &BlockAdvanceEnvTyped<'_>,
     states: &mut [BlockRunStateTyped<T>],
@@ -148,7 +158,10 @@ fn advance_block_history_typed<
 }
 
 fn advance_block_step_typed<
-    T: ComputeFloat + crate::field::LusgsDiagonalUpdateBackend + InviscidFaceFluxTyped,
+    T: ComputeFloat
+        + crate::field::LusgsDiagonalUpdateBackend
+        + InviscidFaceFluxTyped
+        + PrimitiveFillFromConserved,
 >(
     env: &BlockAdvanceEnvTyped<'_>,
     states: &mut [BlockRunStateTyped<T>],

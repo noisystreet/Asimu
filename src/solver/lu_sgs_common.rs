@@ -392,19 +392,70 @@ pub(crate) fn apply_diagonal_fallback_typed<T: crate::core::ComputeFloat>(
     Ok(())
 }
 
-pub(crate) fn refresh_primitive_at_cell_typed<T: crate::core::ComputeFloat>(
+/// 按精度从守恒场刷新单单元原始变量（f32 无 `cell_state` 往返）。
+pub trait PrimitiveRefreshLane: crate::core::ComputeFloat {
+    fn refresh_primitive_at_cell(
+        fields: &crate::field::ConservedFieldsT<Self>,
+        cell: usize,
+        eos: &IdealGasEoS,
+        min_pressure: Real,
+        primitives: &mut crate::field::PrimitiveFieldsT<Self>,
+    ) -> Result<()>;
+}
+
+impl PrimitiveRefreshLane for f32 {
+    fn refresh_primitive_at_cell(
+        fields: &crate::field::ConservedFieldsT<f32>,
+        cell: usize,
+        eos: &IdealGasEoS,
+        min_pressure: Real,
+        primitives: &mut crate::field::PrimitiveFieldsT<f32>,
+    ) -> Result<()> {
+        let prim = crate::field::primitive_from_conserved_relaxed_f32(
+            eos,
+            fields.density.values()[cell],
+            [
+                fields.momentum_x.values()[cell],
+                fields.momentum_y.values()[cell],
+                fields.momentum_z.values()[cell],
+            ],
+            fields.total_energy.values()[cell],
+            min_pressure,
+        )?;
+        primitives.density.values_mut()[cell] = prim.density;
+        primitives.pressure.values_mut()[cell] = prim.pressure;
+        primitives.velocity_x.values_mut()[cell] = prim.velocity[0];
+        primitives.velocity_y.values_mut()[cell] = prim.velocity[1];
+        primitives.velocity_z.values_mut()[cell] = prim.velocity[2];
+        Ok(())
+    }
+}
+
+impl PrimitiveRefreshLane for f64 {
+    fn refresh_primitive_at_cell(
+        fields: &crate::field::ConservedFieldsT<f64>,
+        cell: usize,
+        eos: &IdealGasEoS,
+        min_pressure: Real,
+        primitives: &mut crate::field::PrimitiveFieldsT<f64>,
+    ) -> Result<()> {
+        let cons = fields.cell_state(cell)?;
+        let prim = crate::field::primitive_from_conserved_relaxed(eos, &cons, min_pressure)?;
+        primitives.density.values_mut()[cell] = prim.density;
+        primitives.pressure.values_mut()[cell] = prim.pressure;
+        primitives.velocity_x.values_mut()[cell] = prim.velocity[0];
+        primitives.velocity_y.values_mut()[cell] = prim.velocity[1];
+        primitives.velocity_z.values_mut()[cell] = prim.velocity[2];
+        Ok(())
+    }
+}
+
+pub(crate) fn refresh_primitive_at_cell_typed<T: PrimitiveRefreshLane>(
     fields: &crate::field::ConservedFieldsT<T>,
     cell: usize,
     eos: &IdealGasEoS,
     min_pressure: Real,
     primitives: &mut crate::field::PrimitiveFieldsT<T>,
 ) -> Result<()> {
-    let cons = fields.cell_state(cell)?;
-    let prim = crate::field::primitive_from_conserved_relaxed(eos, &cons, min_pressure)?;
-    primitives.density.values_mut()[cell] = T::from_real(prim.density);
-    primitives.pressure.values_mut()[cell] = T::from_real(prim.pressure);
-    primitives.velocity_x.values_mut()[cell] = T::from_real(prim.velocity[0]);
-    primitives.velocity_y.values_mut()[cell] = T::from_real(prim.velocity[1]);
-    primitives.velocity_z.values_mut()[cell] = T::from_real(prim.velocity[2]);
-    Ok(())
+    T::refresh_primitive_at_cell(fields, cell, eos, min_pressure, primitives)
 }

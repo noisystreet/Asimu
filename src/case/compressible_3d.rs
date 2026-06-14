@@ -139,7 +139,10 @@ fn run_compressible_3d(
 }
 
 fn run_compressible_3d_typed<
-    T: crate::core::ComputeFloat + crate::field::LusgsDiagonalUpdateBackend + InviscidFaceFluxTyped,
+    T: crate::core::ComputeFloat
+        + crate::field::LusgsDiagonalUpdateBackend
+        + InviscidFaceFluxTyped
+        + crate::field::PrimitiveFillFromConserved,
 >(
     case: &CaseSpec,
     mesh: &MultiBlockStructuredMesh3d,

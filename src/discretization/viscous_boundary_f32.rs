@@ -13,14 +13,8 @@ use crate::error::Result;
 use crate::field::{ConservedResidualT, PrimitiveFieldsT};
 use crate::physics::{IdealGasEoS, PrimitiveState, ViscousPhysicsConfig};
 
-/// f32 原始变量（边界面通量局部态）。
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct PrimitiveStateF32 {
-    pub density: f32,
-    pub velocity: [f32; 3],
-    pub pressure: f32,
-    pub temperature: f32,
-}
+/// f32 原始变量（边界面通量局部态；定义见 [`PrimitiveStateF32`]）。
+pub use crate::physics::PrimitiveStateF32;
 
 /// f32 粘性边界面通量输入。
 pub struct ViscousBoundaryFluxParamsF32<'a> {

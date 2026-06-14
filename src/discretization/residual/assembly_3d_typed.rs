@@ -256,9 +256,12 @@ fn assemble_boundary_faces_3d_typed<T: InviscidFaceFluxTyped>(
 mod tests {
     use super::*;
     use crate::discretization::freestream_pair::{FreestreamPairFixture, uniform_farfield_box};
+    use crate::field::PrimitiveFillFromConserved;
     use crate::mesh::MeshMetricMode;
 
-    fn assemble_uniform_freestream_typed<T: ComputeFloat + InviscidFaceFluxTyped>(
+    fn assemble_uniform_freestream_typed<
+        T: ComputeFloat + InviscidFaceFluxTyped + PrimitiveFillFromConserved,
+    >(
         side: &crate::discretization::freestream_pair::UniformFarfieldSide<'_>,
         metric_mode: MeshMetricMode,
     ) -> ConservedResidualT<T> {

@@ -21,13 +21,14 @@ pub use algebra::LusgsDiagonalUpdateBackend;
 pub use conserved::{
     ConservedFields, ConservedFieldsT, clamp_conserved_positivity, positivity_pressure_floor,
     primitive_from_conserved, primitive_from_conserved_relaxed,
+    primitive_from_conserved_relaxed_f32, primitive_from_conserved_relaxed_f32_from_state,
 };
 pub use incompressible::IncompressibleFields;
 pub use initial::{
     FluidInitialConfig, InitialKind, InitialSet, ScalarInitial, build_scalar_initial,
 };
 pub use positivity::{is_physical_conserved, max_physical_increment_scale, state_after_increment};
-pub use primitive::{PrimitiveFields, PrimitiveFieldsT};
+pub use primitive::{PrimitiveFields, PrimitiveFieldsT, PrimitiveFillFromConserved};
 pub use residual::{ConservedResidual, ConservedResidualT};
 pub use scalar_field::{ScalarField, ScalarFieldT};
 

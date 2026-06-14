@@ -6,7 +6,7 @@ mod reference;
 mod riemann_exact;
 mod viscosity;
 
-pub use eos::{ConservedState, FreestreamParams, IdealGasEoS, PrimitiveState};
+pub use eos::{ConservedState, FreestreamParams, IdealGasEoS, PrimitiveState, PrimitiveStateF32};
 pub use freestream::FreestreamContext;
 pub use reference::{IncompressibleReferenceScales, REFERENCE_LENGTH, ReferenceScales};
 pub use riemann_exact::{

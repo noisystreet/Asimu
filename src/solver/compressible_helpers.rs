@@ -69,7 +69,9 @@ pub fn refresh_compressible_ghosts_and_primitives(
 }
 
 /// typed 守恒场：ghost 与 primitive 均基于 typed 场刷新。
-pub fn refresh_compressible_ghosts_and_primitives_typed<T: crate::core::ComputeFloat>(
+pub fn refresh_compressible_ghosts_and_primitives_typed<
+    T: crate::core::ComputeFloat + crate::field::PrimitiveFillFromConserved,
+>(
     input: RefreshCompressibleStateTypedInput<'_, T>,
 ) -> Result<()> {
     let fs_ctx = FreestreamContext::new(input.eos, input.reference, input.viscous);

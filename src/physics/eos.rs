@@ -153,6 +153,15 @@ pub struct PrimitiveState {
     pub temperature: Real,
 }
 
+/// f32 原始变量（核心计算热路径）。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PrimitiveStateF32 {
+    pub density: f32,
+    pub velocity: [f32; 3],
+    pub pressure: f32,
+    pub temperature: f32,
+}
+
 /// 守恒变量 \([\rho, \rho u, \rho v, \rho w, \rho E]\)。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ConservedState {

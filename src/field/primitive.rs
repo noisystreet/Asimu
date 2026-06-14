@@ -2,11 +2,15 @@
 
 use tracing::info_span;
 
-use crate::core::{ComputeFloat, Real};
+use crate::core::ComputeFloat;
+use crate::core::Real;
 use crate::error::{AsimuError, Result};
 use crate::physics::{IdealGasEoS, PrimitiveState};
 
-use super::{ConservedFieldsT, ScalarFieldT, primitive_from_conserved_relaxed};
+use super::{
+    ConservedFieldsT, ScalarFieldT, primitive_from_conserved_relaxed,
+    primitive_from_conserved_relaxed_f32,
+};
 
 /// 与 [`ConservedFieldsT`] 同长度的原始变量 SoA。
 #[derive(Debug, Clone, PartialEq)]
@@ -20,6 +24,81 @@ pub struct PrimitiveFieldsT<T: ComputeFloat> {
 
 /// 默认工程标量原始变量场（`f64`）。
 pub type PrimitiveFields = PrimitiveFieldsT<Real>;
+
+/// 从守恒场批量恢复原始变量（f32/f64 分路径）。
+pub trait PrimitiveFillFromConserved: ComputeFloat {
+    fn fill_from_conserved(
+        primitives: &mut PrimitiveFieldsT<Self>,
+        fields: &ConservedFieldsT<Self>,
+        eos: &IdealGasEoS,
+        min_pressure: Real,
+    ) -> Result<()>;
+}
+
+impl PrimitiveFillFromConserved for f32 {
+    fn fill_from_conserved(
+        primitives: &mut PrimitiveFieldsT<f32>,
+        fields: &ConservedFieldsT<f32>,
+        eos: &IdealGasEoS,
+        min_pressure: Real,
+    ) -> Result<()> {
+        let n = fields.num_cells();
+        if primitives.num_cells() != n {
+            return Err(AsimuError::Field(format!(
+                "PrimitiveFields 长度 {} 与守恒场 {n} 不一致",
+                primitives.num_cells()
+            )));
+        }
+        let _span = info_span!("fill_primitives_f32", cells = n).entered();
+        for i in 0..n {
+            let prim = primitive_from_conserved_relaxed_f32(
+                eos,
+                fields.density.values()[i],
+                [
+                    fields.momentum_x.values()[i],
+                    fields.momentum_y.values()[i],
+                    fields.momentum_z.values()[i],
+                ],
+                fields.total_energy.values()[i],
+                min_pressure,
+            )?;
+            primitives.density.values_mut()[i] = prim.density;
+            primitives.pressure.values_mut()[i] = prim.pressure;
+            primitives.velocity_x.values_mut()[i] = prim.velocity[0];
+            primitives.velocity_y.values_mut()[i] = prim.velocity[1];
+            primitives.velocity_z.values_mut()[i] = prim.velocity[2];
+        }
+        Ok(())
+    }
+}
+
+impl PrimitiveFillFromConserved for f64 {
+    fn fill_from_conserved(
+        primitives: &mut PrimitiveFieldsT<f64>,
+        fields: &ConservedFieldsT<f64>,
+        eos: &IdealGasEoS,
+        min_pressure: Real,
+    ) -> Result<()> {
+        let n = fields.num_cells();
+        if primitives.num_cells() != n {
+            return Err(AsimuError::Field(format!(
+                "PrimitiveFields 长度 {} 与守恒场 {n} 不一致",
+                primitives.num_cells()
+            )));
+        }
+        let _span = info_span!("fill_primitives", cells = n).entered();
+        for i in 0..n {
+            let cons = fields.cell_state(i)?;
+            let prim = primitive_from_conserved_relaxed(eos, &cons, min_pressure)?;
+            primitives.density.values_mut()[i] = prim.density;
+            primitives.pressure.values_mut()[i] = prim.pressure;
+            primitives.velocity_x.values_mut()[i] = prim.velocity[0];
+            primitives.velocity_y.values_mut()[i] = prim.velocity[1];
+            primitives.velocity_z.values_mut()[i] = prim.velocity[2];
+        }
+        Ok(())
+    }
+}
 
 impl<T: ComputeFloat> PrimitiveFieldsT<T> {
     pub fn zeros(num_cells: usize) -> Result<Self> {
@@ -35,33 +114,6 @@ impl<T: ComputeFloat> PrimitiveFieldsT<T> {
     #[must_use]
     pub fn num_cells(&self) -> usize {
         self.density.len()
-    }
-
-    /// 从守恒场批量恢复原始变量（RK 中间态用宽松压力下限）。
-    pub fn fill_from_conserved(
-        &mut self,
-        fields: &ConservedFieldsT<T>,
-        eos: &IdealGasEoS,
-        min_pressure: Real,
-    ) -> Result<()> {
-        let n = fields.num_cells();
-        if self.num_cells() != n {
-            return Err(AsimuError::Field(format!(
-                "PrimitiveFields 长度 {} 与守恒场 {n} 不一致",
-                self.num_cells()
-            )));
-        }
-        let _span = info_span!("fill_primitives", cells = n).entered();
-        for i in 0..n {
-            let cons = fields.cell_state(i)?;
-            let prim = primitive_from_conserved_relaxed(eos, &cons, min_pressure)?;
-            self.density.values_mut()[i] = T::from_real(prim.density);
-            self.pressure.values_mut()[i] = T::from_real(prim.pressure);
-            self.velocity_x.values_mut()[i] = T::from_real(prim.velocity[0]);
-            self.velocity_y.values_mut()[i] = T::from_real(prim.velocity[1]);
-            self.velocity_z.values_mut()[i] = T::from_real(prim.velocity[2]);
-        }
-        Ok(())
     }
 
     /// 转为 `Real` 原始变量场（谱半径等仍走 f64 路径时用）。
@@ -89,6 +141,18 @@ impl<T: ComputeFloat> PrimitiveFieldsT<T> {
             pressure,
             temperature: 0.0,
         }
+    }
+}
+
+impl<T: PrimitiveFillFromConserved> PrimitiveFieldsT<T> {
+    /// 从守恒场批量恢复原始变量（RK 中间态用宽松压力下限）。
+    pub fn fill_from_conserved(
+        &mut self,
+        fields: &ConservedFieldsT<T>,
+        eos: &IdealGasEoS,
+        min_pressure: Real,
+    ) -> Result<()> {
+        T::fill_from_conserved(self, fields, eos, min_pressure)
     }
 }
 

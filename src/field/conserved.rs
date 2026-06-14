@@ -4,7 +4,7 @@ use crate::core::{ComputeFloat, Real};
 use crate::error::{AsimuError, Result};
 use crate::physics::{
     ConservedState, FreestreamContext, FreestreamParams, IdealGasEoS, PrimitiveState,
-    ReferenceScales,
+    PrimitiveStateF32, ReferenceScales,
 };
 
 use super::ScalarFieldT;
@@ -238,6 +238,68 @@ pub fn primitive_from_conserved_relaxed(
     Ok(prim)
 }
 
+/// f32 守恒分量 → 原始变量（理想气体；热路径无 `cell_state` 往返）。
+pub fn primitive_from_conserved_relaxed_f32(
+    eos: &IdealGasEoS,
+    density: f32,
+    momentum: [f32; 3],
+    total_energy: f32,
+    min_pressure: Real,
+) -> Result<PrimitiveStateF32> {
+    let rho = density;
+    if rho <= 0.0_f32 {
+        return Err(AsimuError::Field("密度必须大于 0".to_string()));
+    }
+    let inv_rho = 1.0_f32 / rho;
+    let velocity = [
+        momentum[0] * inv_rho,
+        momentum[1] * inv_rho,
+        momentum[2] * inv_rho,
+    ];
+    let ke = 0.5_f32
+        * rho
+        * (velocity[0] * velocity[0] + velocity[1] * velocity[1] + velocity[2] * velocity[2]);
+    let internal = total_energy - ke;
+    if internal <= 0.0_f32 {
+        return Err(AsimuError::Field(format!(
+            "内能非正: rho={rho}, KE={ke}, total_energy={total_energy}"
+        )));
+    }
+    let gamma = eos.gamma as f32;
+    let mut pressure = (gamma - 1.0_f32) * internal;
+    let min_p = min_pressure as f32;
+    if pressure < min_p {
+        pressure = min_p;
+    }
+    let r_star = eos.gas_constant as f32;
+    let temperature = pressure / (rho.max(1.0e-30_f32) * r_star);
+    Ok(PrimitiveStateF32 {
+        density: rho,
+        velocity,
+        pressure,
+        temperature,
+    })
+}
+
+/// 从 `ConservedState`（ghost 缓冲）恢复 f32 原始变量；输入 Real 仅转换一次。
+pub fn primitive_from_conserved_relaxed_f32_from_state(
+    eos: &IdealGasEoS,
+    cons: &ConservedState,
+    min_pressure: Real,
+) -> Result<PrimitiveStateF32> {
+    primitive_from_conserved_relaxed_f32(
+        eos,
+        cons.density as f32,
+        [
+            cons.momentum[0] as f32,
+            cons.momentum[1] as f32,
+            cons.momentum[2] as f32,
+        ],
+        cons.total_energy as f32,
+        min_pressure,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,6 +308,23 @@ mod tests {
     fn positivity_pressure_floor_is_one_percent_of_freestream() {
         assert!((positivity_pressure_floor(1000.0) - 10.0).abs() < 1.0e-12);
         assert!((positivity_pressure_floor(1.0 / 1.4) - 0.01 / 1.4).abs() < 1.0e-12);
+    }
+
+    #[test]
+    fn f32_primitive_recovery_matches_f64_relaxed() {
+        let eos = IdealGasEoS::AIR_STANDARD;
+        let cons = ConservedState {
+            density: 1.2,
+            momentum: [0.36, 0.0, 0.0],
+            total_energy: 2.5,
+        };
+        let min_p = 0.01;
+        let f64_prim = primitive_from_conserved_relaxed(&eos, &cons, min_p).expect("f64");
+        let f32_prim =
+            primitive_from_conserved_relaxed_f32_from_state(&eos, &cons, min_p).expect("f32");
+        assert!((f32_prim.density as Real - f64_prim.density).abs() < 1.0e-5);
+        assert!((f32_prim.pressure as Real - f64_prim.pressure).abs() < 1.0e-4);
+        assert!((f32_prim.velocity[0] as Real - f64_prim.velocity[0]).abs() < 1.0e-5);
     }
 
     #[test]

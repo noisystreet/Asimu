@@ -10,8 +10,8 @@ use crate::physics::IdealGasEoS;
 
 use crate::discretization::unstructured_face_cache_f32::LuSgsCellCouplingF32;
 use crate::solver::lu_sgs_common::{
-    LuSgsSweepScalars, apply_limited_cell_increment_typed, conserved_vector_f32,
-    conserved_vector_typed, implicit_scale, increment_real_from_f32,
+    LuSgsSweepScalars, PrimitiveRefreshLane, apply_limited_cell_increment_typed,
+    conserved_vector_f32, conserved_vector_typed, implicit_scale, increment_real_from_f32,
     refresh_primitive_at_cell_typed, residual_cell_vector_f32, residual_cell_vector_typed,
     scale_source, scale_source_f32, stabilize_sweep_update_typed,
 };
@@ -78,7 +78,7 @@ impl LuSgsUnstructuredSweepTyped for f64 {
 }
 
 /// typed 非结构 LU-SGS 双扫。
-pub fn lu_sgs_sweep_unstructured_typed<T: LuSgsUnstructuredSweepTyped>(
+pub fn lu_sgs_sweep_unstructured_typed<T: LuSgsUnstructuredSweepTyped + PrimitiveRefreshLane>(
     fields: &mut ConservedFieldsT<T>,
     residual: &ConservedResidualT<T>,
     params: &mut LuSgsSweepUnstructuredTypedParams<'_, T>,
@@ -141,7 +141,7 @@ pub fn lu_sgs_sweep_unstructured_typed<T: LuSgsUnstructuredSweepTyped>(
     )
 }
 
-fn forward_sweep_typed<T: LuSgsUnstructuredSweepTyped>(
+fn forward_sweep_typed<T: LuSgsUnstructuredSweepTyped + PrimitiveRefreshLane>(
     fields: &mut ConservedFieldsT<T>,
     u0: &ConservedFieldsT<T>,
     residual: &ConservedResidualT<T>,
@@ -176,7 +176,7 @@ fn forward_sweep_typed<T: LuSgsUnstructuredSweepTyped>(
     Ok(())
 }
 
-fn backward_sweep_typed<T: LuSgsUnstructuredSweepTyped>(
+fn backward_sweep_typed<T: LuSgsUnstructuredSweepTyped + PrimitiveRefreshLane>(
     fields: &mut ConservedFieldsT<T>,
     u0: &ConservedFieldsT<T>,
     params: &mut LuSgsSweepUnstructuredTypedParams<'_, T>,
@@ -383,7 +383,7 @@ pub fn lu_sgs_sweep_unstructured_f32(
     )
 }
 
-fn refresh_primitive_typed<T: LuSgsUnstructuredSweepTyped>(
+fn refresh_primitive_typed<T: LuSgsUnstructuredSweepTyped + PrimitiveRefreshLane>(
     params: &mut LuSgsSweepUnstructuredTypedParams<'_, T>,
     fields: &ConservedFieldsT<T>,
     cell: usize,

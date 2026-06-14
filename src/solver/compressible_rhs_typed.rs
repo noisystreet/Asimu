@@ -11,6 +11,7 @@ use crate::discretization::{
     assemble_inviscid_residual_3d_typed,
 };
 use crate::error::Result;
+use crate::field::PrimitiveFillFromConserved;
 use crate::field::{ConservedFieldsT, ConservedResidualT, PrimitiveFieldsT};
 use crate::mesh::{BoundaryMesh3d, StructuredMesh3d};
 use crate::physics::{FreestreamParams, IdealGasEoS, ReferenceScales, ViscousPhysicsConfig};
@@ -34,7 +35,9 @@ pub(crate) struct EvaluateRhs3dTyped<'a, T: ComputeFloat> {
     pub gradient_scratch: &'a mut GradientFields,
 }
 
-impl<T: ComputeFloat + InviscidFaceFluxTyped> EvaluateRhs3dTyped<'_, T> {
+impl<T: ComputeFloat + InviscidFaceFluxTyped + PrimitiveFillFromConserved>
+    EvaluateRhs3dTyped<'_, T>
+{
     pub fn run(
         &mut self,
         fields: &ConservedFieldsT<T>,

@@ -9,6 +9,7 @@ use super::gmres_implicit_3d::{GmresStepLog, GmresStepTiming, log_gmres_step_dia
 use crate::core::{ComputeFloat, Real, elapsed_ms, log10_positive};
 use crate::discretization::{InviscidFaceFluxTyped, InviscidFluxConfig};
 use crate::error::{AsimuError, Result};
+use crate::field::PrimitiveFillFromConserved;
 use crate::field::{ConservedFieldsT, ConservedResidualT};
 use crate::physics::IdealGasEoS;
 use crate::solver::compressible::{
@@ -34,7 +35,10 @@ mod gmres_implicit_3d_typed;
 use gmres_implicit_3d_typed::apply_delta_with_line_search_typed;
 
 impl CompressibleEulerSolver {
-    pub(crate) fn rhs_context_3d_typed<'a, T: ComputeFloat + InviscidFaceFluxTyped>(
+    pub(crate) fn rhs_context_3d_typed<
+        'a,
+        T: ComputeFloat + InviscidFaceFluxTyped + PrimitiveFillFromConserved,
+    >(
         &'a self,
         ctx: &'a mut CompressibleAdvanceContext3dTyped<'_, T>,
         inviscid: &'a InviscidFluxConfig,
@@ -58,7 +62,10 @@ impl CompressibleEulerSolver {
 
     /// typed 3D 时间推进（显式 rk4/euler；隐式 lu_sgs/gmres）。
     pub fn advance_step_3d_typed<
-        T: ComputeFloat + crate::field::LusgsDiagonalUpdateBackend + InviscidFaceFluxTyped,
+        T: ComputeFloat
+            + crate::field::LusgsDiagonalUpdateBackend
+            + InviscidFaceFluxTyped
+            + PrimitiveFillFromConserved,
     >(
         &self,
         ctx: &mut CompressibleAdvanceContext3dTyped<'_, T>,
@@ -83,7 +90,9 @@ impl CompressibleEulerSolver {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn advance_gmres_step_3d_typed<T: ComputeFloat + InviscidFaceFluxTyped>(
+    fn advance_gmres_step_3d_typed<
+        T: ComputeFloat + InviscidFaceFluxTyped + PrimitiveFillFromConserved,
+    >(
         &self,
         ctx: &mut CompressibleAdvanceContext3dTyped<'_, T>,
         fields: &mut ConservedFieldsT<T>,
@@ -169,7 +178,10 @@ impl CompressibleEulerSolver {
 
     #[allow(clippy::too_many_arguments)]
     fn advance_lusgs_step_3d_typed<
-        T: ComputeFloat + crate::field::LusgsDiagonalUpdateBackend + InviscidFaceFluxTyped,
+        T: ComputeFloat
+            + crate::field::LusgsDiagonalUpdateBackend
+            + InviscidFaceFluxTyped
+            + PrimitiveFillFromConserved,
     >(
         &self,
         ctx: &mut CompressibleAdvanceContext3dTyped<'_, T>,
@@ -249,7 +261,9 @@ impl CompressibleEulerSolver {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn advance_explicit_step_3d_typed<T: ComputeFloat + InviscidFaceFluxTyped>(
+    fn advance_explicit_step_3d_typed<
+        T: ComputeFloat + InviscidFaceFluxTyped + PrimitiveFillFromConserved,
+    >(
         &self,
         ctx: &mut CompressibleAdvanceContext3dTyped<'_, T>,
         fields: &mut ConservedFieldsT<T>,
@@ -362,7 +376,7 @@ impl CompressibleEulerSolver {
         }
     }
 
-    fn compute_cell_dts_3d_typed<T: ComputeFloat>(
+    fn compute_cell_dts_3d_typed<T: ComputeFloat + PrimitiveFillFromConserved>(
         &self,
         ctx: &mut CompressibleAdvanceContext3dTyped<'_, T>,
         fields: &mut ConservedFieldsT<T>,
@@ -382,7 +396,7 @@ impl CompressibleEulerSolver {
         }
     }
 
-    fn prepare_spectral_timestep_3d_typed<T: ComputeFloat>(
+    fn prepare_spectral_timestep_3d_typed<T: ComputeFloat + PrimitiveFillFromConserved>(
         &self,
         ctx: &mut CompressibleAdvanceContext3dTyped<'_, T>,
         fields: &mut ConservedFieldsT<T>,
@@ -419,7 +433,7 @@ impl CompressibleEulerSolver {
         Ok((cell_dts, sigma))
     }
 
-    fn prepare_lusgs_timestep_3d_typed<T: ComputeFloat>(
+    fn prepare_lusgs_timestep_3d_typed<T: ComputeFloat + PrimitiveFillFromConserved>(
         &self,
         ctx: &mut CompressibleAdvanceContext3dTyped<'_, T>,
         fields: &mut ConservedFieldsT<T>,

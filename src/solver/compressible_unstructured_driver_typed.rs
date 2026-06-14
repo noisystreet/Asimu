@@ -33,7 +33,10 @@ use crate::discretization::{
 use crate::error::{AsimuError, Result};
 use crate::exec::{ExecutionContext, MeshExecMetrics};
 use crate::field::LusgsDiagonalUpdateBackend;
-use crate::field::{ConservedFields, ConservedFieldsT, ConservedResidualT, PrimitiveFieldsT};
+use crate::field::{
+    ConservedFields, ConservedFieldsT, ConservedResidualT, PrimitiveFieldsT,
+    PrimitiveFillFromConserved,
+};
 use crate::solver::spectral_radius_unstructured::{
     SpectralRadiusUnstructuredTypedParams, UnstructuredSpectralRadiusTyped,
 };
@@ -559,7 +562,9 @@ impl UnstructuredRhsDispatchImpl for f64 {
     }
 }
 
-fn prepare_unstructured_timestep_typed<T: ComputeFloat + UnstructuredSpectralRadiusTyped>(
+fn prepare_unstructured_timestep_typed<
+    T: ComputeFloat + UnstructuredSpectralRadiusTyped + PrimitiveFillFromConserved,
+>(
     env: &UnstructuredRunEnvTyped<'_>,
     fields: &mut ConservedFieldsT<T>,
     work: &mut UnstructuredStepWorkTyped<T>,
@@ -613,6 +618,7 @@ pub(crate) trait UnstructuredComputeBackend:
     + LuSgsUnstructuredSweepTyped
     + UnstructuredRhsDispatchImpl
     + UnstructuredLusgsSweep
+    + PrimitiveFillFromConserved
 {
 }
 
