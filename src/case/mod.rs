@@ -3,6 +3,7 @@
 //! 应用层（`app`）与集成测试共用本模块，避免在 CLI 中重复装配逻辑。
 
 mod benchmark;
+mod benchmark_expected;
 mod compressible_3d;
 mod compressible_unstructured_3d;
 #[cfg(test)]

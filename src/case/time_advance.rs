@@ -39,6 +39,17 @@ pub const fn incompressible_physical_transient(kind: IncompressibleTimeAdvanceKi
     matches!(kind, IncompressibleTimeAdvanceKind::PhysicalTransient)
 }
 
+#[must_use]
+pub const fn incompressible_time_advance_label(
+    kind: IncompressibleTimeAdvanceKind,
+) -> &'static str {
+    match kind {
+        IncompressibleTimeAdvanceKind::SteadyCoupling => "steady_coupling",
+        IncompressibleTimeAdvanceKind::SteadyPseudoTime => "steady_pseudo_time",
+        IncompressibleTimeAdvanceKind::PhysicalTransient => "physical_transient",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

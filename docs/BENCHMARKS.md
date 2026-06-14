@@ -65,12 +65,16 @@ tests/benchmarks/
 
 ---
 
-## 5. `expected.json`  schema（规划）
+## 5. `expected.json` schema
+
+当前 **schema_version = 1**（由 `case::benchmark_expected` 解析）：
 
 ```json
 {
+  "schema_version": 1,
   "benchmark_id": "1d_diffusion_analytical",
   "asimu_min_version": "0.2.0",
+  "status": "optional_ci_tier_label",
   "quantities": [
     {
       "name": "L2_error",
@@ -82,6 +86,8 @@ tests/benchmarks/
   "profiles": []
 }
 ```
+
+Run Manifest（`output/run-manifest.json`，**schema_version = 2**）在存在 `expected.json` 时写入 `benchmark_status`，不可压算例另写入 `time.incompressible_advance`（`steady_coupling` / `steady_pseudo_time` / `physical_transient`）。
 
 ---
 

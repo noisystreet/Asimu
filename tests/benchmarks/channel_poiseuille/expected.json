@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "benchmark_id": "channel_poiseuille",
   "asimu_min_version": "0.3.0",
   "status": "profile_validation_enabled",
@@ -6,22 +7,22 @@
     {
       "name": "max_abs_corrected_divergence",
       "value": 0.0,
-      "tolerance_abs": 3.0e-5,
+      "tolerance_abs": 3e-05,
       "source": "pressure-correction equation residual"
     },
     {
       "name": "max_abs_underrelaxed_corrected_divergence",
-      "max_value": 3.0e-5,
+      "max_value": 3e-05,
       "source": "continuity residual after pressure_under_relaxation scaling; SIMPLEC convergence residual"
     },
     {
       "name": "max_abs_corrected_field_divergence_after_boundary",
-      "max_value": 3.0e-5,
+      "max_value": 3e-05,
       "source": "boundary-aware face-flux divergence recomputed from corrected velocity after boundary reapply"
     },
     {
       "name": "pressure_correction_rhs_active_sum",
-      "max_abs": 1.0e-12,
+      "max_abs": 1e-12,
       "source": "pressure-correction RHS sum after skipping p'=0 constraint rows"
     },
     {

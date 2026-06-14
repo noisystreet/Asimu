@@ -11,8 +11,8 @@ use crate::core::Real;
 use crate::error::Result;
 use crate::io::{CaseSpec, CaseTimeMode, resolve_case_output_path};
 
-/// Manifest schema 版本（见 `docs/DATA_MODEL.md` §10）。
-pub const MANIFEST_SCHEMA_VERSION: u32 = 1;
+/// Manifest schema 版本（见 `docs/DATA_MODEL.md` §10、`docs/BENCHMARKS.md` §5）。
+pub const MANIFEST_SCHEMA_VERSION: u32 = 2;
 
 /// 运行清单（v0.3 最小字段集）。
 #[derive(Debug, Clone, PartialEq)]
@@ -23,7 +23,9 @@ pub struct RunManifest {
     pub config_hash: String,
     pub case_name: String,
     pub benchmark_id: Option<String>,
+    pub benchmark_status: Option<String>,
     pub time_mode: &'static str,
+    pub incompressible_time_advance: Option<&'static str>,
     pub started_at_unix: f64,
     pub finished_at_unix: f64,
     pub solve: ManifestSolveSummary,
@@ -77,6 +79,14 @@ impl RunManifest {
             Some(id) => format!("\"{}\"", escape_json(id)),
             None => "null".to_string(),
         };
+        let benchmark_status = match &self.benchmark_status {
+            Some(status) => format!("\"{}\"", escape_json(status)),
+            None => "null".to_string(),
+        };
+        let incompressible_advance = match self.incompressible_time_advance {
+            Some(label) => format!("\"{}\"", escape_json(label)),
+            None => "null".to_string(),
+        };
         let steps = optional_u64(self.solve.steps);
         let converged = optional_bool(self.solve.converged);
         let residual_log10 = optional_f64(self.solve.residual_log10);
@@ -94,7 +104,8 @@ impl RunManifest {
   "config_hash": "{}",
   "case_name": "{}",
   "benchmark_id": {},
-  "time": {{ "mode": "{}" }},
+  "benchmark_status": {},
+  "time": {{ "mode": "{}", "incompressible_advance": {} }},
   "started_at_unix": {:.6},
   "finished_at_unix": {:.6},
   "solve": {{
@@ -114,7 +125,9 @@ impl RunManifest {
             escape_json(&self.config_hash),
             escape_json(&self.case_name),
             benchmark,
+            benchmark_status,
             self.time_mode,
+            incompressible_advance,
             self.started_at_unix,
             self.finished_at_unix,
             escape_json(&self.solve.kind),
@@ -192,7 +205,9 @@ mod tests {
             config_hash: "abc".to_string(),
             case_name: "demo".to_string(),
             benchmark_id: Some("bench".to_string()),
+            benchmark_status: Some("smoke".to_string()),
             time_mode: "steady",
+            incompressible_time_advance: None,
             started_at_unix: 1.0,
             finished_at_unix: 2.0,
             solve: ManifestSolveSummary {
@@ -207,8 +222,10 @@ mod tests {
             output_paths: vec![PathBuf::from("output/a.csv")],
         };
         let json = manifest.to_json().expect("json");
-        assert!(json.contains("\"schema_version\": 1"));
+        assert!(json.contains("\"schema_version\": 2"));
         assert!(json.contains("\"benchmark_id\": \"bench\""));
+        assert!(json.contains("\"benchmark_status\": \"smoke\""));
+        assert!(json.contains("\"incompressible_advance\": null"));
         assert!(json.contains("\"wall_time_sec\": 0.500000"));
     }
 

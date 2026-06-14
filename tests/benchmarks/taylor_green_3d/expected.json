@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "benchmark_id": "taylor_green_3d",
   "asimu_min_version": "0.3.0",
   "status": "i3_piso_bdf1_kinetic_decay",
