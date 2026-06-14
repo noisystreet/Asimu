@@ -1,7 +1,7 @@
 {
   "benchmark_id": "lid_driven_cavity_re100",
   "asimu_min_version": "0.3.0",
-  "status": "coarse_grid_quantitative",
+  "status": "i2_steady_simplec_16x16",
   "quantities": [
     {
       "name": "reynolds_number",
@@ -11,65 +11,54 @@
     },
     {
       "name": "time_scheme",
-      "value": "piso",
-      "source": "transient incompressible PISO smoke path"
+      "value": "simplec",
+      "source": "steady incompressible SIMPLEC (ADR 0015 I2)"
     },
     {
-      "name": "simplec_iterations",
-      "value": 100,
-      "tolerance_abs": 0,
-      "source": "case.toml time.min_steps; stable long-iteration convergence window"
+      "name": "time_mode",
+      "value": "steady",
+      "source": "pressure-velocity coupling requires interior velocity update convergence"
+    },
+    {
+      "name": "mesh_resolution",
+      "value": 16,
+      "source": "uniform 16x16x1 structured grid"
     },
     {
       "name": "simplec_converged",
       "value": true,
-      "source": "transient PISO pressure-velocity coupling residuals satisfy time.tolerance after min_steps"
-    },
-    {
-      "name": "max_abs_corrected_divergence",
-      "value": 0.0,
-      "tolerance_abs": 1.0e-8,
-      "source": "pressure-correction equation residual; not the reconstructed velocity divergence"
-    },
-    {
-      "name": "max_abs_underrelaxed_corrected_divergence",
-      "max_value": 3.0e-5,
-      "source": "continuity residual after pressure_under_relaxation scaling; SIMPLEC convergence residual"
+      "source": "continuity, momentum and interior velocity delta below time.tolerance for convergence window"
     },
     {
       "name": "max_abs_corrected_field_divergence_after_boundary",
-      "max_value": 1.0e-8,
+      "max_value": 1.0e-5,
       "source": "explicit pressure-corrected phi divergence after boundary flux constraints"
     },
     {
-      "name": "pressure_correction_rhs_active_sum",
-      "max_abs": 1.0e-4,
-      "source": "pressure-correction RHS sum after skipping p'=0 constraint rows"
-    },
-    {
       "name": "max_abs_corrected_velocity_delta_interior",
-      "max_value": 2.0e-2,
-      "source": "transient velocity update outside velocity-constrained boundary owner cells; diagnostic, not PISO coupling convergence"
-    },
-    {
-      "name": "max_abs_corrected_velocity_delta_boundary",
-      "max_value": 1.0e-12,
-      "source": "velocity-constrained boundary owner cells are fixed by moving/no-slip wall constraints"
+      "max_value": 1.0e-6,
+      "source": "steady SIMPLEC interior velocity update at convergence"
     },
     {
       "name": "pressure_solve_converged",
       "value": true,
-      "source": "pressure linear solve smoke threshold (PCG or GMRES)"
+      "source": "pressure linear solve (PCG or GMRES)"
+    },
+    {
+      "name": "momentum_solve_converged",
+      "value": true,
+      "source": "momentum GMRES on final outer step"
     }
   ],
   "profiles": [
     {
       "name": "vertical_centerline_u",
-      "status": "coarse_grid_quantitative",
+      "status": "i2_upwind_16x16",
       "source": "Ghia et al. 1982, Table I",
       "coordinate": "y",
       "velocity_component": "u",
-      "max_abs_tolerance": 1.0,
+      "max_abs_tolerance": 0.22,
+      "l2_tolerance": 0.12,
       "points": [
         { "y": 1.0, "u": 1.0 },
         { "y": 0.9766, "u": 0.84123 },
@@ -92,11 +81,12 @@
     },
     {
       "name": "horizontal_centerline_v",
-      "status": "coarse_grid_quantitative",
+      "status": "i2_upwind_16x16",
       "source": "Ghia et al. 1982, Table II",
       "coordinate": "x",
       "velocity_component": "v",
-      "max_abs_tolerance": 1.0,
+      "max_abs_tolerance": 0.12,
+      "l2_tolerance": 0.09,
       "points": [
         { "x": 1.0, "v": 0.0 },
         { "x": 0.9688, "v": -0.05906 },

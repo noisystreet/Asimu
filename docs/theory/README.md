@@ -53,7 +53,7 @@
 | [curvilinear_metrics.md](curvilinear_metrics.md) | `mesh/metrics` | v1.x | **规划** | Vinokur (1989)；CFL3D TM-2010-216758 |
 | [linear_gmres.md](linear_gmres.md) | `linalg` | v1.x | **已实现（GMRES + ILU(0)/LU-SGS 对角预条件）** | Saad (2003) Ch. 6、Ch. 10 |
 | [turbulence_k_omega_sst.md](turbulence_k_omega_sst.md) | `physics/turbulence` / `discretization/turbulence` | v1.x | **规划（ADR 0014）** | Menter (1994, 2003)；Wilcox (2006) Ch. 4；Blazek (2015) §10 |
-| [incompressible_simplec_piso.md](incompressible_simplec_piso.md) | `solver/incompressible` · `discretization/incompressible` | v0.3 | **已实现（I1 pressure-velocity coupling）** | Patankar (1980) Ch. 6–7；Issa (1986)；Ferziger et al. Ch. 8–9 |
+| [incompressible_simplec_piso.md](incompressible_simplec_piso.md) | `solver/incompressible` · `discretization/incompressible` | v0.3 | **已实现（I2 稳态 SIMPLEC + Ghia 粗网格 V&V）** | Patankar (1980) Ch. 6–7；Issa (1986)；Ferziger et al. Ch. 8–9 |
 | *(待建)* `compressible_ns.md` | `discretization` / `physics` | v1.x | 部分（Euler 无粘见上表） | [adr/0009](../adr/0009-compressible-navier-stokes.md)；Toro (2009) |
 
 实现对应功能时：将「规划」改为链接，并从索引表移除 *(待建)* 前缀。

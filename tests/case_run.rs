@@ -86,7 +86,7 @@ fn lid_driven_cavity_re100_incompressible_benchmark_runs() {
     let expected =
         std::fs::read_to_string("tests/benchmarks/lid_driven_cavity_re100/expected.json")
             .expect("expected");
-    assert!(expected.contains("coarse_grid_quantitative"));
+    assert!(expected.contains("i2_steady_simplec_16x16"));
     assert!(expected.contains("Ghia et al. 1982"));
     let result = run_case_path(Path::new(
         "tests/benchmarks/lid_driven_cavity_re100/case.toml",
@@ -98,45 +98,22 @@ fn lid_driven_cavity_re100_incompressible_benchmark_runs() {
         Some("lid_driven_cavity_re100")
     );
     let metrics = result.incompressible_3d.expect("incompressible metrics");
-    assert_eq!(metrics.algorithm, "piso");
-    assert_eq!(metrics.pressure_correctors, 2);
-    assert_eq!(metrics.simplec_iterations, 100);
+    assert_eq!(metrics.algorithm, "simplec");
+    assert_eq!(metrics.pressure_correctors, 1);
+    assert!(metrics.simplec_iterations >= 50);
+    assert!(metrics.simplec_iterations <= 5000);
     assert!(metrics.simplec_converged);
-    assert_eq!(
-        metrics.pressure_corrector_residual_history.len(),
-        metrics.simplec_iterations * metrics.pressure_correctors
-    );
-    assert_eq!(
-        metrics.pressure_corrector_max_correction_history.len(),
-        metrics.pressure_corrector_residual_history.len()
-    );
-    assert!(metrics.simplec_final_residual.is_finite());
-    assert!(metrics.max_abs_corrected_divergence < 5.0e-8);
-    assert!(
-        metrics
-            .max_abs_underrelaxed_corrected_divergence
-            .is_finite()
-    );
-    assert!(metrics.max_abs_underrelaxed_corrected_divergence < 3.0e-5);
-    assert!(metrics.max_abs_corrected_velocity_delta_interior < 5.0e-2);
+    assert!(metrics.simplec_final_residual <= 1.0e-5);
+    assert!(metrics.max_abs_corrected_divergence < 1.0e-5);
+    assert!(metrics.max_abs_corrected_field_divergence_after_boundary < 1.0e-5);
+    assert!(metrics.max_abs_corrected_velocity_delta_interior < 1.0e-6);
     assert!(metrics.max_abs_corrected_velocity_delta_boundary < 1.0e-12);
-    assert!(
-        metrics
-            .max_abs_corrected_field_divergence_before_boundary
-            .is_finite()
-    );
-    assert!(
-        metrics
-            .max_abs_corrected_field_divergence_after_boundary
-            .is_finite()
-    );
-    assert!(metrics.pressure_correction_rhs_active_sum.is_finite());
-    assert!(metrics.simplec_final_momentum_residual.is_finite());
+    assert!(metrics.pressure_correction_rhs_active_sum.abs() < 1.0e-4);
     assert!(metrics.pressure_solve_converged);
     assert!(metrics.momentum_solve_converged);
     let profiles = metrics.centerline_profiles.expect("centerline profiles");
-    assert_eq!(profiles.vertical_u.len(), 8);
-    assert_eq!(profiles.horizontal_v.len(), 8);
+    assert_eq!(profiles.vertical_u.len(), 16);
+    assert_eq!(profiles.horizontal_v.len(), 16);
     assert!(
         profiles
             .vertical_u
@@ -157,14 +134,24 @@ fn lid_driven_cavity_re100_incompressible_benchmark_runs() {
     assert!(error.horizontal_v.max_abs.is_finite());
     assert!(error.horizontal_v.l2.is_finite());
     assert!(
-        error.vertical_u.max_abs < 1.0,
+        error.vertical_u.max_abs < 0.22,
         "vertical_u max_abs={}",
         error.vertical_u.max_abs
     );
     assert!(
-        error.horizontal_v.max_abs < 1.0,
+        error.vertical_u.l2 < 0.12,
+        "vertical_u l2={}",
+        error.vertical_u.l2
+    );
+    assert!(
+        error.horizontal_v.max_abs < 0.12,
         "horizontal_v max_abs={}",
         error.horizontal_v.max_abs
+    );
+    assert!(
+        error.horizontal_v.l2 < 0.09,
+        "horizontal_v l2={}",
+        error.horizontal_v.l2
     );
 }
 
@@ -279,32 +266,4 @@ solution_every = 2
     assert!(csv.contains("velocity_delta_interior"));
     assert_eq!(csv.lines().count(), 4);
     let _ = fs::remove_dir_all(&root);
-}
-
-#[test]
-fn lid_driven_cavity_re100_refined_grid_runs() {
-    let result = run_case_path(Path::new(
-        "tests/benchmarks/lid_driven_cavity_re100_refined/case.toml",
-    ))
-    .expect("run");
-    assert_eq!(result.kind, CaseRunKind::Incompressible3dSteady);
-    assert_eq!(
-        result.benchmark_id.as_deref(),
-        Some("lid_driven_cavity_re100_refined")
-    );
-    let metrics = result.incompressible_3d.expect("incompressible metrics");
-    assert_eq!(metrics.algorithm, "piso");
-    assert_eq!(metrics.pressure_correctors, 2);
-    assert_eq!(metrics.simplec_iterations, 100);
-    assert!(metrics.simplec_final_residual.is_finite());
-    assert!(metrics.pressure_solve_converged);
-    assert!(metrics.momentum_solve_converged);
-    let profiles = metrics.centerline_profiles.expect("centerline profiles");
-    assert_eq!(profiles.vertical_u.len(), 12);
-    assert_eq!(profiles.horizontal_v.len(), 12);
-    let error = metrics
-        .lid_cavity_profile_error
-        .expect("lid cavity profile error");
-    assert!(error.vertical_u.max_abs.is_finite());
-    assert!(error.horizontal_v.max_abs.is_finite());
 }

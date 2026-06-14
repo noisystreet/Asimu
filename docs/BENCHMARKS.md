@@ -59,7 +59,7 @@ tests/benchmarks/
 | `1d_diffusion_analytical` | v0.2 | 1D 稳态扩散，Dirichlet | 解析解 | 必跑 |
 | `1d_advection_diffusion` | v0.2 | 1D 对流-扩散 | 解析 / manufactured | 必跑 |
 | `channel_poiseuille` | v0.3 | 2D 不可压通道 | 解析速度剖面（当前 smoke 骨架） | 必跑 |
-| `lid_driven_cavity_re100` | v0.4 | 方腔 Re=100 | Ghia 1982 中心线速度（当前 smoke 骨架） | 必跑 smoke，完整剖面可选 ignore |
+| `lid_driven_cavity_re100` | v0.4 | 方腔 Re=100 | Ghia 1982 中心线（16×16 稳态 SIMPLEC） | 必跑 smoke |
 | `backward_facing_step` | v1.x | 台阶流 | 实验/文献（待定） | ignore |
 
 ---

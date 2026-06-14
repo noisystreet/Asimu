@@ -253,4 +253,87 @@ mod tests {
         assert_eq!(fields.velocity_x.values()[lid], 1.0);
         assert_eq!(fields.velocity_y.values()[lid], 0.0);
     }
+
+    #[test]
+    fn symmetry_preserves_uniform_field() {
+        let mesh = StructuredMesh3d::uniform_box("box", 2, 2, 1, 1.0, 1.0, 1.0).expect("mesh");
+        let mut fields =
+            IncompressibleFields::uniform(mesh.num_cells(), 0.0, [0.2, 0.1, 0.0]).expect("fields");
+        let boundary = BoundarySet::new(vec![BoundaryPatch::new(
+            "k_min",
+            mesh.resolve_logical_boundary("k_min").expect("faces"),
+            BoundaryKind::Symmetry,
+        )]);
+
+        let stats =
+            apply_incompressible_boundary_conditions_3d(&mesh, &mut fields, &boundary).expect("bc");
+
+        assert_eq!(stats.ignored_faces, 0);
+        for cell in 0..mesh.num_cells() {
+            assert_eq!(fields.velocity_x.values()[cell], 0.2);
+            assert_eq!(fields.velocity_y.values()[cell], 0.1);
+            assert_eq!(fields.velocity_z.values()[cell], 0.0);
+        }
+    }
+
+    #[test]
+    fn lid_cavity_wall_configuration_preserves_corner_constraints() {
+        let mesh = StructuredMesh3d::uniform_box("box", 2, 2, 1, 1.0, 1.0, 0.1).expect("mesh");
+        let mut fields =
+            IncompressibleFields::uniform(mesh.num_cells(), 0.0, [0.0, 0.0, 0.0]).expect("fields");
+        let boundary = BoundarySet::new(vec![
+            BoundaryPatch::new(
+                "i_min",
+                mesh.resolve_logical_boundary("i_min").expect("faces"),
+                BoundaryKind::Wall {
+                    no_slip: true,
+                    heat: crate::boundary::WallHeat::Adiabatic,
+                },
+            ),
+            BoundaryPatch::new(
+                "i_max",
+                mesh.resolve_logical_boundary("i_max").expect("faces"),
+                BoundaryKind::Wall {
+                    no_slip: true,
+                    heat: crate::boundary::WallHeat::Adiabatic,
+                },
+            ),
+            BoundaryPatch::new(
+                "j_min",
+                mesh.resolve_logical_boundary("j_min").expect("faces"),
+                BoundaryKind::Wall {
+                    no_slip: true,
+                    heat: crate::boundary::WallHeat::Adiabatic,
+                },
+            ),
+            BoundaryPatch::new(
+                "j_max",
+                mesh.resolve_logical_boundary("j_max").expect("faces"),
+                BoundaryKind::MovingWall {
+                    velocity: [1.0, 0.0, 0.0],
+                },
+            ),
+            BoundaryPatch::new(
+                "k_min",
+                mesh.resolve_logical_boundary("k_min").expect("faces"),
+                BoundaryKind::Symmetry,
+            ),
+            BoundaryPatch::new(
+                "k_max",
+                mesh.resolve_logical_boundary("k_max").expect("faces"),
+                BoundaryKind::Symmetry,
+            ),
+        ]);
+
+        let stats =
+            apply_incompressible_boundary_conditions_3d(&mesh, &mut fields, &boundary).expect("bc");
+
+        assert!(stats.velocity_cells > 0);
+        let lid = mesh.cell_index(0, 1, 0);
+        assert_eq!(fields.velocity_x.values()[lid], 1.0);
+        assert_eq!(fields.velocity_y.values()[lid], 0.0);
+        let bottom = mesh.cell_index(0, 0, 0);
+        assert_eq!(fields.velocity_x.values()[bottom], 0.0);
+        assert_eq!(fields.velocity_y.values()[bottom], 0.0);
+    }
 }
