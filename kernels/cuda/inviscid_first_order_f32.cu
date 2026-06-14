@@ -371,3 +371,62 @@ extern "C" __global__ void inviscid_first_order_bucket_f32(
     scatter_flux(res_rho, res_mx, res_my, res_mz, res_e, g.owner, g.neighbor, g.owner_scale,
                  g.neighbor_scale, flux);
 }
+
+struct BoundaryFaceGeom {
+    uint32_t owner;
+    float nx;
+    float ny;
+    float nz;
+    float owner_scale;
+};
+
+struct GhostPrim5 {
+    float rho;
+    float pressure;
+    float u;
+    float v;
+    float w;
+};
+
+__device__ inline void scatter_flux_boundary_atomic(float *res_rho, float *res_mx, float *res_my,
+                                                    float *res_mz, float *res_e, uint32_t owner,
+                                                    float os, const Flux5 &f) {
+    atomicAdd(&res_rho[owner], os * f.mass);
+    atomicAdd(&res_mx[owner], os * f.mx);
+    atomicAdd(&res_my[owner], os * f.my);
+    atomicAdd(&res_mz[owner], os * f.mz);
+    atomicAdd(&res_e[owner], os * f.energy);
+}
+
+// 边界面一阶无粘通量（ghost 每步 H2D；owner 侧 atomic scatter）。
+extern "C" __global__ void inviscid_first_order_boundary_f32(
+    const BoundaryFaceGeom *__restrict__ faces, uint32_t num_faces,
+    const GhostPrim5 *__restrict__ ghosts, const float *__restrict__ prim_rho,
+    const float *__restrict__ prim_p, const float *__restrict__ prim_ux,
+    const float *__restrict__ prim_uy, const float *__restrict__ prim_uz, float *__restrict__ res_rho,
+    float *__restrict__ res_mx, float *__restrict__ res_my, float *__restrict__ res_mz,
+    float *__restrict__ res_e, float gamma, uint32_t flux_scheme, uint32_t entropy_fix) {
+    uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= num_faces) {
+        return;
+    }
+    BoundaryFaceGeom g = faces[i];
+    if (g.owner_scale == 0.0f) {
+        return;
+    }
+    float nx = g.nx;
+    float ny = g.ny;
+    float nz = g.nz;
+    normalize3(nx, ny, nz);
+    uint32_t o = g.owner;
+    Prim5 pl = {prim_rho[o], prim_p[o], prim_ux[o], prim_uy[o], prim_uz[o]};
+    GhostPrim5 gh = ghosts[i];
+    Prim5 pr = {gh.rho, gh.pressure, gh.u, gh.v, gh.w};
+    Flux5 flux;
+    if (flux_scheme == 0u) {
+        flux = roe_flux_f32(gamma, entropy_fix != 0u, nx, ny, nz, pl, pr);
+    } else {
+        flux = hvl_flux_f32(gamma, nx, ny, nz, pl, pr);
+    }
+    scatter_flux_boundary_atomic(res_rho, res_mx, res_my, res_mz, res_e, o, g.owner_scale, flux);
+}

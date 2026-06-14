@@ -39,6 +39,48 @@ pub(super) fn cuda_first_order_f32_interior(
     )
 }
 
+pub(super) fn cuda_first_order_f32_boundary(
+    residual: &mut crate::field::ConservedResidualT<f32>,
+    params: &mut InviscidAssemblyUnstructuredTypedParams<'_, f32>,
+    topology: &UnstructuredFaceTopology,
+) -> Result<bool> {
+    let _ = topology;
+    if params.mesh_cache.cuda_inviscid_boundary_topo.num_faces() == 0 {
+        return Ok(true);
+    }
+    let (flux_scheme, roe_entropy_fix) = match params.config.scheme {
+        crate::discretization::flux_config::FluxScheme::Roe(roe_cfg) => {
+            (CUDA_FLUX_SCHEME_ROE, roe_cfg.entropy_fix)
+        }
+        crate::discretization::flux_config::FluxScheme::HanelVanLeer => {
+            (CUDA_FLUX_SCHEME_HVL, false)
+        }
+        _ => return Ok(false),
+    };
+    let boundary_ghosts =
+        crate::discretization::unstructured_boundary_exec_topo::prepare_inviscid_boundary_ghost_prims_f32(
+            &params.mesh_cache.face_topology_f32,
+            params.ghosts,
+            params.eos,
+            params.min_pressure,
+        )?;
+    let topo = &params.mesh_cache.cuda_inviscid_boundary_topo;
+    let topo_key = std::ptr::from_ref(params.mesh_cache).addr();
+    crate::exec::inviscid::try_assemble_first_order_boundary_f32(
+        params.exec,
+        residual,
+        params.primitives,
+        topo,
+        topo_key,
+        &boundary_ghosts,
+        CudaFirstOrderInviscidParams {
+            gamma: params.eos.gamma as f32,
+            flux_scheme,
+            roe_entropy_fix,
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use crate::boundary::{BoundaryKind, BoundaryPatch, BoundarySet};

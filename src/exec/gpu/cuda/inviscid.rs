@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use cudarc::driver::{CudaContext, CudaStream, LaunchConfig, PushKernelArg};
+use cudarc::driver::{CudaContext, CudaStream};
 use tracing::info_span;
 
 use super::buffers::CudaFieldBuffers;
@@ -15,7 +15,8 @@ use super::idwls_mesh_cache::{
 use super::idwls_topology::ExecIdwlsViscousTopology;
 use super::mesh_cache::CudaMeshDeviceCache;
 use super::module::{
-    CudaIdwlsModule, CudaInviscidModule, CudaSpectralRadiusModule, CudaViscousModule,
+    CudaIdwlsModule, CudaInviscidModule, CudaLusgsModule, CudaSpectralRadiusModule,
+    CudaViscousModule,
 };
 use super::pipeline::CudaPipelineState;
 use super::spectral_radius::{launch_finalize_cell_dts, launch_spectral_radius_accumulate};
@@ -31,6 +32,16 @@ use crate::error::{AsimuError, Result};
 use crate::exec::CsrSpmvView;
 use crate::exec::spectral_radius_cuda::SpectralRadiusCudaInput;
 use crate::field::{ConservedResidualT, PrimitiveFieldsT};
+use inviscid_launch::{
+    InviscidBucketLaunchParams, launch_inviscid_bucket, launch_viscous_interior_color_buckets,
+};
+
+#[path = "cuda_boundary_assembly.rs"]
+mod cuda_boundary_assembly;
+#[path = "cuda_lusgs_timestep.rs"]
+mod cuda_lusgs_timestep;
+#[path = "inviscid_launch.rs"]
+mod inviscid_launch;
 
 const BLOCK_THREADS: u32 = 256;
 
@@ -54,6 +65,7 @@ pub struct CudaBackendState {
     pub(crate) viscous_module: CudaViscousModule,
     idwls_module: CudaIdwlsModule,
     spectral_module: CudaSpectralRadiusModule,
+    lusgs_module: CudaLusgsModule,
     mesh: Option<CudaMeshDeviceCache>,
     fields: Option<CudaFieldBuffers>,
     mesh_topo_key: Option<usize>,
@@ -75,6 +87,10 @@ pub struct CudaBackendState {
     idwls_lsq_key: Option<usize>,
     /// 粘性输运 kernel 用单元静温（每步 H2D）。
     viscous_transport_temps: Option<cudarc::driver::CudaSlice<f32>>,
+    inviscid_boundary_mesh: Option<super::boundary_mesh_cache::CudaInviscidBoundaryMeshCache>,
+    inviscid_boundary_topo_key: Option<usize>,
+    viscous_boundary_mesh: Option<super::boundary_mesh_cache::CudaViscousBoundaryMeshCache>,
+    viscous_boundary_topo_key: Option<usize>,
 }
 
 impl CudaBackendState {
@@ -86,6 +102,7 @@ impl CudaBackendState {
         let viscous_module = CudaViscousModule::try_load(&context)?;
         let idwls_module = CudaIdwlsModule::try_load(&context)?;
         let spectral_module = CudaSpectralRadiusModule::try_load(&context)?;
+        let lusgs_module = CudaLusgsModule::try_load(&context)?;
         let cusparse_handle = try_create_cusparse_handle()?;
         tracing::info!("cuda_cusparse_handle_created");
         Ok(Self {
@@ -95,6 +112,7 @@ impl CudaBackendState {
             viscous_module,
             idwls_module,
             spectral_module,
+            lusgs_module,
             mesh: None,
             fields: None,
             mesh_topo_key: None,
@@ -114,6 +132,10 @@ impl CudaBackendState {
             idwls_lsq_geometry: None,
             idwls_lsq_key: None,
             viscous_transport_temps: None,
+            inviscid_boundary_mesh: None,
+            inviscid_boundary_topo_key: None,
+            viscous_boundary_mesh: None,
+            viscous_boundary_topo_key: None,
         })
     }
 
@@ -123,7 +145,25 @@ impl CudaBackendState {
     }
 
     pub(crate) fn reset_pipeline_step(&mut self) {
+        self.pipeline.reset_rhs_step();
+    }
+
+    pub(crate) fn reset_step_transfer_counters(&mut self) {
+        super::transfer::reset_step_transfer_counters();
+    }
+
+    pub(crate) fn reset_full_pipeline_step(&mut self) {
         self.pipeline.reset_step();
+    }
+
+    pub(crate) fn log_step_transfer_counters(&self, step: u32) {
+        let (h2d, d2h) = super::transfer::step_transfer_counters();
+        tracing::info!(
+            step,
+            cuda_h2d = h2d,
+            cuda_d2h = d2h,
+            "cuda_step_transfer_counters"
+        );
     }
 
     pub(crate) fn enable_rhs_device_pipeline(&mut self) {
@@ -138,6 +178,11 @@ impl CudaBackendState {
     #[must_use]
     pub(crate) fn timestep_on_device(&self) -> bool {
         self.pipeline.timestep_on_device
+    }
+
+    #[must_use]
+    pub(crate) fn residual_on_device(&self) -> bool {
+        self.pipeline.residual_on_device
     }
 
     pub(crate) fn upload_residual_from_host(
@@ -368,25 +413,7 @@ impl CudaBackendState {
     ) -> Result<()> {
         self.ensure_viscous_resources(topo, topo_key)?;
         let num_cells = temperatures.len();
-        let need_temps = self
-            .viscous_transport_temps
-            .as_ref()
-            .is_none_or(|t| t.len() != num_cells);
-        if need_temps {
-            use super::transfer::clone_htod;
-            self.viscous_transport_temps = Some(clone_htod(
-                &self.stream,
-                "viscous_transport_temps_alloc",
-                temperatures,
-            )?);
-        } else {
-            use super::transfer::memcpy_htod;
-            let temps = self
-                .viscous_transport_temps
-                .as_mut()
-                .expect("viscous transport temps");
-            memcpy_htod(&self.stream, "viscous_transport_temps", temperatures, temps)?;
-        }
+        self.upload_viscous_transport_temps(temperatures)?;
         let face_geom_buf = self
             .viscous_face_geom
             .as_mut()
@@ -584,33 +611,6 @@ impl CudaBackendState {
         Ok(())
     }
 
-    pub fn download_timestep_f32(
-        &mut self,
-        sigma_out: &mut [f32],
-        cell_dts_out: &mut [f32],
-        local_time_step: bool,
-    ) -> Result<()> {
-        if !self.pipeline.timestep_on_device {
-            return Err(AsimuError::Exec(
-                "CUDA timestep 未在 device 上；请先调用谱半径 CUDA 路径".to_string(),
-            ));
-        }
-        let mesh = self.spectral_mesh.as_ref().expect("spectral mesh");
-        mesh.download_timestep(&self.stream, sigma_out, cell_dts_out)?;
-        if !local_time_step {
-            let min_dt = cell_dts_out
-                .iter()
-                .copied()
-                .filter(|d| d.is_finite() && *d > 0.0)
-                .fold(f32::INFINITY, f32::min);
-            if min_dt.is_finite() {
-                cell_dts_out.fill(min_dt);
-            }
-        }
-        self.pipeline.timestep_on_device = false;
-        Ok(())
-    }
-
     fn ensure_viscous_resources(
         &mut self,
         topo: &super::viscous_face_geom::ExecViscousInteriorTopology,
@@ -669,83 +669,4 @@ impl Drop for CudaBackendState {
     fn drop(&mut self) {
         let _ = destroy_cusparse_handle(self.cusparse_handle);
     }
-}
-
-fn launch_viscous_interior_color_buckets(
-    stream: &Arc<CudaStream>,
-    function: &cudarc::driver::CudaFunction,
-    buckets: &CudaViscousBucketCache,
-    face_geom: &mut CudaViscousFaceGeomBuffer,
-    fields: &mut CudaFieldBuffers,
-    gradients_buf: &CudaGradientBuffers,
-) -> Result<()> {
-    for color in 0..buckets.num_colors() {
-        let num_faces = buckets.bucket_len(color)?;
-        if num_faces == 0 {
-            continue;
-        }
-        let bucket = buckets.bucket_faces(color)?;
-        super::viscous::launch_viscous_bucket(
-            stream,
-            function,
-            bucket,
-            num_faces,
-            face_geom.face_geom(),
-            fields,
-            gradients_buf,
-        )?;
-    }
-    Ok(())
-}
-
-struct InviscidBucketLaunchParams {
-    gamma: f32,
-    flux_scheme: u32,
-    entropy_fix: u32,
-}
-
-fn launch_inviscid_bucket(
-    stream: &Arc<CudaStream>,
-    function: &cudarc::driver::CudaFunction,
-    bucket_faces: &cudarc::driver::CudaSlice<u32>,
-    num_faces: u32,
-    face_geom: &cudarc::driver::CudaSlice<super::buffers::DeviceFaceGeom>,
-    fields: &mut CudaFieldBuffers,
-    launch: InviscidBucketLaunchParams,
-) -> Result<()> {
-    let InviscidBucketLaunchParams {
-        gamma,
-        flux_scheme,
-        entropy_fix,
-    } = launch;
-    let num_blocks = num_faces.div_ceil(BLOCK_THREADS);
-    let cfg = LaunchConfig {
-        grid_dim: (num_blocks, 1, 1),
-        block_dim: (BLOCK_THREADS, 1, 1),
-        shared_mem_bytes: 0,
-    };
-    let mut builder = stream.launch_builder(function);
-    builder.arg(bucket_faces);
-    builder.arg(&num_faces);
-    builder.arg(face_geom);
-    builder.arg(&fields.prim_rho);
-    builder.arg(&fields.prim_p);
-    builder.arg(&fields.prim_ux);
-    builder.arg(&fields.prim_uy);
-    builder.arg(&fields.prim_uz);
-    builder.arg(&mut fields.res_rho);
-    builder.arg(&mut fields.res_mx);
-    builder.arg(&mut fields.res_my);
-    builder.arg(&mut fields.res_mz);
-    builder.arg(&mut fields.res_e);
-    builder.arg(&gamma);
-    builder.arg(&flux_scheme);
-    builder.arg(&entropy_fix);
-    // SAFETY: 着色桶内面无共享单元；参数布局与 `inviscid_first_order_bucket_f32` 一致。
-    unsafe {
-        builder
-            .launch(cfg)
-            .map_err(|e| AsimuError::Exec(format!("CUDA kernel launch 失败: {e:?}")))?;
-    }
-    Ok(())
 }

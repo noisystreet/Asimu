@@ -211,6 +211,12 @@ pub struct UnstructuredSolverMeshCache {
     /// 粘性内面 CUDA 拓扑模板（\(\mu,\lambda\) 每步在 scratch 副本上刷新）。
     #[cfg(feature = "cuda")]
     pub cuda_viscous_interior_topo: crate::exec::gpu::cuda::ExecViscousInteriorTopology,
+    /// 无粘边界面 CUDA 拓扑（init 一次 H2D）。
+    #[cfg(feature = "cuda")]
+    pub cuda_inviscid_boundary_topo: crate::exec::gpu::cuda::ExecInviscidBoundaryTopology,
+    /// 粘性边界面 CUDA 拓扑（init 一次 H2D）。
+    #[cfg(feature = "cuda")]
+    pub cuda_viscous_boundary_topo: crate::exec::gpu::cuda::ExecViscousBoundaryTopology,
 }
 
 impl UnstructuredSolverMeshCache {
@@ -243,6 +249,16 @@ impl UnstructuredSolverMeshCache {
                 &face_topology_f32,
                 &face_topology,
             );
+        #[cfg(feature = "cuda")]
+        let cuda_inviscid_boundary_topo =
+            crate::discretization::unstructured_boundary_exec_topo::build_cuda_inviscid_boundary_topology(
+                &face_topology_f32,
+            );
+        #[cfg(feature = "cuda")]
+        let cuda_viscous_boundary_topo =
+            crate::discretization::unstructured_boundary_exec_topo::build_cuda_viscous_boundary_topology(
+                &face_topology_f32,
+            );
         Ok(Self {
             face_topology,
             face_topology_f32,
@@ -258,6 +274,10 @@ impl UnstructuredSolverMeshCache {
             cuda_inviscid_interior_topo,
             #[cfg(feature = "cuda")]
             cuda_viscous_interior_topo,
+            #[cfg(feature = "cuda")]
+            cuda_inviscid_boundary_topo,
+            #[cfg(feature = "cuda")]
+            cuda_viscous_boundary_topo,
         })
     }
 }

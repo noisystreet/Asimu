@@ -2,12 +2,16 @@
 
 use tracing::info_span;
 
+#[cfg(feature = "cuda")]
+use crate::core::ExecDevice;
 use crate::core::{ComputeFloat, Real};
 use crate::error::Result;
 use crate::field::{ConservedFieldsT, PrimitiveFillFromConserved};
 use crate::solver::compressible::spectral_radius_unstructured::{
     SpectralRadiusUnstructuredTypedParams, UnstructuredSpectralRadiusTyped,
 };
+#[cfg(feature = "cuda")]
+use crate::solver::time::TimeIntegrationScheme;
 use crate::solver::{
     RefreshCompressibleStateTypedInput, finalize_cell_dts_from_sigma,
     finalize_cell_dts_from_sigma_f32, min_positive_dt, min_positive_dt_f32,
@@ -148,6 +152,9 @@ impl UnstructuredSpectralRadiusAtPrepare for f32 {
         };
         #[cfg(feature = "cuda")]
         {
+            let keep_timestep_on_device = env.config.time_scheme == TimeIntegrationScheme::LuSgs
+                && !env.config.lu_sgs.sweep
+                && work.exec.device() == ExecDevice::GpuCuda;
             let (sigma, cell_dts) =
                 crate::solver::compressible::spectral_radius_unstructured_f32_cuda::compute_spectral_radius_f32_with_exec(
                     &params,
@@ -155,11 +162,9 @@ impl UnstructuredSpectralRadiusAtPrepare for f32 {
                     cfl,
                     fixed_dt,
                     local_time_step,
+                    keep_timestep_on_device,
                 )?;
-            Ok(TimestepPrepareSpectral {
-                sigma,
-                cell_dts: Some(cell_dts),
-            })
+            Ok(TimestepPrepareSpectral { sigma, cell_dts })
         }
         #[cfg(not(feature = "cuda"))]
         {
@@ -221,18 +226,24 @@ impl UnstructuredTimestepFromSigma for f32 {
         local_time_step: bool,
     ) -> Result<Real> {
         work.timestep.sigma_f32 = prepared.sigma;
-        work.timestep.cell_dts_f32 = if let Some(cell_dts) = prepared.cell_dts {
-            cell_dts
+        if let Some(cell_dts) = prepared.cell_dts {
+            work.timestep.cell_dts_f32 = cell_dts;
+            Ok(min_positive_dt_f32(&work.timestep.cell_dts_f32) as Real)
         } else {
-            finalize_cell_dts_from_sigma_f32(
+            #[cfg(feature = "cuda")]
+            if work.exec.cuda_timestep_on_device() {
+                work.timestep.cell_dts_f32.clear();
+                return Ok(work.exec.cuda_download_min_cell_dt_f32()? as Real);
+            }
+            work.timestep.cell_dts_f32 = finalize_cell_dts_from_sigma_f32(
                 &work.volumes_f32,
                 &work.timestep.sigma_f32,
                 cfl as f32,
                 fixed_dt.map(|d| d as f32),
                 local_time_step,
-            )?
-        };
-        Ok(min_positive_dt_f32(&work.timestep.cell_dts_f32) as Real)
+            )?;
+            Ok(min_positive_dt_f32(&work.timestep.cell_dts_f32) as Real)
+        }
     }
 }
 

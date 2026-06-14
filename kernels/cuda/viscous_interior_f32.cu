@@ -188,3 +188,184 @@ extern "C" __global__ void viscous_face_transport_f32(
     g.lambda = 0.5f * (lambda_o + lambda_n);
     face_geom[face_idx] = g;
 }
+
+struct ViscousBoundaryFaceGeom {
+    uint32_t owner;
+    float nx;
+    float ny;
+    float nz;
+    float owner_scale;
+    float spacing;
+    uint32_t flags;
+    float wall_param;
+};
+
+struct ViscousBoundaryGhostPrim {
+    float rho;
+    float pressure;
+    float u;
+    float v;
+    float w;
+    float temperature;
+};
+
+__device__ inline void scatter_viscous_boundary_atomic(float *res_mx, float *res_my, float *res_mz,
+                                                       float *res_e, uint32_t owner, float os,
+                                                       const ViscousFlux4 &f) {
+    atomicAdd(&res_mx[owner], os * f.mx);
+    atomicAdd(&res_my[owner], os * f.my);
+    atomicAdd(&res_mz[owner], os * f.mz);
+    atomicAdd(&res_e[owner], os * f.energy);
+}
+
+__device__ inline void wall_extrapolated_gradient_f32(
+    float du_o[3], float dv_o[3], float dw_o[3], float dt_o[3], float u_o[3], float u_g[3],
+    float t_o, float t_g, float nx, float ny, float nz, float spacing, float du_g[3], float dv_g[3],
+    float dw_g[3], float dt_g[3]) {
+    if (spacing <= 1.0e-30f) {
+        for (int k = 0; k < 3; ++k) {
+            du_g[k] = du_o[k];
+            dv_g[k] = dv_o[k];
+            dw_g[k] = dw_o[k];
+            dt_g[k] = dt_o[k];
+        }
+        return;
+    }
+    float inv_two_delta = 1.0f / (2.0f * spacing);
+    for (int k = 0; k < 3; ++k) {
+        du_g[k] = du_o[k];
+        dv_g[k] = dv_o[k];
+        dw_g[k] = dw_o[k];
+        dt_g[k] = dt_o[k];
+    }
+    float dudn = (u_g[0] - u_o[0]) * inv_two_delta;
+    float grad_n = du_o[0] * nx + du_o[1] * ny + du_o[2] * nz;
+    float corr = dudn - grad_n;
+    du_g[0] += corr * nx;
+    du_g[1] += corr * ny;
+    du_g[2] += corr * nz;
+    dudn = (u_g[1] - u_o[1]) * inv_two_delta;
+    grad_n = dv_o[0] * nx + dv_o[1] * ny + dv_o[2] * nz;
+    corr = dudn - grad_n;
+    dv_g[0] += corr * nx;
+    dv_g[1] += corr * ny;
+    dv_g[2] += corr * nz;
+    dudn = (u_g[2] - u_o[2]) * inv_two_delta;
+    grad_n = dw_o[0] * nx + dw_o[1] * ny + dw_o[2] * nz;
+    corr = dudn - grad_n;
+    dw_g[0] += corr * nx;
+    dw_g[1] += corr * ny;
+    dw_g[2] += corr * nz;
+    float dtdn = (t_g - t_o) * inv_two_delta;
+    float grad_t_n = dt_o[0] * nx + dt_o[1] * ny + dt_o[2] * nz;
+    float corr_t = dtdn - grad_t_n;
+    dt_g[0] += corr_t * nx;
+    dt_g[1] += corr_t * ny;
+    dt_g[2] += corr_t * nz;
+}
+
+__device__ inline void average_gradient_f32(const float du_l[3], const float dv_l[3],
+                                            const float dw_l[3], const float dt_l[3],
+                                            const float du_r[3], const float dv_r[3],
+                                            const float dw_r[3], const float dt_r[3],
+                                            float du_a[3], float dv_a[3], float dw_a[3],
+                                            float dt_a[3]) {
+    float half = 0.5f;
+    for (int k = 0; k < 3; ++k) {
+        du_a[k] = half * (du_l[k] + du_r[k]);
+        dv_a[k] = half * (dv_l[k] + dv_r[k]);
+        dw_a[k] = half * (dw_l[k] + dw_r[k]);
+        dt_a[k] = half * (dt_l[k] + dt_r[k]);
+    }
+}
+
+__device__ inline float wall_heat_flux_into_fluid_f32(float t_owner, float t_ghost, float spacing,
+                                                      float lambda, uint32_t flags,
+                                                      float wall_param) {
+    if ((flags & 4u) == 0u) {
+        return 0.0f;
+    }
+    if ((flags & 8u) != 0u) {
+        return wall_param;
+    }
+    if ((flags & 16u) != 0u) {
+        if (spacing <= 1.0e-30f) {
+            return 0.0f;
+        }
+        return lambda * (wall_param - t_owner) / spacing;
+    }
+    return 0.0f;
+}
+
+// 粘性边界面通量（读 device 梯度；ghost 每步 H2D）。
+extern "C" __global__ void viscous_boundary_f32(
+    const ViscousBoundaryFaceGeom *__restrict__ faces, uint32_t num_faces,
+    const ViscousBoundaryGhostPrim *__restrict__ ghosts, const float *__restrict__ prim_ux,
+    const float *__restrict__ prim_uy, const float *__restrict__ prim_uz,
+    const float *__restrict__ temperatures, const float *__restrict__ du_dx,
+    const float *__restrict__ du_dy, const float *__restrict__ du_dz,
+    const float *__restrict__ dv_dx, const float *__restrict__ dv_dy, const float *__restrict__ dv_dz,
+    const float *__restrict__ dw_dx, const float *__restrict__ dw_dy, const float *__restrict__ dw_dz,
+    const float *__restrict__ dt_dx, const float *__restrict__ dt_dy, const float *__restrict__ dt_dz,
+    float *__restrict__ res_mx, float *__restrict__ res_my, float *__restrict__ res_mz,
+    float *__restrict__ res_e, ViscousTransportParams params) {
+    uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= num_faces) {
+        return;
+    }
+    ViscousBoundaryFaceGeom g = faces[i];
+    if (g.owner_scale == 0.0f) {
+        return;
+    }
+    uint32_t o = g.owner;
+    float nx = g.nx;
+    float ny = g.ny;
+    float nz = g.nz;
+    normalize3(nx, ny, nz);
+    float u_o[3] = {prim_ux[o], prim_uy[o], prim_uz[o]};
+    ViscousBoundaryGhostPrim gh = ghosts[i];
+    float u_g[3] = {gh.u, gh.v, gh.w};
+    float du_o[3] = {du_dx[o], du_dy[o], du_dz[o]};
+    float dv_o[3] = {dv_dx[o], dv_dy[o], dv_dz[o]};
+    float dw_o[3] = {dw_dx[o], dw_dy[o], dw_dz[o]};
+    float dt_o[3] = {dt_dx[o], dt_dy[o], dt_dz[o]};
+    float du_g[3], dv_g[3], dw_g[3], dt_g[3];
+    uint32_t flags = g.flags;
+    float t_o = temperatures[o];
+    float t_g = gh.temperature;
+    if ((flags & 1u) != 0u) {
+        wall_extrapolated_gradient_f32(du_o, dv_o, dw_o, dt_o, u_o, u_g, t_o, t_g, nx, ny, nz,
+                                       g.spacing, du_g, dv_g, dw_g, dt_g);
+    } else {
+        for (int k = 0; k < 3; ++k) {
+            du_g[k] = du_o[k];
+            dv_g[k] = dv_o[k];
+            dw_g[k] = dw_o[k];
+            dt_g[k] = dt_o[k];
+        }
+    }
+    float mu_o = 0.0f;
+    float lambda_o = 0.0f;
+    float mu_g = 0.0f;
+    float lambda_g = 0.0f;
+    cell_transport_f32(t_o, params, mu_o, lambda_o);
+    cell_transport_f32(t_g, params, mu_g, lambda_g);
+    float mu = 0.5f * (mu_o + mu_g);
+    float lambda = 0.5f * (lambda_o + lambda_g);
+    float du_a[3], dv_a[3], dw_a[3], dt_a[3];
+    average_gradient_f32(du_o, dv_o, dw_o, dt_o, du_g, dv_g, dw_g, dt_g, du_a, dv_a, dw_a, dt_a);
+    float half = 0.5f;
+    float ux = half * (u_o[0] + u_g[0]);
+    float uy = half * (u_o[1] + u_g[1]);
+    float uz = half * (u_o[2] + u_g[2]);
+    ViscousFlux4 flux = fused_viscous_flux_averaged(
+        ux, uy, uz, du_a[0], du_a[1], du_a[2], dv_a[0], dv_a[1], dv_a[2], dw_a[0], dw_a[1], dw_a[2],
+        dt_a[0], dt_a[1], dt_a[2], nx, ny, nz, mu, lambda);
+    if ((flags & 2u) != 0u) {
+        flux.energy = lambda * (dt_a[0] * nx + dt_a[1] * ny + dt_a[2] * nz);
+    }
+    if ((flags & 4u) != 0u) {
+        flux.energy = wall_heat_flux_into_fluid_f32(t_o, t_g, g.spacing, lambda, flags, g.wall_param);
+    }
+    scatter_viscous_boundary_atomic(res_mx, res_my, res_mz, res_e, o, g.owner_scale, flux);
+}

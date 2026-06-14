@@ -19,7 +19,8 @@ pub(crate) fn compute_spectral_radius_f32_with_exec(
     cfl: Real,
     fixed_dt: Option<Real>,
     local_time_step: bool,
-) -> Result<(Vec<f32>, Vec<f32>)> {
+    keep_timestep_on_device: bool,
+) -> Result<(Vec<f32>, Option<Vec<f32>>)> {
     let n = params.mesh.num_cells();
     #[cfg(feature = "cuda")]
     {
@@ -34,7 +35,6 @@ pub(crate) fn compute_spectral_radius_f32_with_exec(
             None
         };
         let mut sigma = vec![0.0f32; n];
-        let mut cell_dts = vec![0.0f32; n];
         let topo = &params.mesh_cache.spectral_radius_topo;
         let topo_key = std::ptr::from_ref(params.mesh_cache).addr();
         if crate::exec::spectral_radius_cuda::try_compute_spectral_radius_unstructured_f32(
@@ -52,16 +52,26 @@ pub(crate) fn compute_spectral_radius_f32_with_exec(
             },
             &mut sigma,
         )? {
+            if keep_timestep_on_device {
+                return Ok((Vec::new(), None));
+            }
+            let mut cell_dts = vec![0.0f32; n];
             crate::exec::spectral_radius_cuda::download_timestep_f32(
                 exec,
                 &mut sigma,
                 &mut cell_dts,
                 local_time_step,
             )?;
-            return Ok((sigma, cell_dts));
+            return Ok((sigma, Some(cell_dts)));
         }
     }
-    let _ = (exec, cfl, fixed_dt, local_time_step);
+    let _ = (
+        exec,
+        cfl,
+        fixed_dt,
+        local_time_step,
+        keep_timestep_on_device,
+    );
     let sigma = cell_spectral_radius_unstructured_f32(&SpectralRadiusUnstructuredF32Params {
         mesh: params.mesh,
         mesh_cache: params.mesh_cache,
@@ -85,7 +95,7 @@ pub(crate) fn compute_spectral_radius_f32_with_exec(
         fixed_dt.map(|d| d as f32),
         local_time_step,
     )?;
-    Ok((sigma, cell_dts))
+    Ok((sigma, Some(cell_dts)))
 }
 
 fn prepare_boundary_ghost_prims_f32(
@@ -221,8 +231,10 @@ mod tests {
             MeshExecMetrics::new(mesh.num_cells(), cache.face_topology.interior.len(), 1),
         )
         .expect("cuda");
-        let gpu = super::compute_spectral_radius_f32_with_exec(&params, &mut exec, 0.5, None, true)
-            .expect("cuda");
+        let gpu = super::compute_spectral_radius_f32_with_exec(
+            &params, &mut exec, 0.5, None, true, false,
+        )
+        .expect("cuda");
         assert!(approx_eq(gpu.0[0] as f64, cpu[0] as f64, 1.0e-3));
     }
 }

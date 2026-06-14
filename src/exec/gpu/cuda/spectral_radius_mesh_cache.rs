@@ -24,6 +24,7 @@ pub struct CudaSpectralMeshDeviceCache {
     diffusivity: CudaSlice<f32>,
     sigma: CudaSlice<f32>,
     cell_dts: CudaSlice<f32>,
+    min_dt_scratch: CudaSlice<f32>,
 }
 
 impl CudaSpectralMeshDeviceCache {
@@ -81,6 +82,9 @@ impl CudaSpectralMeshDeviceCache {
             cell_dts: stream
                 .alloc_zeros::<f32>(n)
                 .map_err(|e| AsimuError::Exec(format!("CUDA 谱半径 cell_dts 分配失败: {e:?}")))?,
+            min_dt_scratch: stream
+                .alloc_zeros::<f32>(1)
+                .map_err(|e| AsimuError::Exec(format!("CUDA min_dt scratch 分配失败: {e:?}")))?,
         })
     }
 
@@ -160,6 +164,37 @@ impl CudaSpectralMeshDeviceCache {
             cell_dts_host.copy_from_slice(dts_flat.as_slice());
             Ok(())
         })
+    }
+
+    pub fn download_min_cell_dt(
+        &mut self,
+        stream: &Arc<CudaStream>,
+        spectral_module: &super::module::CudaSpectralRadiusModule,
+    ) -> Result<f32> {
+        super::transfer::memcpy_htod(
+            stream,
+            "spectral_min_dt_init",
+            &[f32::MAX],
+            &mut self.min_dt_scratch,
+        )?;
+        let num_cells = self.num_cells as u32;
+        let cell_dts = &self.cell_dts;
+        let min_scratch = &mut self.min_dt_scratch;
+        super::spectral_radius::launch_min_positive_cell_dt(
+            stream,
+            &spectral_module.min_positive_dt,
+            num_cells,
+            cell_dts,
+            min_scratch,
+        )?;
+        let min_host = super::transfer::clone_dtoh(stream, "spectral_min_cell_dt", min_scratch)?;
+        let min_dt = min_host.first().copied().unwrap_or(0.0);
+        if !min_dt.is_finite() || min_dt <= 0.0 {
+            return Err(AsimuError::Field(
+                "CUDA min_positive_cell_dt 未得到有效正有限 Δt".to_string(),
+            ));
+        }
+        Ok(min_dt)
     }
 
     #[allow(dead_code)]

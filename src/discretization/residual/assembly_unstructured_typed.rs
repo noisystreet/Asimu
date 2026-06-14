@@ -80,6 +80,15 @@ pub trait InviscidTypedScatterBackend: ComputeFloat {
     ) -> Result<bool> {
         Ok(false)
     }
+
+    /// CUDA 一阶边界面装配（默认 `false`；`f32` + feature `cuda` 可返回 `true`）。
+    fn try_cuda_first_order_boundary(
+        _residual: &mut ConservedResidualT<Self>,
+        _params: &mut InviscidAssemblyUnstructuredTypedParams<'_, Self>,
+        _topology: &UnstructuredFaceTopology,
+    ) -> Result<bool> {
+        Ok(false)
+    }
 }
 
 #[cfg_attr(feature = "parallel-fvm", allow(dead_code))]
@@ -143,6 +152,24 @@ impl InviscidTypedScatterBackend for f32 {
         #[cfg(feature = "cuda")]
         {
             assembly_unstructured_typed_cuda::cuda_first_order_f32_interior(
+                residual, params, topology,
+            )
+        }
+        #[cfg(not(feature = "cuda"))]
+        {
+            let _ = (residual, params, topology);
+            Ok(false)
+        }
+    }
+
+    fn try_cuda_first_order_boundary(
+        residual: &mut ConservedResidualT<f32>,
+        params: &mut InviscidAssemblyUnstructuredTypedParams<'_, f32>,
+        topology: &UnstructuredFaceTopology,
+    ) -> Result<bool> {
+        #[cfg(feature = "cuda")]
+        {
+            assembly_unstructured_typed_cuda::cuda_first_order_f32_boundary(
                 residual, params, topology,
             )
         }
@@ -268,6 +295,8 @@ fn assemble_first_order_typed<T: InviscidTypedScatterBackend + InviscidFirstOrde
     let cuda_pipeline = false;
 
     if cuda_pipeline {
+        // P2：边界面在内面 CUDA 之后装配；不再 CPU prepare + H2D。
+    } else {
         T::prepare_cuda_rhs_before_interior(residual, params, topology)?;
     }
 
@@ -288,7 +317,19 @@ fn assemble_first_order_typed<T: InviscidTypedScatterBackend + InviscidFirstOrde
         }
     }
 
-    if !cuda_pipeline {
+    if cuda_pipeline {
+        let boundary_cuda = T::try_cuda_first_order_boundary(residual, params, topology)?;
+        if !boundary_cuda {
+            let _span = info_span!(
+                "unstructured_inviscid_boundary_faces_typed",
+                faces = topology.boundary.len(),
+                precision = T::PRECISION.label(),
+                order = "cpu_fallback",
+            )
+            .entered();
+            T::assemble_first_order_boundary_faces(residual, params, topology)?;
+        }
+    } else {
         let _span = info_span!(
             "unstructured_inviscid_boundary_faces_typed",
             faces = topology.boundary.len(),
@@ -438,26 +479,10 @@ impl InviscidFirstOrderInterior for f32 {
     }
 
     fn prepare_cuda_rhs_before_interior(
-        residual: &mut ConservedResidualT<f32>,
-        params: &mut InviscidAssemblyUnstructuredTypedParams<'_, f32>,
-        topology: &UnstructuredFaceTopology,
+        _residual: &mut ConservedResidualT<f32>,
+        _params: &mut InviscidAssemblyUnstructuredTypedParams<'_, f32>,
+        _topology: &UnstructuredFaceTopology,
     ) -> Result<()> {
-        #[cfg(feature = "cuda")]
-        if params.exec.cuda_rhs_pipeline_active() {
-            let _span = info_span!(
-                "unstructured_inviscid_boundary_faces_typed",
-                faces = topology.boundary.len(),
-                precision = "f32",
-                order = "before_interior_cuda",
-            )
-            .entered();
-            Self::assemble_first_order_boundary_faces(residual, params, topology)?;
-            params.exec.cuda_upload_residual_for_rhs(residual)?;
-        }
-        #[cfg(not(feature = "cuda"))]
-        {
-            let _ = (residual, params, topology);
-        }
         Ok(())
     }
 

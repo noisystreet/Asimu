@@ -1,5 +1,7 @@
 //! NVIDIA CUDA 后端（`cudarc`；ADR 0017 G0+）。
 
+mod boundary_face_geom;
+mod boundary_mesh_cache;
 mod buffers;
 mod face_geom;
 mod gradient_buffers;
@@ -7,6 +9,7 @@ mod idwls;
 mod idwls_mesh_cache;
 mod idwls_topology;
 mod inviscid;
+mod lusgs_diagonal;
 mod mesh_cache;
 mod module;
 mod pipeline;
@@ -20,6 +23,10 @@ mod viscous_face_geom;
 mod viscous_mesh_cache;
 mod viscous_transport_params;
 
+pub use boundary_face_geom::{
+    CudaViscousBoundaryInput, ExecInviscidBoundaryFaceStatic, ExecInviscidBoundaryTopology,
+    ExecViscousBoundaryFaceStatic, ExecViscousBoundaryTopology, ViscousBoundaryGhostHost,
+};
 pub use face_geom::{ExecInteriorColorBucket, ExecInteriorFaceStatic, ExecInteriorFaceTopology};
 pub use idwls_mesh_cache::IdwlsViscousRhsHostOut;
 pub use idwls_topology::{DeviceIdwlsGhostSample, ExecIdwlsViscousTopology};

@@ -19,4 +19,11 @@ impl CudaPipelineState {
     pub(crate) fn reset_step(&mut self) {
         *self = Self::default();
     }
+
+    /// RHS 管线步初：保留谱半径 timestep device 驻留状态。
+    pub(crate) fn reset_rhs_step(&mut self) {
+        self.residual_on_device = false;
+        self.gradients_on_device = false;
+        self.viscous_transport_on_device = false;
+    }
 }

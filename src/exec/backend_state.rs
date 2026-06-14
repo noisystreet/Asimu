@@ -87,6 +87,14 @@ impl BackendState {
     }
 
     #[cfg(feature = "cuda")]
+    pub(crate) fn cuda_residual_on_device(&self) -> Option<bool> {
+        match self {
+            Self::Cuda(state) => Some(state.residual_on_device()),
+            Self::Cpu => None,
+        }
+    }
+
+    #[cfg(feature = "cuda")]
     pub(crate) fn cuda_mut(&mut self) -> Result<&mut super::gpu::cuda::CudaBackendState> {
         match self {
             Self::Cuda(state) => Ok(state.as_mut()),

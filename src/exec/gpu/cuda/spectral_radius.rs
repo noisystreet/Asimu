@@ -102,3 +102,29 @@ pub fn launch_finalize_cell_dts(
     }
     Ok(())
 }
+
+pub fn launch_min_positive_cell_dt(
+    stream: &Arc<CudaStream>,
+    function: &cudarc::driver::CudaFunction,
+    num_cells: u32,
+    cell_dts: &cudarc::driver::CudaSlice<f32>,
+    min_out: &mut cudarc::driver::CudaSlice<f32>,
+) -> Result<()> {
+    let _span = info_span!("cuda_min_positive_cell_dt", cells = num_cells).entered();
+    let num_blocks = num_cells.div_ceil(BLOCK_THREADS);
+    let cfg = LaunchConfig {
+        grid_dim: (num_blocks, 1, 1),
+        block_dim: (BLOCK_THREADS, 1, 1),
+        shared_mem_bytes: 0,
+    };
+    let mut builder = stream.launch_builder(function);
+    builder.arg(&num_cells);
+    builder.arg(cell_dts);
+    builder.arg(min_out);
+    unsafe {
+        builder.launch(cfg).map_err(|e| {
+            AsimuError::Exec(format!("CUDA min_positive_cell_dt launch 失败: {e:?}"))
+        })?;
+    }
+    Ok(())
+}

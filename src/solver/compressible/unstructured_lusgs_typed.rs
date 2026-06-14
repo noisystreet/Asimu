@@ -1,5 +1,7 @@
 //! 非结构 typed 驱动 LU-SGS 扫掠精度分发（f32 预打包耦合）。
 
+#[cfg(feature = "cuda")]
+use crate::core::ExecDevice;
 use crate::core::{ComputeFloat, Real};
 use crate::error::Result;
 use crate::field::{ConservedFieldsT, assign_lusgs_diagonal_update_f32};
@@ -113,6 +115,17 @@ impl UnstructuredLusgsDiagonalUpdate for f32 {
         gamma: Real,
         p_floor: Real,
     ) -> Result<()> {
+        #[cfg(feature = "cuda")]
+        if try_cuda_lusgs_diagonal_update_f32(work, omega)? {
+            if work.exec.cuda_residual_on_device() {
+                work.exec.cuda_flush_rhs_residual(&mut work.storage.k1)?;
+            }
+            return Ok(());
+        }
+        #[cfg(feature = "cuda")]
+        if work.exec.cuda_rhs_pipeline_active() && work.exec.cuda_residual_on_device() {
+            work.exec.cuda_flush_rhs_residual(&mut work.storage.k1)?;
+        }
         assign_lusgs_diagonal_update_f32(
             &mut work.storage.stage,
             &work.storage.u0,
@@ -124,6 +137,23 @@ impl UnstructuredLusgsDiagonalUpdate for f32 {
             p_floor,
         )
     }
+}
+
+#[cfg(feature = "cuda")]
+fn try_cuda_lusgs_diagonal_update_f32(
+    work: &mut UnstructuredStepWorkTyped<f32>,
+    omega: Real,
+) -> Result<bool> {
+    if work.exec.device() != ExecDevice::GpuCuda || !work.exec.cuda_timestep_on_device() {
+        return Ok(false);
+    }
+    work.exec.cuda_lusgs_diagonal_update_f32(
+        &work.storage.u0,
+        &work.storage.k1,
+        &mut work.storage.stage,
+        omega as f32,
+    )?;
+    Ok(true)
 }
 
 impl UnstructuredLusgsDiagonalUpdate for f64 {

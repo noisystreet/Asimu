@@ -7,7 +7,7 @@ use cudarc::driver::{CudaSlice, CudaStream, DeviceRepr};
 
 use super::transfer::{clone_dtoh_unchecked, d2h_batch, h2d_batch, memcpy_htod_unchecked};
 use crate::error::{AsimuError, Result};
-use crate::field::{ConservedResidualT, PrimitiveFieldsT};
+use crate::field::{ConservedFieldsT, ConservedResidualT, PrimitiveFieldsT};
 
 /// 与 CUDA kernel `FaceGeom` 一致的设备布局。
 #[repr(C)]
@@ -36,6 +36,11 @@ pub struct CudaFieldBuffers {
     pub(crate) res_my: CudaSlice<f32>,
     pub(crate) res_mz: CudaSlice<f32>,
     pub(crate) res_e: CudaSlice<f32>,
+    pub(crate) cons_rho: CudaSlice<f32>,
+    pub(crate) cons_mx: CudaSlice<f32>,
+    pub(crate) cons_my: CudaSlice<f32>,
+    pub(crate) cons_mz: CudaSlice<f32>,
+    pub(crate) cons_e: CudaSlice<f32>,
     pub(crate) num_cells: usize,
 }
 
@@ -51,22 +56,24 @@ impl CudaFieldBuffers {
                 "CUDA 场缓冲需要 num_cells > 0".to_string(),
             ));
         }
-        let alloc = |n: usize| -> Result<CudaSlice<f32>> {
-            stream
-                .alloc_zeros::<f32>(n)
-                .map_err(|e| AsimuError::Exec(format!("CUDA 分配失败: {e:?}")))
-        };
+        let prim_res = alloc_prim_and_residual_buffers(stream, num_cells)?;
+        let cons = alloc_conserved_buffers(stream, num_cells)?;
         Ok(Self {
-            prim_rho: alloc(num_cells)?,
-            prim_p: alloc(num_cells)?,
-            prim_ux: alloc(num_cells)?,
-            prim_uy: alloc(num_cells)?,
-            prim_uz: alloc(num_cells)?,
-            res_rho: alloc(num_cells)?,
-            res_mx: alloc(num_cells)?,
-            res_my: alloc(num_cells)?,
-            res_mz: alloc(num_cells)?,
-            res_e: alloc(num_cells)?,
+            prim_rho: prim_res.prim_rho,
+            prim_p: prim_res.prim_p,
+            prim_ux: prim_res.prim_ux,
+            prim_uy: prim_res.prim_uy,
+            prim_uz: prim_res.prim_uz,
+            res_rho: prim_res.res_rho,
+            res_mx: prim_res.res_mx,
+            res_my: prim_res.res_my,
+            res_mz: prim_res.res_mz,
+            res_e: prim_res.res_e,
+            cons_rho: cons.cons_rho,
+            cons_mx: cons.cons_mx,
+            cons_my: cons.cons_my,
+            cons_mz: cons.cons_mz,
+            cons_e: cons.cons_e,
             num_cells,
         })
     }
@@ -120,6 +127,50 @@ impl CudaFieldBuffers {
             dtoh_into_unchecked(stream, &self.res_my, residual.momentum_y.values_mut())?;
             dtoh_into_unchecked(stream, &self.res_mz, residual.momentum_z.values_mut())?;
             dtoh_into_unchecked(stream, &self.res_e, residual.total_energy.values_mut())?;
+            Ok(())
+        })
+    }
+
+    pub fn upload_conserved(
+        &mut self,
+        stream: &Arc<CudaStream>,
+        fields: &ConservedFieldsT<f32>,
+    ) -> Result<()> {
+        let n = fields.num_cells();
+        if n != self.num_cells {
+            return Err(AsimuError::Field(format!(
+                "守恒场长度 {n} 与 device 缓冲 {} 不一致",
+                self.num_cells
+            )));
+        }
+        h2d_batch("field_conserved", n * 5 * size_of::<f32>(), n, || {
+            memcpy_htod_unchecked(stream, fields.density.values(), &mut self.cons_rho)?;
+            memcpy_htod_unchecked(stream, fields.momentum_x.values(), &mut self.cons_mx)?;
+            memcpy_htod_unchecked(stream, fields.momentum_y.values(), &mut self.cons_my)?;
+            memcpy_htod_unchecked(stream, fields.momentum_z.values(), &mut self.cons_mz)?;
+            memcpy_htod_unchecked(stream, fields.total_energy.values(), &mut self.cons_e)?;
+            Ok(())
+        })
+    }
+
+    pub fn download_conserved(
+        &self,
+        stream: &Arc<CudaStream>,
+        fields: &mut ConservedFieldsT<f32>,
+    ) -> Result<()> {
+        let n = fields.num_cells();
+        if n != self.num_cells {
+            return Err(AsimuError::Field(format!(
+                "守恒场长度 {n} 与 device 缓冲 {} 不一致",
+                self.num_cells
+            )));
+        }
+        d2h_batch("field_conserved", n * 5 * size_of::<f32>(), n, || {
+            dtoh_into_unchecked(stream, &self.cons_rho, fields.density.values_mut())?;
+            dtoh_into_unchecked(stream, &self.cons_mx, fields.momentum_x.values_mut())?;
+            dtoh_into_unchecked(stream, &self.cons_my, fields.momentum_y.values_mut())?;
+            dtoh_into_unchecked(stream, &self.cons_mz, fields.momentum_z.values_mut())?;
+            dtoh_into_unchecked(stream, &self.cons_e, fields.total_energy.values_mut())?;
             Ok(())
         })
     }
@@ -213,4 +264,59 @@ fn zero_slice(stream: &Arc<CudaStream>, buf: &mut CudaSlice<f32>) -> Result<()> 
     stream
         .memset_zeros(buf)
         .map_err(|e| AsimuError::Exec(format!("CUDA memset 失败: {e:?}")))
+}
+
+struct PrimResidualBuffers {
+    prim_rho: CudaSlice<f32>,
+    prim_p: CudaSlice<f32>,
+    prim_ux: CudaSlice<f32>,
+    prim_uy: CudaSlice<f32>,
+    prim_uz: CudaSlice<f32>,
+    res_rho: CudaSlice<f32>,
+    res_mx: CudaSlice<f32>,
+    res_my: CudaSlice<f32>,
+    res_mz: CudaSlice<f32>,
+    res_e: CudaSlice<f32>,
+}
+
+struct ConservedBuffers {
+    cons_rho: CudaSlice<f32>,
+    cons_mx: CudaSlice<f32>,
+    cons_my: CudaSlice<f32>,
+    cons_mz: CudaSlice<f32>,
+    cons_e: CudaSlice<f32>,
+}
+
+fn alloc_zeros_f32(stream: &Arc<CudaStream>, n: usize) -> Result<CudaSlice<f32>> {
+    stream
+        .alloc_zeros::<f32>(n)
+        .map_err(|e| AsimuError::Exec(format!("CUDA 分配失败: {e:?}")))
+}
+
+fn alloc_prim_and_residual_buffers(
+    stream: &Arc<CudaStream>,
+    num_cells: usize,
+) -> Result<PrimResidualBuffers> {
+    Ok(PrimResidualBuffers {
+        prim_rho: alloc_zeros_f32(stream, num_cells)?,
+        prim_p: alloc_zeros_f32(stream, num_cells)?,
+        prim_ux: alloc_zeros_f32(stream, num_cells)?,
+        prim_uy: alloc_zeros_f32(stream, num_cells)?,
+        prim_uz: alloc_zeros_f32(stream, num_cells)?,
+        res_rho: alloc_zeros_f32(stream, num_cells)?,
+        res_mx: alloc_zeros_f32(stream, num_cells)?,
+        res_my: alloc_zeros_f32(stream, num_cells)?,
+        res_mz: alloc_zeros_f32(stream, num_cells)?,
+        res_e: alloc_zeros_f32(stream, num_cells)?,
+    })
+}
+
+fn alloc_conserved_buffers(stream: &Arc<CudaStream>, num_cells: usize) -> Result<ConservedBuffers> {
+    Ok(ConservedBuffers {
+        cons_rho: alloc_zeros_f32(stream, num_cells)?,
+        cons_mx: alloc_zeros_f32(stream, num_cells)?,
+        cons_my: alloc_zeros_f32(stream, num_cells)?,
+        cons_mz: alloc_zeros_f32(stream, num_cells)?,
+        cons_e: alloc_zeros_f32(stream, num_cells)?,
+    })
 }

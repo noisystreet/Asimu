@@ -180,6 +180,22 @@ impl ExecutionContext {
         self.backend_state.mark_cuda_primitives_stale();
     }
 
+    /// CUDA P1：步初重置 H2D/D2H 计数。
+    #[cfg(feature = "cuda")]
+    pub fn cuda_reset_step_transfer_counters(&mut self) -> Result<()> {
+        self.backend_state
+            .cuda_mut()?
+            .reset_step_transfer_counters();
+        Ok(())
+    }
+
+    /// CUDA P1：步初清零整条 device 管线状态。
+    #[cfg(feature = "cuda")]
+    pub fn cuda_reset_full_pipeline_step(&mut self) -> Result<()> {
+        self.backend_state.cuda_mut()?.reset_full_pipeline_step();
+        Ok(())
+    }
+
     /// CUDA P1：步初重置 device 管线状态。
     #[cfg(feature = "cuda")]
     pub fn cuda_reset_pipeline_step(&mut self) -> Result<()> {
@@ -210,6 +226,14 @@ impl ExecutionContext {
             .unwrap_or(false)
     }
 
+    #[cfg(feature = "cuda")]
+    #[must_use]
+    pub fn cuda_residual_on_device(&self) -> bool {
+        self.backend_state
+            .cuda_residual_on_device()
+            .unwrap_or(false)
+    }
+
     /// CUDA P1：边界面 CPU scatter 后上传残差至 device。
     #[cfg(feature = "cuda")]
     pub fn cuda_upload_residual_for_rhs(
@@ -236,6 +260,28 @@ impl ExecutionContext {
         )
     }
 
+    /// CUDA P1：RHS 管线结束，仅残差 D2H（梯度可延后至边界面装配前）。
+    #[cfg(feature = "cuda")]
+    pub fn cuda_flush_rhs_residual(
+        &mut self,
+        residual: &mut crate::field::ConservedResidualT<f32>,
+    ) -> Result<()> {
+        self.backend_state
+            .cuda_mut()?
+            .flush_residual_to_host(residual)
+    }
+
+    /// CUDA P1：梯度 device → host（粘性边界面装配前按需调用）。
+    #[cfg(feature = "cuda")]
+    pub fn cuda_download_gradients_to_host(
+        &mut self,
+        gradients: &mut crate::discretization::gradient_typed::GradientFieldsT<f32>,
+    ) -> Result<()> {
+        self.backend_state
+            .cuda_mut()?
+            .flush_gradients_to_host(gradients)
+    }
+
     /// CUDA P1：RHS 管线结束，残差/梯度 D2H。
     #[cfg(feature = "cuda")]
     pub fn cuda_flush_rhs_pipeline(
@@ -243,10 +289,37 @@ impl ExecutionContext {
         residual: &mut crate::field::ConservedResidualT<f32>,
         gradients: &mut crate::discretization::gradient_typed::GradientFieldsT<f32>,
     ) -> Result<()> {
-        let cuda = self.backend_state.cuda_mut()?;
-        cuda.flush_residual_to_host(residual)?;
-        cuda.flush_gradients_to_host(gradients)?;
+        self.cuda_flush_rhs_residual(residual)?;
+        self.cuda_download_gradients_to_host(gradients)?;
         Ok(())
+    }
+
+    /// CUDA P1：device 上 `cell_dts` 最小正有限值（单 float D2H）。
+    #[cfg(feature = "cuda")]
+    pub fn cuda_download_min_cell_dt_f32(&mut self) -> Result<f32> {
+        self.backend_state.cuda_mut()?.download_min_cell_dt_f32()
+    }
+
+    /// CUDA P1：LU-SGS 对角更新（σ/Δt/residual 在 device）。
+    #[cfg(feature = "cuda")]
+    pub fn cuda_lusgs_diagonal_update_f32(
+        &mut self,
+        base: &crate::field::ConservedFieldsT<f32>,
+        residual: &crate::field::ConservedResidualT<f32>,
+        stage: &mut crate::field::ConservedFieldsT<f32>,
+        omega: f32,
+    ) -> Result<()> {
+        self.backend_state
+            .cuda_mut()?
+            .lusgs_diagonal_update_f32(base, residual, stage, omega)
+    }
+
+    /// CUDA P1：步末记录本步 H2D/D2H 次数。
+    #[cfg(feature = "cuda")]
+    pub fn cuda_log_step_transfer_counters(&mut self, step: u32) {
+        if let Ok(cuda) = self.backend_state.cuda_mut() {
+            cuda.log_step_transfer_counters(step);
+        }
     }
 
     /// CUDA：将 host primitive 上传 device（仅当已标记过期）。
@@ -277,6 +350,52 @@ impl ExecutionContext {
             .assemble_first_order_inviscid_interior(
                 residual, primitives, topo, topo_key, params, defer,
             )
+    }
+
+    /// CUDA P2：一阶无粘边界面 flux + atomic scatter（ghost 每步 H2D）。
+    #[cfg(feature = "cuda")]
+    pub fn cuda_assemble_first_order_inviscid_boundary(
+        &mut self,
+        residual: &mut crate::field::ConservedResidualT<f32>,
+        primitives: &crate::field::PrimitiveFieldsT<f32>,
+        topo: &crate::exec::gpu::cuda::ExecInviscidBoundaryTopology,
+        topo_key: usize,
+        boundary_ghosts: &[crate::discretization::unstructured_spectral_exec_topo::SpectralGhostPrimHost],
+        params: crate::exec::gpu::cuda::CudaFirstOrderInviscidParams,
+    ) -> Result<()> {
+        let defer = self
+            .backend_state
+            .cuda_rhs_pipeline_active()
+            .unwrap_or(false);
+        self.backend_state
+            .cuda_mut()?
+            .assemble_first_order_inviscid_boundary(
+                residual,
+                primitives,
+                topo,
+                topo_key,
+                boundary_ghosts,
+                params,
+                defer,
+            )
+    }
+
+    /// CUDA P2：粘性边界面 flux + atomic scatter（读 device 梯度）。
+    #[cfg(feature = "cuda")]
+    pub fn cuda_assemble_viscous_boundary_f32(
+        &mut self,
+        residual: &mut crate::field::ConservedResidualT<f32>,
+        primitives: &crate::field::PrimitiveFieldsT<f32>,
+        gradients: &crate::discretization::gradient_typed::GradientFieldsT<f32>,
+        input: crate::exec::gpu::cuda::CudaViscousBoundaryInput<'_>,
+    ) -> Result<()> {
+        let defer = self
+            .backend_state
+            .cuda_rhs_pipeline_active()
+            .unwrap_or(false);
+        self.backend_state
+            .cuda_mut()?
+            .assemble_viscous_boundary(residual, primitives, gradients, input, defer)
     }
 
     /// CUDA G2：粘性内面着色桶 flux + scatter（仅动量/能量）。

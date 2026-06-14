@@ -47,6 +47,8 @@ pub mod roe;
 pub mod roe_f32;
 pub mod slau2;
 pub mod slau2_f32;
+#[cfg(feature = "cuda")]
+pub mod unstructured_boundary_exec_topo;
 pub mod unstructured_face_cache;
 pub mod unstructured_face_cache_f32;
 pub mod unstructured_idwls_exec_topo;

@@ -114,9 +114,28 @@ pub fn compute_gradients_and_assemble_viscous_unstructured_f32(
     )?;
     #[cfg(feature = "cuda")]
     if input.exec.cuda_rhs_pipeline_active() {
-        input
-            .exec
-            .cuda_flush_rhs_pipeline(residual, input.gradient_scratch)?;
+        let boundary_cuda = assembly_unstructured_viscous_f32_cuda::cuda_viscous_f32_boundary(
+            residual,
+            input,
+            grad_scratch,
+        )?;
+        if !boundary_cuda {
+            let boundary_params = ViscousBoundaryFluxParamsF32 {
+                eos: input.eos,
+                viscous: input.viscous,
+                primitives: input.primitives,
+                gradients: input.gradient_scratch,
+            };
+            assemble_boundary_faces_f32(
+                residual,
+                &input.mesh_cache.face_topology_f32,
+                input.ghosts,
+                &boundary_params,
+                input.min_pressure,
+                &grad_scratch.temperatures,
+            )?;
+        }
+        return Ok(());
     }
     let boundary_params = ViscousBoundaryFluxParamsF32 {
         eos: input.eos,

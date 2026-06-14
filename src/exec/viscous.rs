@@ -53,3 +53,22 @@ pub fn try_prepare_unstructured_viscous_transport_f32_cuda(
     let _ = (exec, topo, topo_key, temperatures, viscous, eos);
     Ok(false)
 }
+
+/// 若当前 `ExecutionContext` 为 CUDA，在 device 上装配粘性边界面残差并返回 `Ok(true)`。
+pub fn try_assemble_viscous_boundary_f32(
+    exec: &mut ExecutionContext,
+    residual: &mut ConservedResidualT<f32>,
+    primitives: &PrimitiveFieldsT<f32>,
+    gradients: &GradientFieldsT<f32>,
+    input: crate::exec::gpu::cuda::CudaViscousBoundaryInput<'_>,
+) -> Result<bool> {
+    #[cfg(feature = "cuda")]
+    {
+        if exec.device() == ExecDevice::GpuCuda {
+            exec.cuda_assemble_viscous_boundary_f32(residual, primitives, gradients, input)?;
+            return Ok(true);
+        }
+    }
+    let _ = (exec, residual, primitives, gradients, input);
+    Ok(false)
+}

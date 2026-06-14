@@ -156,3 +156,29 @@ extern "C" __global__ void finalize_cell_dts_f32(uint32_t num_cells, float cfl, 
     }
     cell_dts[cell] = cfl / s;
 }
+
+// device 上求 cell_dts 正有限最小值（单 float D2H；对齐 min_positive_dt_f32）。
+__device__ inline void atomic_min_positive_f32(float *addr, float val) {
+    if (!isfinite(val) || val <= 0.0f) {
+        return;
+    }
+    int *addr_as_i = (int *)addr;
+    int old = *addr_as_i;
+    while (val < __int_as_float(old)) {
+        int assumed = old;
+        old = atomicCAS(addr_as_i, assumed, __float_as_int(val));
+        if (assumed == old) {
+            break;
+        }
+    }
+}
+
+extern "C" __global__ void min_positive_cell_dt_f32(uint32_t num_cells,
+                                                    const float *__restrict__ cell_dts,
+                                                    float *__restrict__ min_out) {
+    uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= num_cells) {
+        return;
+    }
+    atomic_min_positive_f32(min_out, cell_dts[i]);
+}
