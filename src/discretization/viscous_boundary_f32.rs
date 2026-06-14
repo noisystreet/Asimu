@@ -3,7 +3,6 @@
 use crate::boundary::WallHeat;
 use crate::core::{Real, Vector3};
 use crate::discretization::gradient_typed::{GradientFieldsT, VelocityGradientT};
-use crate::discretization::viscous::face_transport_coefficients;
 use crate::discretization::viscous_assembly::ViscousBoundaryFaceKind;
 use crate::discretization::viscous_f32::{
     ColoredViscousFaceFluxF32, ViscousFaceAveragedLaneF32,
@@ -210,27 +209,24 @@ pub fn viscous_flux_at_boundary_f32(
     temperatures: &[f32],
 ) -> Result<ColoredViscousFaceFluxF32> {
     let prim_o = viscous_primitive_at_f32(params.primitives, temperatures, owner);
-    let t_ghost = params.viscous.static_temperature(
-        ghost_prim.pressure as Real,
-        ghost_prim.density.max(1.0e-30_f32) as Real,
+    let t_ghost = params.viscous.static_temperature_f32(
+        ghost_prim.pressure,
+        ghost_prim.density.max(1.0e-30_f32),
         params.eos,
     );
     let mut ghost = ghost_prim;
-    ghost.temperature = t_ghost as f32;
+    ghost.temperature = t_ghost;
     let grad_o = params.gradients.velocity_grad_at(owner);
     let grad_g = if kind.is_wall {
         wall_extrapolated_gradient_f32(&grad_o, &prim_o, &ghost, normal, spacing)
     } else {
         grad_o
     };
-    let (mu, lambda) = face_transport_coefficients(
-        temperatures[owner] as Real,
-        ghost.temperature as Real,
-        params.viscous,
+    let (mu, lambda) = params.viscous.face_transport_coefficients_f32(
+        temperatures[owner],
+        ghost.temperature,
         params.eos,
     )?;
-    let mu = mu as f32;
-    let lambda = lambda as f32;
     let mut flux = viscous_face_flux_f32(&prim_o, &grad_o, &ghost, &grad_g, normal, mu, lambda);
     if kind.no_slip {
         let grad = average_gradient_f32(&grad_o, &grad_g);

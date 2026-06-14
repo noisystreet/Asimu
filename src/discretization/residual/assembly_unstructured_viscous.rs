@@ -753,10 +753,9 @@ fn fill_cell_transport_coefficients_f32(
     scratch: &mut ViscousAssemblyUnstructuredScratch,
 ) -> Result<()> {
     for (cell, &t) in temperatures.iter().enumerate() {
-        let t_real = t as Real;
-        let (mu, lambda) = face_transport_coefficients(t_real, t_real, viscous, eos)?;
-        scratch.cell_mu[cell] = mu;
-        scratch.cell_lambda[cell] = lambda;
+        let (mu, lambda) = viscous.face_transport_coefficients_f32(t, t, eos)?;
+        scratch.cell_mu[cell] = mu as Real;
+        scratch.cell_lambda[cell] = lambda as Real;
     }
     Ok(())
 }

@@ -326,6 +326,16 @@ fn viscous_face_flux_from_averaged(
     }
 }
 
+/// 面两侧粘度与热导率（算术平均，f32）。
+pub fn face_transport_coefficients_f32(
+    t_l: f32,
+    t_r: f32,
+    viscous: &ViscousPhysicsConfig,
+    eos: &IdealGasEoS,
+) -> crate::error::Result<(f32, f32)> {
+    viscous.face_transport_coefficients_f32(t_l, t_r, eos)
+}
+
 /// 面两侧粘度与热导率（算术平均）。
 pub fn face_transport_coefficients(
     t_l: Real,

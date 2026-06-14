@@ -57,6 +57,35 @@ impl ViscosityModel {
         }
     }
 
+    /// f32 动力粘度（Sutherland / 常数；热路径用）。
+    pub fn dynamic_viscosity_f32(&self, temperature: f32) -> Result<f32> {
+        if temperature <= 0.0 {
+            return Err(AsimuError::Config(
+                "温度必须大于 0 才能计算粘度".to_string(),
+            ));
+        }
+        match self {
+            Self::Constant { mu } => Ok(*mu as f32),
+            Self::Sutherland {
+                mu_ref,
+                t_ref,
+                sutherland_constant,
+            } => {
+                if *t_ref <= 0.0 {
+                    return Err(AsimuError::Config(
+                        "Sutherland T_ref 必须大于 0".to_string(),
+                    ));
+                }
+                let t_ref = *t_ref as f32;
+                let tr = temperature / t_ref;
+                Ok(
+                    (*mu_ref as f32) * tr.powf(1.5) * (t_ref + *sutherland_constant as f32)
+                        / (temperature + *sutherland_constant as f32),
+                )
+            }
+        }
+    }
+
     /// 热传导系数 \(\lambda = \mu c_p / \mathrm{Pr}\)。
     pub fn thermal_conductivity(
         &self,
@@ -134,11 +163,31 @@ impl ViscousPhysicsConfig {
         }
     }
 
+    /// 静温 f32（与 [`static_temperature`] 语义一致）。
+    #[must_use]
+    pub fn static_temperature_f32(&self, pressure: f32, density: f32, eos: &IdealGasEoS) -> f32 {
+        let rho = density.max(1.0e-30_f32);
+        let gamma = eos.gamma as f32;
+        if self.is_nondimensional() {
+            pressure / rho * gamma
+        } else {
+            pressure / (rho * eos.gas_constant as f32)
+        }
+    }
+
     /// 将 `static_temperature` 返回值转为 Sutherland 等模型所需的有量纲 \(T\) (K)。
     #[must_use]
     pub fn dimensional_temperature_from_static(&self, temperature: Real) -> Real {
         self.temperature_ref
             .map(|t_ref| temperature * t_ref)
+            .unwrap_or(temperature)
+    }
+
+    /// 将 f32 静温转为 Sutherland 等有量纲温度 (K)。
+    #[must_use]
+    pub fn dimensional_temperature_from_static_f32(&self, temperature: f32) -> f32 {
+        self.temperature_ref
+            .map(|t_ref| temperature * t_ref as f32)
             .unwrap_or(temperature)
     }
 
@@ -149,6 +198,16 @@ impl ViscousPhysicsConfig {
             1.0 / (eos.gamma - 1.0)
         } else {
             eos.gamma * eos.gas_constant / (eos.gamma - 1.0)
+        }
+    }
+
+    #[must_use]
+    pub fn specific_heat_capacity_f32(&self, eos: &IdealGasEoS) -> f32 {
+        let gamma = eos.gamma as f32;
+        if self.is_nondimensional() {
+            1.0 / (gamma - 1.0)
+        } else {
+            gamma * eos.gas_constant as f32 / (gamma - 1.0)
         }
     }
 
@@ -188,11 +247,35 @@ impl ViscousPhysicsConfig {
         }
         Ok((mu, lambda))
     }
+
+    /// 面平均 \(\mu,\lambda\)（f32 热路径；无量纲缩放与 f64 一致）。
+    pub fn face_transport_coefficients_f32(
+        &self,
+        t_left: f32,
+        t_right: f32,
+        eos: &IdealGasEoS,
+    ) -> Result<(f32, f32)> {
+        let t_l = self.dimensional_temperature_from_static_f32(t_left);
+        let t_r = self.dimensional_temperature_from_static_f32(t_right);
+        let mu_l = self.model.dynamic_viscosity_f32(t_l)?;
+        let mu_r = self.model.dynamic_viscosity_f32(t_r)?;
+        let mut mu = 0.5 * (mu_l + mu_r);
+        let cp = self.specific_heat_capacity_f32(eos);
+        let prandtl = self.prandtl as f32;
+        let mut lambda = mu * cp / prandtl;
+        if let Some(mu_ref) = self.viscosity_ref {
+            let scale = (self.inv_reynolds / mu_ref) as f32;
+            mu *= scale;
+            lambda *= scale;
+        }
+        Ok((mu, lambda))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::approx_eq;
     use crate::physics::IdealGasEoS;
     use crate::physics::{FreestreamParams, ReferenceScales};
 
@@ -261,6 +344,21 @@ mod tests {
             (mu - inv_re).abs() / inv_re < 1.0e-10,
             "freestream mu* should be 1/Re, got {mu} vs {inv_re}"
         );
+    }
+
+    #[test]
+    fn face_transport_coefficients_f32_matches_f64_at_300k() {
+        let eos = IdealGasEoS::AIR_STANDARD;
+        let viscous = ViscousPhysicsConfig::default();
+        let t = 300.0_f32;
+        let (mu_f64, lambda_f64) = viscous
+            .face_transport_coefficients(t as Real, t as Real, &eos)
+            .expect("f64");
+        let (mu_f32, lambda_f32) = viscous
+            .face_transport_coefficients_f32(t, t, &eos)
+            .expect("f32");
+        assert!(approx_eq(mu_f32 as Real, mu_f64, 1.0e-4));
+        assert!(approx_eq(lambda_f32 as Real, lambda_f64, 1.0e-4));
     }
 
     #[test]
