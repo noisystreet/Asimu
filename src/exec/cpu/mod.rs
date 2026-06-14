@@ -1,13 +1,16 @@
 //! CPU 热算子：标量实现 + 可选 `wide` SIMD（`simd-fvm`）。
 
 mod hvl;
+mod hvl_f32_batch;
 mod lsq;
 mod lsq_f32;
 mod lusgs;
 mod roe;
+mod roe_f32_batch;
 mod viscous;
 
 pub use hvl::face_inviscid_flux_first_order_hanel_batch4;
+pub use hvl_f32_batch::face_inviscid_flux_first_order_hanel_batch4_f32;
 pub use lsq::{
     Symmetric3x3, accumulate_lsq_rhs_component, solve_symmetric_3x3, solve_symmetric_3x3_batch4,
 };
@@ -16,6 +19,7 @@ pub use lsq_f32::{
 };
 pub use lusgs::{ConservedSoA, ConservedSoAMut, LusgsDiagonalUpdate, assign_lusgs_diagonal_update};
 pub use roe::{InviscidFlux5, face_inviscid_flux_first_order_roe_batch4};
+pub use roe_f32_batch::face_inviscid_flux_first_order_roe_batch4_f32;
 pub use viscous::{
     VelocityGradientSoA, ViscousFaceBatchGeom, ViscousFaceGather4, ViscousFlux4,
     fused_interior_viscous_face_flux_batch4, fused_interior_viscous_face_flux_batch4_from_soa,

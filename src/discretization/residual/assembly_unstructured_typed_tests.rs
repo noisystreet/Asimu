@@ -251,3 +251,34 @@ fn f64_single_tet_muscl_uniform_freestream_has_near_zero_rhs() {
         "f64 muscl tet density rhs"
     );
 }
+
+#[cfg(feature = "simd-fvm")]
+#[test]
+fn f32_single_tet_roe_simd_freestream_has_near_zero_rhs() {
+    let pair = FreestreamPairFixture::air_sutherland(0.2);
+    let side = pair.inviscid_side();
+    let (mesh, boundary, fields, ghosts, mesh_cache, primitives) = single_tet_fixture(&side);
+    let config = InviscidFluxConfig::roe_first_order();
+    let mut exec = ExecutionContext::for_unit_test();
+    let mut params = InviscidAssemblyUnstructuredTypedParams {
+        mesh: &mesh,
+        eos: side.eos,
+        config: &config,
+        boundaries: &boundary,
+        ghosts: &ghosts,
+        primitives: &primitives,
+        mesh_cache: &mesh_cache,
+        gradients: None,
+        min_pressure: side.min_pressure,
+        exec: &mut exec,
+    };
+    let mut rhs = ConservedResidualT::<f32>::zeros(mesh.num_cells()).expect("rhs");
+    assemble_inviscid_residual_unstructured_typed(&fields, &mut rhs, &mut params).expect("simd");
+    assert!(
+        rhs.density
+            .values()
+            .iter()
+            .all(|v| v.to_real().abs() < 1.0e-5),
+        "f32 roe simd tet density rhs"
+    );
+}

@@ -16,6 +16,10 @@ mod first_order_typed;
 #[path = "assembly_unstructured_first_order_f32.rs"]
 mod first_order_f32;
 
+#[cfg(feature = "simd-fvm")]
+#[path = "assembly_unstructured_inviscid_simd_f32.rs"]
+mod assembly_unstructured_inviscid_simd_f32;
+
 use first_order_f32::assemble_boundary_faces_first_order_f32;
 #[cfg(feature = "parallel-fvm")]
 use first_order_f32::assemble_first_order_interior_faces_parallel_f32;
@@ -412,6 +416,18 @@ impl InviscidFirstOrderInterior for f32 {
         _topology: &UnstructuredFaceTopology,
     ) -> Result<()> {
         assemble_boundary_faces_first_order_f32(residual, params)
+    }
+
+    #[cfg(feature = "simd-fvm")]
+    fn try_simd_first_order_interior_faces(
+        _fields: &ConservedFieldsT<f32>,
+        residual: &mut ConservedResidualT<f32>,
+        params: &InviscidAssemblyUnstructuredTypedParams<'_, f32>,
+        topology: &UnstructuredFaceTopology,
+    ) -> Result<bool> {
+        assembly_unstructured_inviscid_simd_f32::try_assemble_interior_faces_f32(
+            residual, params, topology,
+        )
     }
 }
 

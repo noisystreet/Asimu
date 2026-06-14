@@ -103,7 +103,7 @@ fn first_order_inviscid_scatter_extract_f32(
     }
 }
 
-fn compute_interior_first_order_face_contribution_f32(
+pub(super) fn compute_interior_first_order_face_contribution_f32(
     face_idx: usize,
     interior: &[UnstructuredInteriorFaceF32],
     params: &InviscidAssemblyUnstructuredTypedParams<'_, f32>,
