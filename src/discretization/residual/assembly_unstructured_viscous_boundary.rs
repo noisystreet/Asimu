@@ -6,11 +6,13 @@ use crate::discretization::viscous_assembly::{
     accumulate_viscous_boundary_typed, viscous_flux_at_boundary,
 };
 use crate::discretization::viscous_boundary_f32::{
-    ViscousBoundaryFluxParamsF32, primitive_state_f32_from_real, scatter_viscous_boundary_f32,
-    viscous_flux_at_boundary_f32,
+    ViscousBoundaryFluxParamsF32, scatter_viscous_boundary_f32, viscous_flux_at_boundary_f32,
 };
 use crate::error::{AsimuError, Result};
-use crate::field::{ConservedResidual, ConservedResidualT, primitive_from_conserved_relaxed};
+use crate::field::{
+    ConservedResidual, ConservedResidualT, primitive_from_conserved_relaxed,
+    primitive_from_conserved_relaxed_f32_from_state,
+};
 
 use super::{ViscousAssemblyUnstructuredParams, ViscousAssemblyUnstructuredScratch};
 
@@ -80,9 +82,11 @@ pub(crate) fn assemble_boundary_faces_f32(
         let ghost = ghosts.get_face(face.face).ok_or_else(|| {
             AsimuError::Boundary(format!("边界面 FaceId({}) 缺少 ghost", face.face.index()))
         })?;
-        let ghost_prim_f64 =
-            primitive_from_conserved_relaxed(params.eos, &ghost.conserved, min_pressure)?;
-        let ghost_prim = primitive_state_f32_from_real(ghost_prim_f64);
+        let ghost_prim = primitive_from_conserved_relaxed_f32_from_state(
+            params.eos,
+            &ghost.conserved,
+            min_pressure,
+        )?;
         let kind = face.viscous;
         let flux = viscous_flux_at_boundary_f32(
             params,

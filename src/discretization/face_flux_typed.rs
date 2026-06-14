@@ -13,11 +13,12 @@ use crate::discretization::slau2_f32::slau2_flux_with_primitives_f32;
 use crate::discretization::van_leer_f32::{
     hanel_van_leer_flux_with_primitives_f32, van_leer_flux_with_primitives_f32,
 };
-use crate::discretization::viscous_boundary_f32::{
-    PrimitiveStateF32, primitive_state_f32_from_real,
-};
+use crate::discretization::viscous_boundary_f32::PrimitiveStateF32;
 use crate::error::Result;
-use crate::field::{PrimitiveFieldsT, primitive_from_conserved_relaxed};
+use crate::field::{
+    PrimitiveFieldsT, primitive_from_conserved_relaxed,
+    primitive_from_conserved_relaxed_f32_from_state,
+};
 use crate::physics::IdealGasEoS;
 
 /// 一阶 / 边界面无粘通量 typed 分发。
@@ -68,8 +69,8 @@ impl InviscidFaceFluxTyped for f32 {
         min_pressure: Real,
     ) -> Result<InviscidFlux> {
         let prim_l = primitive_lane_f32(primitives, owner);
-        let ghost_prim = primitive_from_conserved_relaxed(eos, &ghost.conserved, min_pressure)?;
-        let prim_r = primitive_state_f32_from_real(ghost_prim);
+        let prim_r =
+            primitive_from_conserved_relaxed_f32_from_state(eos, &ghost.conserved, min_pressure)?;
         Ok(inviscid_flux_f32_to_real(
             dispatch_inviscid_flux_primitives_f32(&prim_l, &prim_r, normal, eos, config)?,
         ))
@@ -150,8 +151,8 @@ pub fn face_inviscid_flux_first_order_boundary_soa_f32(
     min_pressure: Real,
 ) -> Result<InviscidFluxF32> {
     let prim_l = primitive_lane_f32(primitives, owner);
-    let ghost_prim = primitive_from_conserved_relaxed(eos, &ghost.conserved, min_pressure)?;
-    let prim_r = primitive_state_f32_from_real(ghost_prim);
+    let prim_r =
+        primitive_from_conserved_relaxed_f32_from_state(eos, &ghost.conserved, min_pressure)?;
     dispatch_inviscid_flux_primitives_f32(&prim_l, &prim_r, normal, eos, config)
 }
 
@@ -197,6 +198,7 @@ mod tests {
     use crate::discretization::reconstruction::InterfacePrimitiveStates;
     use crate::discretization::slau2::slau2_flux;
     use crate::discretization::van_leer::{hanel_van_leer_flux, van_leer_flux};
+    use crate::discretization::viscous_boundary_f32::primitive_state_f32_from_real;
     use crate::physics::{ConservedState, PrimitiveState};
 
     #[test]

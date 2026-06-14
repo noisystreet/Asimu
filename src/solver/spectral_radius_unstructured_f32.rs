@@ -10,7 +10,7 @@ use crate::discretization::unstructured_face_cache_f32::{
     UnstructuredBoundaryFaceF32, UnstructuredFaceTopologyF32, UnstructuredInteriorFaceF32,
 };
 use crate::error::{AsimuError, Result};
-use crate::field::{PrimitiveFieldsT, primitive_from_conserved_relaxed};
+use crate::field::{PrimitiveFieldsT, primitive_from_conserved_relaxed_f32_from_state};
 use crate::mesh::UnstructuredMesh3d;
 use crate::physics::{IdealGasEoS, ViscousPhysicsConfig};
 
@@ -158,19 +158,18 @@ fn accumulate_boundary_hyperbolic_f32(
             face.face.index()
         ))
     })?;
-    let ghost_prim =
-        primitive_from_conserved_relaxed(params.eos, &ghost.conserved, params.min_pressure)?;
+    let ghost_prim = primitive_from_conserved_relaxed_f32_from_state(
+        params.eos,
+        &ghost.conserved,
+        params.min_pressure,
+    )?;
     let left = prim_lane_f32(prim, face.owner);
     let radius = face_spectral_radius_f32(
         left,
         FacePrimitiveLaneF32 {
-            rho: ghost_prim.density as f32,
-            pressure: ghost_prim.pressure as f32,
-            velocity: [
-                ghost_prim.velocity[0] as f32,
-                ghost_prim.velocity[1] as f32,
-                ghost_prim.velocity[2] as f32,
-            ],
+            rho: ghost_prim.density,
+            pressure: ghost_prim.pressure,
+            velocity: ghost_prim.velocity,
         },
         face.normal,
         gamma,

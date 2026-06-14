@@ -15,11 +15,9 @@ use crate::discretization::unstructured_limiter::UnstructuredGradientLimiter;
 use crate::discretization::unstructured_limiter::{
     barth_jespersen_sample_factor_f32, venkatakrishnan_sample_factor_f32,
 };
-use crate::discretization::viscous_boundary_f32::{
-    PrimitiveStateF32, primitive_state_f32_from_real, primitive_state_f32_to_real,
-};
+use crate::discretization::viscous_boundary_f32::{PrimitiveStateF32, primitive_state_f32_to_real};
 use crate::error::{AsimuError, Result};
-use crate::field::{PrimitiveFieldsT, primitive_from_conserved_relaxed};
+use crate::field::{PrimitiveFieldsT, primitive_from_conserved_relaxed_f32_from_state};
 use crate::physics::IdealGasEoS;
 
 /// f32 面左右原始变量态。
@@ -87,9 +85,11 @@ pub fn reconstruct_unstructured_boundary_face_f32(
             face.face.index()
         ))
     })?;
-    let ghost_prim_f64 =
-        primitive_from_conserved_relaxed(ctx.eos, &ghost.conserved, ctx.min_pressure)?;
-    let ghost_prim = primitive_state_f32_from_real(ghost_prim_f64);
+    let ghost_prim = primitive_from_conserved_relaxed_f32_from_state(
+        ctx.eos,
+        &ghost.conserved,
+        ctx.min_pressure,
+    )?;
     let left =
         extrapolate_cell_primitive_f32(owner, &owner_prim, owner_grad, face.dr_owner_to_face, ctx)?;
     Ok(InterfacePrimitiveStatesF32 {
@@ -246,8 +246,11 @@ fn sample_phi_f32(
                     bface.face.index()
                 ))
             })?;
-            let prim = primitive_from_conserved_relaxed(eos, &ghost.conserved, min_pressure)?;
-            Ok(primitive_state_f32_from_real(prim))
+            Ok(primitive_from_conserved_relaxed_f32_from_state(
+                eos,
+                &ghost.conserved,
+                min_pressure,
+            )?)
         }
     }
 }

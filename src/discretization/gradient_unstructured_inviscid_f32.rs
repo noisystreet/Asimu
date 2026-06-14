@@ -12,7 +12,7 @@ use crate::discretization::unstructured_face_cache_f32::{
 use crate::error::{AsimuError, Result};
 use crate::exec::ExecutionContext;
 use crate::exec::cpu::{accumulate_lsq_rhs_component_f32, solve_lsq_precomputed_cell_f32};
-use crate::field::primitive_from_conserved_relaxed;
+use crate::field::primitive_from_conserved_relaxed_f32_from_state;
 
 /// 非结构二阶线性重构用 IDWLS 梯度（f32）。
 pub fn compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq_f32(
@@ -171,13 +171,16 @@ fn accumulate_boundary_f32(
             face.face.index()
         ))
     })?;
-    let ghost_prim =
-        primitive_from_conserved_relaxed(input.eos, &ghost.conserved, input.min_pressure)?;
-    let rho_g = ghost_prim.density as f32;
-    let p_g = ghost_prim.pressure as f32;
-    let u_g = ghost_prim.velocity[0] as f32;
-    let v_g = ghost_prim.velocity[1] as f32;
-    let w_g = ghost_prim.velocity[2] as f32;
+    let ghost_prim = primitive_from_conserved_relaxed_f32_from_state(
+        input.eos,
+        &ghost.conserved,
+        input.min_pressure,
+    )?;
+    let rho_g = ghost_prim.density;
+    let p_g = ghost_prim.pressure;
+    let u_g = ghost_prim.velocity[0];
+    let v_g = ghost_prim.velocity[1];
+    let w_g = ghost_prim.velocity[2];
     accumulate_lsq_rhs_component_f32(br, face.lsq_dr, face.lsq_w, rho_g - rho_o);
     accumulate_lsq_rhs_component_f32(bp, face.lsq_dr, face.lsq_w, p_g - p_o);
     accumulate_lsq_rhs_component_f32(bu, face.lsq_dr, face.lsq_w, u_g - u_o);

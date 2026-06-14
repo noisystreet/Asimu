@@ -12,7 +12,7 @@ use crate::discretization::unstructured_face_cache_f32::{
 use crate::error::{AsimuError, Result};
 use crate::exec::ExecutionContext;
 use crate::exec::cpu::{accumulate_lsq_rhs_component_f32, solve_lsq_precomputed_cell_f32};
-use crate::field::{PrimitiveFieldsT, primitive_from_conserved_relaxed};
+use crate::field::{PrimitiveFieldsT, primitive_from_conserved_relaxed_f32_from_state};
 use crate::mesh::UnstructuredMesh3d;
 use crate::physics::{IdealGasEoS, ViscousPhysicsConfig};
 
@@ -245,16 +245,23 @@ fn ghost_scalar_sample_f32(
     input: &UnstructuredGradientLsqInputF32<'_>,
     conserved: crate::physics::ConservedState,
 ) -> Result<ScalarSampleF32> {
-    let prim = primitive_from_conserved_relaxed(input.eos, &conserved, input.min_pressure)?;
+    let prim =
+        primitive_from_conserved_relaxed_f32_from_state(input.eos, &conserved, input.min_pressure)?;
     let t = input
         .viscous
-        .map(|v| v.static_temperature(prim.pressure, prim.density, input.eos))
-        .unwrap_or(prim.pressure / (prim.density.max(1.0e-30) * input.eos.gas_constant));
+        .map(|v| {
+            v.static_temperature(
+                prim.pressure as crate::core::Real,
+                prim.density as crate::core::Real,
+                input.eos,
+            ) as f32
+        })
+        .unwrap_or(prim.temperature);
     Ok(ScalarSampleF32 {
-        u: prim.velocity[0] as f32,
-        v: prim.velocity[1] as f32,
-        w: prim.velocity[2] as f32,
-        t: t as f32,
+        u: prim.velocity[0],
+        v: prim.velocity[1],
+        w: prim.velocity[2],
+        t,
     })
 }
 
