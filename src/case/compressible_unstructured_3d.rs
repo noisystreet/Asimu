@@ -8,13 +8,13 @@ use crate::case::{CaseRunKind, CaseRunResult, validate};
 use crate::core::{ComputePrecision, Real, format_log_fixed4, format_log_sci4, log10_positive};
 use crate::error::{AsimuError, Result};
 use crate::exec::ExecConfig;
-use crate::field::ConservedFields;
+use crate::field::{ConservedFields, ConservedFieldsT};
 use crate::io::{CaseSpec, resolve_case_output_path};
 use crate::mesh::UnstructuredMesh3d;
+use crate::solver::UnstructuredComputeBackend;
 use crate::solver::{
     CompressibleEulerConfig, CompressibleEulerSolver, CompressibleStepInfo, CompressibleTimeMode,
     RungeKutta4Config, UnstructuredDriverConfig, run_unstructured_typed_with_observer,
-    run_unstructured_with_observer,
 };
 
 use super::Compressible3dRunMetrics;
@@ -22,8 +22,8 @@ use super::Compressible3dRunMetrics;
 pub(super) fn run(case: &CaseSpec) -> Result<CaseRunResult> {
     let mesh = case.mesh.as_unstructured_3d()?;
     match case.numerics.compute_precision {
-        ComputePrecision::F64 => run_compressible_unstructured_3d(case, mesh),
-        ComputePrecision::F32 => run_compressible_unstructured_3d_typed_f32(case, mesh),
+        ComputePrecision::F64 => run_compressible_unstructured_3d_typed::<f64>(case, mesh),
+        ComputePrecision::F32 => run_compressible_unstructured_3d_typed::<f32>(case, mesh),
     }
 }
 
@@ -79,91 +79,7 @@ fn prepare_unstructured_run(
     })
 }
 
-fn run_compressible_unstructured_3d(
-    case: &CaseSpec,
-    mesh: &UnstructuredMesh3d,
-) -> Result<CaseRunResult> {
-    let prepared = {
-        let _span = debug_span!("prepare_unstructured_solver").entered();
-        prepare_unstructured_run(case, mesh)?
-    };
-    let UnstructuredPreparedRun {
-        inviscid,
-        solver,
-        eos,
-        freestream,
-        fields,
-        driver_time,
-    } = prepared;
-    let equation_label = unstructured_equation_label(case);
-    log_unstructured_start(mesh, &inviscid, &driver_time, equation_label, None);
-    let driver = UnstructuredDriverConfig {
-        solver: &solver,
-        mesh,
-        eos: &eos,
-        freestream: &freestream,
-        inviscid: &inviscid,
-        patches: &case.boundary,
-        reference: case.reference.as_ref(),
-        viscous: case.physics.viscous.as_ref(),
-        fixed_dt: driver_time.fixed_dt,
-        local_time_step: driver_time.local_time_step,
-        time_scheme: driver_time.time_scheme,
-        lu_sgs: driver_time.lu_sgs,
-        cfl_schedule: driver_time.cfl_schedule,
-        max_steps: driver_time.max_steps,
-        residual_tolerance: driver_time.residual_tolerance,
-        exec_config: ExecConfig::from_numerics(&case.numerics),
-    };
-    let mut fields = fields;
-    let mut interval_paths = Vec::new();
-    let history = run_unstructured_with_observer(&driver, &mut fields, |step| {
-        interval_paths.extend(
-            super::output_interval::maybe_write_compressible_unstructured_interval(
-                case, mesh, step,
-            )?,
-        );
-        Ok(())
-    })?;
-    let last = history
-        .last()
-        .ok_or_else(|| AsimuError::Solver("非结构 3D 推进未产生任何时间步".to_string()))?;
-    let metrics = Compressible3dRunMetrics {
-        steps: last.step,
-        final_time: last.physical_time,
-        residual_rms: last.residual_rms,
-        residual_log10: log10_positive(last.residual_rms),
-        scheme: inviscid.short_label().to_string(),
-        limiter: inviscid.limiter_label().to_string(),
-        converged: last.converged,
-    };
-    log_unstructured_complete(
-        &metrics,
-        inviscid.short_label(),
-        inviscid.limiter_label(),
-        mesh,
-        equation_label,
-    );
-    let output_paths = {
-        let _span = debug_span!("write_unstructured_outputs").entered();
-        write_unstructured_outputs(case, mesh, &fields, &history)?
-    };
-    for path in &interval_paths {
-        info!(path = %path.display(), "算例间隔流场输出");
-    }
-    for path in output_paths {
-        info!(path = %path.display(), "非结构算例输出");
-    }
-    Ok(build_unstructured_case_result(
-        case,
-        mesh,
-        metrics,
-        inviscid.short_label(),
-        equation_label,
-    ))
-}
-
-fn run_compressible_unstructured_3d_typed_f32(
+fn run_compressible_unstructured_3d_typed<T: UnstructuredComputeBackend>(
     case: &CaseSpec,
     mesh: &UnstructuredMesh3d,
 ) -> Result<CaseRunResult> {
@@ -185,7 +101,7 @@ fn run_compressible_unstructured_3d_typed_f32(
         &inviscid,
         &driver_time,
         equation_label,
-        Some(ComputePrecision::F32.label()),
+        Some(T::PRECISION.label()),
     );
     let driver = UnstructuredDriverConfig {
         solver: &solver,
@@ -205,10 +121,10 @@ fn run_compressible_unstructured_3d_typed_f32(
         residual_tolerance: driver_time.residual_tolerance,
         exec_config: ExecConfig::from_numerics(&case.numerics),
     };
-    let mut fields_t = crate::field::ConservedFieldsT::<f32>::from_real_fields(&fields)?;
+    let mut fields_t = ConservedFieldsT::<T>::from_real_fields(&fields)?;
     let mut interval_paths = Vec::new();
     let (history, fields) =
-        run_unstructured_typed_with_observer::<f32>(&driver, &mut fields_t, |step| {
+        run_unstructured_typed_with_observer::<T>(&driver, &mut fields_t, |step| {
             interval_paths.extend(
                 super::output_interval::maybe_write_compressible_unstructured_interval(
                     case, mesh, step,

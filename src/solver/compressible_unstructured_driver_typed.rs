@@ -8,12 +8,11 @@ use crate::core::{
     ComputeFloat, Real, elapsed_ms, format_log_fixed4, format_log_fixed5, format_log_sci4,
     log10_positive,
 };
+use crate::discretization::InviscidFaceFluxTyped;
 use crate::discretization::gradient_typed::GradientFieldsT;
 use crate::discretization::gradient_unstructured_f32::UnstructuredGradientLsqInputF32;
-use crate::discretization::residual::{
-    InviscidAssemblyUnstructuredTypedParams, InviscidTypedScatterBackend,
-    ViscousTypedScatterBackend,
-};
+use crate::discretization::residual::InviscidAssemblyUnstructuredTypedParams;
+use crate::discretization::residual::{InviscidTypedScatterBackend, ViscousTypedScatterBackend};
 use crate::discretization::{
     BoundaryGhostBuffer, ReconstructionKind, UnstructuredGradientLsqInput,
     UnstructuredGradientScratchF32, UnstructuredSolverMeshCache,
@@ -26,14 +25,14 @@ use crate::discretization::{
 };
 use crate::error::{AsimuError, Result};
 use crate::exec::{ExecutionContext, MeshExecMetrics};
+use crate::field::LusgsDiagonalUpdateBackend;
 use crate::field::{ConservedFields, ConservedFieldsT, ConservedResidualT, PrimitiveFieldsT};
 use crate::solver::spectral_radius_unstructured::{
     SpectralRadiusUnstructuredTypedParams, UnstructuredSpectralRadiusTyped,
 };
-use crate::solver::time::TransientStepControl;
 use crate::solver::time::{
     Rk4StorageT, RungeKutta4Config, RungeKutta4Integrator, TimeIntegrationScheme, TimeIntegrator,
-    euler_step, euler_step_local, min_positive_dt, rk4_step, rk4_step_local,
+    TransientStepControl, euler_step, euler_step_local, min_positive_dt, rk4_step, rk4_step_local,
 };
 use crate::solver::{
     CompressibleStepInfo, CompressibleUnstructuredStepView, LuSgsSweepUnstructuredInput,
@@ -74,16 +73,7 @@ pub(crate) struct UnstructuredRunEnvTyped<'a> {
 
 /// typed 非结构同步推进；结束时将场转为 `f64` 供输出。
 #[allow(private_bounds)]
-pub fn run_unstructured_typed_with_observer<
-    T: ComputeFloat
-        + crate::field::LusgsDiagonalUpdateBackend
-        + InviscidTypedScatterBackend
-        + ViscousTypedScatterBackend
-        + UnstructuredTypedRhsDispatch
-        + UnstructuredSpectralRadiusTyped
-        + LuSgsUnstructuredSweepTyped
-        + rhs_dispatch::DispatchImpl,
->(
+pub fn run_unstructured_typed_with_observer<T: UnstructuredComputeBackend>(
     config: &UnstructuredDriverConfig<'_>,
     fields: &mut ConservedFieldsT<T>,
     mut observe_step: impl FnMut(CompressibleUnstructuredStepView<'_>) -> Result<()>,
@@ -167,15 +157,7 @@ pub fn run_unstructured_typed_with_observer<
     Ok((history, fields.cast_real()?))
 }
 
-fn advance_unstructured_step_typed<
-    T: ComputeFloat
-        + crate::field::LusgsDiagonalUpdateBackend
-        + InviscidTypedScatterBackend
-        + ViscousTypedScatterBackend
-        + UnstructuredSpectralRadiusTyped
-        + LuSgsUnstructuredSweepTyped
-        + rhs_dispatch::DispatchImpl,
->(
+fn advance_unstructured_step_typed<T: UnstructuredComputeBackend>(
     env: &mut UnstructuredRunEnvTyped<'_>,
     fields: &mut ConservedFieldsT<T>,
     work: &mut UnstructuredStepWorkTyped<T>,
@@ -239,14 +221,7 @@ fn advance_unstructured_step_typed<
     })
 }
 
-fn advance_unstructured_lusgs_typed<
-    T: ComputeFloat
-        + crate::field::LusgsDiagonalUpdateBackend
-        + InviscidTypedScatterBackend
-        + ViscousTypedScatterBackend
-        + LuSgsUnstructuredSweepTyped
-        + rhs_dispatch::DispatchImpl,
->(
+fn advance_unstructured_lusgs_typed<T: UnstructuredComputeBackend>(
     env: &UnstructuredRunEnvTyped<'_>,
     fields: &mut ConservedFieldsT<T>,
     work: &mut UnstructuredStepWorkTyped<T>,
@@ -331,9 +306,7 @@ fn advance_unstructured_lusgs_typed<
     Ok(())
 }
 
-fn advance_unstructured_explicit_typed<
-    T: InviscidTypedScatterBackend + ViscousTypedScatterBackend + rhs_dispatch::DispatchImpl,
->(
+fn advance_unstructured_explicit_typed<T: UnstructuredRhsDispatchImpl>(
     env: &UnstructuredRunEnvTyped<'_>,
     fields: &mut ConservedFieldsT<T>,
     work: &mut UnstructuredStepWorkTyped<T>,
@@ -386,53 +359,48 @@ fn advance_unstructured_explicit_typed<
     }
 }
 
-fn assemble_unstructured_typed_rhs<T>(
+fn assemble_unstructured_typed_rhs<T: UnstructuredRhsDispatchImpl>(
     env: &UnstructuredRunEnvTyped<'_>,
     work: &mut UnstructuredTypedRhsWork<'_, T>,
     fields: &ConservedFieldsT<T>,
     residual: &mut ConservedResidualT<T>,
     refresh_state: bool,
     p_floor: Real,
-) -> Result<()>
-where
-    T: InviscidTypedScatterBackend + ViscousTypedScatterBackend + rhs_dispatch::DispatchImpl,
+) -> Result<()> {
+    T::assemble_unstructured_rhs(env, work, fields, residual, refresh_state, p_floor)
+}
+
+/// typed 非结构 RHS 装配分发（sealed，仅 f32 / f64）。
+pub(crate) trait UnstructuredRhsDispatchImpl:
+    ComputeFloat + rhs_dispatch::Sealed + Sized
 {
-    rhs_dispatch::DispatchImpl::assemble_unstructured_rhs(
-        env,
-        work,
-        fields,
-        residual,
-        refresh_state,
-        p_floor,
-    )
+    fn assemble_unstructured_rhs(
+        env: &UnstructuredRunEnvTyped<'_>,
+        work: &mut UnstructuredTypedRhsWork<'_, Self>,
+        fields: &ConservedFieldsT<Self>,
+        residual: &mut ConservedResidualT<Self>,
+        refresh_state: bool,
+        p_floor: Real,
+    ) -> Result<()>;
 }
 
 mod rhs_dispatch {
-    use super::*;
-
-    pub trait Sealed {}
+    pub(crate) trait Sealed {}
     impl Sealed for f32 {}
     impl Sealed for f64 {}
-
-    pub(crate) trait DispatchImpl: ComputeFloat + Sealed + Sized {
-        fn assemble_unstructured_rhs(
-            env: &UnstructuredRunEnvTyped<'_>,
-            work: &mut UnstructuredTypedRhsWork<'_, Self>,
-            fields: &ConservedFieldsT<Self>,
-            residual: &mut ConservedResidualT<Self>,
-            refresh_state: bool,
-            p_floor: Real,
-        ) -> Result<()>;
-    }
 }
 
-/// 非结构 typed RHS 装配分发标记（sealed，仅 f32 / f64）。
-pub trait UnstructuredTypedRhsDispatch: ComputeFloat + rhs_dispatch::Sealed + Sized {}
+/// 兼容别名：空标记 trait，由 [`UnstructuredRhsDispatchImpl`] 取代。
+#[allow(dead_code)]
+pub(crate) trait UnstructuredTypedRhsDispatch:
+    ComputeFloat + rhs_dispatch::Sealed + Sized
+{
+}
 
 impl UnstructuredTypedRhsDispatch for f32 {}
 impl UnstructuredTypedRhsDispatch for f64 {}
 
-impl rhs_dispatch::DispatchImpl for f32 {
+impl UnstructuredRhsDispatchImpl for f32 {
     fn assemble_unstructured_rhs(
         env: &UnstructuredRunEnvTyped<'_>,
         work: &mut UnstructuredTypedRhsWork<'_, f32>,
@@ -512,7 +480,7 @@ impl rhs_dispatch::DispatchImpl for f32 {
     }
 }
 
-impl rhs_dispatch::DispatchImpl for f64 {
+impl UnstructuredRhsDispatchImpl for f64 {
     fn assemble_unstructured_rhs(
         env: &UnstructuredRunEnvTyped<'_>,
         work: &mut UnstructuredTypedRhsWork<'_, f64>,
@@ -634,6 +602,22 @@ fn prepare_unstructured_timestep_typed<T: ComputeFloat + UnstructuredSpectralRad
     )?;
     Ok((cell_dts, sigma))
 }
+
+/// 非结构可压缩求解热路径所需精度后端（ADR 0018；密封于 f32 / f64）。
+pub(crate) trait UnstructuredComputeBackend:
+    ComputeFloat
+    + LusgsDiagonalUpdateBackend
+    + InviscidFaceFluxTyped
+    + InviscidTypedScatterBackend
+    + ViscousTypedScatterBackend
+    + UnstructuredSpectralRadiusTyped
+    + LuSgsUnstructuredSweepTyped
+    + UnstructuredRhsDispatchImpl
+{
+}
+
+impl UnstructuredComputeBackend for f32 {}
+impl UnstructuredComputeBackend for f64 {}
 
 #[cfg(test)]
 mod tests {

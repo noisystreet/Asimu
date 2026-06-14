@@ -6,7 +6,6 @@ mod compressible_multiblock;
 mod compressible_multiblock_driver;
 mod compressible_multiblock_driver_typed;
 mod compressible_multiblock_interface;
-mod compressible_rhs_unstructured_typed;
 mod compressible_unstructured_driver;
 mod compressible_unstructured_driver_typed;
 pub mod incompressible;
@@ -50,9 +49,8 @@ pub use compressible_multiblock_driver_typed::run_multiblock_structured_typed_wi
 pub use compressible_unstructured_driver::{
     CompressibleUnstructuredStepView, UnstructuredDriverConfig, run_unstructured_with_observer,
 };
-pub use compressible_unstructured_driver_typed::{
-    UnstructuredTypedRhsDispatch, run_unstructured_typed_with_observer,
-};
+pub(crate) use compressible_unstructured_driver_typed::UnstructuredComputeBackend;
+pub use compressible_unstructured_driver_typed::run_unstructured_typed_with_observer;
 pub use incompressible::{
     IncompressibleLinearSolverConfig, IncompressiblePressureLinearSolverConfig,
     IncompressiblePressureLinearSolverKind, IncompressiblePressureVelocityAlgorithm,

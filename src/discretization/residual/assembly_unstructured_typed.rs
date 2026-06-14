@@ -264,7 +264,7 @@ pub fn assemble_inviscid_residual_unstructured_typed<
     let topology = &params.mesh_cache.face_topology;
     match params.config.reconstruction {
         ReconstructionKind::FirstOrder => {
-            assemble_first_order_typed(residual, params, topology)?;
+            assemble_first_order_typed(fields, residual, params, topology)?;
         }
         ReconstructionKind::Muscl => {
             T::assemble_muscl_unstructured_typed(residual, params, topology)?;
@@ -274,6 +274,7 @@ pub fn assemble_inviscid_residual_unstructured_typed<
 }
 
 fn assemble_first_order_typed<T: InviscidTypedScatterBackend + InviscidFirstOrderInterior>(
+    fields: &ConservedFieldsT<T>,
     residual: &mut ConservedResidualT<T>,
     params: &mut InviscidAssemblyUnstructuredTypedParams<'_, T>,
     topology: &UnstructuredFaceTopology,
@@ -287,7 +288,11 @@ fn assemble_first_order_typed<T: InviscidTypedScatterBackend + InviscidFirstOrde
         .entered();
         let interior_on_cuda = T::try_cuda_first_order_interior(residual, params, topology)?;
         if !interior_on_cuda {
-            T::assemble_first_order_interior_faces(residual, params, topology)?;
+            let simd_done =
+                T::try_simd_first_order_interior_faces(fields, residual, params, topology)?;
+            if !simd_done {
+                T::assemble_first_order_interior_faces(residual, params, topology)?;
+            }
         }
     }
     {
@@ -472,13 +477,22 @@ fn assemble_boundary_faces_muscl_typed<T: ComputeFloat>(
     Ok(())
 }
 
-/// 一阶内面装配分发（f32 串行 typed；f64 可走 parallel 桶）。
+/// 一阶内面装配分发（f32 串行 typed；f64 可走 parallel 桶 / SIMD）。
 trait InviscidFirstOrderInterior: InviscidTypedScatterBackend + InviscidFirstOrderFaceFlux {
     fn assemble_first_order_interior_faces(
         residual: &mut ConservedResidualT<Self>,
         params: &InviscidAssemblyUnstructuredTypedParams<'_, Self>,
         topology: &UnstructuredFaceTopology,
     ) -> Result<()>;
+
+    fn try_simd_first_order_interior_faces(
+        _fields: &ConservedFieldsT<Self>,
+        _residual: &mut ConservedResidualT<Self>,
+        _params: &InviscidAssemblyUnstructuredTypedParams<'_, Self>,
+        _topology: &UnstructuredFaceTopology,
+    ) -> Result<bool> {
+        Ok(false)
+    }
 }
 
 impl InviscidFirstOrderInterior for f32 {
@@ -506,6 +520,21 @@ impl InviscidFirstOrderInterior for f64 {
         {
             assemble_first_order_interior_faces_serial(residual, params, topology)
         }
+    }
+
+    #[cfg(feature = "simd-fvm")]
+    fn try_simd_first_order_interior_faces(
+        fields: &ConservedFieldsT<f64>,
+        residual: &mut ConservedResidualT<f64>,
+        params: &InviscidAssemblyUnstructuredTypedParams<'_, f64>,
+        topology: &UnstructuredFaceTopology,
+    ) -> Result<bool> {
+        super::assembly_unstructured::try_assemble_first_order_interior_simd_f64(
+            residual,
+            fields,
+            &spectral_f64_params(params),
+            topology,
+        )
     }
 }
 

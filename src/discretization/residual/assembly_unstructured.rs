@@ -105,6 +105,18 @@ fn inviscid_boundary_face_count(params: &InviscidAssemblyUnstructuredParams<'_>)
         .sum()
 }
 
+#[cfg(feature = "simd-fvm")]
+pub(crate) fn try_assemble_first_order_interior_simd_f64(
+    residual: &mut crate::field::ConservedResidual,
+    fields: &crate::field::ConservedFields,
+    params: &InviscidAssemblyUnstructuredParams<'_>,
+    topology: &crate::discretization::UnstructuredFaceTopology,
+) -> Result<bool> {
+    assembly_unstructured_inviscid_simd::try_assemble_interior_faces_cached(
+        residual, fields, params, topology,
+    )
+}
+
 fn validate_unstructured_linear_reconstruction_params(
     params: &InviscidAssemblyUnstructuredParams<'_>,
 ) -> Result<()> {
