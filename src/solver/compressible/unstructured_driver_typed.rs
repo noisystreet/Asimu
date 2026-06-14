@@ -180,6 +180,7 @@ pub fn run_unstructured_typed_with_observer<T: UnstructuredComputeBackend>(
             cfl = %format_log_fixed5(step.cfl),
         );
         history.push(step);
+        work.exec.sync_to_host()?;
         let fields_real = fields.cast_real()?;
         observe_step(CompressibleUnstructuredStepView {
             info: history.last().expect("history"),
@@ -385,6 +386,7 @@ impl UnstructuredRhsDispatchImpl for f32 {
                 min_pressure: p_floor,
                 primitives: work.primitives,
             })?;
+            work.exec.mark_cuda_primitives_stale();
         }
         if env.config.inviscid.reconstruction == ReconstructionKind::Muscl {
             let grad_input = UnstructuredGradientLsqInputF32 {
@@ -550,6 +552,7 @@ fn prepare_unstructured_timestep_typed<
         min_pressure: p_floor,
         primitives: &mut work.primitives,
     })?;
+    work.exec.mark_cuda_primitives_stale();
     let sigma =
         T::cell_spectral_radius_unstructured_typed(&SpectralRadiusUnstructuredTypedParams {
             mesh: env.config.mesh,

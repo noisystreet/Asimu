@@ -173,6 +173,20 @@ impl ExecutionContext {
         self.backend_state.sync_to_device()
     }
 
+    /// CUDA：守恒场 / BC 刷新后标记 device primitive 过期。
+    pub fn mark_cuda_primitives_stale(&mut self) {
+        self.backend_state.mark_cuda_primitives_stale();
+    }
+
+    /// CUDA：将 host primitive 上传 device（仅当已标记过期）。
+    pub fn sync_cuda_primitives_to_device(
+        &mut self,
+        primitives: &crate::field::PrimitiveFieldsT<f32>,
+    ) -> Result<()> {
+        self.backend_state
+            .sync_cuda_primitives_to_device(primitives)
+    }
+
     /// CUDA G1：一阶无粘内面着色桶 flux + scatter（Roe / HVL）。
     #[cfg(feature = "cuda")]
     pub fn cuda_assemble_first_order_inviscid_interior(

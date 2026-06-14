@@ -34,6 +34,8 @@ pub struct CudaBackendState {
     mesh: Option<CudaMeshDeviceCache>,
     fields: Option<CudaFieldBuffers>,
     mesh_topo_key: Option<usize>,
+    /// host 侧 primitive 自上次 H2D 后是否已更新。
+    primitives_dirty: bool,
 }
 
 impl CudaBackendState {
@@ -49,7 +51,13 @@ impl CudaBackendState {
             mesh: None,
             fields: None,
             mesh_topo_key: None,
+            primitives_dirty: true,
         })
+    }
+
+    /// BC / 守恒场刷新后调用：下一步 RHS 前将 primitive 上传 device。
+    pub fn mark_host_primitives_updated(&mut self) {
+        self.primitives_dirty = true;
     }
 
     pub fn context(&self) -> &Arc<CudaContext> {
@@ -91,7 +99,10 @@ impl CudaBackendState {
         let mesh = self.mesh.as_ref().expect("mesh cache after ensure");
         let fields = self.fields.as_mut().expect("field buffers after ensure");
 
-        fields.upload_primitives(&self.stream, primitives)?;
+        if self.primitives_dirty {
+            fields.upload_primitives(&self.stream, primitives)?;
+            self.primitives_dirty = false;
+        }
         fields.zero_residual(&self.stream)?;
 
         let _span = info_span!(
@@ -133,7 +144,22 @@ impl CudaBackendState {
             .map_err(|e| AsimuError::Exec(format!("CUDA 同步失败: {e:?}")))
     }
 
-    pub fn sync_to_device(&mut self) -> Result<()> {
+    /// BC 更新后将 host primitive 写回 device（仅当 `primitives_dirty`）。
+    pub fn sync_primitives_to_device(&mut self, primitives: &PrimitiveFieldsT<f32>) -> Result<()> {
+        if !self.primitives_dirty {
+            return Ok(());
+        }
+        self.ensure_fields(primitives.num_cells())?;
+        let fields = self.fields.as_mut().expect("field buffers after ensure");
+        fields.upload_primitives(&self.stream, primitives)?;
+        self.primitives_dirty = false;
+        Ok(())
+    }
+
+    pub fn sync_to_device(&mut self, primitives: Option<&PrimitiveFieldsT<f32>>) -> Result<()> {
+        if let Some(prim) = primitives {
+            self.sync_primitives_to_device(prim)?;
+        }
         Ok(())
     }
 }

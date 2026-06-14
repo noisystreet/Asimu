@@ -7,6 +7,7 @@
 
 ### Added
 
+- **ADR 0017 G1 完成**：非结构 f32 CUDA 一阶无粘 Roe/HVL 着色桶 kernel；`sync_to_host` / `sync_to_device` 骨架与 `primitives_dirty` 步间缓冲；驱动层 `mark_cuda_primitives_stale`；`make check-cuda` / `make test-cuda`；benchmark `unstructured_cuda_freestream`；case 层 CUDA validate / GPU smoke 测试。
 - 非结构 f32 热路径原生原变量恢复：`primitive_from_conserved_relaxed_f32` / `PrimitiveFillFromConserved`；ghost 边界面单次 `primitive_from_conserved_relaxed_f32_from_state`。
 - f32 Riemann 求解器法向 API：`FaceNormalF32`（`[f32; 3]`）；一阶/MUSCL 装配直接传 `face_topology_f32.normal`，消除 `vec3_from_f32`→`Vector3` 往返。
 - f32 Sutherland 输运系数：`ViscousPhysicsConfig::face_transport_coefficients_f32`、`static_temperature_f32`；粘性装配/谱半径/边界面通量全 f32 温度链。

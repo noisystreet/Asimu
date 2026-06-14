@@ -7,10 +7,10 @@ CARGO_FLAGS :=
 CARGO_NO_SIMD_FLAGS := --no-default-features --features io-cgns,io-vtk,parallel-fvm
 CARGO_SCALAR_FLAGS := --no-default-features --features io-cgns,io-vtk
 
-.PHONY: help build run test test-parallel-fvm test-simd-fvm test-no-simd-fvm lint fmt complexity check check-parallel-fvm clean setup audit doc
+.PHONY: help build run test test-parallel-fvm test-simd-fvm test-no-simd-fvm lint fmt complexity check check-parallel-fvm check-cuda test-cuda clean setup audit doc
 
 help:
-	@echo "Targets: build run test lint complexity fmt check clean setup audit doc"
+	@echo "Targets: build run test lint complexity fmt check check-cuda test-cuda clean setup audit doc"
 
 build:
 	$(CARGO) build $(CARGO_FLAGS)
@@ -60,6 +60,16 @@ check: lint test
 
 check-parallel-fvm: check
 	@echo "parallel-fvm 已包含在默认 CARGO_FLAGS / Cargo default features 中"
+
+CARGO_CUDA_FLAGS := --features cuda
+
+check-cuda:
+	$(CARGO) fmt --check
+	$(CARGO) clippy --all-targets $(CARGO_CUDA_FLAGS) -- -D warnings
+	$(MAKE) complexity
+
+test-cuda:
+	$(CARGO) test $(CARGO_CUDA_FLAGS) -- --ignored gpu
 
 clean:
 	$(CARGO) clean

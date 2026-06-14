@@ -190,8 +190,10 @@ mod tests {
             .expect("cpu assemble");
 
         let mut cuda_rhs = ConservedResidualT::<f32>::zeros(mesh.num_cells()).expect("cuda rhs");
-        let mut cuda_config = ExecConfig::default();
-        cuda_config.device = ExecDevice::GpuCuda;
+        let cuda_config = ExecConfig {
+            device: ExecDevice::GpuCuda,
+            ..Default::default()
+        };
         let mut cuda_exec =
             ExecutionContext::new(cuda_config, MeshExecMetrics::empty()).expect("cuda exec");
         let mut cuda_params = InviscidAssemblyUnstructuredTypedParams {
@@ -263,8 +265,10 @@ mod tests {
             .expect("cpu assemble");
 
         let mut cuda_rhs = ConservedResidualT::<f32>::zeros(mesh.num_cells()).expect("cuda rhs");
-        let mut cuda_config = ExecConfig::default();
-        cuda_config.device = ExecDevice::GpuCuda;
+        let cuda_config = ExecConfig {
+            device: ExecDevice::GpuCuda,
+            ..Default::default()
+        };
         let mut cuda_exec =
             ExecutionContext::new(cuda_config, MeshExecMetrics::empty()).expect("cuda exec");
         let mut cuda_params = InviscidAssemblyUnstructuredTypedParams {

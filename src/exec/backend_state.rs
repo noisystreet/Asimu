@@ -47,8 +47,27 @@ impl BackendState {
         match self {
             Self::Cpu => Ok(()),
             #[cfg(feature = "cuda")]
-            Self::Cuda(state) => state.sync_to_device(),
+            Self::Cuda(state) => state.sync_to_device(None),
         }
+    }
+
+    pub(crate) fn mark_cuda_primitives_stale(&mut self) {
+        #[cfg(feature = "cuda")]
+        if let Self::Cuda(state) = self {
+            state.mark_host_primitives_updated();
+        }
+    }
+
+    pub(crate) fn sync_cuda_primitives_to_device(
+        &mut self,
+        primitives: &crate::field::PrimitiveFieldsT<f32>,
+    ) -> Result<()> {
+        #[cfg(feature = "cuda")]
+        if let Self::Cuda(state) = self {
+            return state.sync_primitives_to_device(primitives);
+        }
+        let _ = primitives;
+        Ok(())
     }
 
     #[cfg(feature = "cuda")]

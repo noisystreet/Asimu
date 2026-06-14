@@ -343,7 +343,7 @@ Manifest 记录：`exec_device`、`cuda_device_name`、`kernel_ptx_arch`（Run M
 |----|------|
 | ADR 0017 文本 | **已接受（规划）** |
 | **G0** feature + 配置 + 多 Backend 类型 | **2026-06-13 已实现** |
-| **G1** 一阶无粘 CUDA kernel | **2026-06-13 已实现**（Roe + 着色桶 scatter；边界仍 CPU） |
+| **G1** 一阶无粘 CUDA kernel | **2026-06-13 已实现**（Roe/HVL + 着色桶 scatter；边界仍 CPU；含 Makefile/benchmark/sync/端到端 smoke） |
 | **G2** dual_ellipsoid GPU smoke | 规划 |
 | **G3** cuSPARSE SpMV | 规划 |
 | **G4** 性能与 manifest 字段 | 规划 |
