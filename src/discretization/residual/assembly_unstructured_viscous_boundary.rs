@@ -97,13 +97,7 @@ pub(crate) fn assemble_boundary_faces_f32(
             },
             temperatures,
         )?;
-        scatter_viscous_boundary_f32(
-            residual,
-            face.owner,
-            &flux,
-            face.area as crate::core::Real,
-            face.owner_volume as crate::core::Real,
-        );
+        scatter_viscous_boundary_f32(residual, face.owner, &flux, face.area, face.owner_volume);
     }
     Ok(())
 }

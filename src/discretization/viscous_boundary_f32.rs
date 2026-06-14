@@ -1,7 +1,7 @@
 //! f32 粘性边界面通量 compute + scatter（几何仍 f64）。
 
 use crate::boundary::WallHeat;
-use crate::core::{ComputeFloat, Real, Vector3};
+use crate::core::{Real, Vector3};
 use crate::discretization::gradient_typed::{GradientFieldsT, VelocityGradientT};
 use crate::discretization::viscous::face_transport_coefficients;
 use crate::discretization::viscous_assembly::ViscousBoundaryFaceKind;
@@ -262,18 +262,14 @@ pub fn scatter_viscous_boundary_f32(
     residual: &mut ConservedResidualT<f32>,
     owner: usize,
     flux: &ColoredViscousFaceFluxF32,
-    area: Real,
-    owner_volume: Real,
+    area: f32,
+    owner_volume: f32,
 ) {
-    let scale = (-area / owner_volume) as f32;
-    residual.momentum_x.values_mut()[owner] =
-        residual.momentum_x.values()[owner].add_mul_real(flux.mx, scale as Real);
-    residual.momentum_y.values_mut()[owner] =
-        residual.momentum_y.values()[owner].add_mul_real(flux.my, scale as Real);
-    residual.momentum_z.values_mut()[owner] =
-        residual.momentum_z.values()[owner].add_mul_real(flux.mz, scale as Real);
-    residual.total_energy.values_mut()[owner] =
-        residual.total_energy.values()[owner].add_mul_real(flux.energy, scale as Real);
+    let scale = -area / owner_volume;
+    residual.momentum_x.values_mut()[owner] += scale * flux.mx;
+    residual.momentum_y.values_mut()[owner] += scale * flux.my;
+    residual.momentum_z.values_mut()[owner] += scale * flux.mz;
+    residual.total_energy.values_mut()[owner] += scale * flux.energy;
 }
 
 #[cfg(test)]
