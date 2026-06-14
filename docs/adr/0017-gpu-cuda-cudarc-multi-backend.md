@@ -201,7 +201,7 @@ NVRTC 输入为 **CUDA C++ 字符串**，不是 Rust。禁止首版仅依赖 NVR
 | 无粘内面 scatter → residual | ✓ device atomic 或桶内直写 | — |
 | 边界通量 | ✗ 首版 CPU | 不规则访问 |
 | 粘性通量 / IDWLS | G2 内面 CUDA / G2+ IDWLS device | G2 内面已实现 |
-| CSR SpMV | G3+（`cusparse`） | — |
+| CSR SpMV | **G3** `cusparse` 经 `ExecutionContext::csr_spmv` | — |
 | 收敛 / CFL / I/O | ✗ CPU | ADR 0003 |
 
 数值语义与 `exec::scatter::scatter_inviscid_pairs_f32`、CPU Roe/HLLC 参考实现 **同公式同着色契约**；golden 容差宽于 f64（ADR 0016）。
@@ -345,5 +345,5 @@ Manifest 记录：`exec_device`、`cuda_device_name`、`kernel_ptx_arch`（Run M
 | **G0** feature + 配置 + 多 Backend 类型 | **2026-06-13 已实现** |
 | **G1** 一阶无粘 CUDA kernel | **2026-06-13 已实现**（Roe/HVL + 着色桶 scatter；边界仍 CPU；含 Makefile/benchmark/sync/端到端 smoke） |
 | **G2** dual_ellipsoid GPU smoke | **2026-06-13 已实现**（粘性内面 f32 CUDA kernel + device scatter；IDWLS/边界面仍 CPU；`case_cuda_f32.toml` + CPU≈CUDA 单 tet） |
-| **G3** cuSPARSE SpMV | 规划 |
+| **G3** cuSPARSE SpMV | **2026-06-13 已实现**（`ExecutionContext::csr_spmv` f64 分发；CSR 结构 device 缓存 + CPU≈CUDA 单测） |
 | **G4** 性能与 manifest 字段 | 规划 |

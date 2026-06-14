@@ -10,8 +10,12 @@ use super::face_geom::ExecInteriorFaceTopology;
 use super::gradient_buffers::CudaGradientBuffers;
 use super::mesh_cache::CudaMeshDeviceCache;
 use super::module::{CudaInviscidModule, CudaViscousModule};
+use super::spmv::{
+    CudaCsrSpmvCache, CusparseHandle, destroy_cusparse_handle, try_create_cusparse_handle,
+};
 use super::viscous_mesh_cache::{CudaViscousBucketCache, CudaViscousFaceGeomBuffer};
 use crate::error::{AsimuError, Result};
+use crate::exec::CsrSpmvView;
 use crate::field::{ConservedResidualT, PrimitiveFieldsT};
 
 const BLOCK_THREADS: u32 = 256;
@@ -41,6 +45,8 @@ pub struct CudaBackendState {
     viscous_face_geom: Option<CudaViscousFaceGeomBuffer>,
     viscous_bucket_key: Option<usize>,
     gradients: Option<CudaGradientBuffers>,
+    cusparse_handle: CusparseHandle,
+    spmv_cache: CudaCsrSpmvCache,
     /// host 侧 primitive 自上次 H2D 后是否已更新。
     primitives_dirty: bool,
 }
@@ -52,6 +58,8 @@ impl CudaBackendState {
         let stream = context.default_stream();
         let module = CudaInviscidModule::try_load(&context)?;
         let viscous_module = CudaViscousModule::try_load(&context)?;
+        let cusparse_handle = try_create_cusparse_handle()?;
+        tracing::info!("cuda_cusparse_handle_created");
         Ok(Self {
             context,
             stream,
@@ -64,6 +72,8 @@ impl CudaBackendState {
             viscous_face_geom: None,
             viscous_bucket_key: None,
             gradients: None,
+            cusparse_handle,
+            spmv_cache: CudaCsrSpmvCache::new(),
             primitives_dirty: true,
         })
     }
@@ -271,6 +281,29 @@ impl CudaBackendState {
             self.gradients = Some(CudaGradientBuffers::try_new(&self.stream, num_cells)?);
         }
         Ok(())
+    }
+
+    /// G3：cuSPARSE CSR SpMV（f64；隐式路径预研入口）。
+    pub fn csr_spmv(
+        &mut self,
+        matrix: &CsrSpmvView<'_>,
+        x: &[crate::core::Real],
+        y: &mut [crate::core::Real],
+    ) -> Result<()> {
+        super::spmv::csr_spmv_f64(
+            &self.stream,
+            self.cusparse_handle,
+            &mut self.spmv_cache,
+            matrix,
+            x,
+            y,
+        )
+    }
+}
+
+impl Drop for CudaBackendState {
+    fn drop(&mut self) {
+        let _ = destroy_cusparse_handle(self.cusparse_handle);
     }
 }
 

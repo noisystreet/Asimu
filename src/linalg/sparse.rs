@@ -88,7 +88,7 @@ impl CsrMatrix {
     /// \(y \leftarrow A x\)，经 [`ExecutionContext`](crate::exec::ExecutionContext) 调度（并行/串行）。
     pub fn apply_with_context(
         &self,
-        ctx: &crate::exec::ExecutionContext,
+        ctx: &mut crate::exec::ExecutionContext,
         x: &[Real],
         y: &mut [Real],
     ) -> Result<()> {

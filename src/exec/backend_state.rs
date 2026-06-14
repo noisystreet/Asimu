@@ -77,4 +77,19 @@ impl BackendState {
             Self::Cpu => Err(AsimuError::Exec("CUDA 装配需要 backend = cuda".to_string())),
         }
     }
+
+    #[cfg(feature = "cuda")]
+    pub(crate) fn try_csr_spmv_cuda(
+        &mut self,
+        matrix: &crate::exec::CsrSpmvView<'_>,
+        x: &[crate::core::Real],
+        y: &mut [crate::core::Real],
+    ) -> Result<()> {
+        if let Self::Cuda(state) = self {
+            return state.csr_spmv(matrix, x, y);
+        }
+        Err(AsimuError::Exec(
+            "CUDA SpMV 需要 backend = cuda".to_string(),
+        ))
+    }
 }

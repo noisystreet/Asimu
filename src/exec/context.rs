@@ -146,7 +146,9 @@ impl ExecutionContext {
             "exec_scatter_mode_resolved"
         );
         if config.device == ExecDevice::GpuCuda {
-            info!("cuda_backend_g1_g2: 一阶无粘/粘性内面走 device kernel（边界与梯度仍 CPU）");
+            info!(
+                "cuda_backend_g1_g2_g3: 无粘/粘性内面 kernel + cuSPARSE SpMV（边界与梯度仍 CPU）"
+            );
         }
         Ok(Self {
             device: config.device,
@@ -215,6 +217,17 @@ impl ExecutionContext {
         self.backend_state
             .cuda_mut()?
             .assemble_viscous_interior(residual, primitives, gradients, topo, topo_key)
+    }
+
+    /// CUDA G3：cuSPARSE CSR SpMV（f64）。
+    #[cfg(feature = "cuda")]
+    pub(crate) fn dispatch_cuda_csr_spmv(
+        &mut self,
+        matrix: &crate::exec::CsrSpmvView<'_>,
+        x: &[crate::core::Real],
+        y: &mut [crate::core::Real],
+    ) -> Result<()> {
+        self.backend_state.try_csr_spmv_cuda(matrix, x, y)
     }
 
     /// 单元测试：重置本 context 的 scatter 调用计数。

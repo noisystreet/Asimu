@@ -6,6 +6,7 @@ mod gradient_buffers;
 mod inviscid;
 mod mesh_cache;
 mod module;
+mod spmv;
 mod viscous;
 mod viscous_face_geom;
 mod viscous_mesh_cache;
