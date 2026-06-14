@@ -45,6 +45,7 @@ pub mod roe_f32;
 pub mod slau2;
 pub mod slau2_f32;
 pub mod unstructured_face_cache;
+pub mod unstructured_face_cache_f32;
 pub mod unstructured_limiter;
 pub mod van_leer;
 pub mod van_leer_f32;
@@ -153,6 +154,10 @@ pub use unstructured_face_cache::{
     InteriorFaceBatchStatic4, InteriorFaceBucketBatchLayout, InteriorFaceColoring,
     LsqPrecomputedCell, UnstructuredFaceTopology, UnstructuredInteriorFace,
     UnstructuredSolverMeshCache,
+};
+pub use unstructured_face_cache_f32::{
+    LsqPrecomputedCellF32, UnstructuredBoundaryFaceF32, UnstructuredFaceTopologyF32,
+    UnstructuredInteriorFaceF32, neg_dr, vec3_from_f32, vec3_to_f32,
 };
 pub use unstructured_limiter::UnstructuredGradientLimiter;
 pub use van_leer::{hanel_van_leer_flux, van_leer_flux};

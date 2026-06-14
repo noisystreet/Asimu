@@ -66,14 +66,15 @@ pub(crate) fn assemble_boundary_faces_typed<T: ComputeFloat>(
 /// f32 非结构粘性边界面装配（通量 compute + scatter 均为 f32）。
 pub(crate) fn assemble_boundary_faces_f32(
     residual: &mut ConservedResidualT<f32>,
-    face_topology: &crate::discretization::unstructured_face_cache::UnstructuredFaceTopology,
+    face_topology: &crate::discretization::unstructured_face_cache_f32::UnstructuredFaceTopologyF32,
     ghosts: &crate::discretization::BoundaryGhostBuffer,
     params: &ViscousBoundaryFluxParamsF32<'_>,
     min_pressure: crate::core::Real,
     temperatures: &[f32],
 ) -> Result<()> {
+    use crate::discretization::vec3_from_f32;
     for face in &face_topology.boundary {
-        if is_degenerate_volume(face.owner_volume) {
+        if is_degenerate_volume(face.owner_volume as crate::core::Real) {
             continue;
         }
         let ghost = ghosts.get_face(face.face).ok_or_else(|| {
@@ -87,8 +88,8 @@ pub(crate) fn assemble_boundary_faces_f32(
             params,
             face.owner,
             ghost_prim,
-            face.normal,
-            face.spacing,
+            vec3_from_f32(face.normal),
+            face.spacing as crate::core::Real,
             ViscousBoundaryFaceKind {
                 is_wall: kind.is_wall,
                 no_slip: kind.no_slip,
@@ -96,7 +97,13 @@ pub(crate) fn assemble_boundary_faces_f32(
             },
             temperatures,
         )?;
-        scatter_viscous_boundary_f32(residual, face.owner, &flux, face.area, face.owner_volume);
+        scatter_viscous_boundary_f32(
+            residual,
+            face.owner,
+            &flux,
+            face.area as crate::core::Real,
+            face.owner_volume as crate::core::Real,
+        );
     }
     Ok(())
 }

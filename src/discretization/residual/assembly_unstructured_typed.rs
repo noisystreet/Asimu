@@ -10,7 +10,15 @@ mod inviscid_f32;
 #[path = "assembly_unstructured_first_order_typed.rs"]
 mod first_order_typed;
 
-use first_order_typed::{InviscidFirstOrderFaceFlux, first_order_interior_flux};
+#[path = "assembly_unstructured_first_order_f32.rs"]
+mod first_order_f32;
+
+use first_order_f32::{
+    assemble_boundary_faces_first_order_f32, assemble_first_order_interior_faces_serial_f32,
+};
+use first_order_typed::InviscidFirstOrderFaceFlux;
+#[cfg(not(feature = "parallel-fvm"))]
+use first_order_typed::first_order_interior_flux;
 
 use tracing::info_span;
 
@@ -302,7 +310,7 @@ fn assemble_first_order_typed<T: InviscidTypedScatterBackend + InviscidFirstOrde
             precision = T::PRECISION.label(),
         )
         .entered();
-        assemble_boundary_faces_first_order_typed(residual, params, topology)?;
+        T::assemble_first_order_boundary_faces(residual, params, topology)?;
     }
     Ok(())
 }
@@ -485,6 +493,12 @@ trait InviscidFirstOrderInterior: InviscidTypedScatterBackend + InviscidFirstOrd
         topology: &UnstructuredFaceTopology,
     ) -> Result<()>;
 
+    fn assemble_first_order_boundary_faces(
+        residual: &mut ConservedResidualT<Self>,
+        params: &InviscidAssemblyUnstructuredTypedParams<'_, Self>,
+        topology: &UnstructuredFaceTopology,
+    ) -> Result<()>;
+
     fn try_simd_first_order_interior_faces(
         _fields: &ConservedFieldsT<Self>,
         _residual: &mut ConservedResidualT<Self>,
@@ -499,9 +513,17 @@ impl InviscidFirstOrderInterior for f32 {
     fn assemble_first_order_interior_faces(
         residual: &mut ConservedResidualT<f32>,
         params: &InviscidAssemblyUnstructuredTypedParams<'_, f32>,
-        topology: &UnstructuredFaceTopology,
+        _topology: &UnstructuredFaceTopology,
     ) -> Result<()> {
-        assemble_first_order_interior_faces_serial(residual, params, topology)
+        assemble_first_order_interior_faces_serial_f32(residual, params)
+    }
+
+    fn assemble_first_order_boundary_faces(
+        residual: &mut ConservedResidualT<f32>,
+        params: &InviscidAssemblyUnstructuredTypedParams<'_, f32>,
+        _topology: &UnstructuredFaceTopology,
+    ) -> Result<()> {
+        assemble_boundary_faces_first_order_f32(residual, params)
     }
 }
 
@@ -536,8 +558,17 @@ impl InviscidFirstOrderInterior for f64 {
             topology,
         )
     }
+
+    fn assemble_first_order_boundary_faces(
+        residual: &mut ConservedResidualT<f64>,
+        params: &InviscidAssemblyUnstructuredTypedParams<'_, f64>,
+        topology: &UnstructuredFaceTopology,
+    ) -> Result<()> {
+        assemble_boundary_faces_first_order_typed(residual, params, topology)
+    }
 }
 
+#[cfg(not(feature = "parallel-fvm"))]
 fn assemble_first_order_interior_faces_serial<T: InviscidFirstOrderFaceFlux>(
     residual: &mut ConservedResidualT<T>,
     params: &InviscidAssemblyUnstructuredTypedParams<'_, T>,

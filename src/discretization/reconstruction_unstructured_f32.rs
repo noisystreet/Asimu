@@ -1,12 +1,14 @@
 //! 非结构网格二阶线性重构（f32 路径；几何/限制器样本距离仍 f64）。
 
-use crate::core::{Real, Vector3};
+use crate::core::Real;
 use crate::discretization::BoundaryGhostBuffer;
 use crate::discretization::gradient_typed::InviscidPrimitiveGradientsT;
 use crate::discretization::reconstruction::InterfacePrimitiveStates;
 use crate::discretization::unstructured_face_cache::{
-    GradientLimiterSampleKind, UnstructuredBoundaryFace, UnstructuredInteriorFace,
-    UnstructuredSolverMeshCache,
+    GradientLimiterSampleKind, UnstructuredSolverMeshCache,
+};
+use crate::discretization::unstructured_face_cache_f32::{
+    UnstructuredBoundaryFaceF32, UnstructuredInteriorFaceF32,
 };
 use crate::discretization::unstructured_limiter::UnstructuredGradientLimiter;
 use crate::discretization::viscous_boundary_f32::{
@@ -46,7 +48,7 @@ pub struct UnstructuredLinearReconstructionCtxF32<'a> {
 
 /// 非结构内部面原始变量重构（f32）。
 pub fn reconstruct_unstructured_interior_face_f32(
-    face: &UnstructuredInteriorFace,
+    face: &UnstructuredInteriorFaceF32,
     ctx: UnstructuredLinearReconstructionCtxF32<'_>,
     owner_grad: InviscidPrimitiveGradientsT<f32>,
     neighbor_grad: InviscidPrimitiveGradientsT<f32>,
@@ -69,7 +71,7 @@ pub fn reconstruct_unstructured_interior_face_f32(
 
 /// 非结构边界面 owner 侧外推（f32）；ghost 侧取 BC 原始变量。
 pub fn reconstruct_unstructured_boundary_face_f32(
-    face: &UnstructuredBoundaryFace,
+    face: &UnstructuredBoundaryFaceF32,
     ctx: UnstructuredLinearReconstructionCtxF32<'_>,
     owner_grad: InviscidPrimitiveGradientsT<f32>,
 ) -> Result<InterfacePrimitiveStatesF32> {
@@ -110,7 +112,7 @@ fn extrapolate_cell_primitive_f32(
     cell: usize,
     prim: &PrimitiveStateF32,
     grad: InviscidPrimitiveGradientsT<f32>,
-    dr_to_face: Vector3,
+    dr_to_face: [f32; 3],
     ctx: UnstructuredLinearReconstructionCtxF32<'_>,
 ) -> Result<PrimitiveStateF32> {
     let samples = sample_phi_extrema_and_list_f32(
@@ -273,8 +275,8 @@ fn max_primitive_f32(a: &PrimitiveStateF32, b: &PrimitiveStateF32) -> PrimitiveS
 }
 
 #[must_use]
-fn dot_f32(grad: [f32; 3], dr: Vector3) -> f32 {
-    grad[0] * dr.x as f32 + grad[1] * dr.y as f32 + grad[2] * dr.z as f32
+fn dot_f32(grad: [f32; 3], dr: [f32; 3]) -> f32 {
+    grad[0] * dr[0] + grad[1] * dr[1] + grad[2] * dr[2]
 }
 
 #[must_use]

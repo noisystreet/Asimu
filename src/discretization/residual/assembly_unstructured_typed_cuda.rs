@@ -2,6 +2,7 @@
 
 use crate::discretization::flux_config::FluxScheme;
 use crate::discretization::unstructured_face_cache::UnstructuredFaceTopology;
+use crate::discretization::unstructured_face_cache_f32::UnstructuredFaceTopologyF32;
 use crate::error::Result;
 use crate::exec::gpu::cuda::{
     CUDA_FLUX_SCHEME_HVL, CUDA_FLUX_SCHEME_ROE, CudaFirstOrderInviscidParams,
@@ -21,7 +22,7 @@ pub(super) fn cuda_first_order_f32_interior(
         FluxScheme::HanelVanLeer => (CUDA_FLUX_SCHEME_HVL, false),
         _ => return Ok(false),
     };
-    let exec_topo = build_exec_interior_topology(topology);
+    let exec_topo = build_exec_interior_topology(&params.mesh_cache.face_topology_f32, topology);
     let topo_key = std::ptr::from_ref(topology).addr();
     crate::exec::inviscid::try_assemble_first_order_interior_f32(
         params.exec,
@@ -37,14 +38,17 @@ pub(super) fn cuda_first_order_f32_interior(
     )
 }
 
-fn build_exec_interior_topology(topology: &UnstructuredFaceTopology) -> ExecInteriorFaceTopology {
-    let faces = topology
+fn build_exec_interior_topology(
+    topology_f32: &UnstructuredFaceTopologyF32,
+    coloring: &UnstructuredFaceTopology,
+) -> ExecInteriorFaceTopology {
+    let faces = topology_f32
         .interior
         .iter()
         .map(|face| {
-            let mut nx = face.normal.x as f32;
-            let mut ny = face.normal.y as f32;
-            let mut nz = face.normal.z as f32;
+            let mut nx = face.normal[0];
+            let mut ny = face.normal[1];
+            let mut nz = face.normal[2];
             let mag = (nx * nx + ny * ny + nz * nz).sqrt();
             if mag > 1.0e-30 {
                 let inv = 1.0 / mag;
@@ -58,12 +62,12 @@ fn build_exec_interior_topology(topology: &UnstructuredFaceTopology) -> ExecInte
                 nx,
                 ny,
                 nz,
-                owner_scale: face.owner_rhs_scale as f32,
-                neighbor_scale: face.neighbor_rhs_scale as f32,
+                owner_scale: face.owner_rhs_scale,
+                neighbor_scale: face.neighbor_rhs_scale,
             }
         })
         .collect();
-    let color_buckets = topology
+    let color_buckets = coloring
         .interior_coloring
         .buckets
         .iter()

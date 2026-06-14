@@ -264,7 +264,7 @@ name=<mesh_name>;cells=<count>
 | `assemble_diffusion_1d` | 1D 内部面扩散装配 |
 | `apply_boundary_conditions` | 按 patch 顺序施加 BC |
 | `apply_dirichlet_face` / `apply_neumann` | 单面 BC |
-| `UnstructuredSolverMeshCache` / `from_mesh` | 非结构求解器网格缓存：面拓扑（`UnstructuredFaceTopology`）+ 内面着色（`InteriorFaceColoring`）+ IDWLS 单元–面关联（`LsqRhsCellIncidence`）+ 每单元 IDWLS 正规方程矩阵 \(A\) |
+| `UnstructuredSolverMeshCache` / `from_mesh` | 非结构求解器网格缓存：面拓扑（`UnstructuredFaceTopology`）+ f32 预打包面几何（`face_topology_f32`）+ f32 IDWLS 矩阵（`lsq_geometry_f32`）+ 内面着色（`InteriorFaceColoring`）+ IDWLS 单元–面关联（`LsqRhsCellIncidence`）+ 每单元 IDWLS 正规方程矩阵 \(A\)（`lsq_geometry`） |
 | `UnstructuredGradientLsqInput` / `compute_unstructured_gradients_idw_lsq` | `UnstructuredMesh3d` 上的逆距离加权最小二乘梯度；**必须**提供 `mesh_cache`；内部面用相邻单元中心，边界面用 ghost 镜像样本 |
 | `compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq` | 二阶线性重构用 IDWLS 梯度（\(\nabla\rho,\nabla u,\nabla p\) 等）；装配前由 `EvaluateRhsUnstructured` 调用 |
 | `UnstructuredGradientLimiter` | 非结构梯度限制器（`barth_jespersen` / `venkatakrishnan`）；与结构化 `SlopeLimiter` 独立 |

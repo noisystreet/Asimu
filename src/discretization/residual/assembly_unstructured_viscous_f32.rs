@@ -12,6 +12,7 @@ use crate::discretization::gradient_unstructured_f32::{
 use crate::discretization::unstructured_face_cache::{
     UnstructuredFaceTopology, UnstructuredSolverMeshCache,
 };
+use crate::discretization::unstructured_face_cache_f32::UnstructuredFaceTopologyF32;
 use crate::discretization::viscous_f32::{
     average_face_lane_f32, fused_interior_viscous_face_flux_averaged_f32,
     scatter_fused_interior_viscous_face_f32,
@@ -30,7 +31,8 @@ use super::assembly_unstructured_viscous::{
 use crate::discretization::viscous_boundary_f32::ViscousBoundaryFluxParamsF32;
 
 struct ViscousInteriorAssemblyF32<'a> {
-    face_topology: &'a UnstructuredFaceTopology,
+    face_topology: &'a UnstructuredFaceTopologyF32,
+    transport_topology: &'a UnstructuredFaceTopology,
     eos: &'a IdealGasEoS,
     viscous: &'a ViscousPhysicsConfig,
     primitives: &'a PrimitiveFieldsT<f32>,
@@ -83,7 +85,8 @@ pub fn compute_gradients_and_assemble_viscous_unstructured_f32(
     assemble_viscous_residual_f32_interior(
         residual,
         &ViscousInteriorAssemblyF32 {
-            face_topology: &input.mesh_cache.face_topology,
+            face_topology: &input.mesh_cache.face_topology_f32,
+            transport_topology: &input.mesh_cache.face_topology,
             eos: input.eos,
             viscous: input.viscous,
             primitives: input.primitives,
@@ -100,7 +103,7 @@ pub fn compute_gradients_and_assemble_viscous_unstructured_f32(
     };
     assemble_boundary_faces_f32(
         residual,
-        &input.mesh_cache.face_topology,
+        &input.mesh_cache.face_topology_f32,
         input.ghosts,
         &boundary_params,
         input.min_pressure,
@@ -114,7 +117,7 @@ fn assemble_viscous_residual_f32_interior(
     scratch: &mut ViscousAssemblyUnstructuredScratch,
 ) -> Result<()> {
     let constant = prepare_unstructured_viscous_transport_f32(
-        params.face_topology,
+        params.transport_topology,
         params.primitives.num_cells(),
         params.viscous,
         params.eos,
@@ -141,23 +144,18 @@ fn assemble_viscous_residual_f32_interior(
         let geom = ColoredViscousFaceGeom {
             owner: face.owner,
             neighbor: face.neighbor,
-            nx: normal.x,
-            ny: normal.y,
-            nz: normal.z,
+            nx: normal[0] as Real,
+            ny: normal[1] as Real,
+            nz: normal[2] as Real,
             mu: mu as Real,
             lambda: lambda as Real,
-            owner_scale: face.owner_rhs_scale,
-            neighbor_scale: face.neighbor_rhs_scale,
+            owner_scale: face.owner_rhs_scale as Real,
+            neighbor_scale: face.neighbor_rhs_scale as Real,
         };
         let lane =
             average_face_lane_f32(face.owner, face.neighbor, params.primitives, &grad_slices);
         let flux = fused_interior_viscous_face_flux_averaged_f32(
-            lane,
-            normal.x as f32,
-            normal.y as f32,
-            normal.z as f32,
-            mu,
-            lambda,
+            lane, normal[0], normal[1], normal[2], mu, lambda,
         );
         scatter_fused_interior_viscous_face_f32(residual, &geom, &flux);
     }

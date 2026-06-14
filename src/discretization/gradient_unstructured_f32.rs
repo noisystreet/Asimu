@@ -1,15 +1,17 @@
-//! 非结构 IDWLS 梯度（f32 串行路径；几何仍 f64）。
+//! 非结构 IDWLS 梯度（f32 串行路径；面样本与矩阵读 `face_topology_f32` / `lsq_geometry_f32`）。
 
 use tracing::info_span;
 
-use crate::core::{ComputeFloat, Real, Vector3};
+use crate::core::{ComputeFloat, Real};
 use crate::discretization::gradient_typed::GradientFieldsT;
-use crate::discretization::unstructured_face_cache::{
-    UnstructuredBoundaryFace, UnstructuredInteriorFace, UnstructuredSolverMeshCache,
+use crate::discretization::neg_dr;
+use crate::discretization::unstructured_face_cache::UnstructuredSolverMeshCache;
+use crate::discretization::unstructured_face_cache_f32::{
+    LsqPrecomputedCellF32, UnstructuredBoundaryFaceF32, UnstructuredInteriorFaceF32,
 };
 use crate::error::{AsimuError, Result};
 use crate::exec::ExecutionContext;
-use crate::exec::cpu::{Symmetric3x3, accumulate_lsq_rhs_component_f32, solve_symmetric_3x3_f32};
+use crate::exec::cpu::{accumulate_lsq_rhs_component_f32, solve_lsq_precomputed_cell_f32};
 use crate::field::{PrimitiveFieldsT, primitive_from_conserved_relaxed};
 use crate::mesh::UnstructuredMesh3d;
 use crate::physics::{IdealGasEoS, ViscousPhysicsConfig};
@@ -55,9 +57,9 @@ pub fn compute_unstructured_gradients_idw_lsq_f32(
             "非结构 f32 梯度场与原始变量场尺寸不一致".to_string(),
         ));
     }
-    if input.mesh_cache.lsq_geometry.len() != n {
+    if input.mesh_cache.lsq_geometry_f32.len() != n {
         return Err(AsimuError::Field(
-            "非结构 IDWLS 几何缓存与网格单元数不一致".to_string(),
+            "非结构 f32 IDWLS 几何缓存与网格单元数不一致".to_string(),
         ));
     }
     out.clear();
@@ -70,7 +72,7 @@ pub fn compute_unstructured_gradients_idw_lsq_f32(
     )?;
     exec.idwls_prepare_viscous_f32(n);
     {
-        let topology = &input.mesh_cache.face_topology;
+        let topology = &input.mesh_cache.face_topology_f32;
         let _span = info_span!(
             "unstructured_idw_lsq_accumulate_rhs_f32",
             interior_faces = topology.interior.len(),
@@ -114,7 +116,7 @@ fn accumulate_lsq_rhs_f32(
     scratch: &UnstructuredGradientScratchF32,
     exec: &mut ExecutionContext,
 ) -> Result<()> {
-    let topology = &input.mesh_cache.face_topology;
+    let topology = &input.mesh_cache.face_topology_f32;
     let temperatures = &scratch.temperatures;
     let idwls = exec.scratch_mut().idwls_mut();
     let (bu, bv, bw, bt) = idwls.viscous_arrays_mut_f32();
@@ -154,7 +156,7 @@ fn accumulate_lsq_rhs_f32(
 
 fn accumulate_interior_as_owner_f32(
     input: &UnstructuredGradientLsqInputF32<'_>,
-    face: &UnstructuredInteriorFace,
+    face: &UnstructuredInteriorFaceF32,
     temperatures: &[f32],
     bu: &mut [f32; 3],
     bv: &mut [f32; 3],
@@ -179,7 +181,7 @@ fn accumulate_interior_as_owner_f32(
 
 fn accumulate_interior_as_neighbor_f32(
     input: &UnstructuredGradientLsqInputF32<'_>,
-    face: &UnstructuredInteriorFace,
+    face: &UnstructuredInteriorFaceF32,
     temperatures: &[f32],
     bu: &mut [f32; 3],
     bv: &mut [f32; 3],
@@ -195,7 +197,7 @@ fn accumulate_interior_as_neighbor_f32(
     let v_n = prim.velocity_y.values()[face.neighbor];
     let w_n = prim.velocity_z.values()[face.neighbor];
     let t_n = temperatures[face.neighbor];
-    let dr_n = neg_vector(face.lsq_dr);
+    let dr_n = neg_dr(face.lsq_dr);
     accumulate_lsq_rhs_component_f32(bu, dr_n, face.lsq_w, u_o - u_n);
     accumulate_lsq_rhs_component_f32(bv, dr_n, face.lsq_w, v_o - v_n);
     accumulate_lsq_rhs_component_f32(bw, dr_n, face.lsq_w, w_o - w_n);
@@ -205,7 +207,7 @@ fn accumulate_interior_as_neighbor_f32(
 
 fn accumulate_boundary_f32(
     input: &UnstructuredGradientLsqInputF32<'_>,
-    face: &UnstructuredBoundaryFace,
+    face: &UnstructuredBoundaryFaceF32,
     temperatures: &[f32],
     bu: &mut [f32; 3],
     bv: &mut [f32; 3],
@@ -256,43 +258,17 @@ fn ghost_scalar_sample_f32(
     })
 }
 
-fn neg_vector(v: Vector3) -> Vector3 {
-    Vector3::new(-v.x, -v.y, -v.z)
-}
-
-fn sym3_from_lsq(
-    a: &crate::discretization::unstructured_face_cache::LsqPrecomputedCell,
-) -> Symmetric3x3 {
-    Symmetric3x3 {
-        a_xx: a.a_xx,
-        a_xy: a.a_xy,
-        a_xz: a.a_xz,
-        a_yy: a.a_yy,
-        a_yz: a.a_yz,
-        a_zz: a.a_zz,
-    }
-}
-
 fn write_lsq_gradients_f32(
     mesh_cache: &UnstructuredSolverMeshCache,
     exec: &ExecutionContext,
     out: &mut GradientFieldsT<f32>,
 ) -> Result<()> {
     let idwls = exec.idwls_rhs_f32();
-    for (cell, geometry) in mesh_cache.lsq_geometry.iter().enumerate() {
-        let mat = sym3_from_lsq(geometry);
-        let du = solve_symmetric_3x3_f32(&mat, idwls.bu_f32()[cell]).ok_or_else(|| {
-            AsimuError::Mesh(format!("非结构单元 {cell} 的 u 最小二乘梯度样本退化"))
-        })?;
-        let dv = solve_symmetric_3x3_f32(&mat, idwls.bv_f32()[cell]).ok_or_else(|| {
-            AsimuError::Mesh(format!("非结构单元 {cell} 的 v 最小二乘梯度样本退化"))
-        })?;
-        let dw = solve_symmetric_3x3_f32(&mat, idwls.bw_f32()[cell]).ok_or_else(|| {
-            AsimuError::Mesh(format!("非结构单元 {cell} 的 w 最小二乘梯度样本退化"))
-        })?;
-        let dt = solve_symmetric_3x3_f32(&mat, idwls.bt_f32()[cell]).ok_or_else(|| {
-            AsimuError::Mesh(format!("非结构单元 {cell} 的 T 最小二乘梯度样本退化"))
-        })?;
+    for (cell, geometry) in mesh_cache.lsq_geometry_f32.iter().enumerate() {
+        let du = solve_lsq_cell_f32(geometry, idwls.bu_f32()[cell], "u", cell)?;
+        let dv = solve_lsq_cell_f32(geometry, idwls.bv_f32()[cell], "v", cell)?;
+        let dw = solve_lsq_cell_f32(geometry, idwls.bw_f32()[cell], "w", cell)?;
+        let dt = solve_lsq_cell_f32(geometry, idwls.bt_f32()[cell], "T", cell)?;
         out.du_dx.values_mut()[cell] = du[0];
         out.du_dy.values_mut()[cell] = du[1];
         out.du_dz.values_mut()[cell] = du[2];
@@ -307,4 +283,17 @@ fn write_lsq_gradients_f32(
         out.dt_dz.values_mut()[cell] = dt[2];
     }
     Ok(())
+}
+
+fn solve_lsq_cell_f32(
+    geometry: &LsqPrecomputedCellF32,
+    rhs: [f32; 3],
+    component: &str,
+    cell: usize,
+) -> Result<[f32; 3]> {
+    solve_lsq_precomputed_cell_f32(geometry, rhs).ok_or_else(|| {
+        AsimuError::Mesh(format!(
+            "非结构单元 {cell} 的 {component} 最小二乘梯度样本退化"
+        ))
+    })
 }

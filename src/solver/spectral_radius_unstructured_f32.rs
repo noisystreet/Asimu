@@ -4,8 +4,10 @@ use crate::boundary::BoundarySet;
 use crate::core::Real;
 use crate::discretization::BoundaryGhostBuffer;
 use crate::discretization::unstructured_face_cache::{
-    LsqRhsCellIncidence, UnstructuredBoundaryFace, UnstructuredFaceTopology,
-    UnstructuredInteriorFace, UnstructuredSolverMeshCache,
+    LsqRhsCellIncidence, UnstructuredSolverMeshCache,
+};
+use crate::discretization::unstructured_face_cache_f32::{
+    UnstructuredBoundaryFaceF32, UnstructuredFaceTopologyF32, UnstructuredInteriorFaceF32,
 };
 use crate::error::{AsimuError, Result};
 use crate::field::{PrimitiveFieldsT, primitive_from_conserved_relaxed};
@@ -52,7 +54,7 @@ pub fn cell_spectral_radius_unstructured_f32(
         None
     };
     let mut sigma = vec![0.0; n];
-    let topology = &params.mesh_cache.face_topology;
+    let topology = &params.mesh_cache.face_topology_f32;
     let incidence = &params.mesh_cache.lsq_rhs_incidence;
     let gamma = params.eos.gamma as f32;
     let prim = params.primitives;
@@ -73,7 +75,7 @@ pub fn cell_spectral_radius_unstructured_f32(
 fn accumulate_hyperbolic_sigma_one_cell_f32(
     params: &SpectralRadiusUnstructuredF32Params<'_>,
     prim: &PrimitiveFieldsT<f32>,
-    topology: &UnstructuredFaceTopology,
+    topology: &UnstructuredFaceTopologyF32,
     incidence: &LsqRhsCellIncidence,
     cell: usize,
     gamma: f32,
@@ -121,32 +123,32 @@ fn prim_lane_f32(prim: &PrimitiveFieldsT<f32>, cell: usize) -> FacePrimitiveLane
 
 fn accumulate_interior_hyperbolic_as_owner_f32(
     prim: &PrimitiveFieldsT<f32>,
-    face: &UnstructuredInteriorFace,
+    face: &UnstructuredInteriorFaceF32,
     gamma: f32,
     sigma_cell: &mut Real,
 ) {
     let left = prim_lane_f32(prim, face.owner);
     let right = prim_lane_f32(prim, face.neighbor);
     let radius = face_spectral_radius_f32(left, right, face.normal, gamma);
-    add_hyperbolic_contribution(sigma_cell, radius, face.area, face.inv_owner_volume);
+    add_hyperbolic_contribution_f32(sigma_cell, radius, face.area, face.inv_owner_volume);
 }
 
 fn accumulate_interior_hyperbolic_as_neighbor_f32(
     prim: &PrimitiveFieldsT<f32>,
-    face: &UnstructuredInteriorFace,
+    face: &UnstructuredInteriorFaceF32,
     gamma: f32,
     sigma_cell: &mut Real,
 ) {
     let left = prim_lane_f32(prim, face.owner);
     let right = prim_lane_f32(prim, face.neighbor);
     let radius = face_spectral_radius_f32(left, right, face.normal, gamma);
-    add_hyperbolic_contribution(sigma_cell, radius, face.area, face.inv_neighbor_volume);
+    add_hyperbolic_contribution_f32(sigma_cell, radius, face.area, face.inv_neighbor_volume);
 }
 
 fn accumulate_boundary_hyperbolic_f32(
     params: &SpectralRadiusUnstructuredF32Params<'_>,
     prim: &PrimitiveFieldsT<f32>,
-    face: &UnstructuredBoundaryFace,
+    face: &UnstructuredBoundaryFaceF32,
     gamma: f32,
     sigma_cell: &mut Real,
 ) -> Result<()> {
@@ -173,19 +175,23 @@ fn accumulate_boundary_hyperbolic_f32(
         face.normal,
         gamma,
     );
-    let inv_volume = inv_volume(face.owner_volume);
-    add_hyperbolic_contribution(sigma_cell, radius, face.area, inv_volume);
+    add_hyperbolic_contribution_f32(
+        sigma_cell,
+        radius,
+        face.area,
+        inv_volume_f32(face.owner_volume),
+    );
     Ok(())
 }
 
-fn add_hyperbolic_contribution(sigma_cell: &mut Real, radius: f32, area: Real, inv_volume: Real) {
+fn add_hyperbolic_contribution_f32(sigma_cell: &mut Real, radius: f32, area: f32, inv_volume: f32) {
     if inv_volume > 0.0 {
-        *sigma_cell += (radius as Real) * area * inv_volume;
+        *sigma_cell += (radius as Real) * (area as Real) * (inv_volume as Real);
     }
 }
 
-fn inv_volume(volume: Real) -> Real {
-    if volume > DEGENERATE_VOLUME {
+fn inv_volume_f32(volume: f32) -> f32 {
+    if volume > DEGENERATE_VOLUME as f32 {
         1.0 / volume
     } else {
         0.0
@@ -193,7 +199,7 @@ fn inv_volume(volume: Real) -> Real {
 }
 
 fn accumulate_parabolic_sigma_one_cell(
-    topology: &UnstructuredFaceTopology,
+    topology: &UnstructuredFaceTopologyF32,
     incidence: &LsqRhsCellIncidence,
     cell: usize,
     diffusivity: &[Real],
@@ -205,20 +211,26 @@ fn accumulate_parabolic_sigma_one_cell(
     }
     for &face_idx in &incidence.interior_as_owner[cell] {
         let face = &topology.interior[face_idx];
-        add_parabolic_contribution(sigma_cell, diff, face.area, face.owner_volume);
+        add_parabolic_contribution_f32(sigma_cell, diff, face.area, face.owner_volume);
     }
     for &face_idx in &incidence.interior_as_neighbor[cell] {
         let face = &topology.interior[face_idx];
-        add_parabolic_contribution(sigma_cell, diff, face.area, face.neighbor_volume);
+        add_parabolic_contribution_f32(sigma_cell, diff, face.area, face.neighbor_volume);
     }
     for &boundary_idx in &incidence.boundary_faces[cell] {
         let face = &topology.boundary[boundary_idx];
-        add_parabolic_contribution(sigma_cell, diff, face.area, face.owner_volume);
+        add_parabolic_contribution_f32(sigma_cell, diff, face.area, face.owner_volume);
     }
 }
 
-fn add_parabolic_contribution(sigma_cell: &mut Real, diff: Real, area: Real, volume: Real) {
-    add_viscous_parabolic_face_sigma(std::slice::from_mut(sigma_cell), &[diff], 0, area, volume);
+fn add_parabolic_contribution_f32(sigma_cell: &mut Real, diff: Real, area: f32, volume: f32) {
+    add_viscous_parabolic_face_sigma(
+        std::slice::from_mut(sigma_cell),
+        &[diff],
+        0,
+        area as Real,
+        volume as Real,
+    );
 }
 
 #[cfg(test)]

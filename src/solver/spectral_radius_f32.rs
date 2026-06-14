@@ -1,6 +1,6 @@
 //! 谱半径 f32 热路径（输出仍为 `Real` 供 CFL / LU-SGS 共用）。
 
-use crate::core::{ComputeFloat, Real, Vector3};
+use crate::core::{ComputeFloat, Real};
 use crate::error::Result;
 use crate::field::PrimitiveFieldsT;
 use crate::physics::{IdealGasEoS, ViscousPhysicsConfig};
@@ -17,7 +17,7 @@ pub struct FacePrimitiveLaneF32 {
 pub fn face_spectral_radius_f32(
     left: FacePrimitiveLaneF32,
     right: FacePrimitiveLaneF32,
-    normal: Vector3,
+    normal: [f32; 3],
     gamma: f32,
 ) -> f32 {
     let lam_l = normal_speed_plus_sound_f32(left.rho, left.pressure, left.velocity, normal, gamma);
@@ -30,13 +30,11 @@ fn normal_speed_plus_sound_f32(
     rho: f32,
     pressure: f32,
     velocity: [f32; 3],
-    normal: Vector3,
+    normal: [f32; 3],
     gamma: f32,
 ) -> f32 {
     let rho = rho.max(1.0e-30_f32);
-    let u_n = velocity[0] * normal.x as f32
-        + velocity[1] * normal.y as f32
-        + velocity[2] * normal.z as f32;
+    let u_n = velocity[0] * normal[0] + velocity[1] * normal[1] + velocity[2] * normal[2];
     let a = (gamma * pressure.max(1.0e-30_f32) / rho).sqrt();
     u_n.abs() + a
 }
@@ -64,7 +62,7 @@ pub fn cell_viscous_diffusivity_max_f32(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::approx_eq;
+    use crate::core::{Vector3, approx_eq};
     use crate::physics::PrimitiveState;
 
     #[test]
@@ -81,7 +79,7 @@ mod tests {
             pressure: 100_000.0,
             temperature: 290.0,
         };
-        let normal = Vector3 {
+        let normal_f64 = Vector3 {
             x: 1.0,
             y: 0.0,
             z: 0.0,
@@ -106,11 +104,11 @@ mod tests {
                     prim_r.velocity[2] as f32,
                 ],
             },
-            normal,
+            [1.0_f32, 0.0, 0.0],
             gamma,
         );
         let f64_val =
-            crate::solver::spectral_radius::face_spectral_radius(&prim_l, &prim_r, normal, 1.4);
+            crate::solver::spectral_radius::face_spectral_radius(&prim_l, &prim_r, normal_f64, 1.4);
         assert!(approx_eq(f32_val as Real, f64_val, 1.0e-3));
     }
 }

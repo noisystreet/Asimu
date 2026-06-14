@@ -11,6 +11,8 @@ use crate::discretization::reconstruction_unstructured_f32::{
     reconstruct_unstructured_interior_face_f32,
 };
 use crate::discretization::unstructured_face_cache::UnstructuredFaceTopology;
+use crate::discretization::unstructured_face_cache_f32::UnstructuredInteriorFaceF32;
+use crate::discretization::vec3_from_f32;
 use crate::error::{AsimuError, Result};
 use crate::field::ConservedResidualT;
 
@@ -22,11 +24,11 @@ use super::{
 pub(super) fn assemble_inviscid_muscl_unstructured_f32(
     residual: &mut ConservedResidualT<f32>,
     params: &InviscidAssemblyUnstructuredTypedParams<'_, f32>,
-    topology: &UnstructuredFaceTopology,
+    _topology: &UnstructuredFaceTopology,
 ) -> Result<()> {
     validate_f32_muscl_params(params)?;
-    assemble_interior_faces_muscl_f32(residual, params, topology)?;
-    assemble_boundary_faces_muscl_f32(residual, params, topology)?;
+    assemble_interior_faces_muscl_f32(residual, params)?;
+    assemble_boundary_faces_muscl_f32(residual, params)?;
     Ok(())
 }
 
@@ -50,8 +52,9 @@ fn validate_f32_muscl_params(
 fn assemble_interior_faces_muscl_f32(
     residual: &mut ConservedResidualT<f32>,
     params: &InviscidAssemblyUnstructuredTypedParams<'_, f32>,
-    topology: &UnstructuredFaceTopology,
 ) -> Result<()> {
+    let topology = &params.mesh_cache.face_topology;
+    let topology_f32 = &params.mesh_cache.face_topology_f32;
     let gradients = params.gradients.expect("gradients");
     let limiter = muscl_limiter(params);
     let ctx = UnstructuredLinearReconstructionCtxF32 {
@@ -65,7 +68,11 @@ fn assemble_interior_faces_muscl_f32(
     for bucket in &topology.interior_coloring.buckets {
         for &face_idx in bucket {
             if let Some((geom, flux)) = compute_interior_inviscid_face_contribution_f32(
-                face_idx, params, topology, gradients, ctx,
+                face_idx,
+                params,
+                topology_f32.interior.as_slice(),
+                gradients,
+                ctx,
             )? {
                 f32::scatter_fused_interior_face(residual, &geom, &flux);
             }
@@ -77,7 +84,7 @@ fn assemble_interior_faces_muscl_f32(
 fn compute_interior_inviscid_face_contribution_f32(
     face_idx: usize,
     params: &InviscidAssemblyUnstructuredTypedParams<'_, f32>,
-    topology: &UnstructuredFaceTopology,
+    topology: &[UnstructuredInteriorFaceF32],
     gradients: &GradientFieldsT<f32>,
     ctx: UnstructuredLinearReconstructionCtxF32<'_>,
 ) -> Result<
@@ -86,7 +93,7 @@ fn compute_interior_inviscid_face_contribution_f32(
         crate::discretization::InviscidFlux,
     )>,
 > {
-    let face = &topology.interior[face_idx];
+    let face = &topology[face_idx];
     if face.owner_rhs_scale == 0.0 && face.neighbor_rhs_scale == 0.0 {
         return Ok(None);
     }
@@ -96,14 +103,18 @@ fn compute_interior_inviscid_face_contribution_f32(
         gradients.inviscid_primitive_grad_at(face.owner),
         gradients.inviscid_primitive_grad_at(face.neighbor),
     )?;
-    let flux =
-        face_inviscid_flux_from_interface_f32(iface_f32, face.normal, params.eos, params.config)?;
+    let flux = face_inviscid_flux_from_interface_f32(
+        iface_f32,
+        vec3_from_f32(face.normal),
+        params.eos,
+        params.config,
+    )?;
     Ok(Some((
         InteriorInviscidScatterGeom {
             owner: face.owner,
             neighbor: face.neighbor,
-            owner_scale: face.owner_rhs_scale,
-            neighbor_scale: face.neighbor_rhs_scale,
+            owner_scale: face.owner_rhs_scale as crate::core::Real,
+            neighbor_scale: face.neighbor_rhs_scale as crate::core::Real,
         },
         flux,
     )))
@@ -112,8 +123,8 @@ fn compute_interior_inviscid_face_contribution_f32(
 fn assemble_boundary_faces_muscl_f32(
     residual: &mut ConservedResidualT<f32>,
     params: &InviscidAssemblyUnstructuredTypedParams<'_, f32>,
-    topology: &UnstructuredFaceTopology,
 ) -> Result<()> {
+    let topology_f32 = &params.mesh_cache.face_topology_f32;
     let gradients = params.gradients.expect("gradients");
     let limiter = muscl_limiter(params);
     let ctx = UnstructuredLinearReconstructionCtxF32 {
@@ -124,8 +135,10 @@ fn assemble_boundary_faces_muscl_f32(
         min_pressure: params.min_pressure,
         limiter,
     };
-    for bface in &topology.boundary {
-        if bface.owner_rhs_scale == 0.0 || is_degenerate_volume(bface.owner_volume) {
+    for bface in &topology_f32.boundary {
+        if bface.owner_rhs_scale == 0.0
+            || is_degenerate_volume(bface.owner_volume as crate::core::Real)
+        {
             continue;
         }
         let iface_f32 = reconstruct_unstructured_boundary_face_f32(
@@ -135,14 +148,14 @@ fn assemble_boundary_faces_muscl_f32(
         )?;
         let flux = face_inviscid_flux_from_interface_f32(
             iface_f32,
-            bface.normal,
+            vec3_from_f32(bface.normal),
             params.eos,
             params.config,
         )?;
         scatter_fused_boundary_inviscid_face_typed(
             residual,
             bface.owner,
-            bface.owner_rhs_scale,
+            bface.owner_rhs_scale as crate::core::Real,
             &flux,
         );
     }

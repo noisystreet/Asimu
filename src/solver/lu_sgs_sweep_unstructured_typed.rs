@@ -49,7 +49,7 @@ impl LuSgsUnstructuredSweepTyped for f32 {
         face_spectral_radius_f32(
             prim_lane_f32(primitives, cell),
             prim_lane_f32(primitives, neighbor),
-            normal,
+            [normal.x as f32, normal.y as f32, normal.z as f32],
             gamma_f32,
         )
         .to_real()
