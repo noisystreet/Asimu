@@ -51,6 +51,7 @@ CI（`tests/case_run.rs`）判据：
 | 压力 Poisson 残差 | `max_abs_corrected_divergence` \(< 10^{-6}\) |
 
 机器可读参考值见 `expected.json`（`status = i3_piso_bdf1_kinetic_decay_vv`）。
+metrics 与文献对不上时，先查 [docs/DEBUG_CHECKLIST.md](../../../docs/DEBUG_CHECKLIST.md) §2–§3。
 
 ## 参数敏感性（16×16，\(t^*=2\)，本地 `#[ignore]` 对照）
 

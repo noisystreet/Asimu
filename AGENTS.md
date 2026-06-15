@@ -185,7 +185,7 @@ impl SteadyDiffusionSolver {
 | 时间推进 | `TimeIntegrator`、CFL 条件 | `docs/theory/` + ADR 0005 |
 | 物理本构 / 源项 | 粘性、湍流闭包（远期） | `docs/theory/` |
 | 线性求解算法 | CG、预条件子（非 trivial 调用） | `docs/theory/` 或 `linalg` rustdoc |
-| V&V 验证算例 | `tests/benchmarks/*` | 算例 `README.md`（见 [BENCHMARKS.md](docs/BENCHMARKS.md)） |
+| V&V 验证算例 | `tests/benchmarks/*` | 算例 `README.md`（见 [BENCHMARKS.md](docs/BENCHMARKS.md)）；metrics 对不上文献时见 [DEBUG_CHECKLIST.md](docs/DEBUG_CHECKLIST.md) |
 
 #### 理论说明最低内容
 
@@ -256,6 +256,7 @@ impl SteadyDiffusionSolver {
 
 - MCP：`docs/MCP.md`（v1.1+ 规划）
 - 运行产物 / V&V：`docs/BENCHMARKS.md`、Run Manifest、Restart（ARCHITECTURE §8.5）
+- V&V 排查：`docs/DEBUG_CHECKLIST.md`（无量纲/解析对照；修数值前先查）
 
 ## 验证命令（修改后必须运行）
 

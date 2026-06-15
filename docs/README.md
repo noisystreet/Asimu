@@ -8,6 +8,7 @@
 | [API.md](API.md) | 公开 library API |
 | [MCP.md](MCP.md) | MCP 集成规划（Tools / Resources） |
 | [BENCHMARKS.md](BENCHMARKS.md) | V&V 验证算例库规划 |
+| [DEBUG_CHECKLIST.md](DEBUG_CHECKLIST.md) | V&V / 无量纲 metrics 排查清单 |
 | [OBSERVABILITY.md](OBSERVABILITY.md) | 性能与可观测性规划 |
 | [SLIDING_MESH.md](SLIDING_MESH.md) | 滑移网格 / MRF / ALE 分阶段规划 |
 | [theory/](theory/) | 数值理论手册（离散、BC、时间推进等） |

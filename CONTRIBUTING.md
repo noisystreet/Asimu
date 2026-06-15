@@ -37,6 +37,7 @@ feat(mesh): add structured grid loader
 - 基于 `main` 创建功能分支（命名：`feat/xxx`、`fix/xxx`、`docs/xxx`）
 - 确保 `make check` 通过
 - 新功能需附带测试（见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 测试策略）
+- V&V / 无量纲 metrics 与文献对不上时，先走 [docs/DEBUG_CHECKLIST.md](docs/DEBUG_CHECKLIST.md)
 - 填写 PR 模板中的检查项
 
 ## 许可证

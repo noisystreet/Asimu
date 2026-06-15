@@ -16,7 +16,7 @@
 | **可自动化** | `expected.json` 机器可读；CI 断言 |
 | **Manifest 联动** | 运行 manifest 写入 `benchmark_id` |
 
-与 golden test 的区别见 [ARCHITECTURE.md](ARCHITECTURE.md) §8.5.6 · 性能 macro 基准见 [OBSERVABILITY.md](OBSERVABILITY.md)。
+与 golden test 的区别见 [ARCHITECTURE.md](ARCHITECTURE.md) §8.5.6 · 性能 macro 基准见 [OBSERVABILITY.md](OBSERVABILITY.md) · metrics 与文献不一致时的排查顺序见 [DEBUG_CHECKLIST.md](DEBUG_CHECKLIST.md)。
 
 ## 2. 与 golden test 的区别
 
