@@ -221,8 +221,13 @@ a_P^c = a_P - \sum a_{nb} \tag{9}
 \]
 
 \[
-d_P = \frac{V_P}{a_P^c} \tag{10}
+d_P = \frac{V_P}{a_P} \tag{10}
 \]
+
+实现上，`assemble_incompressible_momentum_predictor_with_boundary_and_flux_3d` 使用动量矩阵对角
+\(a_P\)（含伪瞬态、扩散、对流与欠松弛后对角）计算 `d_coefficient`。此前若用
+\(a_P+\sum a_{nb}\) 作为分母，会在守恒离散下出现对角与邻接项抵消，导致 \(d_P\) 近似退化为常数尺度并削弱
+pressure-velocity coupling；I3 现已修正为按 (10) 取对角系数。
 
 ### 5.3 压力修正方程
 
@@ -238,7 +243,7 @@ d_P = \frac{V_P}{a_P^c} \tag{10}
 \]
 
 压力校正 RHS 使用当前显式 \(\phi_f^k\) 的散度；内部面速度插值只使用 owner/neighbor 两侧真实 cell，\(d_f=(d_P+d_N)/2\)，
-\(A_f\) 与 \(\Delta n_f\) 来自结构化网格局部 metric。边界面通量由
+\(A_f\) 与 \(\Delta n_f\) 来自结构化网格局部 metric。对 `periodic` 成对边界，\(\Delta n_f\) 使用周期 wrap 后的最短镜像距离（而非跨域直差），保证周期缝与内部面的离散尺度一致。边界面通量由
 `incompressible_boundary_face_state` 给定：壁面/对称面法向通量为零，速度入口与动壁使用给定面速度，压力出口使用 owner 速度零梯度外推；结构化 `i_min/i_max` 成对周期边界通过 wrap 面通量进入 Rhie-Chow 连续性残差。
 
 I3 压力校正矩阵使用动量预测矩阵提供的 cell-centered \(d_P\)，内部面取
@@ -364,7 +369,7 @@ Ghost 单元距 owner 中心法向距离 \(d_f\)。
 | 边界 face state | `discretization::incompressible_boundary_face_state` | **已实现：集中 wall / moving_wall / symmetry / inlet / outlet 的 face 速度、压力与 pressure-correction 约束语义** |
 | (6a) 速度 Laplacian skeleton | `discretization::compute_incompressible_velocity_laplacian_3d` | **I1 已实现** |
 | (8a)–(8c) 动量预测 | `discretization::assemble_incompressible_momentum_predictor_with_boundary_and_flux_3d` | **已实现：内部扩散/迎风对流、显式 \(\phi\) 对流通量、边界面贡献、周期 x wrap、三分量 RHS** |
-| (9)(10) SIMPLEC 系数 | `discretization::assemble_incompressible_momentum_predictor_with_boundary_and_flux_3d` | **已实现：由动量矩阵一致系数计算 \(d_P\)** |
+| (9)(10) SIMPLEC 系数 | `discretization::assemble_incompressible_momentum_predictor_with_boundary_and_flux_3d` | **已实现：由动量矩阵对角系数计算 \(d_P\)** |
 | (11a)(11b) 压力校正 Poisson skeleton | `discretization::assemble_incompressible_pressure_poisson_3d` | **I1 已实现：RHS 来自预测速度 \(u^*\) 的散度** |
 | (2a)–(2e) 不可压缩无量纲化 | `io::nondimensional::apply_nondimensionalization_for_incompressible` | **I1 已实现** |
 | I1 runner 诊断闭环 | `case/incompressible_3d.rs`, `solver::run_incompressible_pressure_velocity` | **已实现：case 负责输入/输出，solver 负责编排 pressure-velocity 迭代、algorithm 标签与收敛历史** |

@@ -59,12 +59,17 @@ impl KnownIncompressibleBenchmark {
         mesh: &StructuredMesh3d,
         config: &IncompressibleCaseConfig,
         boundary: &crate::boundary::BoundarySet,
+        pseudo_time_step: crate::core::Real,
         fields: IncompressibleFields,
     ) -> Result<IncompressibleFields> {
         match self {
-            Self::TaylorGreen3d => {
-                taylor_green_prepare_initial_fields(mesh, config, boundary, fields)
-            }
+            Self::TaylorGreen3d => taylor_green_prepare_initial_fields(
+                mesh,
+                config,
+                boundary,
+                pseudo_time_step,
+                fields,
+            ),
             Self::LidDrivenCavityRe100 | Self::ChannelPoiseuille => Ok(fields),
         }
     }

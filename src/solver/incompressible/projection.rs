@@ -68,23 +68,38 @@ pub struct IncompressibleProjectionStats {
 /// 将 collocated 初场投影至 Rhie-Chow 面通量散度低于 `tolerance`。
 #[must_use = "散度投影失败须向上传播"]
 pub fn project_incompressible_fields_divergence_free_3d(
+    fields: IncompressibleFields,
+    config: IncompressibleProjectionConfig<'_>,
+) -> Result<(IncompressibleFields, IncompressibleProjectionStats)> {
+    let d = ScalarField::uniform(config.mesh.num_cells(), 1.0)?;
+    project_incompressible_fields_divergence_free_with_d_3d(fields, &d, config)
+}
+
+/// 将 collocated 初场在给定 \(d_P\) 下投影至 Rhie-Chow 面通量散度低于 `tolerance`。
+#[must_use = "散度投影失败须向上传播"]
+pub fn project_incompressible_fields_divergence_free_with_d_3d(
     mut fields: IncompressibleFields,
+    d_coefficient: &ScalarField,
     config: IncompressibleProjectionConfig<'_>,
 ) -> Result<(IncompressibleFields, IncompressibleProjectionStats)> {
     match config.mode {
         IncompressibleProjectionMode::RhieChowPressureOnly => {
-            project_rhie_chow_pressure_only(&mut fields, config)
+            project_rhie_chow_pressure_only(&mut fields, d_coefficient, config)
         }
     }
 }
 
 fn project_rhie_chow_pressure_only(
     fields: &mut IncompressibleFields,
+    d_coefficient: &ScalarField,
     config: IncompressibleProjectionConfig<'_>,
 ) -> Result<(IncompressibleFields, IncompressibleProjectionStats)> {
-    let d = ScalarField::uniform(config.mesh.num_cells(), 1.0)?;
-    let initial_div =
-        compute_incompressible_rhie_chow_divergence_3d(config.mesh, fields, &d, config.boundary)?;
+    let initial_div = compute_incompressible_rhie_chow_divergence_3d(
+        config.mesh,
+        fields,
+        d_coefficient,
+        config.boundary,
+    )?;
     let max_abs_divergence_before = max_abs_scalar_field(&initial_div);
     if max_abs_divergence_before <= config.tolerance {
         return Ok((
@@ -104,7 +119,7 @@ fn project_rhie_chow_pressure_only(
         let divergence = compute_incompressible_rhie_chow_divergence_3d(
             config.mesh,
             fields,
-            &d,
+            d_coefficient,
             config.boundary,
         )?;
         let max_div = max_abs_scalar_field(&divergence);
@@ -114,7 +129,7 @@ fn project_rhie_chow_pressure_only(
         let system = assemble_incompressible_pressure_correction_3d(
             config.mesh,
             &divergence,
-            &d,
+            d_coefficient,
             config.boundary,
             IncompressiblePressureCorrectionConfig::new(config.density, 0, 0.0)?,
         )?;
@@ -124,15 +139,19 @@ fn project_rhie_chow_pressure_only(
         apply_rhie_chow_pressure_projection_to_fields(
             config.mesh,
             fields,
-            &d,
+            d_coefficient,
             &solution.correction,
             config.boundary,
         )?;
         iterations += 1;
     }
 
-    let final_div =
-        compute_incompressible_rhie_chow_divergence_3d(config.mesh, fields, &d, config.boundary)?;
+    let final_div = compute_incompressible_rhie_chow_divergence_3d(
+        config.mesh,
+        fields,
+        d_coefficient,
+        config.boundary,
+    )?;
     let max_abs_divergence_after = max_abs_scalar_field(&final_div);
     Ok((
         fields.clone(),

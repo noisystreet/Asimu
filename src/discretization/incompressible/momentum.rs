@@ -155,7 +155,7 @@ pub fn assemble_incompressible_momentum_predictor_with_boundary_and_flux_3d(
                 let row = mesh.cell_index(i, j, k);
                 let volume = mesh.cell_metric(i, j, k).volume;
                 let time_coeff = volume / config.pseudo_time_step;
-                let consistent_coeff = add_momentum_predictor_neighbors(
+                let diagonal_coeff = add_momentum_predictor_neighbors(
                     ctx,
                     &mut rows[row],
                     (i, j, k),
@@ -211,7 +211,7 @@ pub fn assemble_incompressible_momentum_predictor_with_boundary_and_flux_3d(
                 rhs_x.push(rhs_cell_x);
                 rhs_y.push(rhs_cell_y);
                 rhs_z.push(rhs_cell_z);
-                d.push(volume / consistent_coeff);
+                d.push(volume / diagonal_coeff);
             }
         }
     }
@@ -405,9 +405,8 @@ fn add_momentum_predictor_neighbors(
     add_diffusion_y_neighbors(ctx, row, &mut diag, cell);
     add_diffusion_z_neighbors(ctx, row, &mut diag, cell);
     add_momentum_convection(ctx, row, &mut diag, cell);
-    let consistent_coeff = diag + row.iter().map(|(_, value)| *value).sum::<Real>();
     row.push((center, diag));
-    consistent_coeff.max(time_coeff)
+    diag.max(time_coeff)
 }
 
 fn add_diffusion_x_neighbors(

@@ -7,6 +7,7 @@
 
 ### Fixed
 
+- 不可压缩 pressure-velocity 耦合：修正动量预测 `d_coefficient` 分母为动量矩阵对角系数 \(a_P\)（避免守恒离散下 \(a_P+\sum a_{nb}\) 抵消导致 \(d_P\) 近常数）；并修正 Rhie-Chow/压力校正/动量扩散在周期边界 `owner-neighbor` 距离为周期 wrap 最短镜像距离，消除周期缝尺度失真。
 - 非结构 f32 IDWLS 梯度：`scale` 缩尺网格（如 dual_ellipsoid `0.001`）下 `lsq_geometry_f32` 行列式下溢导致首步报「最小二乘梯度样本退化」；粘性/二阶无粘梯度求解改回 f64 预计算矩阵，输出仍为 f32。
 
 ### Added

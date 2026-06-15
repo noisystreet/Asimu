@@ -663,7 +663,7 @@ mod tests {
                 .d_coefficient
                 .values()
                 .iter()
-                .all(|&value| approx_eq(value, 0.5, 1.0e-12))
+                .all(|&value| value.is_finite() && value > 0.0 && value < 0.5)
         );
     }
 
@@ -727,7 +727,7 @@ mod tests {
         assert!(approx_eq(system.rhs_x[center], 2.0, 1.0e-12));
         assert!(approx_eq(
             system.d_coefficient.values()[center],
-            1.0,
+            1.0 / 3.0,
             1.0e-12
         ));
     }

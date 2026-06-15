@@ -335,11 +335,22 @@ fn owner_neighbor_distance(
 ) -> Real {
     let owner_center = mesh.cell_metric(owner.0, owner.1, owner.2).center;
     let neighbor_center = mesh.cell_metric(neighbor.0, neighbor.1, neighbor.2).center;
-    let dx = neighbor_center.x - owner_center.x;
-    let dy = neighbor_center.y - owner_center.y;
-    let dz = neighbor_center.z - owner_center.z;
+    let lx = mesh.node_x(mesh.nx, 0, 0) - mesh.node_x(0, 0, 0);
+    let ly = mesh.node_y(0, mesh.ny, 0) - mesh.node_y(0, 0, 0);
+    let lz = mesh.node_z(0, 0, mesh.nz) - mesh.node_z(0, 0, 0);
+    let dx = wrapped_delta(neighbor_center.x - owner_center.x, lx);
+    let dy = wrapped_delta(neighbor_center.y - owner_center.y, ly);
+    let dz = wrapped_delta(neighbor_center.z - owner_center.z, lz);
     let projected = (dx * face.normal.x + dy * face.normal.y + dz * face.normal.z).abs();
     projected.max(Real::EPSILON)
+}
+
+fn wrapped_delta(delta: Real, period: Real) -> Real {
+    if period > Real::EPSILON && delta.abs() > 0.5 * period.abs() {
+        delta - delta.signum() * period
+    } else {
+        delta
+    }
 }
 
 fn scatter_x_fluxes(mesh: &StructuredMesh3d, flux: &IncompressibleFaceFluxField, net: &mut [Real]) {
@@ -502,6 +513,14 @@ mod tests {
             ax,
             mesh.cell_metric(1, 0, 0).volume
         );
+    }
+
+    #[test]
+    fn periodic_owner_neighbor_distance_uses_wrapped_spacing() {
+        let mesh = StructuredMesh3d::uniform_box("box", 16, 4, 1, 1.0, 1.0, 0.1).expect("mesh");
+        let metric = mesh.i_face_metric(mesh.nx - 2, 0, 0);
+        let spacing = owner_neighbor_distance(&mesh, (mesh.nx - 1, 0, 0), (0, 0, 0), &metric);
+        assert!(approx_eq(spacing, 1.0 / mesh.nx as Real, 1.0e-12));
     }
 
     fn nonuniform_two_cell_mesh() -> StructuredMesh3d {

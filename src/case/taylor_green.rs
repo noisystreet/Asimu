@@ -8,12 +8,16 @@ use tracing::info;
 
 use crate::boundary::BoundarySet;
 use crate::core::{Real, format_log_sci4};
+use crate::discretization::{
+    IncompressibleMomentumPredictorConfig,
+    assemble_incompressible_momentum_predictor_with_boundary_and_flux_3d,
+};
 use crate::error::Result;
 use crate::field::{IncompressibleFields, ScalarField};
 use crate::io::IncompressibleCaseConfig;
 use crate::mesh::StructuredMesh3d;
 use crate::solver::{
-    IncompressibleProjectionConfig, project_incompressible_fields_divergence_free_3d,
+    IncompressibleProjectionConfig, project_incompressible_fields_divergence_free_with_d_3d,
 };
 
 const TWO_PI: Real = 2.0 * PI;
@@ -57,10 +61,24 @@ pub fn taylor_green_prepare_initial_fields(
     mesh: &StructuredMesh3d,
     config: &IncompressibleCaseConfig,
     boundary: &BoundarySet,
+    pseudo_time_step: Real,
     fields: IncompressibleFields,
 ) -> Result<IncompressibleFields> {
-    let (projected, stats) = project_incompressible_fields_divergence_free_3d(
+    let predictor_config =
+        IncompressibleMomentumPredictorConfig::new(config.kinematic_viscosity, pseudo_time_step)?
+            .with_body_force(config.body_force)?
+            .with_velocity_under_relaxation(1.0)?
+            .with_convection_scheme(config.convection_scheme);
+    let momentum = assemble_incompressible_momentum_predictor_with_boundary_and_flux_3d(
+        mesh,
+        &fields,
+        boundary,
+        predictor_config,
+        None,
+    )?;
+    let (projected, stats) = project_incompressible_fields_divergence_free_with_d_3d(
         fields,
+        &momentum.d_coefficient,
         IncompressibleProjectionConfig::rhie_chow_pressure_only(
             mesh,
             boundary,
@@ -267,5 +285,363 @@ kind = "symmetry"
             max_after,
             1.0e-12
         ));
+    }
+
+    #[test]
+    fn projection_then_boundary_keeps_low_divergence_with_consistent_d() {
+        use crate::discretization::{
+            IncompressibleMomentumPredictorConfig, apply_incompressible_boundary_conditions_3d,
+            assemble_incompressible_momentum_predictor_with_boundary_and_flux_3d,
+            compute_incompressible_rhie_chow_divergence_3d,
+        };
+        use crate::io::parse_case_str;
+        use crate::solver::{
+            IncompressibleProjectionConfig, project_incompressible_fields_divergence_free_with_d_3d,
+        };
+
+        let case = parse_case_str(
+            r#"
+name = "tg_projection_boundary"
+benchmark_id = "taylor_green_3d"
+
+[mesh]
+kind = "structured_3d"
+nx = 16
+ny = 16
+nz = 1
+lx = 6.283185307179586
+ly = 6.283185307179586
+lz = 0.1
+
+[physics]
+
+[time]
+mode = "transient"
+dt = 0.05
+
+[incompressible]
+pressure = 0.0
+velocity = [0.0, 0.0, 0.0]
+density = 1.0
+kinematic_viscosity = 0.1
+
+[incompressible.reference]
+length = 6.283185307179586
+velocity = 1.0
+
+[boundary.i_min]
+kind = "periodic"
+partner = "i_max"
+
+[boundary.i_max]
+kind = "periodic"
+partner = "i_min"
+
+[boundary.j_min]
+kind = "periodic"
+partner = "j_max"
+
+[boundary.j_max]
+kind = "periodic"
+partner = "j_min"
+
+[boundary.k_min]
+kind = "symmetry"
+
+[boundary.k_max]
+kind = "symmetry"
+"#,
+        )
+        .expect("parse");
+        let mesh = case.mesh.as_3d().expect("mesh");
+        let config = case.incompressible.expect("inc");
+        let fields = taylor_green_initial_fields(mesh).expect("fields");
+        let predictor_config = IncompressibleMomentumPredictorConfig::new(
+            config.kinematic_viscosity,
+            case.time.dt.expect("dt"),
+        )
+        .expect("predictor")
+        .with_body_force(config.body_force)
+        .expect("body_force")
+        .with_velocity_under_relaxation(1.0)
+        .expect("urf")
+        .with_convection_scheme(config.convection_scheme);
+        let momentum = assemble_incompressible_momentum_predictor_with_boundary_and_flux_3d(
+            mesh,
+            &fields,
+            &case.boundary,
+            predictor_config,
+            None,
+        )
+        .expect("momentum");
+        let (mut projected, _) = project_incompressible_fields_divergence_free_with_d_3d(
+            fields,
+            &momentum.d_coefficient,
+            IncompressibleProjectionConfig::rhie_chow_pressure_only(
+                mesh,
+                &case.boundary,
+                config.density,
+                config.linear_solvers.pressure,
+                12,
+                1.0e-6,
+            ),
+        )
+        .expect("project");
+        let div_before_bc = compute_incompressible_rhie_chow_divergence_3d(
+            mesh,
+            &projected,
+            &momentum.d_coefficient,
+            &case.boundary,
+        )
+        .expect("div before bc");
+        let max_before_bc = div_before_bc
+            .values()
+            .iter()
+            .fold(0.0_f64, |acc, value| acc.max(value.abs()));
+        apply_incompressible_boundary_conditions_3d(mesh, &mut projected, &case.boundary)
+            .expect("apply bc");
+        let div_after_bc = compute_incompressible_rhie_chow_divergence_3d(
+            mesh,
+            &projected,
+            &momentum.d_coefficient,
+            &case.boundary,
+        )
+        .expect("div after bc");
+        let max_after_bc = div_after_bc
+            .values()
+            .iter()
+            .fold(0.0_f64, |acc, value| acc.max(value.abs()));
+        assert!(
+            max_after_bc <= max_before_bc * 2.0 + 1.0e-8,
+            "max_before_bc={max_before_bc:e}, max_after_bc={max_after_bc:e}"
+        );
+    }
+
+    #[test]
+    fn initial_pressure_projection_reduces_but_not_eliminates_step1_predicted_divergence() {
+        use crate::io::parse_case_str;
+        use crate::solver::{
+            IncompressiblePressureVelocityConfig, run_incompressible_pressure_velocity,
+        };
+
+        let case = parse_case_str(
+            r#"
+name = "tg_step1_probe"
+benchmark_id = "taylor_green_3d"
+
+[mesh]
+kind = "structured_3d"
+nx = 16
+ny = 16
+nz = 1
+lx = 6.283185307179586
+ly = 6.283185307179586
+lz = 0.1
+
+[physics]
+
+[time]
+mode = "transient"
+dt = 0.05
+
+[incompressible]
+pressure = 0.0
+velocity = [0.0, 0.0, 0.0]
+density = 1.0
+kinematic_viscosity = 0.1
+convection_scheme = "central"
+piso_correctors = 2
+
+[incompressible.reference]
+length = 6.283185307179586
+velocity = 1.0
+
+[boundary.i_min]
+kind = "periodic"
+partner = "i_max"
+
+[boundary.i_max]
+kind = "periodic"
+partner = "i_min"
+
+[boundary.j_min]
+kind = "periodic"
+partner = "j_max"
+
+[boundary.j_max]
+kind = "periodic"
+partner = "j_min"
+
+[boundary.k_min]
+kind = "symmetry"
+
+[boundary.k_max]
+kind = "symmetry"
+"#,
+        )
+        .expect("parse");
+        let mesh = case.mesh.as_3d().expect("mesh");
+        let config = case.incompressible.expect("inc");
+        let dt = case.time.dt.expect("dt");
+        let base_fields = taylor_green_initial_fields(mesh).expect("base");
+        let projected_fields = taylor_green_prepare_initial_fields(
+            mesh,
+            &config,
+            &case.boundary,
+            dt,
+            base_fields.clone(),
+        )
+        .expect("projected");
+        let solver_config = IncompressiblePressureVelocityConfig {
+            mesh,
+            density: config.density,
+            kinematic_viscosity: config.kinematic_viscosity,
+            body_force: config.body_force,
+            velocity_under_relaxation: 1.0,
+            pressure_under_relaxation: 1.0,
+            pseudo_time_step: dt,
+            convection_scheme: config.convection_scheme,
+            pressure_correctors: config.piso_correctors.max(1),
+            boundary: &case.boundary,
+            max_iterations: 1,
+            min_iterations: 0,
+            tolerance: None,
+            require_velocity_convergence: false,
+            convergence_window: 1,
+            snapshot_interval: None,
+            linear_solvers: config.linear_solvers,
+            transient_mode: true,
+        };
+        let base_step1 =
+            run_incompressible_pressure_velocity(&base_fields, solver_config).expect("base step1");
+        let projected_step1 =
+            run_incompressible_pressure_velocity(&projected_fields, solver_config)
+                .expect("projected step1");
+        assert!(
+            projected_step1.max_abs_predicted_divergence
+                < 0.5 * base_step1.max_abs_predicted_divergence,
+            "base={} projected={}",
+            base_step1.max_abs_predicted_divergence,
+            projected_step1.max_abs_predicted_divergence
+        );
+        assert!(
+            projected_step1.max_abs_predicted_divergence > 1.0e-2,
+            "projected={}",
+            projected_step1.max_abs_predicted_divergence
+        );
+    }
+
+    #[test]
+    fn step1_predicted_divergence_is_sensitive_to_pseudo_dt() {
+        use crate::io::parse_case_str;
+        use crate::solver::{
+            IncompressiblePressureVelocityConfig, run_incompressible_pressure_velocity,
+        };
+
+        let case = parse_case_str(
+            r#"
+name = "tg_step1_dt_probe"
+benchmark_id = "taylor_green_3d"
+
+[mesh]
+kind = "structured_3d"
+nx = 16
+ny = 16
+nz = 1
+lx = 6.283185307179586
+ly = 6.283185307179586
+lz = 0.1
+
+[physics]
+
+[time]
+mode = "transient"
+dt = 0.05
+
+[incompressible]
+pressure = 0.0
+velocity = [0.0, 0.0, 0.0]
+density = 1.0
+kinematic_viscosity = 0.1
+convection_scheme = "central"
+piso_correctors = 2
+
+[incompressible.reference]
+length = 6.283185307179586
+velocity = 1.0
+
+[boundary.i_min]
+kind = "periodic"
+partner = "i_max"
+
+[boundary.i_max]
+kind = "periodic"
+partner = "i_min"
+
+[boundary.j_min]
+kind = "periodic"
+partner = "j_max"
+
+[boundary.j_max]
+kind = "periodic"
+partner = "j_min"
+
+[boundary.k_min]
+kind = "symmetry"
+
+[boundary.k_max]
+kind = "symmetry"
+"#,
+        )
+        .expect("parse");
+        let mesh = case.mesh.as_3d().expect("mesh");
+        let config = case.incompressible.expect("inc");
+        let dt_base = case.time.dt.expect("dt");
+        let projected_fields = taylor_green_prepare_initial_fields(
+            mesh,
+            &config,
+            &case.boundary,
+            dt_base,
+            taylor_green_initial_fields(mesh).expect("base"),
+        )
+        .expect("projected");
+        let run_one_step = |pseudo_dt: Real| {
+            run_incompressible_pressure_velocity(
+                &projected_fields,
+                IncompressiblePressureVelocityConfig {
+                    mesh,
+                    density: config.density,
+                    kinematic_viscosity: config.kinematic_viscosity,
+                    body_force: config.body_force,
+                    velocity_under_relaxation: 1.0,
+                    pressure_under_relaxation: 1.0,
+                    pseudo_time_step: pseudo_dt,
+                    convection_scheme: config.convection_scheme,
+                    pressure_correctors: config.piso_correctors.max(1),
+                    boundary: &case.boundary,
+                    max_iterations: 1,
+                    min_iterations: 0,
+                    tolerance: None,
+                    require_velocity_convergence: false,
+                    convergence_window: 1,
+                    snapshot_interval: None,
+                    linear_solvers: config.linear_solvers,
+                    transient_mode: true,
+                },
+            )
+            .expect("step1")
+            .max_abs_predicted_divergence
+        };
+        let div_small_dt = run_one_step(0.005);
+        let div_base_dt = run_one_step(0.05);
+        let div_large_dt = run_one_step(0.5);
+        assert!(
+            div_small_dt < div_base_dt,
+            "small={div_small_dt:e}, base={div_base_dt:e}"
+        );
+        assert!(
+            div_base_dt < div_large_dt,
+            "base={div_base_dt:e}, large={div_large_dt:e}"
+        );
     }
 }

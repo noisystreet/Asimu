@@ -6,21 +6,21 @@
   "quantities": [
     {
       "name": "kinetic_energy_decay_ratio",
-      "value": 0.429854,
-      "tolerance_abs": 0.09,
-      "source": "16x16 collocated PISO-2 vs exp(-4 nu* t*); lower bound 0.35 x analytical"
+      "value": 0.451495,
+      "tolerance_abs": 0.08,
+      "source": "16x16 collocated PISO-2, dt=0.005 (400 steps); lower bound 0.35 x analytical"
     },
     {
       "name": "kinetic_energy_decay_rate",
-      "value": 2.636353,
+      "value": 2.497999,
       "tolerance_abs": 2.5,
-      "source": "spin-up ln(E) slope; 0.5x–45x of 4 nu* on coarse grid"
+      "source": "spin-up ln(E) slope at dt=0.005; 0.5x–45x of 4 nu* on coarse grid"
     },
     {
       "name": "max_abs_corrected_field_divergence_after_boundary",
-      "value": 5.6e-7,
+      "value": 2.5e-7,
       "tolerance_abs": 1.0e-5,
-      "source": "PISO face-flux continuity after Rhie-Chow pressure projection IC"
+      "source": "PISO face-flux continuity after Rhie-Chow pressure projection IC (dt=0.005)"
     }
   ]
 }

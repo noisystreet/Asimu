@@ -37,6 +37,7 @@ pub use linear::{
 pub use projection::{
     IncompressibleProjectionConfig, IncompressibleProjectionMode, IncompressibleProjectionStats,
     project_incompressible_fields_divergence_free_3d,
+    project_incompressible_fields_divergence_free_with_d_3d,
 };
 
 #[derive(Debug, Clone, Copy)]

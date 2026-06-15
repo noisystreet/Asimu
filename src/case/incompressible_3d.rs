@@ -1,8 +1,6 @@
 //! 不可压缩 3D I0 占位求解器：初始化字段并写出流场。
 use std::path::PathBuf;
 
-#[cfg(not(feature = "io-cgns"))]
-use tracing::warn;
 use tracing::{info, info_span};
 
 use crate::core::{Real, format_log_sci4};
@@ -128,16 +126,22 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         .ok_or_else(|| AsimuError::Config("不可压缩算例须包含 [incompressible] 段".to_string()))?;
     let steps = case.resolved_max_steps();
     let dt = case.time.dt.unwrap_or(0.0);
+    let pseudo_time_step = case.time.dt.filter(|value| *value > 0.0).unwrap_or(1.0);
     let time_advance = incompressible_time_advance_kind(case);
     let transient = case.time.mode == CaseTimeMode::Transient;
     let time_marching = incompressible_physical_transient(time_advance);
     let known_benchmark = KnownIncompressibleBenchmark::from_case(case);
     validate_incompressible_transient_inputs(case, transient, dt, time_advance)?;
-    let mut fields = initial_incompressible_fields(known_benchmark, mesh, config, &case.boundary)?;
+    let mut fields = initial_incompressible_fields(
+        known_benchmark,
+        mesh,
+        config,
+        &case.boundary,
+        pseudo_time_step,
+    )?;
     let kinetic_energy_initial = initial_kinetic_energy(known_benchmark, mesh, config, &fields);
     let boundary_stats =
         apply_incompressible_boundary_conditions_3d(mesh, &mut fields, &case.boundary)?;
-    let pseudo_time_step = case.time.dt.filter(|value| *value > 0.0).unwrap_or(1.0);
     let track_kinetic_energy =
         known_benchmark.is_some_and(KnownIncompressibleBenchmark::tracks_kinetic_energy);
     let mut kinetic_energy_history = Vec::new();
@@ -180,7 +184,11 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
     Ok(CaseRunResult {
         name: case.name.clone(),
         benchmark_id: case.benchmark_id.clone(),
-        kind: incompressible_run_kind(time_marching),
+        kind: if time_marching {
+            CaseRunKind::Incompressible3dTransient
+        } else {
+            CaseRunKind::Incompressible3dSteady
+        },
         summary: incompressible_summary(steps, &diagnostic, &boundary_stats),
         diffusion: None,
         sod: None,
@@ -193,14 +201,6 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
             benchmark_diagnostics,
         )),
     })
-}
-
-fn incompressible_run_kind(time_marching: bool) -> CaseRunKind {
-    if time_marching {
-        CaseRunKind::Incompressible3dTransient
-    } else {
-        CaseRunKind::Incompressible3dSteady
-    }
 }
 
 fn validate_incompressible_transient_inputs(
@@ -222,10 +222,11 @@ fn initial_incompressible_fields(
     mesh: &StructuredMesh3d,
     config: &crate::io::IncompressibleCaseConfig,
     boundary: &crate::boundary::BoundarySet,
+    pseudo_time_step: Real,
 ) -> Result<IncompressibleFields> {
     let fields = if let Some(benchmark) = benchmark {
         if let Some(fields) = benchmark.initial_fields(mesh, config)? {
-            benchmark.prepare_initial_fields(mesh, config, boundary, fields)?
+            benchmark.prepare_initial_fields(mesh, config, boundary, pseudo_time_step, fields)?
         } else {
             IncompressibleFields::uniform(mesh.num_cells(), config.pressure, config.velocity)?
         }
@@ -731,13 +732,12 @@ fn write_incompressible_cgns(
 
 #[cfg(not(feature = "io-cgns"))]
 fn write_incompressible_cgns(
-    path: &std::path::Path,
+    _path: &std::path::Path,
     _mesh: &StructuredMesh3d,
     _fields: &IncompressibleFields,
     _physical_time: f64,
 ) -> Result<()> {
-    let _ = path;
-    warn!("solution_cgns 须启用 feature io-cgns");
+    tracing::warn!("solution_cgns 须启用 feature io-cgns");
     Ok(())
 }
 
