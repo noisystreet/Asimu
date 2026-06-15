@@ -7,20 +7,20 @@
     {
       "name": "kinetic_energy_decay_ratio",
       "value": 0.451495,
-      "tolerance_abs": 0.08,
-      "source": "16x16 collocated PISO-2, dt=0.005 (400 steps); lower bound 0.35 x analytical"
+      "tolerance_abs": 0.05,
+      "source": "16x16 PISO-2 dt=0.005/400; lower bound 0.42 x analytical at t*=2"
     },
     {
       "name": "kinetic_energy_decay_rate",
       "value": 2.497999,
-      "tolerance_abs": 2.5,
-      "source": "spin-up ln(E) slope at dt=0.005; 0.5x–45x of 4 nu* on coarse grid"
+      "tolerance_abs": 2.0,
+      "source": "spin-up ln(E) slope at dt=0.005; 0.5x–40x of 4 nu*"
     },
     {
       "name": "max_abs_corrected_field_divergence_after_boundary",
       "value": 2.5e-7,
-      "tolerance_abs": 1.0e-5,
-      "source": "PISO face-flux continuity after Rhie-Chow pressure projection IC (dt=0.005)"
+      "tolerance_abs": 1.0e-6,
+      "source": "PISO face-flux continuity after Rhie-Chow IC (dt=0.005 baseline)"
     }
   ]
 }

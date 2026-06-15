@@ -193,7 +193,7 @@ fn taylor_green_3d_incompressible_benchmark_runs() {
     );
     assert!(decay < 1.0, "decay ratio must stay below unity: {decay}");
     assert!(
-        decay >= analytical_ratio * 0.35,
+        decay >= analytical_ratio * 0.42,
         "decay={decay} analytical_ratio={analytical_ratio}"
     );
     assert!(
@@ -201,27 +201,46 @@ fn taylor_green_3d_incompressible_benchmark_runs() {
         "decay_rate={decay_rate} analytical={analytical_rate}"
     );
     assert!(
-        decay_rate <= analytical_rate * 45.0,
+        decay_rate <= analytical_rate * 40.0,
         "decay_rate={decay_rate} analytical={analytical_rate}"
     );
     assert!(
-        metrics.max_abs_corrected_field_divergence_after_boundary < 1.0e-5,
+        metrics.max_abs_corrected_field_divergence_after_boundary < 1.0e-6,
         "face flux divergence={}",
         metrics.max_abs_corrected_field_divergence_after_boundary
     );
     assert!(
-        metrics.max_abs_corrected_divergence < 1.0e-5,
+        metrics.max_abs_corrected_divergence < 1.0e-6,
         "pressure correction residual={}",
         metrics.max_abs_corrected_divergence
     );
 }
 
-fn write_taylor_green_case(case_path: &Path, nx: usize, ny: usize) {
+struct TaylorGreenCaseConfig<'a> {
+    name: &'a str,
+    nx: usize,
+    ny: usize,
+    dt: f64,
+    max_steps: u64,
+    piso_correctors: usize,
+    output_dir: &'a str,
+}
+
+fn write_taylor_green_case(case_path: &Path, config: TaylorGreenCaseConfig<'_>) {
+    let TaylorGreenCaseConfig {
+        name,
+        nx,
+        ny,
+        dt,
+        max_steps,
+        piso_correctors,
+        output_dir,
+    } = config;
     fs::write(
         case_path,
         format!(
             r#"
-name = "taylor_green_3d_refined_{nx}x{ny}"
+name = "{name}"
 benchmark_id = "taylor_green_3d"
 
 [mesh]
@@ -241,7 +260,7 @@ velocity = [0.0, 0.0, 0.0]
 density = 1.0
 kinematic_viscosity = 0.1
 convection_scheme = "central"
-piso_correctors = 2
+piso_correctors = {piso_correctors}
 
 [incompressible.linear.momentum]
 solver = "gmres"
@@ -283,16 +302,97 @@ kind = "symmetry"
 [time]
 mode = "transient"
 scheme = "bdf1"
-max_steps = 400
-dt = 0.005
+max_steps = {max_steps}
+dt = {dt}
 
 [output]
-dir = "out"
+dir = "{output_dir}"
 residual_csv = "residual.csv"
 "#
         ),
     )
     .expect("write taylor-green case");
+}
+
+#[test]
+#[ignore = "参数敏感性对照（本地/夜间执行）"]
+fn taylor_green_3d_parameter_sensitivity_baseline() {
+    let root = std::env::temp_dir().join(format!("asimu_tg_sensitivity_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("temp dir");
+    let out = root.join("out");
+    fs::create_dir_all(&out).expect("out dir");
+    let out_str = out.to_string_lossy();
+
+    eprintln!("TG sensitivity (16x16, t*=2, PISO correctors noted):");
+    eprintln!("dt\tsteps\tpiso\tE/E0\tanalytical\t|err|\tmax|div(u*)|");
+
+    for (dt, steps) in [(0.05, 40_u64), (0.02, 100), (0.01, 200), (0.005, 400)] {
+        let case_path = root.join(format!("dt_{dt}.toml"));
+        write_taylor_green_case(
+            &case_path,
+            TaylorGreenCaseConfig {
+                name: "tg_sensitivity_dt",
+                nx: 16,
+                ny: 16,
+                dt,
+                max_steps: steps,
+                piso_correctors: 2,
+                output_dir: &out_str,
+            },
+        );
+        let metrics = run_case_path(&case_path)
+            .expect("run dt sweep")
+            .incompressible_3d
+            .expect("metrics");
+        let ratio = metrics.kinetic_energy_decay_ratio.expect("decay ratio");
+        let analytical = metrics
+            .kinetic_energy_analytical_ratio
+            .expect("analytical ratio");
+        let err = (ratio - analytical).abs();
+        eprintln!(
+            "{dt}\t{steps}\t2\t{ratio:.6}\t{analytical:.6}\t{err:.6}\t{:.3e}",
+            metrics.max_abs_predicted_divergence
+        );
+        if (dt - 0.005).abs() < 1.0e-12 {
+            assert!(
+                ratio >= analytical * 0.42,
+                "ratio={ratio} analytical={analytical}"
+            );
+            assert!(metrics.max_abs_corrected_field_divergence_after_boundary < 1.0e-6);
+        }
+    }
+
+    for piso in [1_usize, 2, 3] {
+        let case_path = root.join(format!("piso_{piso}.toml"));
+        write_taylor_green_case(
+            &case_path,
+            TaylorGreenCaseConfig {
+                name: "tg_sensitivity_piso",
+                nx: 16,
+                ny: 16,
+                dt: 0.005,
+                max_steps: 400,
+                piso_correctors: piso,
+                output_dir: &out_str,
+            },
+        );
+        let metrics = run_case_path(&case_path)
+            .expect("run piso sweep")
+            .incompressible_3d
+            .expect("metrics");
+        let ratio = metrics.kinetic_energy_decay_ratio.expect("decay ratio");
+        let analytical = metrics
+            .kinetic_energy_analytical_ratio
+            .expect("analytical ratio");
+        let err = (ratio - analytical).abs();
+        eprintln!(
+            "0.005\t400\t{piso}\t{ratio:.6}\t{analytical:.6}\t{err:.6}\t{:.3e}",
+            metrics.max_abs_predicted_divergence
+        );
+    }
+
+    let _ = fs::remove_dir_all(&root);
 }
 
 #[test]
@@ -303,8 +403,31 @@ fn taylor_green_3d_refined_grid_reduces_energy_ratio_error() {
     fs::create_dir_all(&root).expect("temp dir");
     let coarse_case = root.join("case_16.toml");
     let refined_case = root.join("case_32.toml");
-    write_taylor_green_case(&coarse_case, 16, 16);
-    write_taylor_green_case(&refined_case, 32, 32);
+    let baseline = TaylorGreenCaseConfig {
+        name: "taylor_green_3d_refined",
+        nx: 16,
+        ny: 16,
+        dt: 0.005,
+        max_steps: 400,
+        piso_correctors: 2,
+        output_dir: "out",
+    };
+    write_taylor_green_case(
+        &coarse_case,
+        TaylorGreenCaseConfig {
+            name: "taylor_green_3d_refined_16x16",
+            ..baseline
+        },
+    );
+    write_taylor_green_case(
+        &refined_case,
+        TaylorGreenCaseConfig {
+            name: "taylor_green_3d_refined_32x32",
+            nx: 32,
+            ny: 32,
+            ..baseline
+        },
+    );
 
     let coarse = run_case_path(&coarse_case).expect("run 16");
     let refined = run_case_path(&refined_case).expect("run 32");
@@ -338,8 +461,8 @@ fn taylor_green_3d_refined_grid_reduces_energy_ratio_error() {
         refined_err <= coarse_err * 1.05,
         "coarse_err={coarse_err} refined_err={refined_err}"
     );
-    assert!(refined_metrics.max_abs_corrected_divergence < 1.0e-5);
-    assert!(refined_metrics.max_abs_corrected_field_divergence_after_boundary < 1.0e-5);
+    assert!(refined_metrics.max_abs_corrected_divergence < 1.0e-6);
+    assert!(refined_metrics.max_abs_corrected_field_divergence_after_boundary < 1.0e-6);
     assert!(
         (refined_ratio - coarse_ratio).abs() < 0.05,
         "coarse_ratio={coarse_ratio} refined_ratio={refined_ratio}"
