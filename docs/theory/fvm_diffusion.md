@@ -58,3 +58,5 @@ $$
 - `tests/benchmarks/1d_diffusion_analytical/` — 均匀网格 L2 误差 vs 解析解 \(\phi(x) = x/L\)
 
 Case 输入：[CASE_FORMAT.md](../CASE_FORMAT.md)
+
+**非结构 3D 热传导（无量纲 FVM）** 见 [heat_conduction_fvm.md](heat_conduction_fvm.md)；本页保留 1D 有量纲骨架说明。

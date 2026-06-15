@@ -48,6 +48,8 @@
 
 对 owner 行累加：对角 \(+D/d\)，右端 \(+q\)。
 
+热传导无量纲路径中 \(D \equiv k^*\)，\(d \equiv d/L_{\mathrm{ref}}\)，\(q \equiv q^*\)；见 [heat_conduction_fvm.md](heat_conduction_fvm.md) §2.3–§3。
+
 ---
 
 ## 3. 可压缩边界通量

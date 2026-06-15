@@ -42,6 +42,7 @@
 | 文档 | 模块 | 版本 | 状态 | 主要参考 |
 |------|------|------|------|----------|
 | [fvm_diffusion.md](fvm_diffusion.md) | `discretization` | v0.2 | **骨架** | Patankar (1980) Ch. 5 |
+| [heat_conduction_fvm.md](heat_conduction_fvm.md) | `discretization` / `solver` / `case` | v0.3+ | **设计** | Patankar (1980) Ch. 5–6；ADR 0016 |
 | [interface_reconstruction.md](interface_reconstruction.md) | `discretization/reconstruction` | v1.x | **已实现（结构化 MUSCL）** | LeVeque (2002) Ch. 4；Toro (2009) |
 | [inviscid_flux.md](inviscid_flux.md) | `discretization/roe` | v1.x | **已实现（Roe + 熵修正）** | Roe (1981)；Toro (2009) Ch. 10–11 |
 | [unstructured_fvm.md](unstructured_fvm.md) | `mesh/unstructured` / `discretization/residual` | v1.x | **已实现（一阶 Euler）；M4 二阶设计 + ADR 0012** | Blazek (2015)；Barth & Jespersen (1989)；Venkatakrishnan (1993) |
