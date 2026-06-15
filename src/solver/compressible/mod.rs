@@ -12,6 +12,7 @@ mod multiblock_driver_typed;
 mod multiblock_interface;
 mod rhs;
 mod rhs_typed;
+mod structured_compute_backend;
 mod typed;
 mod unstructured_driver;
 mod unstructured_driver_typed;
@@ -42,6 +43,7 @@ pub use multiblock_driver_typed::run_multiblock_structured_typed_with_observer;
 pub use spectral_radius_unstructured_f32::{
     SpectralRadiusUnstructuredF32Params, cell_spectral_radius_unstructured_f32,
 };
+pub(crate) use structured_compute_backend::StructuredComputeBackend;
 pub use unstructured_driver::{
     CompressibleUnstructuredStepView, UnstructuredDriverConfig, run_unstructured_with_observer,
 };

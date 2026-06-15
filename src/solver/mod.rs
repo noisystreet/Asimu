@@ -45,6 +45,7 @@ use crate::core::Real;
 use crate::error::Result;
 use crate::mesh::Mesh;
 
+pub(crate) use compressible::StructuredComputeBackend;
 pub(crate) use compressible::UnstructuredComputeBackend;
 pub use compressible::helpers::{
     EvaluateRhsUnstructured, RefreshCompressibleStateInput, RefreshCompressibleStateTypedInput,

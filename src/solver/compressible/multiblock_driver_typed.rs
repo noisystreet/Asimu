@@ -4,9 +4,8 @@ use tracing::info_span;
 
 use crate::boundary::{BoundaryPatch, BoundarySet};
 use crate::core::{ComputeFloat, Real, format_log_fixed4, format_log_sci4, log10_positive};
-use crate::discretization::{BoundaryGhostBuffer, GradientFields, InviscidFaceFluxTyped};
+use crate::discretization::{BoundaryGhostBuffer, GradientFields};
 use crate::error::{AsimuError, Result};
-use crate::field::PrimitiveFillFromConserved;
 use crate::field::{ConservedFields, ConservedFieldsT, PrimitiveFields, PrimitiveFieldsT};
 use crate::mesh::{MultiBlockStructuredMesh3d, StructuredBlock3d};
 use crate::physics::{FreestreamParams, IdealGasEoS, ReferenceScales};
@@ -18,6 +17,7 @@ use crate::solver::compressible::multiblock::{
 use crate::solver::compressible::multiblock_interface::{
     SharedInterfaceResidualParams, compute_shared_interface_residuals,
 };
+use crate::solver::compressible::structured_compute_backend::StructuredComputeBackend;
 use crate::solver::time::TransientStepControl;
 use crate::solver::{
     CompressibleEulerSolver, CompressibleMultiblockStepView, CompressibleStepInfo,
@@ -49,12 +49,8 @@ struct BlockAdvanceEnvTyped<'a> {
 }
 
 /// typed 多块 structured 同步推进（含 1-to-1 共享无粘接口通量）。
-pub fn run_multiblock_structured_typed_with_observer<
-    T: ComputeFloat
-        + crate::field::LusgsDiagonalUpdateBackend
-        + InviscidFaceFluxTyped
-        + PrimitiveFillFromConserved,
->(
+#[allow(private_bounds)]
+pub fn run_multiblock_structured_typed_with_observer<T: StructuredComputeBackend>(
     input: MultiblockStructuredDriverInput<'_>,
     mut observe_step: impl FnMut(CompressibleMultiblockStepView<'_>) -> Result<()>,
 ) -> Result<(Vec<CompressibleStepInfo>, Vec<ConservedFields>)> {
@@ -84,12 +80,7 @@ pub fn run_multiblock_structured_typed_with_observer<
     Ok((history, fields))
 }
 
-fn build_block_run_states_typed<
-    T: ComputeFloat
-        + crate::field::LusgsDiagonalUpdateBackend
-        + InviscidFaceFluxTyped
-        + PrimitiveFillFromConserved,
->(
+fn build_block_run_states_typed<T: StructuredComputeBackend>(
     blocks: &[StructuredBlock3d],
     interface_patches: &[Vec<BoundaryPatch>],
     time_config: RungeKutta4Config,
@@ -126,12 +117,7 @@ fn build_block_run_states_typed<
     Ok(states)
 }
 
-fn advance_block_history_typed<
-    T: ComputeFloat
-        + crate::field::LusgsDiagonalUpdateBackend
-        + InviscidFaceFluxTyped
-        + PrimitiveFillFromConserved,
->(
+fn advance_block_history_typed<T: StructuredComputeBackend>(
     env: &BlockAdvanceEnvTyped<'_>,
     states: &mut [BlockRunStateTyped<T>],
     observe_step: &mut impl FnMut(CompressibleMultiblockStepView<'_>) -> Result<()>,
@@ -161,12 +147,7 @@ fn advance_block_history_typed<
     Ok(history)
 }
 
-fn advance_block_step_typed<
-    T: ComputeFloat
-        + crate::field::LusgsDiagonalUpdateBackend
-        + InviscidFaceFluxTyped
-        + PrimitiveFillFromConserved,
->(
+fn advance_block_step_typed<T: StructuredComputeBackend>(
     env: &BlockAdvanceEnvTyped<'_>,
     states: &mut [BlockRunStateTyped<T>],
 ) -> Result<CompressibleStepInfo> {

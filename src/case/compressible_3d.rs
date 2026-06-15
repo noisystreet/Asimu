@@ -4,13 +4,12 @@ use tracing::{debug_span, info, warn};
 
 use crate::case::{CaseRunKind, CaseRunResult};
 use crate::core::{ComputePrecision, Real, format_log_fixed4, format_log_sci4, log10_positive};
-use crate::discretization::InviscidFaceFluxTyped;
 use crate::error::{AsimuError, Result};
 use crate::io::{CaseSpec, CaseTimeMode};
 use crate::mesh::MultiBlockStructuredMesh3d;
 use crate::solver::{
     CompressibleEulerConfig, CompressibleEulerSolver, CompressibleStepInfo, CompressibleTimeMode,
-    MultiblockStructuredDriverInput, RungeKutta4Config,
+    MultiblockStructuredDriverInput, RungeKutta4Config, StructuredComputeBackend,
     run_multiblock_structured_typed_with_observer, run_multiblock_structured_with_observer,
 };
 
@@ -138,12 +137,7 @@ fn run_compressible_3d(
     ))
 }
 
-fn run_compressible_3d_typed<
-    T: crate::core::ComputeFloat
-        + crate::field::LusgsDiagonalUpdateBackend
-        + InviscidFaceFluxTyped
-        + crate::field::PrimitiveFillFromConserved,
->(
+fn run_compressible_3d_typed<T: StructuredComputeBackend>(
     case: &CaseSpec,
     mesh: &MultiBlockStructuredMesh3d,
 ) -> Result<CaseRunResult> {

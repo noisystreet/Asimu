@@ -5,11 +5,11 @@
 use std::time::Instant;
 
 use crate::core::{ComputeFloat, Real, elapsed_ms};
-use crate::discretization::{InviscidFaceFluxTyped, InviscidFluxConfig};
+use crate::discretization::InviscidFluxConfig;
 use crate::error::{AsimuError, Result};
 use crate::field::{
-    ConservedFieldsT, ConservedResidualT, PrimitiveFillFromConserved, is_physical_conserved,
-    max_physical_increment_scale, state_after_increment,
+    ConservedFieldsT, ConservedResidualT, is_physical_conserved, max_physical_increment_scale,
+    state_after_increment,
 };
 use crate::linalg::{GmresSolver, LinearOperator};
 use crate::physics::{ConservedState, IdealGasEoS};
@@ -23,6 +23,7 @@ use super::super::gmres_implicit_3d::{
     GmresPreconditionerKind, GmresUpdateDiagnostics, build_gmres_preconditioner,
     conserved_component_scales, validate_gmres_inputs,
 };
+use crate::solver::compressible::structured_compute_backend::StructuredComputeBackend;
 
 pub(crate) fn apply_delta_with_line_search_typed<T: ComputeFloat>(
     fields: &mut ConservedFieldsT<T>,
@@ -59,9 +60,8 @@ pub(crate) fn apply_delta_with_line_search_typed<T: ComputeFloat>(
 
 impl CompressibleEulerSolver {
     /// typed 场 matrix-free GMRES 隐式伪时间步。
-    pub fn solve_gmres_implicit_delta_3d_typed<
-        T: ComputeFloat + InviscidFaceFluxTyped + PrimitiveFillFromConserved,
-    >(
+    #[allow(private_bounds)]
+    pub fn solve_gmres_implicit_delta_3d_typed<T: StructuredComputeBackend>(
         &self,
         ctx: &mut CompressibleAdvanceContext3dTyped<'_, T>,
         fields: &ConservedFieldsT<T>,
@@ -150,11 +150,7 @@ impl CompressibleEulerSolver {
     }
 }
 
-struct MatrixFreeResidualOperator3dTyped<
-    'a,
-    'ctx,
-    T: ComputeFloat + InviscidFaceFluxTyped + PrimitiveFillFromConserved,
-> {
+struct MatrixFreeResidualOperator3dTyped<'a, 'ctx, T: StructuredComputeBackend> {
     solver: &'a CompressibleEulerSolver,
     ctx: &'a mut CompressibleAdvanceContext3dTyped<'ctx, T>,
     base: &'a ConservedFieldsT<T>,
@@ -168,9 +164,7 @@ struct MatrixFreeResidualOperator3dTyped<
     perturbed_residual: ConservedResidualT<T>,
 }
 
-impl<T: ComputeFloat + InviscidFaceFluxTyped + PrimitiveFillFromConserved> LinearOperator
-    for MatrixFreeResidualOperator3dTyped<'_, '_, T>
-{
+impl<T: StructuredComputeBackend> LinearOperator for MatrixFreeResidualOperator3dTyped<'_, '_, T> {
     fn dimension(&self) -> usize {
         self.base.num_cells() * CONSERVED_COMPONENTS_3D
     }
@@ -208,9 +202,7 @@ impl<T: ComputeFloat + InviscidFaceFluxTyped + PrimitiveFillFromConserved> Linea
     }
 }
 
-impl<T: ComputeFloat + InviscidFaceFluxTyped + PrimitiveFillFromConserved>
-    MatrixFreeResidualOperator3dTyped<'_, '_, T>
-{
+impl<T: StructuredComputeBackend> MatrixFreeResidualOperator3dTyped<'_, '_, T> {
     fn record_perturbation_scale(&mut self, scale: Real) {
         self.diagnostics.perturbation_evals += 1;
         self.diagnostics.min_perturbation_scale =
