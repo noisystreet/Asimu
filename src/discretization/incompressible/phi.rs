@@ -4,7 +4,7 @@
 //! 结构化网格上保存内部面体积通量，并在压力校正后直接更新面通量。
 
 use super::boundary_flux::interior_face_velocity;
-use super::face_boundary::incompressible_boundary_mass_flux;
+use super::face_boundary::incompressible_boundary_mass_flux_3d;
 use crate::boundary::{BoundaryKind, BoundarySet};
 use crate::core::Real;
 use crate::discretization::periodic::StructuredPeriodic3d;
@@ -228,7 +228,8 @@ fn fill_boundary_net(
         for &face in &patch.face_ids {
             let owner = mesh.face_owner(face)?.index() as usize;
             let geom = mesh.face_geometry_3d(face)?;
-            net[owner] += incompressible_boundary_mass_flux(
+            net[owner] += incompressible_boundary_mass_flux_3d(
+                mesh,
                 owner,
                 &patch.kind,
                 fields,

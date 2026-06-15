@@ -1,7 +1,7 @@
 //! 不可压缩结构化 3D 边界感知 face-flux 散度诊断。
 
 use super::boundary_flux::interior_face_velocity;
-use super::face_boundary::incompressible_boundary_mass_flux;
+use super::face_boundary::incompressible_boundary_mass_flux_3d;
 use crate::boundary::{BoundaryKind, BoundarySet};
 use crate::core::Real;
 use crate::discretization::periodic::StructuredPeriodic3d;
@@ -147,7 +147,8 @@ fn add_boundary_fluxes(
         for &face in &patch.face_ids {
             let owner = mesh.face_owner(face)?.index() as usize;
             let geom = mesh.face_geometry_3d(face)?;
-            let flux = incompressible_boundary_mass_flux(
+            let flux = incompressible_boundary_mass_flux_3d(
+                mesh,
                 owner,
                 &patch.kind,
                 fields,

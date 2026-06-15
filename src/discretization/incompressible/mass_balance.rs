@@ -2,7 +2,7 @@
 
 use crate::boundary::{BoundaryKind, BoundarySet};
 use crate::core::Real;
-use crate::discretization::incompressible::face_boundary::incompressible_boundary_mass_flux;
+use crate::discretization::incompressible::face_boundary::incompressible_boundary_mass_flux_3d;
 use crate::error::Result;
 use crate::field::IncompressibleFields;
 use crate::mesh::{BoundaryMesh, BoundaryMesh3d, StructuredMesh3d};
@@ -37,7 +37,8 @@ pub fn compute_incompressible_boundary_mass_balance_3d(
         for &face in &patch.face_ids {
             let owner = mesh.face_owner(face)?.index() as usize;
             let geom = mesh.face_geometry_3d(face)?;
-            patch_flux += incompressible_boundary_mass_flux(
+            patch_flux += incompressible_boundary_mass_flux_3d(
+                mesh,
                 owner,
                 &patch.kind,
                 fields,

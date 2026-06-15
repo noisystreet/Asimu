@@ -87,7 +87,7 @@ Brachet 有量纲形式：
 |----------------|----------|------|
 | `lid_driven_cavity_re100` | 稳态 SIMPLEC 收敛、Ghia 剖面；**不要**用 TG 衰减公式 | `tests/benchmarks/lid_driven_cavity_re100/` |
 | `channel_poiseuille` | 体 force + \(\nu\)、剖面 \(L_2\) 误差 | `tests/benchmarks/channel_poiseuille/` |
-| `channel_re100_3d` | **I4** 入口/出口 `mass_flux_imbalance_ratio` | `tests/benchmarks/channel_re100_3d/` |
+| `channel_re100_3d` | **I4** 入口/出口 `mass_flux_imbalance_ratio`、\(x=3L/4\) 充分发展 Poiseuille 剖面；开域连续性看 **active** face-flux 散度（排除 \(p'=0\) outlet owner） | `tests/benchmarks/channel_re100_3d/` |
 
 ---
 

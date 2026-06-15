@@ -88,7 +88,10 @@ impl KnownIncompressibleBenchmark {
 
     #[must_use]
     pub const fn emits_centerline_profiles(self) -> bool {
-        matches!(self, Self::LidDrivenCavityRe100 | Self::ChannelPoiseuille)
+        matches!(
+            self,
+            Self::LidDrivenCavityRe100 | Self::ChannelPoiseuille | Self::ChannelRe1003d
+        )
     }
 
     /// 若 benchmark 定义专用初场则返回 `Some`；否则调用方回退 uniform 初值。

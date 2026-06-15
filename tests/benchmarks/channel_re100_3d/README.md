@@ -1,6 +1,6 @@
 # Channel Re=100 — 入口/出口内流（ADR 0015 I4）
 
-**benchmark_id**: `channel_re100_3d` · **状态**: I4 骨架（质量守恒 V&V）
+**benchmark_id**: `channel_re100_3d` · **状态**: I4 完成（质量守恒 + 充分发展剖面 smoke V&V）
 
 ## 物理
 
@@ -14,20 +14,19 @@
 
 | 项 | 值 |
 |----|-----|
-| 网格 | 32×8×1 |
+| 网格 | 32×8×1（\(L_x=8\)，入口发展段） |
 | 求解 | 稳态 **SIMPLEC** + 一阶 **upwind** |
 | 入口 | \(\mathbf{u}=(1,0,0)\) m/s（均匀） |
-| 出口 | \(p=0\) Pa |
+| 出口 | \(p=0\) Pa，面通量零梯度外推 |
 
 ## V&V（CI）
 
 | 量 | 判据 |
 |----|------|
-| 质量守恒 | `mass_flux_imbalance_ratio` \(< 1.5\times10^{-2}\)（目标 \(10^{-6}\)，见 ADR） |
-| 连续性 | `max_abs_corrected_field_divergence_after_boundary` \(< 10^{-5}\) |
+| 质量守恒 | `mass_flux_imbalance_ratio` \(< 1.5\times 10^{-2}\)（32×8 upwind smoke；ADR 目标 \(10^{-6}\)） |
+| 充分发展剖面 | `poiseuille_profile_error` @ \(x=3L/4\)：\(u/U_m=6(y/H)(1-y/H)\)，`max_abs` \(<0.35\)，`l2` \(<0.2\) |
+| 连续性 | `max_abs_corrected_field_divergence_after_boundary` \(< 10^{-5}\)（非 \(p'=0\) owner） |
 | 收敛 | `simplec_converged = true` |
-
-目标公式（ADR 0015 §6）：\(|\sum \dot m_f| / |\sum \dot m_{\mathrm{in}}| < 10^{-6}\)。粗网格 CI 暂用 \(10^{-2}\) smoke 容差。
 
 metrics 排查：[docs/DEBUG_CHECKLIST.md](../../../docs/DEBUG_CHECKLIST.md)
 

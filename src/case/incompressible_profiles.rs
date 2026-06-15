@@ -27,6 +27,9 @@ pub(crate) fn incompressible_centerline_profiles(
         {
             Some(channel_poiseuille_centerline_profiles(mesh, fields))
         }
+        Some(KnownIncompressibleBenchmark::ChannelRe1003d) => {
+            Some(channel_re100_developed_centerline_profiles(mesh, fields))
+        }
         _ => None,
     }
 }
@@ -201,6 +204,28 @@ fn lerp(a: Real, b: Real, t: Real) -> Real {
     a + t * (b - a)
 }
 
+fn channel_re100_developed_centerline_profiles(
+    mesh: &StructuredMesh3d,
+    fields: &IncompressibleFields,
+) -> IncompressibleCenterlineProfiles {
+    let i_sample = ((3 * mesh.nx) / 4).clamp(1, mesh.nx.saturating_sub(2));
+    let k_mid = mesh.nz / 2;
+    let mut vertical_u = Vec::with_capacity(mesh.ny);
+    for j in 0..mesh.ny {
+        let cell = mesh.cell_index(i_sample, j, k_mid);
+        vertical_u.push(IncompressibleLineSample {
+            coordinate: cell_center_y(mesh, i_sample, j, k_mid),
+            velocity_x: fields.velocity_x.values()[cell],
+            velocity_y: fields.velocity_y.values()[cell],
+            velocity_z: fields.velocity_z.values()[cell],
+        });
+    }
+    IncompressibleCenterlineProfiles {
+        vertical_u,
+        horizontal_v: Vec::new(),
+    }
+}
+
 fn channel_poiseuille_centerline_profiles(
     mesh: &StructuredMesh3d,
     fields: &IncompressibleFields,
@@ -230,12 +255,25 @@ pub(crate) fn poiseuille_profile_error(
     body_force: [Real; 3],
     fields: &IncompressibleFields,
 ) -> Option<IncompressibleProfileError> {
-    if benchmark != Some(KnownIncompressibleBenchmark::ChannelPoiseuille)
-        || kinematic_viscosity <= 0.0
-        || body_force[0].abs() <= Real::EPSILON
-    {
-        return None;
+    match benchmark {
+        Some(KnownIncompressibleBenchmark::ChannelPoiseuille)
+            if kinematic_viscosity > 0.0 && body_force[0].abs() > Real::EPSILON =>
+        {
+            periodic_channel_poiseuille_profile_error(mesh, kinematic_viscosity, body_force, fields)
+        }
+        Some(KnownIncompressibleBenchmark::ChannelRe1003d) => {
+            channel_re100_developed_poiseuille_profile_error(mesh, fields)
+        }
+        _ => None,
     }
+}
+
+fn periodic_channel_poiseuille_profile_error(
+    mesh: &StructuredMesh3d,
+    kinematic_viscosity: Real,
+    body_force: [Real; 3],
+    fields: &IncompressibleFields,
+) -> Option<IncompressibleProfileError> {
     let y_min = mesh.node_y(0, 0, 0);
     let y_max = mesh.node_y(0, mesh.ny, 0);
     let height = y_max - y_min;
@@ -250,6 +288,35 @@ pub(crate) fn poiseuille_profile_error(
         let y = cell_center_y(mesh, i_mid, j, k_mid) - y_min;
         let expected = body_force[0] * y * (height - y) / (2.0 * kinematic_viscosity);
         let cell = mesh.cell_index(i_mid, j, k_mid);
+        let error = fields.velocity_x.values()[cell] - expected;
+        max_abs = max_abs.max(error.abs());
+        sum_sq += error * error;
+    }
+    Some(IncompressibleProfileError {
+        max_abs,
+        l2: (sum_sq / (mesh.ny - 2) as Real).sqrt(),
+    })
+}
+
+/// 充分发展 Poiseuille：\(u/U_m = 6\,(y/H)(1-y/H)\)，\(U_m=1\)。
+fn channel_re100_developed_poiseuille_profile_error(
+    mesh: &StructuredMesh3d,
+    fields: &IncompressibleFields,
+) -> Option<IncompressibleProfileError> {
+    let y_min = mesh.node_y(0, 0, 0);
+    let y_max = mesh.node_y(0, mesh.ny, 0);
+    let height = y_max - y_min;
+    if height <= 0.0 || mesh.ny <= 2 {
+        return None;
+    }
+    let i_sample = ((3 * mesh.nx) / 4).clamp(1, mesh.nx.saturating_sub(2));
+    let k_mid = mesh.nz / 2;
+    let mut max_abs: Real = 0.0;
+    let mut sum_sq: Real = 0.0;
+    for j in 1..(mesh.ny - 1) {
+        let y = cell_center_y(mesh, i_sample, j, k_mid) - y_min;
+        let expected = 6.0 * y * (height - y) / (height * height);
+        let cell = mesh.cell_index(i_sample, j, k_mid);
         let error = fields.velocity_x.values()[cell] - expected;
         max_abs = max_abs.max(error.abs());
         sum_sq += error * error;

@@ -85,7 +85,7 @@ fn channel_poiseuille_incompressible_benchmark_runs() {
 fn channel_re100_3d_incompressible_benchmark_runs() {
     let expected = std::fs::read_to_string("tests/benchmarks/channel_re100_3d/expected.json")
         .expect("expected");
-    assert!(expected.contains("i4_inlet_outlet_mass_balance_vv"));
+    assert!(expected.contains("i4_inlet_outlet_vv_complete"));
     let result =
         run_case_path(Path::new("tests/benchmarks/channel_re100_3d/case.toml")).expect("run");
     assert_eq!(result.kind, CaseRunKind::Incompressible3dSteady);
@@ -107,6 +107,16 @@ fn channel_re100_3d_incompressible_benchmark_runs() {
         imbalance < 0.015,
         "mass_flux_imbalance_ratio={imbalance} inlet_magnitude={inlet_flux}"
     );
+    let profiles = metrics.centerline_profiles.expect("developed profile");
+    assert_eq!(profiles.vertical_u.len(), 8);
+    assert!(profiles.horizontal_v.is_empty());
+    let error = metrics
+        .poiseuille_profile_error
+        .expect("developed poiseuille profile error");
+    assert!(error.max_abs.is_finite());
+    assert!(error.l2.is_finite());
+    assert!(error.max_abs < 0.35, "max_abs={}", error.max_abs);
+    assert!(error.l2 < 0.2, "l2={}", error.l2);
 }
 
 #[test]
