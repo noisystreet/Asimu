@@ -37,5 +37,7 @@
 | [0015](adr/0015-incompressible-navier-stokes-simplec-piso.md) | 三维不可压 NS（SIMPLEC + PISO） |
 | [0016](adr/0016-runtime-compute-precision.md) | 核心计算模块运行时精度选择 |
 | [0017](adr/0017-gpu-cuda-cudarc-multi-backend.md) | CUDA 后端（`cudarc`）与 `exec` 多 Backend |
+| [0018](adr/0018-unstructured-compute-backend.md) | 非结构可压缩 typed 单一路径与 `UnstructuredComputeBackend` |
+| [0019](adr/0019-structured-compute-backend.md) | 结构化可压缩 typed 与 `StructuredComputeBackend`（S0 完成） |
 
 维护策略：修改中文架构/数据模型文档时，同步更新 `docs/en/` 对应摘要（见 [AGENTS.md](../AGENTS.md)）。

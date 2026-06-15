@@ -13,6 +13,7 @@
 
 ### Changed
 
+- **ADR 0019 S0 完成**：结构化可压缩 `StructuredComputeBackend` 聚合 trait；typed 驱动拆分为 `structured_prepare_timestep_typed` / `structured_explicit_typed` / `structured_lusgs_typed`（无数值变更）；ADR 状态已接受。
 - **I4 收尾**：压力出口面通量零梯度外推（`incompressible_boundary_mass_flux_3d`）；`channel_re100_3d` 增加 \(x=3L/4\) 充分发展 Poiseuille 剖面 V&V；CI 质量守恒 smoke 保持 \(<1.5\%\)（32×8 upwind）；`expected.json` 状态 `i4_inlet_outlet_vv_complete`。
 - **I3 Taylor–Green 收尾**：补全参数敏感性/32×32 标定表；CI 动能比容差收紧至 \(<1\%\)；`expected.json` 增加 `max_abs_corrected_divergence`；`#[ignore]` 敏感性测试全行断言。
 
