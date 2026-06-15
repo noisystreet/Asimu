@@ -1,0 +1,69 @@
+name = "channel_re100_3d"
+benchmark_id = "channel_re100_3d"
+
+[mesh]
+kind = "structured_3d"
+nx = 32
+ny = 8
+nz = 1
+lx = 8.0
+ly = 1.0
+lz = 0.1
+
+[physics]
+
+[incompressible]
+pressure = 0.0
+velocity = [0.0, 0.0, 0.0]
+density = 1.0
+kinematic_viscosity = 0.01
+velocity_under_relaxation = 0.3
+pressure_under_relaxation = 0.3
+convection_scheme = "upwind"
+piso_correctors = 1
+
+[incompressible.linear.momentum]
+solver = "gmres"
+restart = 16
+max_iters = 80
+tolerance = 1.0e-9
+
+[incompressible.linear.pressure]
+solver = "gmres"
+restart = 64
+max_iters = 500
+tolerance = 1.0e-10
+
+[incompressible.reference]
+length = 1.0
+velocity = 1.0
+
+[boundary.i_min]
+kind = "velocity_inlet"
+velocity = [1.0, 0.0, 0.0]
+
+[boundary.i_max]
+kind = "pressure_outlet"
+pressure = 0.0
+
+[boundary.j_min]
+kind = "wall"
+no_slip = true
+
+[boundary.j_max]
+kind = "wall"
+no_slip = true
+
+[boundary.k_min]
+kind = "symmetry"
+
+[boundary.k_max]
+kind = "symmetry"
+
+[time]
+mode = "steady"
+scheme = "simplec"
+max_steps = 3000
+min_steps = 100
+dt = 0.1
+tolerance = 1.0e-5

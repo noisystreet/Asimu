@@ -20,8 +20,8 @@ use crate::mesh::StructuredMesh3d;
 pub use diagnostics::IncompressiblePressureVelocityAlgorithm;
 use diagnostics::{
     PressureCouplingLog, SimplecConvergenceCheck, SimplecStepLog, SimplecStepTiming,
-    log_simplec_step, max_abs_field_divergence, max_abs_scalar_field, max_velocity_delta_by_region,
-    simplec_converged, validate_simplec_step,
+    log_simplec_step, max_abs_active_face_flux_divergence, max_abs_field_divergence,
+    max_abs_scalar_field, max_velocity_delta_by_region, simplec_converged, validate_simplec_step,
 };
 use linear::{
     PressureCorrectionSolveDiagnostic, solve_momentum_predictor, solve_pressure_correction,
@@ -373,7 +373,7 @@ fn assemble_simplec_step(
         &accumulated_pressure_correction,
         momentum_system.d_coefficient.values(),
         config,
-        &face_flux,
+        &mut face_flux,
     )?;
     let mut corrector_residuals = vec![corrected.max_abs_divergence_after_boundary];
     (pressure_step, corrected) = apply_additional_pressure_correctors(
@@ -525,6 +525,7 @@ fn solve_pressure_correction_step(
         IncompressiblePressureCorrectionConfig::new(config.density, 0, 0.0)?,
     )?;
     let mut solution = if pressure_correction_rhs_satisfies_coupling_tolerance(
+        predicted_divergence,
         config.mesh,
         &system.rhs,
         config.density,
@@ -562,13 +563,16 @@ fn solve_pressure_correction_step(
 }
 
 fn pressure_correction_rhs_satisfies_coupling_tolerance(
+    predicted_divergence: &ScalarField,
     mesh: &StructuredMesh3d,
     rhs: &[Real],
     density: Real,
     tolerance: Option<Real>,
 ) -> bool {
     tolerance.is_some_and(|tol| {
-        max_abs_pressure_rhs_divergence(mesh, rhs, density).is_ok_and(|residual| residual <= tol)
+        max_abs_scalar_field(predicted_divergence) <= tol
+            && max_abs_pressure_rhs_divergence(mesh, rhs, density)
+                .is_ok_and(|residual| residual <= tol)
     })
 }
 
@@ -615,7 +619,7 @@ fn build_corrected_fields_with_diagnostics(
     pressure_correction: &[Real],
     d_coefficient: &[Real],
     config: &IncompressibleSimplecConfig<'_>,
-    face_flux: &IncompressibleFaceFluxField,
+    face_flux: &mut IncompressibleFaceFluxField,
 ) -> Result<CorrectedFieldsDiagnostic> {
     let mesh = config.mesh;
     let mut fields =
@@ -632,7 +636,9 @@ fn build_corrected_fields_with_diagnostics(
     let max_abs_divergence_before_boundary =
         max_abs_field_divergence(mesh, &fields, config.boundary)?;
     apply_incompressible_boundary_conditions_3d(mesh, &mut fields, config.boundary)?;
-    let max_abs_divergence_after_boundary = max_abs_scalar_field(&face_flux.divergence(mesh)?);
+    face_flux.refresh_boundary_net(mesh, &fields, config.boundary)?;
+    let max_abs_divergence_after_boundary =
+        max_abs_active_face_flux_divergence(mesh, face_flux, config.boundary)?;
     Ok(CorrectedFieldsDiagnostic {
         fields,
         max_abs_divergence_before_boundary,

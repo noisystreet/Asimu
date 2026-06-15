@@ -2,7 +2,9 @@ use tracing::info;
 
 use crate::boundary::{BoundaryKind, BoundarySet};
 use crate::core::{Real, format_log_fixed4, format_log_sci4, log10_positive};
-use crate::discretization::compute_incompressible_face_flux_divergence_3d;
+use crate::discretization::{
+    compute_incompressible_face_flux_divergence_3d, incompressible_pressure_correction_dirichlet,
+};
 use crate::error::{AsimuError, Result};
 use crate::field::{IncompressibleFields, ScalarField};
 use crate::mesh::{BoundaryMesh, StructuredMesh3d};
@@ -227,6 +229,33 @@ pub(crate) fn max_abs_field_divergence(
 ) -> Result<Real> {
     let divergence = compute_incompressible_face_flux_divergence_3d(mesh, fields, boundary)?;
     Ok(max_abs_scalar_field(&divergence))
+}
+
+/// 面通量散度在非 \(p'=0\) owner 单元上的最大值（开域出口不参与 SIMPLEC 连续性判据）。
+pub(crate) fn max_abs_active_face_flux_divergence(
+    mesh: &StructuredMesh3d,
+    face_flux: &crate::discretization::IncompressibleFaceFluxField,
+    boundary: &BoundarySet,
+) -> Result<Real> {
+    let divergence = face_flux.divergence(mesh)?;
+    let mut dirichlet_cells = vec![false; mesh.num_cells()];
+    for patch in boundary.patches() {
+        if !incompressible_pressure_correction_dirichlet(&patch.kind) {
+            continue;
+        }
+        for &face in &patch.face_ids {
+            let owner = mesh.face_owner(face)?.index() as usize;
+            dirichlet_cells[owner] = true;
+        }
+    }
+    let mut max_abs: Real = 0.0;
+    for (cell, value) in divergence.values().iter().enumerate() {
+        if dirichlet_cells[cell] {
+            continue;
+        }
+        max_abs = max_abs.max(value.abs());
+    }
+    Ok(max_abs)
 }
 
 #[cfg(test)]

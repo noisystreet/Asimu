@@ -118,10 +118,7 @@ pub fn incompressible_boundary_face_state(
 pub fn incompressible_pressure_correction_dirichlet(kind: &BoundaryKind) -> bool {
     matches!(
         kind,
-        BoundaryKind::IncompressibleVelocityInlet { .. }
-            | BoundaryKind::IncompressiblePressureOutlet { .. }
-            | BoundaryKind::Outlet { .. }
-            | BoundaryKind::Inlet { .. }
+        BoundaryKind::IncompressiblePressureOutlet { .. } | BoundaryKind::Outlet { .. }
     )
 }
 
@@ -163,6 +160,22 @@ mod tests {
             state.mass_flux_kind,
             IncompressibleMassFluxBoundaryKind::NoPenetration
         );
+    }
+
+    #[test]
+    fn velocity_inlet_is_not_pressure_correction_dirichlet() {
+        assert!(!incompressible_pressure_correction_dirichlet(
+            &BoundaryKind::IncompressibleVelocityInlet {
+                velocity: [1.0, 0.0, 0.0],
+            }
+        ));
+    }
+
+    #[test]
+    fn pressure_outlet_is_pressure_correction_dirichlet() {
+        assert!(incompressible_pressure_correction_dirichlet(
+            &BoundaryKind::IncompressiblePressureOutlet { pressure: 0.0 }
+        ));
     }
 
     #[test]

@@ -439,6 +439,29 @@ mod tests {
     use crate::boundary::{BoundaryKind, BoundaryPatch, BoundarySet};
 
     #[test]
+    fn open_outlet_channel_keeps_uniform_pressure_rhs() {
+        let mesh = StructuredMesh3d::uniform_box("channel", 4, 2, 1, 4.0, 1.0, 0.1).expect("mesh");
+        let uniform_div = 6.25e-2;
+        let divergence = ScalarField::uniform(mesh.num_cells(), uniform_div).expect("divergence");
+        let d = ScalarField::uniform(mesh.num_cells(), 1.0).expect("d");
+        let boundary = BoundarySet::new(vec![BoundaryPatch::new(
+            "i_max",
+            mesh.resolve_logical_boundary("i_max").expect("outlet"),
+            BoundaryKind::IncompressiblePressureOutlet { pressure: 0.0 },
+        )]);
+        let system = assemble_incompressible_pressure_correction_3d(
+            &mesh,
+            &divergence,
+            &d,
+            &boundary,
+            IncompressiblePressureCorrectionConfig::new(1.0, 0, 0.0).expect("config"),
+        )
+        .expect("system");
+        let volume = mesh.cell_metric(0, 0, 0).volume;
+        assert!((system.rhs[0] - uniform_div * volume).abs() <= Real::EPSILON);
+    }
+
+    #[test]
     fn closed_domain_pressure_rhs_removes_active_mean() {
         let mesh = StructuredMesh3d::uniform_box("box", 2, 2, 1, 1.0, 1.0, 0.1).expect("mesh");
         let divergence = ScalarField::from_values(vec![1.0, 2.0, 3.0, 4.0]).expect("divergence");

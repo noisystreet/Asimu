@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "benchmark_id": "channel_re100_3d",
+  "asimu_min_version": "0.3.0",
+  "status": "i4_inlet_outlet_mass_balance_vv",
+  "quantities": [
+    {
+      "name": "mass_flux_imbalance_ratio",
+      "max_value": 0.015,
+      "source": "ADR 0015 I4: |sum mdot|/|mdot_in|; 32x8 upwind smoke (calibrated ~1.4%)"
+    },
+    {
+      "name": "max_abs_corrected_field_divergence_after_boundary",
+      "max_value": 1.0e-5,
+      "source": "face-flux continuity after boundary reapply"
+    },
+    {
+      "name": "max_abs_corrected_divergence",
+      "max_value": 1.0e-5,
+      "source": "pressure correction equation residual"
+    },
+    {
+      "name": "simplec_converged",
+      "value": true,
+      "source": "steady SIMPLEC velocity-update convergence"
+    }
+  ]
+}

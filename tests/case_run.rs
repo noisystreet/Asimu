@@ -82,6 +82,34 @@ fn channel_poiseuille_incompressible_benchmark_runs() {
 }
 
 #[test]
+fn channel_re100_3d_incompressible_benchmark_runs() {
+    let expected = std::fs::read_to_string("tests/benchmarks/channel_re100_3d/expected.json")
+        .expect("expected");
+    assert!(expected.contains("i4_inlet_outlet_mass_balance_vv"));
+    let result =
+        run_case_path(Path::new("tests/benchmarks/channel_re100_3d/case.toml")).expect("run");
+    assert_eq!(result.kind, CaseRunKind::Incompressible3dSteady);
+    assert_eq!(result.benchmark_id.as_deref(), Some("channel_re100_3d"));
+    let metrics = result.incompressible_3d.expect("incompressible metrics");
+    assert_eq!(metrics.algorithm, "simplec");
+    assert!(metrics.simplec_converged, "simplec must converge");
+    assert!(metrics.simplec_iterations <= 3000);
+    assert!(metrics.max_abs_corrected_field_divergence_after_boundary < 1.0e-5);
+    assert!(metrics.max_abs_corrected_divergence < 1.0e-5);
+    let imbalance = metrics
+        .mass_flux_imbalance_ratio
+        .expect("mass flux imbalance ratio");
+    let inlet_flux = metrics
+        .mass_flux_inlet_magnitude
+        .expect("mass flux inlet magnitude");
+    assert!(inlet_flux > 0.0, "inlet_flux={inlet_flux}");
+    assert!(
+        imbalance < 0.015,
+        "mass_flux_imbalance_ratio={imbalance} inlet_magnitude={inlet_flux}"
+    );
+}
+
+#[test]
 fn lid_driven_cavity_re100_incompressible_benchmark_runs() {
     let expected =
         std::fs::read_to_string("tests/benchmarks/lid_driven_cavity_re100/expected.json")

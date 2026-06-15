@@ -6,6 +6,7 @@ use tracing::{info, info_span};
 use crate::core::Real;
 use crate::discretization::{
     IncompressibleBoundaryApplyStats, apply_incompressible_boundary_conditions_3d,
+    compute_incompressible_boundary_mass_balance_3d,
 };
 use crate::error::{AsimuError, Result};
 use crate::field::IncompressibleFields;
@@ -90,6 +91,9 @@ pub struct Incompressible3dRunMetrics {
     pub kinetic_energy_analytical_ratio: Option<Real>,
     pub kinetic_energy_decay_rate: Option<Real>,
     pub kinetic_energy_analytical_decay_rate: Option<Real>,
+    pub mass_flux_net: Option<Real>,
+    pub mass_flux_inlet_magnitude: Option<Real>,
+    pub mass_flux_imbalance_ratio: Option<Real>,
     pub written: Vec<PathBuf>,
 }
 
@@ -183,6 +187,7 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
         &IncompressibleBenchmarkCollectContext {
             known_benchmark,
             mesh,
+            boundary: &case.boundary,
             config,
             reference_inv_reynolds,
             reference_length,
@@ -290,6 +295,7 @@ fn incompressible_solver_config<'a>(
 struct IncompressibleBenchmarkCollectContext<'a> {
     known_benchmark: Option<KnownIncompressibleBenchmark>,
     mesh: &'a StructuredMesh3d,
+    boundary: &'a crate::boundary::BoundarySet,
     config: &'a crate::io::IncompressibleCaseConfig,
     reference_inv_reynolds: Real,
     reference_length: Real,
@@ -319,6 +325,7 @@ fn collect_incompressible_benchmark_diagnostics(
     let IncompressibleBenchmarkCollectContext {
         known_benchmark,
         mesh,
+        boundary,
         config,
         reference_inv_reynolds,
         reference_length,
@@ -329,6 +336,16 @@ fn collect_incompressible_benchmark_diagnostics(
         kinetic_energy_initial,
         kinetic_energy_history,
     } = *ctx;
+    let mass_balance = known_benchmark
+        .filter(|benchmark| benchmark.tracks_mass_balance())
+        .and_then(|_| {
+            compute_incompressible_boundary_mass_balance_3d(
+                mesh,
+                &diagnostic.corrected_fields,
+                boundary,
+            )
+            .ok()
+        });
     let centerline_profiles = incompressible_centerline_profiles(
         known_benchmark,
         mesh,
@@ -386,6 +403,9 @@ fn collect_incompressible_benchmark_diagnostics(
         kinetic_energy_analytical_ratio,
         kinetic_energy_decay_rate,
         kinetic_energy_analytical_decay_rate,
+        mass_flux_net: mass_balance.map(|balance| balance.net_flux),
+        mass_flux_inlet_magnitude: mass_balance.map(|balance| balance.inlet_magnitude),
+        mass_flux_imbalance_ratio: mass_balance.map(|balance| balance.imbalance_ratio),
         written,
     }
 }
@@ -446,6 +466,9 @@ struct BenchmarkDiagnostics {
     kinetic_energy_analytical_ratio: Option<Real>,
     kinetic_energy_decay_rate: Option<Real>,
     kinetic_energy_analytical_decay_rate: Option<Real>,
+    mass_flux_net: Option<Real>,
+    mass_flux_inlet_magnitude: Option<Real>,
+    mass_flux_imbalance_ratio: Option<Real>,
     written: Vec<PathBuf>,
 }
 
@@ -515,6 +538,9 @@ fn build_run_metrics(
         kinetic_energy_analytical_ratio: benchmark.kinetic_energy_analytical_ratio,
         kinetic_energy_decay_rate: benchmark.kinetic_energy_decay_rate,
         kinetic_energy_analytical_decay_rate: benchmark.kinetic_energy_analytical_decay_rate,
+        mass_flux_net: benchmark.mass_flux_net,
+        mass_flux_inlet_magnitude: benchmark.mass_flux_inlet_magnitude,
+        mass_flux_imbalance_ratio: benchmark.mass_flux_imbalance_ratio,
         written: benchmark.written,
     }
 }

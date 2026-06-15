@@ -8,6 +8,7 @@
 ### Added
 
 - [docs/DEBUG_CHECKLIST.md](docs/DEBUG_CHECKLIST.md)：V&V / 无量纲 metrics 排查清单（含 Taylor–Green 解析 \(L_{\mathrm{ref}}^2\) 反例）。
+- **I4 `channel_re100_3d`**：入口/出口稳态通道 Re=100 benchmark；`compute_incompressible_boundary_mass_balance_3d` 与 `mass_flux_imbalance_ratio` metrics。
 
 ### Changed
 

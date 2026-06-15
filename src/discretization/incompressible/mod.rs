@@ -7,6 +7,7 @@ pub mod bc;
 pub mod boundary_flux;
 pub mod face_boundary;
 pub mod face_flux;
+pub mod mass_balance;
 pub mod momentum;
 mod momentum_convection;
 mod momentum_geometry;
@@ -25,6 +26,9 @@ pub use face_boundary::{
     incompressible_pressure_correction_dirichlet,
 };
 pub use face_flux::compute_incompressible_face_flux_divergence_3d;
+pub use mass_balance::{
+    IncompressibleBoundaryMassBalance, compute_incompressible_boundary_mass_balance_3d,
+};
 pub use momentum::{
     IncompressibleConvectionScheme, IncompressibleMomentumPredictorConfig,
     IncompressibleMomentumPredictorSystem, assemble_incompressible_momentum_predictor_3d,

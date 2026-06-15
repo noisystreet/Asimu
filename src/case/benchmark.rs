@@ -21,6 +21,7 @@ pub enum KnownIncompressibleBenchmark {
     TaylorGreen3d,
     LidDrivenCavityRe100,
     ChannelPoiseuille,
+    ChannelRe1003d,
 }
 
 /// 构建不可压 benchmark / 通用 uniform 初场与可选 Rhie-Chow 面通量播种。
@@ -64,6 +65,7 @@ impl KnownIncompressibleBenchmark {
         match id {
             "taylor_green_3d" => Some(Self::TaylorGreen3d),
             "channel_poiseuille" => Some(Self::ChannelPoiseuille),
+            "channel_re100_3d" => Some(Self::ChannelRe1003d),
             id if id.starts_with("lid_driven_cavity_re100") => Some(Self::LidDrivenCavityRe100),
             _ => None,
         }
@@ -72,6 +74,11 @@ impl KnownIncompressibleBenchmark {
     #[must_use]
     pub fn from_case(case: &CaseSpec) -> Option<Self> {
         case.benchmark_id.as_deref().and_then(Self::parse)
+    }
+
+    #[must_use]
+    pub const fn tracks_mass_balance(self) -> bool {
+        matches!(self, Self::ChannelRe1003d)
     }
 
     #[must_use]
@@ -92,7 +99,7 @@ impl KnownIncompressibleBenchmark {
     ) -> Result<Option<IncompressibleFields>> {
         match self {
             Self::TaylorGreen3d => Ok(Some(taylor_green_initial_fields(mesh)?)),
-            Self::LidDrivenCavityRe100 | Self::ChannelPoiseuille => Ok(None),
+            Self::LidDrivenCavityRe100 | Self::ChannelPoiseuille | Self::ChannelRe1003d => Ok(None),
         }
     }
 
@@ -119,7 +126,7 @@ impl KnownIncompressibleBenchmark {
                     initial_face_flux: Some(prepared.face_flux),
                 })
             }
-            Self::LidDrivenCavityRe100 | Self::ChannelPoiseuille => {
+            Self::LidDrivenCavityRe100 | Self::ChannelPoiseuille | Self::ChannelRe1003d => {
                 Ok(IncompressibleInitialState {
                     fields,
                     initial_face_flux: None,
@@ -158,6 +165,11 @@ mod tests {
             KnownIncompressibleBenchmark::parse("lid_driven_cavity_re100"),
             Some(KnownIncompressibleBenchmark::LidDrivenCavityRe100)
         );
+        assert_eq!(
+            KnownIncompressibleBenchmark::parse("channel_re100_3d"),
+            Some(KnownIncompressibleBenchmark::ChannelRe1003d)
+        );
+        assert!(KnownIncompressibleBenchmark::ChannelRe1003d.tracks_mass_balance());
         assert!(KnownIncompressibleBenchmark::parse("unknown").is_none());
     }
 

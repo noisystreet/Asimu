@@ -77,7 +77,7 @@ pub(crate) use compressible::freestream_pair;
 // --- 不可压 FVM ---
 pub use incompressible::{
     IncompressibleBoundaryApplyStats, IncompressibleBoundaryFaceState,
-    IncompressibleConvectionScheme, IncompressibleFaceFluxField,
+    IncompressibleBoundaryMassBalance, IncompressibleConvectionScheme, IncompressibleFaceFluxField,
     IncompressibleMassFluxBoundaryKind, IncompressibleMomentumPredictorConfig,
     IncompressibleMomentumPredictorSystem, IncompressiblePressureCorrectionConfig,
     IncompressiblePressureCorrectionSystem, IncompressibleVelocityLaplacian,
@@ -87,8 +87,9 @@ pub use incompressible::{
     assemble_incompressible_momentum_predictor_with_boundary_3d,
     assemble_incompressible_momentum_predictor_with_boundary_and_flux_3d,
     assemble_incompressible_pressure_correction_3d, assemble_incompressible_pressure_poisson_3d,
-    compute_incompressible_divergence_3d, compute_incompressible_face_flux_divergence_3d,
-    compute_incompressible_rhie_chow_divergence_3d, compute_incompressible_velocity_laplacian_3d,
+    compute_incompressible_boundary_mass_balance_3d, compute_incompressible_divergence_3d,
+    compute_incompressible_face_flux_divergence_3d, compute_incompressible_rhie_chow_divergence_3d,
+    compute_incompressible_velocity_laplacian_3d,
     compute_pressure_corrected_rhie_chow_divergence_3d,
     corrected_incompressible_fields_rhie_chow_3d, incompressible_boundary_face_state,
     incompressible_boundary_face_velocity, incompressible_pressure_correction_dirichlet,

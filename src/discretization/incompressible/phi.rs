@@ -61,6 +61,17 @@ impl IncompressibleFaceFluxField {
         Ok(())
     }
 
+    /// 用当前 cell-centered 速度场刷新边界 owner 净通量（压力出口外推等）。
+    pub fn refresh_boundary_net(
+        &mut self,
+        mesh: &StructuredMesh3d,
+        fields: &IncompressibleFields,
+        boundary: &BoundarySet,
+    ) -> Result<()> {
+        self.boundary_net.fill(0.0);
+        fill_boundary_net(mesh, fields, boundary, &mut self.boundary_net)
+    }
+
     pub fn divergence(&self, mesh: &StructuredMesh3d) -> Result<ScalarField> {
         let mut net = self.boundary_net.clone();
         scatter_x_fluxes(mesh, self, &mut net);
