@@ -60,7 +60,7 @@ tests/benchmarks/
 | `1d_advection_diffusion` | v0.2 | 1D 对流-扩散 | 解析 / manufactured | 必跑 |
 | `channel_poiseuille` | v0.3 | 2D 不可压通道 | 解析速度剖面（当前 smoke 骨架） | 必跑 |
 | `lid_driven_cavity_re100` | v0.4 | 方腔 Re=100 | Ghia 1982 中心线（16×16 稳态 SIMPLEC） | 必跑 smoke |
-| `taylor_green_3d` | v0.3 I3 | 周期 TG 涡 | 动能衰减（`dt=0.005`/400）+ Rhie-Chow IC | 必跑 V&V |
+| `taylor_green_3d` | v0.3 **I3 完成** | 周期 TG 涡 | 动能衰减 + Rhie-Chow IC + 首步 coupling（CI \(\|E/E_0-\exp(-4\nu t)\| < 0.01\)） | 必跑 V&V |
 | `backward_facing_step` | v1.x | 台阶流 | 实验/文献（待定） | ignore |
 
 ---

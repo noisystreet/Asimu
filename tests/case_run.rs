@@ -157,6 +157,9 @@ fn lid_driven_cavity_re100_incompressible_benchmark_runs() {
 
 #[test]
 fn taylor_green_3d_incompressible_benchmark_runs() {
+    let expected = std::fs::read_to_string("tests/benchmarks/taylor_green_3d/expected.json")
+        .expect("expected");
+    assert!(expected.contains("i3_piso_bdf1_kinetic_decay_vv"));
     let result =
         run_case_path(Path::new("tests/benchmarks/taylor_green_3d/case.toml")).expect("run");
     assert_eq!(result.benchmark_id.as_deref(), Some("taylor_green_3d"));
@@ -188,7 +191,7 @@ fn taylor_green_3d_incompressible_benchmark_runs() {
         .kinetic_energy_analytical_ratio
         .expect("kinetic energy analytical ratio");
     assert!(
-        (decay - analytical_ratio).abs() < 0.02,
+        (decay - analytical_ratio).abs() < 0.01,
         "decay={decay} analytical_ratio={analytical_ratio}"
     );
     assert!(
@@ -224,6 +227,33 @@ struct TaylorGreenCaseConfig<'a> {
     max_steps: u64,
     piso_correctors: usize,
     output_dir: &'a str,
+}
+
+fn assert_taylor_green_kinetic_vv(
+    metrics: &asimu::case::Incompressible3dRunMetrics,
+    max_ratio_err: f64,
+) {
+    let ratio = metrics
+        .kinetic_energy_decay_ratio
+        .expect("kinetic energy decay ratio");
+    let analytical = metrics
+        .kinetic_energy_analytical_ratio
+        .expect("kinetic energy analytical ratio");
+    let err = (ratio - analytical).abs();
+    assert!(
+        err < max_ratio_err,
+        "ratio={ratio} analytical={analytical} err={err} max_ratio_err={max_ratio_err}"
+    );
+    assert!(
+        metrics.max_abs_corrected_field_divergence_after_boundary < 1.0e-6,
+        "face flux divergence={}",
+        metrics.max_abs_corrected_field_divergence_after_boundary
+    );
+    assert!(
+        metrics.max_abs_corrected_divergence < 1.0e-6,
+        "pressure correction residual={}",
+        metrics.max_abs_corrected_divergence
+    );
 }
 
 fn write_taylor_green_case(case_path: &Path, config: TaylorGreenCaseConfig<'_>) {
@@ -324,7 +354,7 @@ fn taylor_green_3d_parameter_sensitivity_baseline() {
     fs::create_dir_all(&out).expect("out dir");
     let out_str = out.to_string_lossy();
 
-    eprintln!("TG sensitivity (16x16, t*=2, PISO correctors noted):");
+    eprintln!("TG sensitivity (16x16, t_phys=2, PISO correctors noted):");
     eprintln!("dt\tsteps\tpiso\tE/E0\tanalytical\t|err|\tmax|div(u*)|");
 
     for (dt, steps) in [(0.05, 40_u64), (0.02, 100), (0.01, 200), (0.005, 400)] {
@@ -354,16 +384,10 @@ fn taylor_green_3d_parameter_sensitivity_baseline() {
             "{dt}\t{steps}\t2\t{ratio:.6}\t{analytical:.6}\t{err:.6}\t{:.3e}",
             metrics.max_abs_predicted_divergence
         );
-        if (dt - 0.005).abs() < 1.0e-12 {
-            assert!(
-                (ratio - analytical).abs() < 0.02,
-                "ratio={ratio} analytical={analytical}"
-            );
-            assert!(metrics.max_abs_corrected_field_divergence_after_boundary < 1.0e-6);
-        }
+        assert_taylor_green_kinetic_vv(&metrics, 0.02);
     }
 
-    for piso in [1_usize, 2, 3] {
+    for piso in [1_usize, 3] {
         let case_path = root.join(format!("piso_{piso}.toml"));
         write_taylor_green_case(
             &case_path,
@@ -390,6 +414,7 @@ fn taylor_green_3d_parameter_sensitivity_baseline() {
             "0.005\t400\t{piso}\t{ratio:.6}\t{analytical:.6}\t{err:.6}\t{:.3e}",
             metrics.max_abs_predicted_divergence
         );
+        assert_taylor_green_kinetic_vv(&metrics, 0.01);
     }
 
     let _ = fs::remove_dir_all(&root);
@@ -454,7 +479,7 @@ fn taylor_green_3d_refined_grid_reduces_energy_ratio_error() {
     );
 
     assert!(
-        coarse_err < 0.02 && refined_err < 0.02,
+        coarse_err < 0.01 && refined_err < 0.01,
         "coarse_err={coarse_err} refined_err={refined_err}"
     );
     assert!(

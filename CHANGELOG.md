@@ -9,6 +9,10 @@
 
 - [docs/DEBUG_CHECKLIST.md](docs/DEBUG_CHECKLIST.md)：V&V / 无量纲 metrics 排查清单（含 Taylor–Green 解析 \(L_{\mathrm{ref}}^2\) 反例）。
 
+### Changed
+
+- **I3 Taylor–Green 收尾**：补全参数敏感性/32×32 标定表；CI 动能比容差收紧至 \(<1\%\)；`expected.json` 增加 `max_abs_corrected_divergence`；`#[ignore]` 敏感性测试全行断言。
+
 ### Fixed
 
 - 不可压缩首步 coupling：Taylor–Green 等 Rhie-Chow IC 在投影后播种 div-free `initial_face_flux`；每个 PISO 外层步在动量预测后、Rhie-Chow 散度诊断前对固定 \(\mathbf{u}^*\) 做 pressure-only 对齐（`reconcile_rhie_chow_pressure_with_fixed_velocity_3d`），首步 `max|div(u*)|` 由 \(O(10^{-2})\) 降至 \(O(10^{-7})\)（16×16，`dt=0.005`）。

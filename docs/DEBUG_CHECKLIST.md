@@ -67,7 +67,7 @@ Brachet 有量纲形式：
 
 ## 3. Taylor–Green（I3）专用顺序
 
-按序执行，**上一步未通过不要改离散/粘性系数**：
+**I3 基线已锁定**（`expected.json` `status = i3_piso_bdf1_kinetic_decay_vv`；CI \(\|E/E_0-\)解析\(\| < 0.01\)）。按序执行，**上一步未通过不要改离散/粘性系数**：
 
 1. [ ] **解析对照**：手算或 `analytical_kinetic_energy_ratio`，确认目标约为 **0.45**（非 0.98），见 §2.4。
 2. [ ] **CI 基线**：`cargo test --test case_run taylor_green_3d_incompressible_benchmark_runs`
