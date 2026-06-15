@@ -63,6 +63,8 @@ p^*=\frac{p}{p_{\mathrm{ref}}},
 
 因此不可压缩核心算子不再携带有量纲密度；密度仅用于 \(p_{\mathrm{ref}}\)、输出还原与有量纲诊断。Case 输入仍用 SI，解析后 `CaseSpec` 内部切换为星号量，CGNS 输出再还原 SI。
 
+**Taylor–Green 动能衰减（Brachet et al. 1983）**：有量纲 \(\exp(-4\nu t)\)。网格缩至 \([0,1]^d\) 且动量扩散仍用 \(\nu^*=1/Re\) 时，同一物理过程在代码中写为 \(\exp(-4\nu^* L_{\mathrm{ref}}^2 t^*)\)（见 `case::taylor_green::analytical_kinetic_energy_ratio`）。
+
 ## 2. 离散布局
 
 - **FVM**，结构化六面体，**collocated**：\(p,\mathbf{u}\) 存于单元中心。
@@ -204,7 +206,12 @@ a_T=a_B=\nu\frac{\Delta x\Delta y}{\Delta z},
 \tag{8b}
 \]
 
-面通量优先使用上一步 pressure-corrected 显式 \(\phi_f\)；首步尚无 \(\phi_f\) 时由相邻真实 cell-centered 速度线性插值得到 \(F_f=(\mathbf{u}_f\cdot\mathbf{n}_f)A_f\)，\(\phi_f^{up}\) 取一阶迎风。内部面不使用 wall / moving wall / symmetry 的 ghost 值替代任一侧 cell；这些边界语义只通过边界面质量通量与动量边界源项进入。
+面通量优先使用上一步 pressure-corrected 显式 \(\phi_f\)。**首步 coupling**（I3 已实现）：
+
+1. **IC 播种**：Rhie-Chow 初场投影后，用与投影相同的 \(d_P\) 构造 `IncompressibleFaceFluxField` 并作为 `initial_face_flux` 传入 solver，使首步动量对流不再回退 cell 线性插值通量。
+2. **动量预测后压力对齐**：每个外层步在 Rhie-Chow 面通量散度诊断前，对固定 \(\mathbf{u}^*\) 做 pressure-only 投影（与初场投影同算子），将调整量 \(p_{\mathrm{old}}-p_{\mathrm{new}}\) 并入累计 \(p'\)，使 \(\nabla\cdot\phi^{H/A}\) 与 Poisson RHS 一致。
+
+若未提供 `initial_face_flux`，首步对流仍由相邻 cell-centered 速度线性插值得到 \(F_f=(\mathbf{u}_f\cdot\mathbf{n}_f)A_f\)，\(\phi_f^{up}\) 取一阶迎风。内部面不使用 wall / moving wall / symmetry 的 ghost 值替代任一侧 cell；这些边界语义只通过边界面质量通量与动量边界源项进入。
 
 \[
 a_P=\frac{V_P}{\Delta\tau}+\sum a_{nb}^{diff}+\sum_f \max(F_f,0),\qquad

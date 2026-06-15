@@ -9,7 +9,7 @@ use tracing::info;
 use crate::boundary::BoundarySet;
 use crate::core::{Real, format_log_sci4};
 use crate::discretization::{
-    IncompressibleMomentumPredictorConfig,
+    IncompressibleFaceFluxField, IncompressibleMomentumPredictorConfig,
     assemble_incompressible_momentum_predictor_with_boundary_and_flux_3d,
 };
 use crate::error::Result;
@@ -56,14 +56,21 @@ pub fn taylor_green_initial_fields(mesh: &StructuredMesh3d) -> Result<Incompress
     })
 }
 
-/// Taylor–Green 初场：Rhie-Chow 压力投影（固定解析速度，调整压力）。
+/// Taylor–Green 初场预处理结果：Rhie-Chow 压力投影后的场与一致面通量。
+#[derive(Debug, Clone, PartialEq)]
+pub struct TaylorGreenPreparedInitial {
+    pub fields: IncompressibleFields,
+    pub face_flux: IncompressibleFaceFluxField,
+}
+
+/// Taylor–Green 初场：Rhie-Chow 压力投影（固定解析速度，调整压力）并播种 div-free 面通量。
 pub fn taylor_green_prepare_initial_fields(
     mesh: &StructuredMesh3d,
     config: &IncompressibleCaseConfig,
     boundary: &BoundarySet,
     pseudo_time_step: Real,
     fields: IncompressibleFields,
-) -> Result<IncompressibleFields> {
+) -> Result<TaylorGreenPreparedInitial> {
     let predictor_config =
         IncompressibleMomentumPredictorConfig::new(config.kinematic_viscosity, pseudo_time_step)?
             .with_body_force(config.body_force)?
@@ -95,7 +102,16 @@ pub fn taylor_green_prepare_initial_fields(
         pressure_converged = stats.pressure_solve_converged,
         "Taylor–Green 初场 Rhie-Chow 散度投影"
     );
-    Ok(projected)
+    let face_flux = IncompressibleFaceFluxField::from_rhie_chow(
+        mesh,
+        &projected,
+        &momentum.d_coefficient,
+        boundary,
+    )?;
+    Ok(TaylorGreenPreparedInitial {
+        fields: projected,
+        face_flux,
+    })
 }
 
 /// 体积平均 kinetic energy \(E=\frac{1}{V}\int \frac{1}{2}\rho|\mathbf{u}|^2\,\mathrm{d}V\)。
@@ -127,16 +143,24 @@ pub fn kinetic_energy(
     }
 }
 
-/// 解析动能比 \(E(t)/E(0)=\exp(-4\nu^* t^*)\)（\(\nu^*=1/Re\)）。
+/// 解析动能比 \(E(t)/E(0)=\exp(-4\nu t)\)（Brachet et al. 1983）。
+///
+/// 网格坐标已缩至 \([0,1]^d\) 且动量扩散用 \(\nu^*=1/Re\) 时，无量纲时间 \(t^*\) 下
+/// \(\exp(-4\nu t)=\exp(-4\nu^* L_{\mathrm{ref}}^2 t^*)\)。
 #[must_use]
-pub fn analytical_kinetic_energy_ratio(inv_reynolds: Real, nondimensional_time: Real) -> Real {
-    (-4.0 * inv_reynolds * nondimensional_time).exp()
+pub fn analytical_kinetic_energy_ratio(
+    inv_reynolds: Real,
+    reference_length: Real,
+    nondimensional_time: Real,
+) -> Real {
+    (-4.0 * inv_reynolds * reference_length * reference_length * nondimensional_time).exp()
 }
 
-/// 在 spin-up 后区间估计 \(-\mathrm{d}\ln E/\mathrm{d}t\)，与解析 \(4\nu^*\) 对比。
+/// 在 spin-up 后区间估计 \(-\mathrm{d}\ln E/\mathrm{d}t^*\)，与解析 \(4\nu^* L_{\mathrm{ref}}^2\) 对比。
 pub(crate) fn taylor_green_decay_rates(
     enabled: bool,
     inv_reynolds: Real,
+    reference_length: Real,
     time_step: Real,
     history: &[Real],
 ) -> (Option<Real>, Option<Real>) {
@@ -144,7 +168,7 @@ pub(crate) fn taylor_green_decay_rates(
         return (None, None);
     }
     const SPIN_UP_STEPS: usize = 10;
-    let analytical = Some(4.0 * inv_reynolds);
+    let analytical = Some(4.0 * inv_reynolds * reference_length * reference_length);
     if history.len() <= SPIN_UP_STEPS + 1 {
         return (None, analytical);
     }
@@ -181,7 +205,7 @@ mod tests {
     fn analytical_decay_matches_reference_slope_at_small_time() {
         let inv_re = 0.01;
         let dt = 0.1;
-        let ratio = analytical_kinetic_energy_ratio(inv_re, dt);
+        let ratio = analytical_kinetic_energy_ratio(inv_re, 1.0, dt);
         assert!(approx_eq(ratio, (-0.004_f64).exp(), 1.0e-12));
     }
 
@@ -484,7 +508,7 @@ kind = "symmetry"
         let config = case.incompressible.expect("inc");
         let dt = case.time.dt.expect("dt");
         let base_fields = taylor_green_initial_fields(mesh).expect("base");
-        let projected_fields = taylor_green_prepare_initial_fields(
+        let prepared = taylor_green_prepare_initial_fields(
             mesh,
             &config,
             &case.boundary,
@@ -492,7 +516,8 @@ kind = "symmetry"
             base_fields.clone(),
         )
         .expect("projected");
-        let solver_config = IncompressiblePressureVelocityConfig {
+        let projected_fields = prepared.fields;
+        let base_solver_config = IncompressiblePressureVelocityConfig {
             mesh,
             density: config.density,
             kinematic_viscosity: config.kinematic_viscosity,
@@ -511,11 +536,16 @@ kind = "symmetry"
             snapshot_interval: None,
             linear_solvers: config.linear_solvers,
             transient_mode: true,
+            initial_face_flux: None,
         };
-        let base_step1 =
-            run_incompressible_pressure_velocity(&base_fields, solver_config).expect("base step1");
+        let projected_solver_config = IncompressiblePressureVelocityConfig {
+            initial_face_flux: Some(prepared.face_flux),
+            ..base_solver_config.clone()
+        };
+        let base_step1 = run_incompressible_pressure_velocity(&base_fields, base_solver_config)
+            .expect("base step1");
         let projected_step1 =
-            run_incompressible_pressure_velocity(&projected_fields, solver_config)
+            run_incompressible_pressure_velocity(&projected_fields, projected_solver_config)
                 .expect("projected step1");
         assert!(
             projected_step1.max_abs_predicted_divergence
@@ -525,14 +555,14 @@ kind = "symmetry"
             projected_step1.max_abs_predicted_divergence
         );
         assert!(
-            projected_step1.max_abs_predicted_divergence > 1.0e-2,
+            projected_step1.max_abs_predicted_divergence < 1.0e-3,
             "projected={}",
             projected_step1.max_abs_predicted_divergence
         );
     }
 
     #[test]
-    fn step1_predicted_divergence_is_sensitive_to_pseudo_dt() {
+    fn step1_predicted_divergence_is_small_after_initial_coupling() {
         use crate::io::parse_case_str;
         use crate::solver::{
             IncompressiblePressureVelocityConfig, run_incompressible_pressure_velocity,
@@ -540,7 +570,7 @@ kind = "symmetry"
 
         let case = parse_case_str(
             r#"
-name = "tg_step1_dt_probe"
+name = "tg_step1_coupled"
 benchmark_id = "taylor_green_3d"
 
 [mesh]
@@ -556,7 +586,7 @@ lz = 0.1
 
 [time]
 mode = "transient"
-dt = 0.05
+dt = 0.005
 
 [incompressible]
 pressure = 0.0
@@ -596,52 +626,44 @@ kind = "symmetry"
         .expect("parse");
         let mesh = case.mesh.as_3d().expect("mesh");
         let config = case.incompressible.expect("inc");
-        let dt_base = case.time.dt.expect("dt");
-        let projected_fields = taylor_green_prepare_initial_fields(
+        let dt = case.time.dt.expect("dt");
+        let prepared = taylor_green_prepare_initial_fields(
             mesh,
             &config,
             &case.boundary,
-            dt_base,
+            dt,
             taylor_green_initial_fields(mesh).expect("base"),
         )
         .expect("projected");
-        let run_one_step = |pseudo_dt: Real| {
-            run_incompressible_pressure_velocity(
-                &projected_fields,
-                IncompressiblePressureVelocityConfig {
-                    mesh,
-                    density: config.density,
-                    kinematic_viscosity: config.kinematic_viscosity,
-                    body_force: config.body_force,
-                    velocity_under_relaxation: 1.0,
-                    pressure_under_relaxation: 1.0,
-                    pseudo_time_step: pseudo_dt,
-                    convection_scheme: config.convection_scheme,
-                    pressure_correctors: config.piso_correctors.max(1),
-                    boundary: &case.boundary,
-                    max_iterations: 1,
-                    min_iterations: 0,
-                    tolerance: None,
-                    require_velocity_convergence: false,
-                    convergence_window: 1,
-                    snapshot_interval: None,
-                    linear_solvers: config.linear_solvers,
-                    transient_mode: true,
-                },
-            )
-            .expect("step1")
-            .max_abs_predicted_divergence
-        };
-        let div_small_dt = run_one_step(0.005);
-        let div_base_dt = run_one_step(0.05);
-        let div_large_dt = run_one_step(0.5);
+        let step1 = run_incompressible_pressure_velocity(
+            &prepared.fields,
+            IncompressiblePressureVelocityConfig {
+                mesh,
+                density: config.density,
+                kinematic_viscosity: config.kinematic_viscosity,
+                body_force: config.body_force,
+                velocity_under_relaxation: 1.0,
+                pressure_under_relaxation: 1.0,
+                pseudo_time_step: dt,
+                convection_scheme: config.convection_scheme,
+                pressure_correctors: config.piso_correctors.max(1),
+                boundary: &case.boundary,
+                max_iterations: 1,
+                min_iterations: 0,
+                tolerance: None,
+                require_velocity_convergence: false,
+                convergence_window: 1,
+                snapshot_interval: None,
+                linear_solvers: config.linear_solvers,
+                transient_mode: true,
+                initial_face_flux: Some(prepared.face_flux),
+            },
+        )
+        .expect("step1");
         assert!(
-            div_small_dt < div_base_dt,
-            "small={div_small_dt:e}, base={div_base_dt:e}"
-        );
-        assert!(
-            div_base_dt < div_large_dt,
-            "base={div_base_dt:e}, large={div_large_dt:e}"
+            step1.max_abs_predicted_divergence < 1.0e-4,
+            "predicted={}",
+            step1.max_abs_predicted_divergence
         );
     }
 }

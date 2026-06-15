@@ -97,7 +97,8 @@ pub use incompressible::{
     IncompressiblePressureVelocityStepView, IncompressibleProjectionConfig,
     IncompressibleProjectionMode, IncompressibleProjectionStats, IncompressibleSimplecConfig,
     IncompressibleSimplecDiagnostic, project_incompressible_fields_divergence_free_3d,
-    project_incompressible_fields_divergence_free_with_d_3d, run_incompressible_pressure_velocity,
+    project_incompressible_fields_divergence_free_with_d_3d,
+    reconcile_rhie_chow_pressure_with_fixed_velocity_3d, run_incompressible_pressure_velocity,
     run_incompressible_pressure_velocity_with_observer, run_incompressible_simplec,
 };
 pub use state::SolverState;

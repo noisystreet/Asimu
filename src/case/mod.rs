@@ -11,6 +11,7 @@ mod compressible_unstructured_3d_tests;
 mod diffusion;
 mod incompressible_3d;
 mod incompressible_profiles;
+mod incompressible_run_log;
 mod manifest;
 mod output_3d;
 mod output_interval;

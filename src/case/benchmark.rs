@@ -1,5 +1,6 @@
 //! 标准 V&V benchmark 注册表（集中 `benchmark_id` 语义，避免 case 编排层散落字符串匹配）。
 
+use crate::discretization::IncompressibleFaceFluxField;
 use crate::error::Result;
 use crate::field::IncompressibleFields;
 use crate::io::{CaseSpec, IncompressibleCaseConfig};
@@ -7,12 +8,54 @@ use crate::mesh::StructuredMesh3d;
 
 use super::taylor_green::{taylor_green_initial_fields, taylor_green_prepare_initial_fields};
 
+/// 不可压 benchmark 初场与首步 coupling 状态。
+#[derive(Debug, Clone, PartialEq)]
+pub struct IncompressibleInitialState {
+    pub fields: IncompressibleFields,
+    pub initial_face_flux: Option<IncompressibleFaceFluxField>,
+}
+
 /// 不可压 benchmark 目录中已知的 `benchmark_id`。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KnownIncompressibleBenchmark {
     TaylorGreen3d,
     LidDrivenCavityRe100,
     ChannelPoiseuille,
+}
+
+/// 构建不可压 benchmark / 通用 uniform 初场与可选 Rhie-Chow 面通量播种。
+pub fn build_incompressible_initial_state(
+    benchmark: Option<KnownIncompressibleBenchmark>,
+    mesh: &StructuredMesh3d,
+    config: &IncompressibleCaseConfig,
+    boundary: &crate::boundary::BoundarySet,
+    pseudo_time_step: crate::core::Real,
+) -> Result<IncompressibleInitialState> {
+    let state = if let Some(benchmark) = benchmark {
+        if let Some(fields) = benchmark.initial_fields(mesh, config)? {
+            benchmark.prepare_initial_state(mesh, config, boundary, pseudo_time_step, fields)?
+        } else {
+            IncompressibleInitialState {
+                fields: IncompressibleFields::uniform(
+                    mesh.num_cells(),
+                    config.pressure,
+                    config.velocity,
+                )?,
+                initial_face_flux: None,
+            }
+        }
+    } else {
+        IncompressibleInitialState {
+            fields: IncompressibleFields::uniform(
+                mesh.num_cells(),
+                config.pressure,
+                config.velocity,
+            )?,
+            initial_face_flux: None,
+        }
+    };
+    state.fields.validate_len(mesh.num_cells())?;
+    Ok(state)
 }
 
 impl KnownIncompressibleBenchmark {
@@ -53,7 +96,40 @@ impl KnownIncompressibleBenchmark {
         }
     }
 
-    /// 在 `initial_fields` 之后做 benchmark 专用预处理（如 Rhie-Chow 压力投影）。
+    /// 在 `initial_fields` 之后做 benchmark 专用预处理（如 Rhie-Chow 压力投影与面通量播种）。
+    pub fn prepare_initial_state(
+        self,
+        mesh: &StructuredMesh3d,
+        config: &IncompressibleCaseConfig,
+        boundary: &crate::boundary::BoundarySet,
+        pseudo_time_step: crate::core::Real,
+        fields: IncompressibleFields,
+    ) -> Result<IncompressibleInitialState> {
+        match self {
+            Self::TaylorGreen3d => {
+                let prepared = taylor_green_prepare_initial_fields(
+                    mesh,
+                    config,
+                    boundary,
+                    pseudo_time_step,
+                    fields,
+                )?;
+                Ok(IncompressibleInitialState {
+                    fields: prepared.fields,
+                    initial_face_flux: Some(prepared.face_flux),
+                })
+            }
+            Self::LidDrivenCavityRe100 | Self::ChannelPoiseuille => {
+                Ok(IncompressibleInitialState {
+                    fields,
+                    initial_face_flux: None,
+                })
+            }
+        }
+    }
+
+    /// 兼容旧调用：仅返回预处理后的 cell-centered 场。
+    #[allow(dead_code)]
     pub fn prepare_initial_fields(
         self,
         mesh: &StructuredMesh3d,
@@ -62,16 +138,9 @@ impl KnownIncompressibleBenchmark {
         pseudo_time_step: crate::core::Real,
         fields: IncompressibleFields,
     ) -> Result<IncompressibleFields> {
-        match self {
-            Self::TaylorGreen3d => taylor_green_prepare_initial_fields(
-                mesh,
-                config,
-                boundary,
-                pseudo_time_step,
-                fields,
-            ),
-            Self::LidDrivenCavityRe100 | Self::ChannelPoiseuille => Ok(fields),
-        }
+        Ok(self
+            .prepare_initial_state(mesh, config, boundary, pseudo_time_step, fields)?
+            .fields)
     }
 }
 

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use tracing::{info, info_span};
 
-use crate::core::{Real, format_log_sci4};
+use crate::core::Real;
 use crate::discretization::{
     IncompressibleBoundaryApplyStats, apply_incompressible_boundary_conditions_3d,
 };
@@ -28,6 +28,7 @@ use super::benchmark::KnownIncompressibleBenchmark;
 use super::incompressible_profiles::{
     incompressible_centerline_profiles, lid_cavity_profile_error, poiseuille_profile_error,
 };
+use super::incompressible_run_log::{incompressible_summary, log_incompressible_completion};
 use super::taylor_green::{
     analytical_kinetic_energy_ratio, kinetic_energy, taylor_green_decay_rates,
 };
@@ -132,13 +133,15 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
     let time_marching = incompressible_physical_transient(time_advance);
     let known_benchmark = KnownIncompressibleBenchmark::from_case(case);
     validate_incompressible_transient_inputs(case, transient, dt, time_advance)?;
-    let mut fields = initial_incompressible_fields(
+    let initial_state = super::benchmark::build_incompressible_initial_state(
         known_benchmark,
         mesh,
         config,
         &case.boundary,
         pseudo_time_step,
     )?;
+    let mut fields = initial_state.fields;
+    let initial_face_flux = initial_state.initial_face_flux;
     let kinetic_energy_initial = initial_kinetic_energy(known_benchmark, mesh, config, &fields);
     let boundary_stats =
         apply_incompressible_boundary_conditions_3d(mesh, &mut fields, &case.boundary)?;
@@ -151,7 +154,15 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
     let mut written = Vec::new();
     let diagnostic = run_incompressible_pressure_velocity_with_observer(
         &fields,
-        incompressible_solver_config(case, config, mesh, steps, time_marching, pseudo_time_step),
+        incompressible_solver_config(
+            case,
+            config,
+            mesh,
+            steps,
+            time_marching,
+            pseudo_time_step,
+            initial_face_flux,
+        ),
         |step| {
             if track_kinetic_energy {
                 kinetic_energy_history.push(kinetic_energy(mesh, step.fields, config.density));
@@ -166,11 +177,15 @@ pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
     let nondimensional_time = dt * completed_steps as f64;
     let physical_time = physical_time_from_nondimensional(case, nondimensional_time);
     written.extend(write_outputs(case, mesh, &diagnostic, nondimensional_time)?);
+    let (reference_inv_reynolds, reference_length) =
+        incompressible_reference_vv_scales(case, config);
     let benchmark_diagnostics = collect_incompressible_benchmark_diagnostics(
         &IncompressibleBenchmarkCollectContext {
             known_benchmark,
             mesh,
             config,
+            reference_inv_reynolds,
+            reference_length,
             time_advance,
             pseudo_time_step,
             nondimensional_time,
@@ -217,26 +232,6 @@ fn validate_incompressible_transient_inputs(
     validate_incompressible_time_advance_scheme(case, time_advance)
 }
 
-fn initial_incompressible_fields(
-    benchmark: Option<KnownIncompressibleBenchmark>,
-    mesh: &StructuredMesh3d,
-    config: &crate::io::IncompressibleCaseConfig,
-    boundary: &crate::boundary::BoundarySet,
-    pseudo_time_step: Real,
-) -> Result<IncompressibleFields> {
-    let fields = if let Some(benchmark) = benchmark {
-        if let Some(fields) = benchmark.initial_fields(mesh, config)? {
-            benchmark.prepare_initial_fields(mesh, config, boundary, pseudo_time_step, fields)?
-        } else {
-            IncompressibleFields::uniform(mesh.num_cells(), config.pressure, config.velocity)?
-        }
-    } else {
-        IncompressibleFields::uniform(mesh.num_cells(), config.pressure, config.velocity)?
-    };
-    fields.validate_len(mesh.num_cells())?;
-    Ok(fields)
-}
-
 fn initial_kinetic_energy(
     benchmark: Option<KnownIncompressibleBenchmark>,
     mesh: &StructuredMesh3d,
@@ -255,6 +250,7 @@ fn incompressible_solver_config<'a>(
     steps: u64,
     time_marching: bool,
     pseudo_time_step: Real,
+    initial_face_flux: Option<crate::discretization::IncompressibleFaceFluxField>,
 ) -> IncompressibleSimplecConfig<'a> {
     let (velocity_under_relaxation, pressure_under_relaxation) = if time_marching {
         (1.0, 1.0)
@@ -287,6 +283,7 @@ fn incompressible_solver_config<'a>(
         snapshot_interval: None,
         linear_solvers: config.linear_solvers,
         transient_mode: time_marching,
+        initial_face_flux,
     }
 }
 
@@ -294,12 +291,25 @@ struct IncompressibleBenchmarkCollectContext<'a> {
     known_benchmark: Option<KnownIncompressibleBenchmark>,
     mesh: &'a StructuredMesh3d,
     config: &'a crate::io::IncompressibleCaseConfig,
+    reference_inv_reynolds: Real,
+    reference_length: Real,
     time_advance: IncompressibleTimeAdvanceKind,
     pseudo_time_step: Real,
     nondimensional_time: Real,
     diagnostic: &'a IncompressibleSimplecDiagnostic,
     kinetic_energy_initial: Option<Real>,
     kinetic_energy_history: &'a [Real],
+}
+
+fn incompressible_reference_vv_scales(
+    case: &CaseSpec,
+    config: &crate::io::IncompressibleCaseConfig,
+) -> (Real, Real) {
+    case.incompressible_reference
+        .as_ref()
+        .map_or((config.kinematic_viscosity, 1.0), |reference| {
+            (reference.inv_reynolds(), reference.length)
+        })
 }
 
 fn collect_incompressible_benchmark_diagnostics(
@@ -310,6 +320,8 @@ fn collect_incompressible_benchmark_diagnostics(
         known_benchmark,
         mesh,
         config,
+        reference_inv_reynolds,
+        reference_length,
         time_advance,
         pseudo_time_step,
         nondimensional_time,
@@ -347,7 +359,11 @@ fn collect_incompressible_benchmark_diagnostics(
             });
     let kinetic_energy_analytical_ratio = kinetic_energy_initial.and_then(|_| {
         incompressible_physical_transient(time_advance).then(|| {
-            analytical_kinetic_energy_ratio(config.kinematic_viscosity, nondimensional_time)
+            analytical_kinetic_energy_ratio(
+                reference_inv_reynolds,
+                reference_length,
+                nondimensional_time,
+            )
         })
     });
     let track_kinetic_energy =
@@ -355,7 +371,8 @@ fn collect_incompressible_benchmark_diagnostics(
     let (kinetic_energy_decay_rate, kinetic_energy_analytical_decay_rate) =
         taylor_green_decay_rates(
             track_kinetic_energy,
-            config.kinematic_viscosity,
+            reference_inv_reynolds,
+            reference_length,
             pseudo_time_step,
             kinetic_energy_history,
         );
@@ -371,57 +388,6 @@ fn collect_incompressible_benchmark_diagnostics(
         kinetic_energy_analytical_decay_rate,
         written,
     }
-}
-
-fn log_incompressible_completion(
-    steps: u64,
-    physical_time: Real,
-    diagnostic: &IncompressibleSimplecDiagnostic,
-    boundary_stats: &IncompressibleBoundaryApplyStats,
-) {
-    info!(
-        steps,
-        t = %format_log_sci4(physical_time),
-        max_abs_divergence = %format_log_sci4(diagnostic.max_abs_divergence),
-        max_abs_predicted_divergence = %format_log_sci4(diagnostic.max_abs_predicted_divergence),
-        max_abs_corrected_divergence = %format_log_sci4(diagnostic.max_abs_corrected_divergence),
-        max_abs_underrelaxed_corrected_divergence =
-            %format_log_sci4(diagnostic.max_abs_underrelaxed_corrected_divergence),
-        max_abs_corrected_field_divergence_before_boundary =
-            %format_log_sci4(diagnostic.max_abs_corrected_field_divergence_before_boundary),
-        max_abs_corrected_field_divergence_after_boundary =
-            %format_log_sci4(diagnostic.max_abs_corrected_field_divergence_after_boundary),
-        pressure_rhs_active_sum = %format_log_sci4(diagnostic.pressure_correction_rhs_active_sum),
-        pressure_rows = diagnostic.pressure_system_rows,
-        pressure_nnz = diagnostic.pressure_system_nnz,
-        pressure_converged = diagnostic.pressure_solve_converged,
-        pressure_iters = diagnostic.pressure_solve_iterations,
-        pressure_residual = %format_log_sci4(diagnostic.pressure_solve_residual),
-        max_abs_pressure_correction = %format_log_sci4(diagnostic.max_abs_pressure_correction),
-        momentum_rows = diagnostic.momentum_system_rows,
-        momentum_nnz = diagnostic.momentum_system_nnz,
-        max_momentum_d = %format_log_sci4(diagnostic.max_momentum_d_coefficient),
-        momentum_converged = diagnostic.momentum_solve_converged,
-        momentum_iters = diagnostic.momentum_solve_iterations,
-        momentum_residual = %format_log_sci4(diagnostic.momentum_solve_residual),
-        max_abs_momentum_equation_residual = %format_log_sci4(diagnostic.max_abs_momentum_equation_residual),
-        max_abs_predicted_velocity_delta = %format_log_sci4(diagnostic.max_abs_predicted_velocity_delta),
-        max_abs_corrected_velocity_delta = %format_log_sci4(diagnostic.max_abs_corrected_velocity_delta),
-        max_abs_corrected_velocity_delta_interior =
-            %format_log_sci4(diagnostic.max_abs_corrected_velocity_delta_interior),
-        max_abs_corrected_velocity_delta_boundary =
-            %format_log_sci4(diagnostic.max_abs_corrected_velocity_delta_boundary),
-        algorithm = diagnostic.algorithm.label(),
-        pressure_correctors = diagnostic.pressure_correctors,
-        simplec_iterations = diagnostic.simplec_iterations,
-        simplec_converged = diagnostic.simplec_converged,
-        simplec_final_residual = %format_log_sci4(diagnostic.simplec_final_residual),
-        simplec_final_momentum_residual = %format_log_sci4(diagnostic.simplec_final_momentum_residual),
-        boundary_velocity_cells = boundary_stats.velocity_cells,
-        boundary_pressure_cells = boundary_stats.pressure_cells,
-        boundary_ignored_faces = boundary_stats.ignored_faces,
-        "不可压缩 3D I1 skeleton 完成"
-    );
 }
 
 fn validate_incompressible_time_advance_scheme(
@@ -468,41 +434,6 @@ fn incompressible_physical_time_scale(case: &CaseSpec) -> Real {
         .as_ref()
         .map(|reference| reference.time_scale())
         .unwrap_or(1.0)
-}
-
-fn incompressible_summary(
-    steps: u64,
-    diagnostic: &IncompressibleSimplecDiagnostic,
-    boundary_stats: &IncompressibleBoundaryApplyStats,
-) -> String {
-    format!(
-        "incompressible_3d_i1 algorithm={} pressure_correctors={} steps={steps} pressure_velocity_iters={} pressure_velocity_converged={} pressure_velocity_residual={} pressure_velocity_momentum_residual={} max|div(u)|={} max|div(u*)|={} max|div(u_corr_eq)|={} max|div(u_corr_underrelaxed_eq)|={} max|div(u_corr_pre_bc)|={} max|div(u_corr_post_bc)|={} pressure_rhs_active_sum={} pressure_rows={} pressure_nnz={} pressure_converged={} pressure_iters={} pressure_residual={} momentum_rows={} momentum_nnz={} momentum_converged={} momentum_iters={} momentum_residual={} bc_velocity_cells={} bc_pressure_cells={}",
-        diagnostic.algorithm.label(),
-        diagnostic.pressure_correctors,
-        diagnostic.simplec_iterations,
-        diagnostic.simplec_converged,
-        format_log_sci4(diagnostic.simplec_final_residual),
-        format_log_sci4(diagnostic.simplec_final_momentum_residual),
-        format_log_sci4(diagnostic.max_abs_divergence),
-        format_log_sci4(diagnostic.max_abs_predicted_divergence),
-        format_log_sci4(diagnostic.max_abs_corrected_divergence),
-        format_log_sci4(diagnostic.max_abs_underrelaxed_corrected_divergence),
-        format_log_sci4(diagnostic.max_abs_corrected_field_divergence_before_boundary),
-        format_log_sci4(diagnostic.max_abs_corrected_field_divergence_after_boundary),
-        format_log_sci4(diagnostic.pressure_correction_rhs_active_sum),
-        diagnostic.pressure_system_rows,
-        diagnostic.pressure_system_nnz,
-        diagnostic.pressure_solve_converged,
-        diagnostic.pressure_solve_iterations,
-        format_log_sci4(diagnostic.pressure_solve_residual),
-        diagnostic.momentum_system_rows,
-        diagnostic.momentum_system_nnz,
-        diagnostic.momentum_solve_converged,
-        diagnostic.momentum_solve_iterations,
-        format_log_sci4(diagnostic.momentum_solve_residual),
-        boundary_stats.velocity_cells,
-        boundary_stats.pressure_cells
-    )
 }
 
 struct BenchmarkDiagnostics {

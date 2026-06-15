@@ -1,3 +1,4 @@
+mod coupling;
 mod diagnostics;
 mod linear;
 mod pressure_reference;
@@ -20,15 +21,13 @@ pub use diagnostics::IncompressiblePressureVelocityAlgorithm;
 use diagnostics::{
     PressureCouplingLog, SimplecConvergenceCheck, SimplecStepLog, SimplecStepTiming,
     log_simplec_step, max_abs_field_divergence, max_abs_scalar_field, max_velocity_delta_by_region,
-    pressure_velocity_algorithm, simplec_converged, validate_simplec_step,
+    simplec_converged, validate_simplec_step,
 };
 use linear::{
-    MomentumPredictorSolveDiagnostic, PressureCorrectionSolveDiagnostic, solve_momentum_predictor,
-    solve_pressure_correction,
+    PressureCorrectionSolveDiagnostic, solve_momentum_predictor, solve_pressure_correction,
 };
 use pressure_reference::volume_weighted_pressure_mean;
 use std::time::Instant;
-use tracing::debug;
 
 pub use linear::{
     IncompressibleLinearSolverConfig, IncompressiblePressureLinearSolverConfig,
@@ -38,9 +37,10 @@ pub use projection::{
     IncompressibleProjectionConfig, IncompressibleProjectionMode, IncompressibleProjectionStats,
     project_incompressible_fields_divergence_free_3d,
     project_incompressible_fields_divergence_free_with_d_3d,
+    reconcile_rhie_chow_pressure_with_fixed_velocity_3d,
 };
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct IncompressiblePressureVelocityConfig<'a> {
     pub mesh: &'a StructuredMesh3d,
     pub density: Real,
@@ -61,6 +61,8 @@ pub struct IncompressiblePressureVelocityConfig<'a> {
     pub linear_solvers: IncompressibleLinearSolverConfig,
     /// 物理时间步进：每个外层步推进 \(t+\Delta t\)，不因 coupling 收敛提前退出。
     pub transient_mode: bool,
+    /// 首步（或 IC 后）用于动量对流的 Rhie-Chow 面通量；缺省则回退 cell 插值。
+    pub initial_face_flux: Option<IncompressibleFaceFluxField>,
 }
 
 pub type IncompressibleSimplecConfig<'a> = IncompressiblePressureVelocityConfig<'a>;
@@ -158,7 +160,7 @@ pub fn run_incompressible_pressure_velocity_with_observer(
     let mut step_history = Vec::with_capacity(max_iterations);
     let mut snapshots = Vec::new();
     let mut last = None;
-    let mut current_face_flux: Option<IncompressibleFaceFluxField> = None;
+    let mut current_face_flux = config.initial_face_flux.clone();
     for step in 0..max_iterations {
         let step_no = step + 1;
         let (mut diagnostic, timing, next_face_flux) =
@@ -330,16 +332,19 @@ fn assemble_simplec_step(
         solve_momentum_predictor(&momentum_system, fields, config.linear_solvers.momentum)?;
     timing.momentum_solve_ms = elapsed_ms(momentum_solve_start);
     let rhie_chow_start = Instant::now();
-    let predicted_fields = predicted_fields_with_boundary(&momentum_solution, config)?;
-    let mut face_flux = IncompressibleFaceFluxField::from_rhie_chow(
-        mesh,
-        &predicted_fields,
+    let predicted = coupling::build_predicted_rhie_chow_flux(
+        &momentum_solution,
         &momentum_system.d_coefficient,
-        config.boundary,
+        config,
     )?;
-    let predicted_divergence = face_flux.divergence(mesh)?;
+    let coupling::PredictedRhieChowFlux {
+        predicted_fields,
+        mut face_flux,
+        predicted_divergence,
+        max_abs_predicted_divergence,
+        pressure_reconciliation,
+    } = predicted;
     timing.rhie_chow_ms = elapsed_ms(rhie_chow_start);
-    let max_abs_predicted_divergence = max_abs_scalar_field(&predicted_divergence);
     let pressure_start = Instant::now();
     let mut pressure_step = solve_pressure_correction_step(
         &predicted_divergence,
@@ -349,7 +354,13 @@ fn assemble_simplec_step(
     timing.pressure_ms = elapsed_ms(pressure_start);
     let correct_start = Instant::now();
     let mut corrector_max_corrections = vec![pressure_step.solution.max_abs_correction];
-    let mut accumulated_pressure_correction = pressure_step.solution.correction.clone();
+    let mut accumulated_pressure_correction = pressure_reconciliation;
+    for (total, increment) in accumulated_pressure_correction
+        .iter_mut()
+        .zip(pressure_step.solution.correction.iter())
+    {
+        *total += *increment;
+    }
     face_flux.apply_pressure_correction(
         mesh,
         momentum_system.d_coefficient.values(),
@@ -389,60 +400,21 @@ fn assemble_simplec_step(
     )?;
     timing.correct_ms = elapsed_ms(correct_start);
     timing.step_total_ms = elapsed_ms(step_start);
-    debug!(
-        pressure_equation_residual = pressure_step.max_abs_corrected_divergence,
-        underrelaxed_pressure_equation_residual =
-            pressure_step.max_abs_underrelaxed_corrected_divergence,
-        corrected_field_divergence_before_boundary = corrected.max_abs_divergence_before_boundary,
-        corrected_field_divergence_after_boundary = corrected.max_abs_divergence_after_boundary,
-        pressure_rhs_active_sum = pressure_step.rhs_active_sum,
-        velocity_delta = velocity_delta.all,
-        velocity_delta_interior = velocity_delta.interior,
-        velocity_delta_boundary = velocity_delta.boundary,
-        "SIMPLEC pressure-velocity diagnostic"
-    );
-    let diagnostic = IncompressibleSimplecDiagnostic {
-        algorithm: pressure_velocity_algorithm(config.pressure_correctors),
-        pressure_correctors: config.pressure_correctors.max(1),
-        max_abs_divergence,
-        max_abs_predicted_divergence,
-        max_abs_corrected_divergence: pressure_step.max_abs_corrected_divergence,
-        max_abs_underrelaxed_corrected_divergence: pressure_step
-            .max_abs_underrelaxed_corrected_divergence,
-        max_abs_corrected_field_divergence_before_boundary: corrected
-            .max_abs_divergence_before_boundary,
-        max_abs_corrected_field_divergence_after_boundary: corrected
-            .max_abs_divergence_after_boundary,
-        pressure_correction_rhs_active_sum: pressure_step.rhs_active_sum,
-        pressure_system_rows: pressure_step.system.matrix.nrows(),
-        pressure_system_nnz: pressure_step.system.matrix.values().len(),
-        pressure_solve_converged: pressure_step.solution.converged,
-        pressure_solve_iterations: pressure_step.solution.iterations,
-        pressure_solve_residual: pressure_step.solution.residual_norm,
-        max_abs_pressure_correction: pressure_step.solution.max_abs_correction,
-        momentum_system_rows: momentum_system.matrix.nrows(),
-        momentum_system_nnz: momentum_system.matrix.values().len(),
-        max_momentum_d_coefficient,
-        momentum_solve_converged: momentum_solution.converged,
-        momentum_solve_iterations: momentum_solution.iterations,
-        momentum_solve_residual: momentum_solution.residual_norm,
-        max_abs_momentum_equation_residual: momentum_solution.max_abs_equation_residual,
-        max_abs_predicted_velocity_delta: momentum_solution.max_abs_velocity_delta,
-        max_abs_corrected_velocity_delta: velocity_delta.all,
-        max_abs_corrected_velocity_delta_interior: velocity_delta.interior,
-        max_abs_corrected_velocity_delta_boundary: velocity_delta.boundary,
-        simplec_iterations: 0,
-        simplec_converged: false,
-        simplec_final_residual: corrected.max_abs_divergence_after_boundary,
-        simplec_final_momentum_residual: momentum_solution.max_abs_equation_residual,
-        simplec_residual_history: Vec::new(),
-        simplec_momentum_residual_history: Vec::new(),
-        pressure_corrector_residual_history: corrector_residuals,
-        pressure_corrector_max_correction_history: corrector_max_corrections,
-        step_history: Vec::new(),
-        snapshots: Vec::new(),
-        corrected_fields: corrected.fields,
-    };
+    coupling::log_simplec_step_diagnostics(&pressure_step, &corrected, &velocity_delta);
+    let diagnostic =
+        coupling::build_incompressible_step_diagnostic(coupling::SimplecStepDiagnosticInput {
+            config,
+            max_abs_divergence,
+            max_abs_predicted_divergence,
+            max_momentum_d_coefficient,
+            momentum_system: &momentum_system,
+            momentum_solution: &momentum_solution,
+            pressure_step: &pressure_step,
+            corrected: &corrected,
+            velocity_delta: &velocity_delta,
+            corrector_residuals,
+            corrector_max_corrections,
+        });
     Ok((diagnostic, timing, face_flux))
 }
 
@@ -526,13 +498,13 @@ fn apply_additional_pressure_correctors(
     Ok((pressure_step, corrected))
 }
 
-struct CorrectedFieldsDiagnostic {
+pub(crate) struct CorrectedFieldsDiagnostic {
     fields: IncompressibleFields,
     max_abs_divergence_before_boundary: Real,
     max_abs_divergence_after_boundary: Real,
 }
 
-struct PressureCorrectionStepDiagnostic {
+pub(crate) struct PressureCorrectionStepDiagnostic {
     system: crate::discretization::IncompressiblePressureCorrectionSystem,
     solution: PressureCorrectionSolveDiagnostic,
     max_abs_corrected_divergence: Real,
@@ -635,15 +607,6 @@ fn has_pressure_correction_dirichlet(boundary: &BoundarySet) -> bool {
         .patches()
         .iter()
         .any(|patch| incompressible_pressure_correction_dirichlet(&patch.kind))
-}
-
-fn predicted_fields_with_boundary(
-    momentum: &MomentumPredictorSolveDiagnostic,
-    config: &IncompressibleSimplecConfig<'_>,
-) -> Result<IncompressibleFields> {
-    let mut fields = momentum.predicted_fields.clone();
-    apply_incompressible_boundary_conditions_3d(config.mesh, &mut fields, config.boundary)?;
-    Ok(fields)
 }
 
 fn build_corrected_fields_with_diagnostics(

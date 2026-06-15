@@ -188,20 +188,20 @@ fn taylor_green_3d_incompressible_benchmark_runs() {
         .kinetic_energy_analytical_ratio
         .expect("kinetic energy analytical ratio");
     assert!(
+        (decay - analytical_ratio).abs() < 0.02,
+        "decay={decay} analytical_ratio={analytical_ratio}"
+    );
+    assert!(
         final_energy < initial,
         "kinetic energy must decay: initial={initial} final={final_energy}"
     );
     assert!(decay < 1.0, "decay ratio must stay below unity: {decay}");
     assert!(
-        decay >= analytical_ratio * 0.42,
-        "decay={decay} analytical_ratio={analytical_ratio}"
-    );
-    assert!(
         decay_rate >= analytical_rate * 0.5,
         "decay_rate={decay_rate} analytical={analytical_rate}"
     );
     assert!(
-        decay_rate <= analytical_rate * 40.0,
+        decay_rate <= analytical_rate * 2.0,
         "decay_rate={decay_rate} analytical={analytical_rate}"
     );
     assert!(
@@ -356,7 +356,7 @@ fn taylor_green_3d_parameter_sensitivity_baseline() {
         );
         if (dt - 0.005).abs() < 1.0e-12 {
             assert!(
-                ratio >= analytical * 0.42,
+                (ratio - analytical).abs() < 0.02,
                 "ratio={ratio} analytical={analytical}"
             );
             assert!(metrics.max_abs_corrected_field_divergence_after_boundary < 1.0e-6);
@@ -454,7 +454,7 @@ fn taylor_green_3d_refined_grid_reduces_energy_ratio_error() {
     );
 
     assert!(
-        coarse_err < 0.7 && refined_err < 0.7,
+        coarse_err < 0.02 && refined_err < 0.02,
         "coarse_err={coarse_err} refined_err={refined_err}"
     );
     assert!(

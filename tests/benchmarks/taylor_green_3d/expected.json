@@ -7,14 +7,14 @@
     {
       "name": "kinetic_energy_decay_ratio",
       "value": 0.451495,
-      "tolerance_abs": 0.05,
-      "source": "16x16 PISO-2 dt=0.005/400; lower bound 0.42 x analytical at t*=2"
+      "tolerance_abs": 0.02,
+      "source": "16x16 PISO-2 dt=0.005/400; |E/E0 - exp(-4 nu t)| < 0.02"
     },
     {
       "name": "kinetic_energy_decay_rate",
       "value": 2.497999,
-      "tolerance_abs": 2.0,
-      "source": "spin-up ln(E) slope at dt=0.005; 0.5x–40x of 4 nu*"
+      "tolerance_abs": 0.15,
+      "source": "spin-up ln(E) slope at dt=0.005; 0.5x–2x of 4 nu* L^2"
     },
     {
       "name": "max_abs_corrected_field_divergence_after_boundary",

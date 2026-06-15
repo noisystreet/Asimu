@@ -84,16 +84,33 @@ pub fn project_incompressible_fields_divergence_free_with_d_3d(
 ) -> Result<(IncompressibleFields, IncompressibleProjectionStats)> {
     match config.mode {
         IncompressibleProjectionMode::RhieChowPressureOnly => {
-            project_rhie_chow_pressure_only(&mut fields, d_coefficient, config)
+            let stats = project_rhie_chow_pressure_only(&mut fields, d_coefficient, config)?;
+            Ok((fields, stats))
         }
     }
+}
+
+/// 固定速度，迭代调整压力使 Rhie-Chow 面通量散度低于容差；返回 \(p_{\mathrm{old}}-p_{\mathrm{new}}\) 以便并入 PISO 压力更新。
+#[must_use = "动量预测后压力对齐失败须向上传播"]
+pub fn reconcile_rhie_chow_pressure_with_fixed_velocity_3d(
+    fields: &mut IncompressibleFields,
+    d_coefficient: &ScalarField,
+    config: IncompressibleProjectionConfig<'_>,
+) -> Result<Vec<Real>> {
+    let before = fields.pressure.values().to_vec();
+    project_rhie_chow_pressure_only(fields, d_coefficient, config)?;
+    Ok(before
+        .iter()
+        .zip(fields.pressure.values())
+        .map(|(old, new)| old - new)
+        .collect())
 }
 
 fn project_rhie_chow_pressure_only(
     fields: &mut IncompressibleFields,
     d_coefficient: &ScalarField,
     config: IncompressibleProjectionConfig<'_>,
-) -> Result<(IncompressibleFields, IncompressibleProjectionStats)> {
+) -> Result<IncompressibleProjectionStats> {
     let initial_div = compute_incompressible_rhie_chow_divergence_3d(
         config.mesh,
         fields,
@@ -102,15 +119,12 @@ fn project_rhie_chow_pressure_only(
     )?;
     let max_abs_divergence_before = max_abs_scalar_field(&initial_div);
     if max_abs_divergence_before <= config.tolerance {
-        return Ok((
-            fields.clone(),
-            IncompressibleProjectionStats {
-                iterations: 0,
-                max_abs_divergence_before,
-                max_abs_divergence_after: max_abs_divergence_before,
-                pressure_solve_converged: true,
-            },
-        ));
+        return Ok(IncompressibleProjectionStats {
+            iterations: 0,
+            max_abs_divergence_before,
+            max_abs_divergence_after: max_abs_divergence_before,
+            pressure_solve_converged: true,
+        });
     }
 
     let mut pressure_solve_converged = true;
@@ -153,15 +167,12 @@ fn project_rhie_chow_pressure_only(
         config.boundary,
     )?;
     let max_abs_divergence_after = max_abs_scalar_field(&final_div);
-    Ok((
-        fields.clone(),
-        IncompressibleProjectionStats {
-            iterations,
-            max_abs_divergence_before,
-            max_abs_divergence_after,
-            pressure_solve_converged,
-        },
-    ))
+    Ok(IncompressibleProjectionStats {
+        iterations,
+        max_abs_divergence_before,
+        max_abs_divergence_after,
+        pressure_solve_converged,
+    })
 }
 
 fn normalize_pressure_correction_mean(

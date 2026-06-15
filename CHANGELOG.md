@@ -7,6 +7,8 @@
 
 ### Fixed
 
+- 不可压缩首步 coupling：Taylor–Green 等 Rhie-Chow IC 在投影后播种 div-free `initial_face_flux`；每个 PISO 外层步在动量预测后、Rhie-Chow 散度诊断前对固定 \(\mathbf{u}^*\) 做 pressure-only 对齐（`reconcile_rhie_chow_pressure_with_fixed_velocity_3d`），首步 `max|div(u*)|` 由 \(O(10^{-2})\) 降至 \(O(10^{-7})\)（16×16，`dt=0.005`）。
+- Taylor–Green V&V 解析：Brachet \(\exp(-4\nu t)\) 在网格缩至 \([0,1]^d\) 后等价于 \(\exp(-4\nu^* L_{\mathrm{ref}}^2 t^*)\)；修正 `analytical_kinetic_energy_ratio` 与 spin-up 衰减率基准，16×16 \(E/E_0\) 与解析相对误差 \(<0.5\%\)（32×32 更优）。
 - I3 Taylor–Green：初场 Rhie-Chow 投影改用与 PISO 一致的动量装配 \(d_P\)；V&V 基线改为 `dt=0.005`/`max_steps=400`（物理时间 \(t^*=2\) 不变），收紧 CI 连续性/动能判据，并新增 `#[ignore]` 参数敏感性对照测试。
 - 不可压缩 pressure-velocity 耦合：修正动量预测 `d_coefficient` 分母为动量矩阵对角系数 \(a_P\)（避免守恒离散下 \(a_P+\sum a_{nb}\) 抵消导致 \(d_P\) 近常数）；并修正 Rhie-Chow/压力校正/动量扩散在周期边界 `owner-neighbor` 距离为周期 wrap 最短镜像距离，消除周期缝尺度失真。
 - 非结构 f32 IDWLS 梯度：`scale` 缩尺网格（如 dual_ellipsoid `0.001`）下 `lsq_geometry_f32` 行列式下溢导致首步报「最小二乘梯度样本退化」；粘性/二阶无粘梯度求解改回 f64 预计算矩阵，输出仍为 f32。
