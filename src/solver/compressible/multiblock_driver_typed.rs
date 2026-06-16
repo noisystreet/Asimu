@@ -19,6 +19,7 @@ use crate::solver::compressible::multiblock_interface::{
     SharedInterfaceResidualParams, compute_shared_interface_residuals,
 };
 use crate::solver::compressible::structured_compute_backend::StructuredComputeBackend;
+use crate::solver::compressible::structured_timestep_buffers::StructuredTimestepBuffers;
 use crate::solver::time::TransientStepControl;
 use crate::solver::{
     CompressibleEulerSolver, CompressibleMultiblockStepView, CompressibleStepInfo,
@@ -37,6 +38,8 @@ struct BlockRunStateTyped<T: ComputeFloat> {
     solver_state: SolverState,
     integrator: RungeKutta4Integrator,
     face_cache_f32: Option<StructuredFaceCacheF32>,
+    volumes_f32: Vec<f32>,
+    timestep: StructuredTimestepBuffers,
 }
 
 struct BlockAdvanceEnvTyped<'a> {
@@ -109,6 +112,10 @@ fn build_block_run_states_typed<T: StructuredComputeBackend>(
         } else {
             None
         };
+        let volumes_f32 = face_cache_f32
+            .as_ref()
+            .map(|cache| cache.cell_volumes.clone())
+            .unwrap_or_default();
         states.push(BlockRunStateTyped {
             fields: ConservedFieldsT::from_real_fields(&fields)?,
             ghosts: BoundaryGhostBuffer::new(),
@@ -120,6 +127,8 @@ fn build_block_run_states_typed<T: StructuredComputeBackend>(
             solver_state: SolverState::default(),
             integrator: RungeKutta4Integrator::new(time_config),
             face_cache_f32,
+            volumes_f32,
+            timestep: StructuredTimestepBuffers::default(),
         });
     }
     Ok(states)
@@ -229,6 +238,8 @@ fn advance_block_step_typed<T: StructuredComputeBackend>(
                 Some(interface_slice)
             },
             face_cache_f32: face_cache_ref,
+            volumes_f32: state.volumes_f32.as_slice(),
+            timestep: &mut state.timestep,
         };
         let step_info = env.solver.advance_step_3d_typed(
             &mut ctx,

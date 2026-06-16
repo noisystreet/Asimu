@@ -13,6 +13,7 @@
 
 ### Changed
 
+- **ADR 0019 S1-c**：结构化 `StructuredTimestepBuffers`（`sigma_f32` / `cell_dts_f32` + Real 镜像）；f32 LTS 显式 `euler_step_local_f32` / `rk4_step_local_f32`；LU-SGS 对角 `StructuredLusgsDiagonalUpdate` + `assign_lusgs_diagonal_update_f32`；freestream box f32≈f64 回归测试。
 - **ADR 0019 S1-b**：结构化 f32 谱半径 `cell_spectral_radius_3d_f32` + `StructuredSpectralRadiusTyped`（去除 prepare 边界 `cast_real`）。
 - **ADR 0019 S1-a**：结构化 `StructuredFaceCacheF32` 面几何 f32 预打包；f32 无粘内面装配读缓存。
 - **ADR 0019 S0 完成**：结构化可压缩 `StructuredComputeBackend` 聚合 trait；typed 驱动拆分为 `structured_prepare_timestep_typed` / `structured_explicit_typed` / `structured_lusgs_typed`（无数值变更）；ADR 状态已接受。

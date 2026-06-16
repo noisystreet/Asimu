@@ -1,24 +1,135 @@
-//! 结构化 3D typed 显式 RK4/Euler 推进（ADR 0019 S0-b）。
+//! 结构化 3D typed 显式 RK4/Euler 推进（ADR 0019 S0-b / S1-c）。
 
 use tracing::info_span;
 
-use crate::core::{ComputeFloat, Real, log10_positive};
+use crate::core::{ComputePrecision, Real, log10_positive};
 use crate::error::{AsimuError, Result};
 use crate::field::{ConservedFieldsT, ConservedResidualT};
 use crate::physics::IdealGasEoS;
 use crate::solver::compressible::structured_compute_backend::StructuredComputeBackend;
+use crate::solver::compressible::structured_timestep_buffers::StructuredExplicitTimeAdvance;
 use crate::solver::compressible::{
     CompressibleAdvanceContext3dTyped, CompressibleEulerSolver, CompressibleStepInfo,
 };
 use crate::solver::state::SolverState;
 use crate::solver::time::{
     Rk4StorageT, RungeKutta4Integrator, TimeIntegrationScheme, TimeIntegrator, euler_step,
-    euler_step_local, min_positive_dt, rk4_step, rk4_step_local,
+    euler_step_local, euler_step_local_f32, min_positive_dt, min_positive_dt_f32, rk4_step,
+    rk4_step_local, rk4_step_local_f32,
 };
+
+impl StructuredExplicitTimeAdvance for f32 {
+    fn advance_structured_explicit(
+        solver: &CompressibleEulerSolver,
+        ctx: &mut CompressibleAdvanceContext3dTyped<'_, f32>,
+        fields: &mut ConservedFieldsT<f32>,
+        storage: &mut Rk4StorageT<f32>,
+        dt_global: Real,
+        local_time_step: bool,
+        p_floor: Real,
+        eos: &IdealGasEoS,
+    ) -> Result<()> {
+        let inviscid = solver.config.inviscid;
+        match (solver.config.time_scheme, local_time_step) {
+            (TimeIntegrationScheme::Rk4, true) => {
+                let cell_dts = ctx.timestep.cell_dts_f32.clone();
+                let evaluate = |u: &ConservedFieldsT<f32>, r: &mut ConservedResidualT<f32>| {
+                    solver
+                        .rhs_context_3d_typed(ctx, &inviscid, p_floor)
+                        .run(u, r)
+                };
+                rk4_step_local_f32(fields, storage, &cell_dts, evaluate, Some(eos), p_floor)
+            }
+            (TimeIntegrationScheme::Rk4, false) => {
+                let evaluate = |u: &ConservedFieldsT<f32>, r: &mut ConservedResidualT<f32>| {
+                    solver
+                        .rhs_context_3d_typed(ctx, &inviscid, p_floor)
+                        .run(u, r)
+                };
+                rk4_step(fields, storage, dt_global, evaluate)
+            }
+            (TimeIntegrationScheme::Euler, true) => {
+                let cell_dts = ctx.timestep.cell_dts_f32.clone();
+                let evaluate = |u: &ConservedFieldsT<f32>, r: &mut ConservedResidualT<f32>| {
+                    solver
+                        .rhs_context_3d_typed(ctx, &inviscid, p_floor)
+                        .run(u, r)
+                };
+                euler_step_local_f32(fields, storage, &cell_dts, evaluate, Some(eos), p_floor)
+            }
+            (TimeIntegrationScheme::Euler, false) => {
+                let evaluate = |u: &ConservedFieldsT<f32>, r: &mut ConservedResidualT<f32>| {
+                    solver
+                        .rhs_context_3d_typed(ctx, &inviscid, p_floor)
+                        .run(u, r)
+                };
+                euler_step(fields, storage, dt_global, evaluate, Some(eos), p_floor)
+            }
+            _ => Err(AsimuError::Solver(
+                "结构化 typed 显式推进收到不支持的时间格式".to_string(),
+            )),
+        }
+    }
+}
+
+impl StructuredExplicitTimeAdvance for f64 {
+    fn advance_structured_explicit(
+        solver: &CompressibleEulerSolver,
+        ctx: &mut CompressibleAdvanceContext3dTyped<'_, f64>,
+        fields: &mut ConservedFieldsT<f64>,
+        storage: &mut Rk4StorageT<f64>,
+        dt_global: Real,
+        local_time_step: bool,
+        p_floor: Real,
+        eos: &IdealGasEoS,
+    ) -> Result<()> {
+        let inviscid = solver.config.inviscid;
+        match (solver.config.time_scheme, local_time_step) {
+            (TimeIntegrationScheme::Rk4, true) => {
+                let cell_dts = ctx.timestep.cell_dts.clone();
+                let evaluate = |u: &ConservedFieldsT<f64>, r: &mut ConservedResidualT<f64>| {
+                    solver
+                        .rhs_context_3d_typed(ctx, &inviscid, p_floor)
+                        .run(u, r)
+                };
+                rk4_step_local(fields, storage, &cell_dts, evaluate, Some(eos), p_floor)
+            }
+            (TimeIntegrationScheme::Rk4, false) => {
+                let evaluate = |u: &ConservedFieldsT<f64>, r: &mut ConservedResidualT<f64>| {
+                    solver
+                        .rhs_context_3d_typed(ctx, &inviscid, p_floor)
+                        .run(u, r)
+                };
+                rk4_step(fields, storage, dt_global, evaluate)
+            }
+            (TimeIntegrationScheme::Euler, true) => {
+                let cell_dts = ctx.timestep.cell_dts.clone();
+                let evaluate = |u: &ConservedFieldsT<f64>, r: &mut ConservedResidualT<f64>| {
+                    solver
+                        .rhs_context_3d_typed(ctx, &inviscid, p_floor)
+                        .run(u, r)
+                };
+                euler_step_local(fields, storage, &cell_dts, evaluate, Some(eos), p_floor)
+            }
+            (TimeIntegrationScheme::Euler, false) => {
+                let evaluate = |u: &ConservedFieldsT<f64>, r: &mut ConservedResidualT<f64>| {
+                    solver
+                        .rhs_context_3d_typed(ctx, &inviscid, p_floor)
+                        .run(u, r)
+                };
+                euler_step(fields, storage, dt_global, evaluate, Some(eos), p_floor)
+            }
+            (scheme, _) => Err(AsimuError::Solver(format!(
+                "typed 显式推进不支持 {}",
+                scheme.label()
+            ))),
+        }
+    }
+}
 
 impl CompressibleEulerSolver {
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn advance_explicit_step_3d_typed<T: ComputeFloat + StructuredComputeBackend>(
+    pub(crate) fn advance_explicit_step_3d_typed<T: StructuredComputeBackend>(
         &self,
         ctx: &mut CompressibleAdvanceContext3dTyped<'_, T>,
         fields: &mut ConservedFieldsT<T>,
@@ -29,7 +140,7 @@ impl CompressibleEulerSolver {
         p_floor: Real,
     ) -> Result<CompressibleStepInfo> {
         let inviscid = self.config.inviscid;
-        let (dt, cell_dts) = {
+        let dt = {
             let _span = info_span!(
                 "compute_dt",
                 cells = ctx.structured.num_cells(),
@@ -41,8 +152,15 @@ impl CompressibleEulerSolver {
                 let _span = info_span!("enforce_positivity_pre").entered();
                 fields.enforce_positivity(ctx.eos, p_floor);
             }
-            let cell_dts = self.compute_cell_dts_3d_typed(ctx, fields, cfl, p_floor)?;
-            (min_positive_dt(&cell_dts), cell_dts)
+            self.prepare_spectral_timestep_3d_typed(ctx, fields, cfl, p_floor)?;
+            match (T::PRECISION, self.config.local_time_step) {
+                (ComputePrecision::F32, true) => {
+                    min_positive_dt_f32(&ctx.timestep.cell_dts_f32) as Real
+                }
+                (ComputePrecision::F32, false) => ctx.timestep.cell_dts[0],
+                (_, true) => min_positive_dt(&ctx.timestep.cell_dts),
+                (_, false) => min_positive_dt(&ctx.timestep.cell_dts),
+            }
         };
         integrator.config.dt = dt;
         let eos = *ctx.eos;
@@ -52,11 +170,6 @@ impl CompressibleEulerSolver {
                 .run(fields, &mut storage.k1)?;
             storage.k1.density_rms_norm()
         };
-        let cell_dts_arg = if self.config.local_time_step {
-            Some(cell_dts.as_slice())
-        } else {
-            None
-        };
         {
             let _span = info_span!(
                 "time_integration",
@@ -65,16 +178,15 @@ impl CompressibleEulerSolver {
                 precision = T::PRECISION.label(),
             )
             .entered();
-            let evaluate = |u: &ConservedFieldsT<T>, r: &mut ConservedResidualT<T>| {
-                self.rhs_context_3d_typed(ctx, &inviscid, p_floor).run(u, r)
-            };
-            self.advance_explicit_step_typed(
+            T::advance_structured_explicit(
+                self,
+                ctx,
                 fields,
                 storage,
                 dt,
-                cell_dts_arg,
-                evaluate,
-                Some((&eos, p_floor)),
+                self.config.local_time_step,
+                p_floor,
+                &eos,
             )?;
         }
         {
@@ -92,42 +204,5 @@ impl CompressibleEulerSolver {
             is_final: time_info.is_final,
             converged: false,
         })
-    }
-
-    fn advance_explicit_step_typed<T, F>(
-        &self,
-        fields: &mut ConservedFieldsT<T>,
-        storage: &mut Rk4StorageT<T>,
-        dt_global: Real,
-        cell_dts: Option<&[Real]>,
-        evaluate_rhs: F,
-        positivity: Option<(&IdealGasEoS, Real)>,
-    ) -> Result<()>
-    where
-        T: ComputeFloat,
-        F: FnMut(&ConservedFieldsT<T>, &mut ConservedResidualT<T>) -> Result<()>,
-    {
-        let (eos, min_pressure) = match positivity {
-            Some((eos, p)) => (Some(eos), p),
-            None => (None, 1.0e-6),
-        };
-        match (self.config.time_scheme, cell_dts) {
-            (TimeIntegrationScheme::Rk4, Some(dt)) => {
-                rk4_step_local(fields, storage, dt, evaluate_rhs, eos, min_pressure)
-            }
-            (TimeIntegrationScheme::Rk4, None) => {
-                rk4_step(fields, storage, dt_global, evaluate_rhs)
-            }
-            (TimeIntegrationScheme::Euler, Some(dt)) => {
-                euler_step_local(fields, storage, dt, evaluate_rhs, eos, min_pressure)
-            }
-            (TimeIntegrationScheme::Euler, None) => {
-                euler_step(fields, storage, dt_global, evaluate_rhs, eos, min_pressure)
-            }
-            (scheme, _) => Err(AsimuError::Solver(format!(
-                "typed 显式推进不支持 {}",
-                scheme.label()
-            ))),
-        }
     }
 }

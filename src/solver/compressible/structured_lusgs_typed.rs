@@ -1,16 +1,19 @@
-//! 结构化 3D typed LU-SGS 对角更新（扫掠见 S4；ADR 0019 S0-b）。
+//! 结构化 3D typed LU-SGS 对角更新（扫掠见 S4；ADR 0019 S0-b / S1-c）。
 
 use tracing::info_span;
 
-use crate::core::{Real, log10_positive};
+use crate::core::{ComputePrecision, Real, log10_positive};
 use crate::error::{AsimuError, Result};
-use crate::field::ConservedFieldsT;
+use crate::field::{ConservedFieldsT, assign_lusgs_diagonal_update_f32};
 use crate::solver::compressible::structured_compute_backend::StructuredComputeBackend;
+use crate::solver::compressible::structured_timestep_buffers::StructuredLusgsDiagonalUpdate;
 use crate::solver::compressible::{
     CompressibleAdvanceContext3dTyped, CompressibleEulerSolver, CompressibleStepInfo,
 };
 use crate::solver::state::SolverState;
-use crate::solver::time::{Rk4StorageT, RungeKutta4Integrator, TimeIntegrator, min_positive_dt};
+use crate::solver::time::{
+    Rk4StorageT, RungeKutta4Integrator, TimeIntegrator, min_positive_dt, min_positive_dt_f32,
+};
 
 impl CompressibleEulerSolver {
     #[allow(clippy::too_many_arguments)]
@@ -36,7 +39,7 @@ impl CompressibleEulerSolver {
             ));
         }
         let inviscid = self.config.inviscid;
-        let (dt, cell_dts, sigma) = {
+        let dt = {
             let _span = info_span!(
                 "compute_dt",
                 cells = ctx.structured.num_cells(),
@@ -44,9 +47,11 @@ impl CompressibleEulerSolver {
                 precision = T::PRECISION.label(),
             )
             .entered();
-            let (cell_dts, sigma) =
-                self.prepare_lusgs_timestep_3d_typed(ctx, fields, cfl, p_floor)?;
-            (min_positive_dt(&cell_dts), cell_dts, sigma)
+            self.prepare_lusgs_timestep_3d_typed(ctx, fields, cfl, p_floor)?;
+            match T::PRECISION {
+                ComputePrecision::F32 => min_positive_dt_f32(&ctx.timestep.cell_dts_f32) as Real,
+                ComputePrecision::F64 => min_positive_dt(&ctx.timestep.cell_dts),
+            }
         };
         integrator.config.dt = dt;
         let eos = *ctx.eos;
@@ -66,11 +71,11 @@ impl CompressibleEulerSolver {
                 self.rhs_context_3d_typed(ctx, &inviscid, p_floor)
                     .run(&storage.u0, &mut storage.k1)?;
             }
-            storage.stage.assign_lusgs_diagonal_update(
+            T::apply_structured_lusgs_diagonal_update(
+                &mut storage.stage,
                 &storage.u0,
                 &storage.k1,
-                &sigma,
-                &cell_dts,
+                ctx,
                 lu_sgs.omega,
                 eos.gamma,
                 p_floor,
@@ -90,5 +95,50 @@ impl CompressibleEulerSolver {
             is_final: time_info.is_final,
             converged: false,
         })
+    }
+}
+
+impl StructuredLusgsDiagonalUpdate for f32 {
+    fn apply_structured_lusgs_diagonal_update(
+        out: &mut ConservedFieldsT<f32>,
+        base: &ConservedFieldsT<f32>,
+        residual: &crate::field::ConservedResidualT<f32>,
+        ctx: &CompressibleAdvanceContext3dTyped<'_, f32>,
+        omega: Real,
+        gamma: Real,
+        min_pressure: Real,
+    ) -> Result<()> {
+        assign_lusgs_diagonal_update_f32(
+            out,
+            base,
+            residual,
+            &ctx.timestep.sigma_f32,
+            &ctx.timestep.cell_dts_f32,
+            omega as f32,
+            gamma,
+            min_pressure,
+        )
+    }
+}
+
+impl StructuredLusgsDiagonalUpdate for f64 {
+    fn apply_structured_lusgs_diagonal_update(
+        out: &mut ConservedFieldsT<f64>,
+        base: &ConservedFieldsT<f64>,
+        residual: &crate::field::ConservedResidualT<f64>,
+        ctx: &CompressibleAdvanceContext3dTyped<'_, f64>,
+        omega: Real,
+        gamma: Real,
+        min_pressure: Real,
+    ) -> Result<()> {
+        out.assign_lusgs_diagonal_update(
+            base,
+            residual,
+            &ctx.timestep.sigma,
+            &ctx.timestep.cell_dts,
+            omega,
+            gamma,
+            min_pressure,
+        )
     }
 }

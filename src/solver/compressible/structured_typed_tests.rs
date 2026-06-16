@@ -1,15 +1,23 @@
 //! 结构化 typed 时间推进回归测试。
 
-use super::*;
 use crate::boundary::BoundarySet;
-use crate::core::approx_eq;
+use crate::core::{ComputeFloat, approx_eq};
 use crate::discretization::StructuredFaceCacheF32;
 use crate::discretization::freestream_pair::{FreestreamPairFixture, uniform_farfield_box};
 use crate::field::PrimitiveFields;
 use crate::mesh::StructuredMesh3d;
 use crate::physics::FreestreamParams;
-use crate::solver::compressible::{CompressibleAdvanceContext3d, CompressibleEulerConfig};
-use crate::solver::time::Rk4Storage;
+use crate::solver::SolverState;
+use crate::solver::compressible::structured_timestep_buffers::StructuredTimestepBuffers;
+use crate::solver::compressible::{
+    CompressibleAdvanceContext3d, CompressibleAdvanceContext3dTyped, CompressibleEulerConfig,
+    CompressibleEulerSolver,
+};
+use crate::solver::time::{Rk4Storage, Rk4StorageT, RungeKutta4Integrator};
+
+fn structured_volumes_f32(mesh: &StructuredMesh3d) -> Vec<f32> {
+    mesh.cell_volumes().iter().map(|v| *v as f32).collect()
+}
 
 fn freestream_box_context<T: crate::core::ComputeFloat>(
     side: &crate::discretization::freestream_pair::UniformFarfieldSide<'_>,
@@ -47,6 +55,8 @@ fn f32_explicit_step_matches_f64_on_uniform_box() {
     let (_, _, fields_f64, ghosts_f64, _, _) = freestream_box_context::<f64>(&side);
     let mut ghosts_f64 = ghosts_f64;
     let face_cache = structured_face_cache_f32(&mesh);
+    let volumes_f32 = structured_volumes_f32(&mesh);
+    let mut timestep = StructuredTimestepBuffers::default();
     let mut ctx_f32 = CompressibleAdvanceContext3dTyped {
         mesh: &mesh,
         structured: &mesh,
@@ -63,6 +73,8 @@ fn f32_explicit_step_matches_f64_on_uniform_box() {
         viscous: None,
         interface_residual: None,
         face_cache_f32: Some(&face_cache),
+        volumes_f32: &volumes_f32,
+        timestep: &mut timestep,
     };
     let mut ctx_f64 = CompressibleAdvanceContext3d {
         mesh: &mesh,
@@ -138,6 +150,8 @@ fn f32_lusgs_step_on_uniform_box() {
     let (mesh, patches, mut fields, mut ghosts, eos, freestream) =
         freestream_box_context::<f32>(&side);
     let face_cache = structured_face_cache_f32(&mesh);
+    let volumes_f32 = structured_volumes_f32(&mesh);
+    let mut timestep = StructuredTimestepBuffers::default();
     let mut ctx = CompressibleAdvanceContext3dTyped {
         mesh: &mesh,
         structured: &mesh,
@@ -154,6 +168,8 @@ fn f32_lusgs_step_on_uniform_box() {
         viscous: None,
         interface_residual: None,
         face_cache_f32: Some(&face_cache),
+        volumes_f32: &volumes_f32,
+        timestep: &mut timestep,
     };
     let mut storage = Rk4StorageT::<f32>::new(mesh.num_cells()).expect("storage");
     let mut state = SolverState::default();
@@ -192,6 +208,8 @@ fn f32_gmres_step_on_uniform_box() {
     let (mesh, patches, mut fields, mut ghosts, eos, freestream) =
         freestream_box_context::<f32>(&side);
     let face_cache = structured_face_cache_f32(&mesh);
+    let volumes_f32 = structured_volumes_f32(&mesh);
+    let mut timestep = StructuredTimestepBuffers::default();
     let mut ctx = CompressibleAdvanceContext3dTyped {
         mesh: &mesh,
         structured: &mesh,
@@ -208,6 +226,8 @@ fn f32_gmres_step_on_uniform_box() {
         viscous: None,
         interface_residual: None,
         face_cache_f32: Some(&face_cache),
+        volumes_f32: &volumes_f32,
+        timestep: &mut timestep,
     };
     let mut storage = Rk4StorageT::<f32>::new(mesh.num_cells()).expect("storage");
     let mut state = SolverState::default();

@@ -8,6 +8,9 @@ use crate::discretization::InviscidFaceFluxTyped;
 use crate::discretization::compressible::residual::StructuredInviscidAssembly3dTyped;
 use crate::field::{LusgsDiagonalUpdateBackend, PrimitiveFillFromConserved};
 use crate::solver::compressible::spectral_radius_3d_f32::StructuredSpectralRadiusTyped;
+use crate::solver::compressible::structured_timestep_buffers::{
+    StructuredExplicitTimeAdvance, StructuredLusgsDiagonalUpdate, StructuredSpectralTimestepPrepare,
+};
 
 /// 结构化 3D 可压缩 typed 热路径所需精度后端（密封于 `f32` / `f64`）。
 pub(crate) trait StructuredComputeBackend:
@@ -17,6 +20,9 @@ pub(crate) trait StructuredComputeBackend:
     + PrimitiveFillFromConserved
     + StructuredInviscidAssembly3dTyped
     + StructuredSpectralRadiusTyped
+    + StructuredSpectralTimestepPrepare
+    + StructuredExplicitTimeAdvance
+    + StructuredLusgsDiagonalUpdate
 {
 }
 

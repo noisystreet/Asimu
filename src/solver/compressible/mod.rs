@@ -1,5 +1,4 @@
-//! 可压缩无粘 Euler 显式求解（RK4 / 一阶 Euler + FVM 残差）。
-//! 理论：[`time_integration.md`](../../docs/theory/time_integration.md)、[`inviscid_flux.md`](../../docs/theory/inviscid_flux.md);
+//! 可压缩无粘 Euler 显式求解（RK4 / Euler + FVM）；理论见 docs/theory/time_integration.md、inviscid_flux.md。
 use std::time::Instant;
 
 mod context;
@@ -13,6 +12,7 @@ mod multiblock_interface;
 mod rhs;
 mod rhs_typed;
 mod structured_compute_backend;
+mod structured_timestep_buffers;
 mod typed;
 mod unstructured_driver;
 mod unstructured_driver_typed;

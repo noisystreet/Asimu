@@ -8,6 +8,7 @@ use crate::error::Result;
 use crate::field::{ConservedResidual, PrimitiveFields, PrimitiveFieldsT};
 use crate::mesh::{BoundaryMesh3d, StructuredMesh1d, StructuredMesh3d};
 use crate::physics::{FreestreamParams, IdealGasEoS, ReferenceScales, ViscousPhysicsConfig};
+use crate::solver::compressible::structured_timestep_buffers::StructuredTimestepBuffers;
 
 pub trait ResidualCorrection3d {
     fn apply(&mut self, residual: &mut ConservedResidual) -> Result<()>;
@@ -54,6 +55,10 @@ pub struct CompressibleAdvanceContext3dTyped<'a, T: crate::core::ComputeFloat> {
     >,
     /// f32 结构化内面几何预打包（S1-a；`T=f32` 时由驱动构建）。
     pub face_cache_f32: Option<&'a StructuredFaceCacheF32>,
+    /// 单元体积 f32（S1-c；`T=f32` 时预计算）。
+    pub volumes_f32: &'a [f32],
+    /// 谱半径 / 局部 \(\Delta t_i\) 缓冲（S1-c）。
+    pub(crate) timestep: &'a mut StructuredTimestepBuffers,
 }
 
 impl<'a, T: crate::core::ComputeFloat> CompressibleAdvanceContext3dTyped<'a, T> {
