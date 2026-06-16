@@ -220,18 +220,14 @@ impl UnstructuredCudaPrepareSync for f32 {
             if !work.exec.cuda_conserved_on_device() {
                 work.exec.cuda_upload_conserved_for_integration(fields)?;
             }
-            let mesh_key = std::ptr::from_ref(&work.mesh_cache).addr();
-            return work.exec.cuda_add_physical_storage_residual_f32(
-                dt_phys as f32,
-                mesh_key,
-                &work.volumes_f32,
-            );
+            return work
+                .exec
+                .cuda_add_physical_storage_residual_f32(dt_phys as f32);
         }
         crate::solver::time::add_physical_storage_residual(
             &mut work.storage.k1,
             fields,
             &work.dual_time_state.u_at_physical_level,
-            &work.volumes,
             dt_phys,
         )
     }

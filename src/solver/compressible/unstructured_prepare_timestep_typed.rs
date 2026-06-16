@@ -175,7 +175,6 @@ pub(crate) trait UnstructuredCudaPrepareSync:
             &mut work.storage.k1,
             fields,
             &work.dual_time_state.u_at_physical_level,
-            &work.volumes,
             dt_phys,
         )
     }

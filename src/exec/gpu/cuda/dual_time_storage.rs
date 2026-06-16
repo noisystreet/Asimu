@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use cudarc::driver::{CudaSlice, CudaStream, LaunchConfig, PushKernelArg};
+use cudarc::driver::{CudaStream, LaunchConfig, PushKernelArg};
 use tracing::info_span;
 
 use super::buffers::CudaFieldBuffers;
@@ -14,7 +14,6 @@ pub fn launch_dual_time_storage(
     stream: &Arc<CudaStream>,
     function: &cudarc::driver::CudaFunction,
     fields: &CudaFieldBuffers,
-    volumes: &CudaSlice<f32>,
     inv_dt_phys: f32,
 ) -> Result<()> {
     let num_cells = fields.num_cells() as u32;
@@ -48,7 +47,6 @@ pub fn launch_dual_time_storage(
     builder.arg(&fields.res_my);
     builder.arg(&fields.res_mz);
     builder.arg(&fields.res_e);
-    builder.arg(volumes);
     unsafe {
         builder.launch(cfg).map_err(|e| {
             AsimuError::Exec(format!("CUDA 双时间存储项 kernel launch 失败: {e:?}"))
@@ -67,7 +65,6 @@ mod gpu_tests {
     use crate::core::ComputeFloat;
     use crate::exec::gpu::cuda::buffers::CudaFieldBuffers;
     use crate::exec::gpu::cuda::module::CudaDualTimeModule;
-    use crate::exec::gpu::cuda::transfer::memcpy_htod;
     use crate::field::{ConservedFieldsT, ConservedResidualT};
     use crate::physics::ConservedState;
     use crate::solver::time::add_physical_storage_residual;
@@ -99,7 +96,6 @@ mod gpu_tests {
         residual_host.density.values_mut()[0] = f32::from_real(-0.5);
         residual_host.density.values_mut()[1] = f32::from_real(0.3);
 
-        let volumes_host = vec![0.25_f32, 0.5];
         let dt_phys = 0.1_f32;
 
         fields.upload_conserved(&stream, &u_n).expect("u_n to cons");
@@ -109,33 +105,16 @@ mod gpu_tests {
             .upload_full_residual(&stream, &residual_host)
             .expect("res");
 
-        let mut volumes_dev = stream.alloc_zeros::<f32>(n).expect("vol");
-        memcpy_htod(&stream, "volumes", &volumes_host, &mut volumes_dev).expect("vol h2d");
-
-        launch_dual_time_storage(
-            &stream,
-            &module.storage,
-            &fields,
-            &volumes_dev,
-            1.0 / dt_phys,
-        )
-        .expect("kernel");
+        launch_dual_time_storage(&stream, &module.storage, &fields, 1.0 / dt_phys).expect("kernel");
         stream.synchronize().expect("sync");
         let mut residual_gpu = residual_host.clone();
         fields
             .download_residual(&stream, &mut residual_gpu)
             .expect("d2h res");
 
-        let volumes_real: Vec<f64> = volumes_host.iter().map(|v| f64::from(*v)).collect();
         let mut residual_cpu = residual_host;
-        add_physical_storage_residual(
-            &mut residual_cpu,
-            &u_curr,
-            &u_n,
-            &volumes_real,
-            f64::from(dt_phys),
-        )
-        .expect("cpu");
+        add_physical_storage_residual(&mut residual_cpu, &u_curr, &u_n, f64::from(dt_phys))
+            .expect("cpu");
 
         for i in 0..n {
             assert!(

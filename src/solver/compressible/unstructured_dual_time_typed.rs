@@ -4,8 +4,9 @@ use tracing::{debug, info_span};
 
 #[cfg(feature = "cuda")]
 use crate::core::ExecDevice;
-use crate::core::{Real, format_log_fixed4, log10_positive};
+use crate::core::{ComputeFloat, Real, format_log_fixed4, format_log_sci4, log10_positive};
 use crate::error::{AsimuError, Result};
+use crate::field::ConservedFieldsT;
 use crate::solver::UnstructuredComputeBackend;
 use crate::solver::time::DualTimeConfig;
 
@@ -126,13 +127,91 @@ fn dual_time_inner_iteration<T: UnstructuredComputeBackend + UnstructuredCudaPre
         ctx.lu_sgs,
         ctx.inv_dt_phys,
     )?;
+    debug_log_conserved_health_after_update(fields, ctx.inner + 1);
     Ok(effective_residual_rms)
+}
+
+/// 内层 LU-SGS 更新后 host 守恒场健康度（debug 级；定位非物 KE/内能）。
+struct ConservedHealthSummary {
+    worst_cell: usize,
+    min_internal: Real,
+    rho: Real,
+    ke: Real,
+    total_energy: Real,
+    speed: Real,
+}
+
+fn summarize_conserved_health<T: ComputeFloat>(
+    fields: &ConservedFieldsT<T>,
+) -> ConservedHealthSummary {
+    let n = fields.num_cells();
+    let mut worst_cell = 0usize;
+    let mut min_internal = Real::INFINITY;
+    let mut rho_at_worst = 0.0;
+    let mut ke_at_worst = 0.0;
+    let mut energy_at_worst = 0.0;
+    let mut speed_at_worst = 0.0;
+    for i in 0..n {
+        let rho = fields.density.values()[i].to_real();
+        let mx = fields.momentum_x.values()[i].to_real();
+        let my = fields.momentum_y.values()[i].to_real();
+        let mz = fields.momentum_z.values()[i].to_real();
+        let energy = fields.total_energy.values()[i].to_real();
+        if !(rho.is_finite() && energy.is_finite()) {
+            worst_cell = i;
+            min_internal = Real::NEG_INFINITY;
+            rho_at_worst = rho;
+            ke_at_worst = Real::NAN;
+            energy_at_worst = energy;
+            speed_at_worst = Real::NAN;
+            break;
+        }
+        let inv_rho = if rho > 0.0 { 1.0 / rho } else { Real::INFINITY };
+        let ux = mx * inv_rho;
+        let uy = my * inv_rho;
+        let uz = mz * inv_rho;
+        let ke = 0.5 * rho * (ux * ux + uy * uy + uz * uz);
+        let internal = energy - ke;
+        if internal < min_internal {
+            min_internal = internal;
+            worst_cell = i;
+            rho_at_worst = rho;
+            ke_at_worst = ke;
+            energy_at_worst = energy;
+            speed_at_worst = (ux * ux + uy * uy + uz * uz).sqrt();
+        }
+    }
+    ConservedHealthSummary {
+        worst_cell,
+        min_internal,
+        rho: rho_at_worst,
+        ke: ke_at_worst,
+        total_energy: energy_at_worst,
+        speed: speed_at_worst,
+    }
+}
+
+fn debug_log_conserved_health_after_update<T: ComputeFloat>(
+    fields: &ConservedFieldsT<T>,
+    inner: u32,
+) {
+    let h = summarize_conserved_health(fields);
+    debug!(
+        inner,
+        worst_cell = h.worst_cell,
+        min_internal = %format_log_sci4(h.min_internal),
+        rho = %format_log_sci4(h.rho),
+        ke = %format_log_sci4(h.ke),
+        total_energy = %format_log_sci4(h.total_energy),
+        speed = %format_log_sci4(h.speed),
+        "dual_time 内层更新后守恒场健康度",
+    );
 }
 
 fn dual_time_assemble_effective_rhs<T: UnstructuredComputeBackend + UnstructuredCudaPrepareSync>(
     env: &UnstructuredRunEnvTyped<'_>,
     work: &mut UnstructuredStepWorkTyped<T>,
-    fields: &crate::field::ConservedFieldsT<T>,
+    fields: &ConservedFieldsT<T>,
     dt_phys: Real,
     p_floor: Real,
 ) -> Result<()> {
@@ -154,8 +233,15 @@ fn dual_time_assemble_effective_rhs<T: UnstructuredComputeBackend + Unstructured
         true,
         p_floor,
     )?;
+    let spatial_rho_rms = work.storage.k1.density_rms_norm();
     let _storage_span = info_span!("unstructured_dual_time_storage_typed").entered();
-    T::add_dual_time_storage_residual(work, fields, dt_phys)
+    T::add_dual_time_storage_residual(work, fields, dt_phys)?;
+    debug!(
+        spatial_log10_rho_rms = %format_log_fixed4(log10_positive(spatial_rho_rms)),
+        effective_log10_rho_rms = %format_log_fixed4(log10_positive(work.storage.k1.density_rms_norm())),
+        "dual_time 内层 RHS 分项（密度 RMS）",
+    );
+    Ok(())
 }
 
 fn dual_time_apply_lusgs_update<T: UnstructuredComputeBackend + UnstructuredCudaPrepareSync>(
@@ -205,4 +291,31 @@ fn dual_time_apply_lusgs_update<T: UnstructuredComputeBackend + UnstructuredCuda
         work.exec.mark_cuda_primitives_stale_after_integration();
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod health_tests {
+    use super::*;
+    use crate::field::ConservedFieldsT;
+    use crate::physics::ConservedState;
+
+    #[test]
+    fn summarize_conserved_health_finds_low_internal_energy_cell() {
+        let state_ok = ConservedState {
+            density: 1.0,
+            momentum: [0.1, 0.0, 0.0],
+            total_energy: 2.5,
+        };
+        let mut bad = state_ok;
+        bad.momentum = [68.0, 0.0, 0.0];
+        bad.total_energy = 8.6;
+        let mut fields = ConservedFieldsT::<f64>::uniform(2, state_ok).expect("fields");
+        fields.density.values_mut()[1] = bad.density;
+        fields.momentum_x.values_mut()[1] = bad.momentum[0];
+        fields.total_energy.values_mut()[1] = bad.total_energy;
+        let h = summarize_conserved_health(&fields);
+        assert_eq!(h.worst_cell, 1);
+        assert!(h.min_internal < 0.0);
+        assert!(h.ke > 2000.0);
+    }
 }

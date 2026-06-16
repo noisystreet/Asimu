@@ -220,7 +220,7 @@ A_i = \sum_m w_m\,\Delta\mathbf x_m\,\Delta\mathbf x_m^{\mathsf T},
 
 后扫对 \(j>i\) 的邻接项做同类修正，并使用 `lusgs_sweep_backward_damping` 阻尼。扫掠候选会经过正性检查；若全场线搜索仍失败，则回退到式 (9) 的对角更新。
 
-**双时间步（规划）**：瞬态隐式路径在式 (9)(10) 分母加 \(\Delta\tau_i/\Delta t_{\mathrm{phys}}\)，并在 RHS 叠加存储项 \((U^n-U)/(V_i\Delta t_{\mathrm{phys}})\)；内外循环与配置见 [dual_time_stepping.md](dual_time_stepping.md)。
+**双时间步（规划）**：瞬态隐式路径在式 (9)(10) 分母加 \(\Delta\tau_i/\Delta t_{\mathrm{phys}}\)，并在 RHS 叠加存储项 \((\mathbf{U}-\mathbf{U}^n)/\Delta t_{\mathrm{phys}}\)（**不除** \(V_i\)，与 \(\mathrm dU/\mathrm dt\) 同量纲）；内外循环与配置见 [dual_time_stepping.md](dual_time_stepping.md)。
 
 ## 内面并行 scatter（面着色）
 

@@ -5,6 +5,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **双时间步 BDF1 存储项量纲**：`add_physical_storage_residual` 与 CUDA kernel 不再对 \((\mathbf{U}-\mathbf{U}^n)\) 除 \(V_i\)；与 FVM 空间残差 \(\mathrm dU/\mathrm dt\) 一致，修复小单元网格内层 2 残差暴涨与 NaN。
+
 ### Added
 
 - **P3b CUDA f32 双时间步**：device \(U^n\) 快照、BDF1 存储项 kernel、LU-SGS 对角 `inv_dt_phys`；`validate` 放行 `backend=cuda` + `scheme=dual_time`；benchmark `unstructured_dual_time_freestream/case_cuda_f32.toml`；`#[ignore=gpu]` Euler/Navier-Stokes smoke。

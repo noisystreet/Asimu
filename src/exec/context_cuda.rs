@@ -178,12 +178,7 @@ impl ExecutionContext {
 
     /// CUDA P3b：device 叠加 BDF1 物理存储项。
     #[cfg(feature = "cuda")]
-    pub fn cuda_add_physical_storage_residual_f32(
-        &mut self,
-        dt_phys: f32,
-        mesh_key: usize,
-        volumes: &[f32],
-    ) -> Result<()> {
+    pub fn cuda_add_physical_storage_residual_f32(&mut self, dt_phys: f32) -> Result<()> {
         if !(dt_phys.is_finite() && dt_phys > 0.0) {
             return Err(crate::error::AsimuError::Field(
                 "dual_time: dt_phys 须为正有限".to_string(),
@@ -191,7 +186,7 @@ impl ExecutionContext {
         }
         self.backend_state
             .cuda_mut()?
-            .add_physical_storage_residual_f32(1.0 / dt_phys, mesh_key, volumes)
+            .add_physical_storage_residual_f32(1.0 / dt_phys)
     }
 
     /// CUDA P4：LU-SGS 步初上传守恒基态至 device。

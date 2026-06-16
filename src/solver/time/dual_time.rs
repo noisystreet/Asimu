@@ -85,13 +85,14 @@ impl<T: ComputeFloat> DualTimeState<T> {
     }
 }
 
-/// 叠加 BDF1 物理存储项（式 (4)）：
-/// \(R_{\mathrm{eff},i} \leftarrow R_i - (U_i-U^n_i)/(V_i\Delta t_{\mathrm{phys}})\)。
+/// 叠加 BDF1 物理存储项（式 (3)–(4)，与 `R_i=\mathrm dU_i/\mathrm dt` 同量纲）：
+/// \(R_{\mathrm{eff},i} \leftarrow R_i - (U_i-U^n_i)/\Delta t_{\mathrm{phys}}\)。
+///
+/// `ConservedFields` 为单元平均守恒密度；`R_i` 已由 FVM 除以 \(V_i\)，存储项不再除 \(V_i\)。
 pub fn add_physical_storage_residual<T: ComputeFloat>(
     residual: &mut ConservedResidualT<T>,
     fields: &ConservedFieldsT<T>,
     u_at_level_n: &ConservedFieldsT<T>,
-    volumes: &[Real],
     dt_phys: Real,
 ) -> Result<()> {
     let n = residual.num_cells();
@@ -100,55 +101,45 @@ pub fn add_physical_storage_residual<T: ComputeFloat>(
             "dual_time: 场与残差单元数不一致".to_string(),
         ));
     }
-    if volumes.len() != n {
-        return Err(AsimuError::Field(format!(
-            "dual_time: volumes 长度 {} 与单元数 {n} 不一致",
-            volumes.len()
-        )));
-    }
     if dt_phys <= 0.0 {
         return Err(AsimuError::Field("dual_time: dt_phys 须为正".to_string()));
     }
     let inv_dt_phys = 1.0 / dt_phys;
-    for (i, &volume) in volumes.iter().enumerate().take(n) {
-        let inv_vol_dt = inv_dt_phys / volume;
-        if !(inv_vol_dt.is_finite() && inv_vol_dt > 0.0) {
-            return Err(AsimuError::Field(format!("dual_time: 单元 {i} 体积须为正")));
-        }
+    for i in 0..n {
         subtract_storage_component(
             residual.density.values_mut(),
             fields.density.values(),
             u_at_level_n.density.values(),
             i,
-            inv_vol_dt,
+            inv_dt_phys,
         );
         subtract_storage_component(
             residual.momentum_x.values_mut(),
             fields.momentum_x.values(),
             u_at_level_n.momentum_x.values(),
             i,
-            inv_vol_dt,
+            inv_dt_phys,
         );
         subtract_storage_component(
             residual.momentum_y.values_mut(),
             fields.momentum_y.values(),
             u_at_level_n.momentum_y.values(),
             i,
-            inv_vol_dt,
+            inv_dt_phys,
         );
         subtract_storage_component(
             residual.momentum_z.values_mut(),
             fields.momentum_z.values(),
             u_at_level_n.momentum_z.values(),
             i,
-            inv_vol_dt,
+            inv_dt_phys,
         );
         subtract_storage_component(
             residual.total_energy.values_mut(),
             fields.total_energy.values(),
             u_at_level_n.total_energy.values(),
             i,
-            inv_vol_dt,
+            inv_dt_phys,
         );
     }
     Ok(())
@@ -160,10 +151,10 @@ fn subtract_storage_component<T: ComputeFloat>(
     field: &[T],
     u_n: &[T],
     cell: usize,
-    inv_vol_dt: Real,
+    inv_dt_phys: Real,
 ) {
     let diff = field[cell].add_mul_real(u_n[cell], -1.0);
-    residual[cell] = residual[cell].add_mul_real(diff, -inv_vol_dt);
+    residual[cell] = residual[cell].add_mul_real(diff, -inv_dt_phys);
 }
 
 #[cfg(test)]
@@ -199,9 +190,9 @@ mod tests {
         u_n.density.values_mut()[0] = 1.0;
         let mut residual = ConservedResidualT::<f64>::zeros(1).expect("res");
         residual.density.values_mut()[0] = -0.5;
-        add_physical_storage_residual(&mut residual, &fields, &u_n, &[0.25], 0.1).expect("add");
-        // -0.5 - (2-1)/(0.25*0.1) = -0.5 - 40 = -40.5
-        assert_component(&residual, 0, -40.5);
+        add_physical_storage_residual(&mut residual, &fields, &u_n, 0.1).expect("add");
+        // -0.5 - (2-1)/0.1 = -10.5
+        assert_component(&residual, 0, -10.5);
     }
 
     #[test]
@@ -215,9 +206,10 @@ mod tests {
         let mut residual = ConservedResidualT::<f32>::zeros(2).expect("res");
         residual.density.values_mut()[0] = 0.1_f32;
         residual.density.values_mut()[1] = -0.2_f32;
-        add_physical_storage_residual(&mut residual, &fields, &u_n, &[1.0, 2.0], 0.5).expect("add");
-        assert!((residual.density.values()[0].to_real() - (0.1 - 1.0)).abs() < 1.0e-5);
-        assert!((residual.density.values()[1].to_real() - (-0.2 - 2.0)).abs() < 1.0e-5);
+        add_physical_storage_residual(&mut residual, &fields, &u_n, 0.5).expect("add");
+        // 0.1 - (1.5-1.0)/0.5 = -0.9；-0.2 - (3.0-1.0)/0.5 = -4.2
+        assert!((residual.density.values()[0].to_real() - (-0.9)).abs() < 1.0e-5);
+        assert!((residual.density.values()[1].to_real() - (-4.2)).abs() < 1.0e-5);
     }
 
     #[test]
