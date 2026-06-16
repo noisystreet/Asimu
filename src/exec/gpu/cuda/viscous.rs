@@ -30,6 +30,9 @@ pub(super) fn launch_viscous_bucket(
     fields: &mut CudaFieldBuffers,
     gradients: &CudaGradientBuffers,
 ) -> Result<()> {
+    if num_faces == 0 {
+        return Ok(());
+    }
     let num_blocks = num_faces.div_ceil(BLOCK_THREADS);
     let cfg = LaunchConfig {
         grid_dim: (num_blocks, 1, 1),
@@ -124,6 +127,9 @@ pub(super) fn launch_viscous_face_transport(
     temperatures: &cudarc::driver::CudaSlice<f32>,
     params: super::viscous_transport_params::DeviceViscousTransportParams,
 ) -> Result<()> {
+    if num_faces == 0 {
+        return Ok(());
+    }
     let num_blocks = num_faces.div_ceil(BLOCK_THREADS);
     let cfg = LaunchConfig {
         grid_dim: (num_blocks, 1, 1),
