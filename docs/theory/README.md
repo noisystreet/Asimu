@@ -49,6 +49,7 @@
 | *(待建)* `fvm_convection_diffusion.md` | `discretization` | v0.2 | 规划 | Patankar (1980) Ch. 5–6 |
 | [boundary_conditions.md](boundary_conditions.md) | `discretization` / BC | v0.2–v0.3 | **已实现（v0.2 Dirichlet/Neumann；§9 不可压规划）** | [boundary_conditions.md](boundary_conditions.md) |
 | [time_integration.md](time_integration.md) | `solver/time` | v1.x | **已实现（RK4 + LU-SGS + CFL）** | Blazek (2015) §6.1.4/§9.1；ADR 0005 |
+| [dual_time_stepping.md](dual_time_stepping.md) | `solver/time` · `solver/compressible/unstructured_*` | v1.x | **规划（非结构可压缩 DTS；f32/f64 + CUDA）** | Blazek (2015) §6.2；Jameson (1991)；ADR 0009/0016/0018 |
 | [nondimensional.md](nondimensional.md) | `physics` / `io` / BC | v1.x | **已实现** | Toro (2009) Ch. 1；Anderson (1995) |
 | [structured_gradients.md](structured_gradients.md) | `discretization/gradient` | v1.x | **已实现** | Vinokur (1989)；Ferziger et al. Ch. 8 |
 | [curvilinear_metrics.md](curvilinear_metrics.md) | `mesh/metrics` | v1.x | **规划** | Vinokur (1989)；CFL3D TM-2010-216758 |

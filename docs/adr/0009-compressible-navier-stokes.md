@@ -131,7 +131,7 @@ BC 数学与离散细节见 `docs/theory/compressible_ns.md`（规划）；v0.2 
 | 场景 | 实现 | 版本 |
 |------|------|------|
 | 瞬态 | 显式 RK3 | v1.x 首版 |
-| 稳态收敛 | 局部时间步（LUS）/ 双时间步 | v1.x+ |
+| 稳态收敛 | 局部时间步（LUS）/ 双时间步 | v1.x+（LUS 已实现；非结构 DTS 路线图见 [theory/dual_time_stepping.md](../theory/dual_time_stepping.md)） |
 | 刚性 / 细网格 | 隐式 BDF + GMRES | v1.x+ 评估 |
 
 CFL 约束独立为 `solver::cfl`：

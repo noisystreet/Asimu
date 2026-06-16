@@ -220,6 +220,8 @@ A_i = \sum_m w_m\,\Delta\mathbf x_m\,\Delta\mathbf x_m^{\mathsf T},
 
 后扫对 \(j>i\) 的邻接项做同类修正，并使用 `lusgs_sweep_backward_damping` 阻尼。扫掠候选会经过正性检查；若全场线搜索仍失败，则回退到式 (9) 的对角更新。
 
+**双时间步（规划）**：瞬态隐式路径在式 (9)(10) 分母加 \(\Delta\tau_i/\Delta t_{\mathrm{phys}}\)，并在 RHS 叠加存储项 \((U^n-U)/(V_i\Delta t_{\mathrm{phys}})\)；内外循环与配置见 [dual_time_stepping.md](dual_time_stepping.md)。
+
 ## 内面并行 scatter（面着色）
 
 粘性/无粘内面装配对每个面执行 \(\mathbf R_i \mathrel{+}= s_i\,\mathbf f_f\)。若两线程同时更新共享单元，会产生数据竞争。标准做法是 **面着色（graph coloring）**：
@@ -325,6 +327,7 @@ IDWLS 梯度每步需对每个单元累加最小二乘右端项 \(b_i\)。与 fl
 | CPU SIMD 热算子 | `exec::cpu` + feature `simd-fvm` | **P5** |
 | (9) | `ConservedFields::assign_lusgs_diagonal_update` | 已实现 |
 | (10) | `lu_sgs_sweep_unstructured` | 已实现 |
+| DTS 存储项 + 内外循环 | [dual_time_stepping.md](dual_time_stepping.md) §5 | 规划 |
 
 ### M4 实现分步（建议 PR 顺序）
 

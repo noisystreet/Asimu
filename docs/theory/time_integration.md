@@ -214,6 +214,10 @@ residual_smoothing_sweeps = 1
 | `SteadyStateIntegrator` | `TimeMode::Steady` | 伪时间步计数 |
 | `RungeKutta4Integrator` | `TimeMode::Transient` | 物理时间 \(t\) |
 
+### 7.1 双时间步（规划）
+
+非结构可压缩 **瞬态隐式** 路径规划为 `scheme = "dual_time"`：物理步 BDF1 存储项 + 伪时间内层 LU-SGS/LTS；**自 P0 起**经 `ComputeFloat` 同时支持 **f32 / f64**，并为 **CUDA f32** 预留 device 存储项与 \(U^n\) 缓冲（见 [dual_time_stepping.md](dual_time_stepping.md) §3.5）。稳态 `lu_sgs` 已是式 (6) 在 \(\Delta t_{\mathrm{phys}}\to\infty\) 时的特例。数学、架构、分阶段实施与配置草案见 **[dual_time_stepping.md](dual_time_stepping.md)**（状态：**规划**）。
+
 ---
 
 ## 8. 实现映射
@@ -226,6 +230,7 @@ residual_smoothing_sweeps = 1
 | (6) LU-SGS | `lu_sgs_sweep_3d`, `lu_sgs_step_local` | **已实现** |
 | (7) GMRES | `solve_gmres_implicit_delta_3d`, `advance_gmres_step_3d` | **已实现** |
 | (8)–(10) 残差光顺 | `smooth_residual_3d` | **已实现** |
+| DTS 存储项 + 内外循环 | `dual_time_stepping.md` §5 | **规划** |
 
 ---
 
