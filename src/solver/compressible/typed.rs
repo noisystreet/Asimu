@@ -51,6 +51,7 @@ impl CompressibleEulerSolver {
             primitive_scratch: &mut ctx.primitive_scratch,
             gradient_scratch: &mut ctx.gradient_scratch,
             interface_residual: ctx.interface_residual,
+            face_cache_f32: ctx.face_cache_f32,
         }
     }
 

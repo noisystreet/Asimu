@@ -24,6 +24,7 @@ mod gradient_unstructured_f32_cuda;
 pub mod gradient_unstructured_inviscid_f32;
 pub mod incompressible;
 pub mod periodic;
+pub mod structured_face_cache_f32;
 #[cfg(feature = "cuda")]
 pub mod unstructured_boundary_exec_topo;
 pub mod unstructured_face_cache;
@@ -119,6 +120,7 @@ pub use gradient_unstructured_f32::{
     compute_unstructured_gradients_idw_lsq_f32,
 };
 pub use gradient_unstructured_inviscid_f32::compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq_f32;
+pub use structured_face_cache_f32::{StructuredFaceCacheF32, StructuredInteriorFaceF32};
 pub use unstructured_face_cache::{
     InteriorFaceBatchStatic4, InteriorFaceBucketBatchLayout, InteriorFaceColoring,
     LsqPrecomputedCell, UnstructuredFaceTopology, UnstructuredInteriorFace,

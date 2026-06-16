@@ -5,11 +5,16 @@
 
 use crate::core::ComputeFloat;
 use crate::discretization::InviscidFaceFluxTyped;
+use crate::discretization::compressible::residual::StructuredInviscidAssembly3dTyped;
 use crate::field::{LusgsDiagonalUpdateBackend, PrimitiveFillFromConserved};
 
 /// 结构化 3D 可压缩 typed 热路径所需精度后端（密封于 `f32` / `f64`）。
 pub(crate) trait StructuredComputeBackend:
-    ComputeFloat + LusgsDiagonalUpdateBackend + InviscidFaceFluxTyped + PrimitiveFillFromConserved
+    ComputeFloat
+    + LusgsDiagonalUpdateBackend
+    + InviscidFaceFluxTyped
+    + PrimitiveFillFromConserved
+    + StructuredInviscidAssembly3dTyped
 {
 }
 

@@ -4,6 +4,7 @@
 
 mod assembly_1d;
 mod assembly_3d;
+mod assembly_3d_interior_f32;
 mod assembly_3d_muscl_typed;
 mod assembly_3d_typed;
 mod assembly_3d_viscous;
@@ -26,7 +27,10 @@ pub use assembly_1d::{
     BoundaryGhosts1d, InviscidBoundary1d, assemble_inviscid_residual_1d, zero_gradient_ghosts_1d,
 };
 pub use assembly_3d::{InviscidAssembly3dParams, assemble_inviscid_residual_3d};
-pub use assembly_3d_typed::{InviscidAssembly3dTypedParams, assemble_inviscid_residual_3d_typed};
+pub use assembly_3d_typed::{
+    InviscidAssembly3dTypedParams, StructuredInviscidAssembly3dTyped,
+    assemble_inviscid_residual_3d_typed,
+};
 pub use assembly_3d_viscous::{
     ViscousAssembly3dInput, ViscousAssembly3dParams, assemble_viscous_residual_3d,
     compute_gradients_and_assemble_viscous_3d,

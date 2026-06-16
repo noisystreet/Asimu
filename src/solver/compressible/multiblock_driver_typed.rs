@@ -3,8 +3,9 @@
 use tracing::info_span;
 
 use crate::boundary::{BoundaryPatch, BoundarySet};
+use crate::core::ComputePrecision;
 use crate::core::{ComputeFloat, Real, format_log_fixed4, format_log_sci4, log10_positive};
-use crate::discretization::{BoundaryGhostBuffer, GradientFields};
+use crate::discretization::{BoundaryGhostBuffer, GradientFields, StructuredFaceCacheF32};
 use crate::error::{AsimuError, Result};
 use crate::field::{ConservedFields, ConservedFieldsT, PrimitiveFields, PrimitiveFieldsT};
 use crate::mesh::{MultiBlockStructuredMesh3d, StructuredBlock3d};
@@ -35,6 +36,7 @@ struct BlockRunStateTyped<T: ComputeFloat> {
     storage: Rk4StorageT<T>,
     solver_state: SolverState,
     integrator: RungeKutta4Integrator,
+    face_cache_f32: Option<StructuredFaceCacheF32>,
 }
 
 struct BlockAdvanceEnvTyped<'a> {
@@ -102,6 +104,11 @@ fn build_block_run_states_typed<T: StructuredComputeBackend>(
         patches.extend(interface_patches[index].iter().cloned());
         let boundary = BoundarySet::new(patches);
         let n = block.mesh.num_cells();
+        let face_cache_f32 = if T::PRECISION == ComputePrecision::F32 {
+            Some(StructuredFaceCacheF32::from_mesh(&block.mesh))
+        } else {
+            None
+        };
         states.push(BlockRunStateTyped {
             fields: ConservedFieldsT::from_real_fields(&fields)?,
             ghosts: BoundaryGhostBuffer::new(),
@@ -112,6 +119,7 @@ fn build_block_run_states_typed<T: StructuredComputeBackend>(
             storage: Rk4StorageT::new(n)?,
             solver_state: SolverState::default(),
             integrator: RungeKutta4Integrator::new(time_config),
+            face_cache_f32,
         });
     }
     Ok(states)
@@ -193,6 +201,7 @@ fn advance_block_step_typed<T: StructuredComputeBackend>(
         }
         let state = &mut states[block_index];
         let interface_slice = interface_residuals[block_index].as_slice();
+        let face_cache_ref = state.face_cache_f32.as_ref();
         let mut ctx = CompressibleAdvanceContext3dTyped {
             mesh: &block.mesh,
             structured: &block.mesh,
@@ -219,6 +228,7 @@ fn advance_block_step_typed<T: StructuredComputeBackend>(
             } else {
                 Some(interface_slice)
             },
+            face_cache_f32: face_cache_ref,
         };
         let step_info = env.solver.advance_step_3d_typed(
             &mut ctx,

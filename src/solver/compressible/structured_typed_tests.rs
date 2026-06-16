@@ -3,6 +3,7 @@
 use super::*;
 use crate::boundary::BoundarySet;
 use crate::core::approx_eq;
+use crate::discretization::StructuredFaceCacheF32;
 use crate::discretization::freestream_pair::{FreestreamPairFixture, uniform_farfield_box};
 use crate::field::PrimitiveFields;
 use crate::mesh::StructuredMesh3d;
@@ -26,6 +27,10 @@ fn freestream_box_context<T: crate::core::ComputeFloat>(
     (mesh, boundary, fields_t, ghosts, *side.eos, *side.fs)
 }
 
+fn structured_face_cache_f32(mesh: &StructuredMesh3d) -> StructuredFaceCacheF32 {
+    StructuredFaceCacheF32::from_mesh(mesh)
+}
+
 #[test]
 fn f32_explicit_step_matches_f64_on_uniform_box() {
     let pair = FreestreamPairFixture::air_sutherland(0.2);
@@ -41,6 +46,7 @@ fn f32_explicit_step_matches_f64_on_uniform_box() {
         freestream_box_context::<f32>(&side);
     let (_, _, fields_f64, ghosts_f64, _, _) = freestream_box_context::<f64>(&side);
     let mut ghosts_f64 = ghosts_f64;
+    let face_cache = structured_face_cache_f32(&mesh);
     let mut ctx_f32 = CompressibleAdvanceContext3dTyped {
         mesh: &mesh,
         structured: &mesh,
@@ -56,6 +62,7 @@ fn f32_explicit_step_matches_f64_on_uniform_box() {
             .expect("grad"),
         viscous: None,
         interface_residual: None,
+        face_cache_f32: Some(&face_cache),
     };
     let mut ctx_f64 = CompressibleAdvanceContext3d {
         mesh: &mesh,
@@ -130,6 +137,7 @@ fn f32_lusgs_step_on_uniform_box() {
     });
     let (mesh, patches, mut fields, mut ghosts, eos, freestream) =
         freestream_box_context::<f32>(&side);
+    let face_cache = structured_face_cache_f32(&mesh);
     let mut ctx = CompressibleAdvanceContext3dTyped {
         mesh: &mesh,
         structured: &mesh,
@@ -145,6 +153,7 @@ fn f32_lusgs_step_on_uniform_box() {
             .expect("grad"),
         viscous: None,
         interface_residual: None,
+        face_cache_f32: Some(&face_cache),
     };
     let mut storage = Rk4StorageT::<f32>::new(mesh.num_cells()).expect("storage");
     let mut state = SolverState::default();
@@ -182,6 +191,7 @@ fn f32_gmres_step_on_uniform_box() {
     });
     let (mesh, patches, mut fields, mut ghosts, eos, freestream) =
         freestream_box_context::<f32>(&side);
+    let face_cache = structured_face_cache_f32(&mesh);
     let mut ctx = CompressibleAdvanceContext3dTyped {
         mesh: &mesh,
         structured: &mesh,
@@ -197,6 +207,7 @@ fn f32_gmres_step_on_uniform_box() {
             .expect("grad"),
         viscous: None,
         interface_residual: None,
+        face_cache_f32: Some(&face_cache),
     };
     let mut storage = Rk4StorageT::<f32>::new(mesh.num_cells()).expect("storage");
     let mut state = SolverState::default();

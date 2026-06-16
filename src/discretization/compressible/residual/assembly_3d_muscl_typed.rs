@@ -156,7 +156,7 @@ fn assemble_k_faces_muscl_typed<T: ComputeFloat>(
     Ok(())
 }
 
-fn assemble_boundary_faces_muscl_typed<T: ComputeFloat>(
+pub(super) fn assemble_boundary_faces_muscl_typed<T: ComputeFloat>(
     residual: &mut ConservedResidualT<T>,
     ctx: &BoundaryAssembly3dTyped<'_, T>,
 ) -> Result<()> {

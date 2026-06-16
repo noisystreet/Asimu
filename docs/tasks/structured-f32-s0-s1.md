@@ -15,7 +15,7 @@
 | PR-1 | S0-a | `StructuredComputeBackend` + trait 骨架 | 已完成 |
 | PR-2 | S0-b | 驱动子模块拆分（数值不变） | 已完成 |
 | PR-3 | S0-c | ADR 0019 定稿 + API/CHANGELOG | 已完成 |
-| PR-4 | S1-a | `StructuredFaceCacheF32` 面几何缓存 | 待办 |
+| PR-4 | S1-a | `StructuredFaceCacheF32` 面几何缓存 | 已完成 |
 | PR-5 | S1-b | `cell_spectral_radius_3d_f32` + typed trait | 待办 |
 | PR-6 | S1-c | f32 时间步缓冲 + 显式推进闭环 | 待办 |
 

@@ -5,6 +5,7 @@ use tracing::info_span;
 use crate::boundary::{BoundaryKind, BoundarySet};
 use crate::core::{ComputeFloat, Real};
 use crate::discretization::face_flux_typed::InviscidFaceFluxTyped;
+use crate::discretization::structured_face_cache_f32::StructuredFaceCacheF32;
 use crate::discretization::{BoundaryGhostBuffer, InviscidFluxConfig, ReconstructionKind};
 use crate::error::{AsimuError, Result};
 use crate::field::{ConservedFieldsT, ConservedResidualT, PrimitiveFieldsT};
@@ -23,6 +24,8 @@ pub struct InviscidAssembly3dTypedParams<'a, T: ComputeFloat> {
     pub ghosts: &'a BoundaryGhostBuffer,
     pub primitives: &'a PrimitiveFieldsT<T>,
     pub min_pressure: Real,
+    /// f32 内面几何预打包（S1-a）；`T=f32` 时由求解器传入。
+    pub face_cache_f32: Option<&'a StructuredFaceCacheF32>,
 }
 
 pub(super) struct BoundaryAssembly3dTyped<'a, T: ComputeFloat> {
@@ -31,8 +34,50 @@ pub(super) struct BoundaryAssembly3dTyped<'a, T: ComputeFloat> {
     pub(super) params: &'a InviscidAssembly3dTypedParams<'a, T>,
 }
 
+/// 结构化 3D 无粘残差 typed 装配分发（密封于 `f32`/`f64`）。
+pub trait StructuredInviscidAssembly3dTyped: ComputeFloat + InviscidFaceFluxTyped {
+    fn assemble_inviscid_residual_3d(
+        fields: &ConservedFieldsT<Self>,
+        residual: &mut ConservedResidualT<Self>,
+        params: &InviscidAssembly3dTypedParams<'_, Self>,
+    ) -> Result<()>;
+}
+
 /// 装配 3D 结构化网格无粘 Euler 残差（一阶 / MUSCL；`T=f32`/`f64`）。
-pub fn assemble_inviscid_residual_3d_typed<T: ComputeFloat + InviscidFaceFluxTyped>(
+pub fn assemble_inviscid_residual_3d_typed<T: StructuredInviscidAssembly3dTyped>(
+    fields: &ConservedFieldsT<T>,
+    residual: &mut ConservedResidualT<T>,
+    params: &InviscidAssembly3dTypedParams<'_, T>,
+) -> Result<()> {
+    T::assemble_inviscid_residual_3d(fields, residual, params)
+}
+
+impl StructuredInviscidAssembly3dTyped for f32 {
+    fn assemble_inviscid_residual_3d(
+        fields: &ConservedFieldsT<f32>,
+        residual: &mut ConservedResidualT<f32>,
+        params: &InviscidAssembly3dTypedParams<'_, f32>,
+    ) -> Result<()> {
+        if let Some(cache) = params.face_cache_f32 {
+            return super::assembly_3d_interior_f32::assemble_inviscid_residual_3d_f32(
+                fields, residual, params, cache,
+            );
+        }
+        assemble_inviscid_residual_3d_typed_generic(fields, residual, params)
+    }
+}
+
+impl StructuredInviscidAssembly3dTyped for f64 {
+    fn assemble_inviscid_residual_3d(
+        fields: &ConservedFieldsT<f64>,
+        residual: &mut ConservedResidualT<f64>,
+        params: &InviscidAssembly3dTypedParams<'_, f64>,
+    ) -> Result<()> {
+        assemble_inviscid_residual_3d_typed_generic(fields, residual, params)
+    }
+}
+
+fn assemble_inviscid_residual_3d_typed_generic<T: ComputeFloat + InviscidFaceFluxTyped>(
     fields: &ConservedFieldsT<T>,
     residual: &mut ConservedResidualT<T>,
     params: &InviscidAssembly3dTypedParams<'_, T>,
@@ -230,7 +275,7 @@ fn assemble_k_faces_typed<T: InviscidFaceFluxTyped>(
     Ok(())
 }
 
-fn assemble_boundary_faces_3d_typed<T: InviscidFaceFluxTyped>(
+pub(super) fn assemble_boundary_faces_3d_typed<T: InviscidFaceFluxTyped>(
     residual: &mut ConservedResidualT<T>,
     ctx: &BoundaryAssembly3dTyped<'_, T>,
 ) -> Result<()> {
@@ -276,7 +321,10 @@ mod tests {
     use crate::mesh::MeshMetricMode;
 
     fn assemble_uniform_freestream_typed<
-        T: ComputeFloat + InviscidFaceFluxTyped + PrimitiveFillFromConserved,
+        T: ComputeFloat
+            + InviscidFaceFluxTyped
+            + PrimitiveFillFromConserved
+            + StructuredInviscidAssembly3dTyped,
     >(
         side: &crate::discretization::freestream_pair::UniformFarfieldSide<'_>,
         metric_mode: MeshMetricMode,
@@ -292,6 +340,7 @@ mod tests {
             .expect("fill");
         let mut rhs = ConservedResidualT::<T>::zeros(mesh.num_cells()).expect("rhs");
         let config = InviscidFluxConfig::default();
+        let cache = StructuredFaceCacheF32::from_mesh(&mesh);
         let params = InviscidAssembly3dTypedParams {
             mesh: &mesh,
             eos: side.eos,
@@ -300,6 +349,7 @@ mod tests {
             ghosts: &ghosts,
             primitives: &primitives,
             min_pressure: side.min_pressure,
+            face_cache_f32: Some(&cache),
         };
         assemble_inviscid_residual_3d_typed(&fields_t, &mut rhs, &params).expect("assemble");
         rhs
@@ -337,6 +387,7 @@ mod tests {
                 .expect("fill");
             let mut rhs = ConservedResidualT::<f32>::zeros(mesh.num_cells()).expect("rhs");
             let config = InviscidFluxConfig::muscl_hllc();
+            let cache = StructuredFaceCacheF32::from_mesh(&mesh);
             let params = InviscidAssembly3dTypedParams {
                 mesh: &mesh,
                 eos: side.eos,
@@ -345,6 +396,7 @@ mod tests {
                 ghosts: &ghosts,
                 primitives: &primitives,
                 min_pressure: side.min_pressure,
+                face_cache_f32: Some(&cache),
             };
             assemble_inviscid_residual_3d_typed(&fields_t, &mut rhs, &params).expect("assemble");
             assert!(

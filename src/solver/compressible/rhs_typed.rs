@@ -2,16 +2,16 @@
 
 use tracing::info_span;
 
+use super::structured_compute_backend::StructuredComputeBackend;
 use crate::boundary::BoundarySet;
 use crate::core::ComputeFloat;
 use crate::core::Real;
 use crate::discretization::compressible::residual::InviscidAssembly3dTypedParams;
 use crate::discretization::{
-    BoundaryGhostBuffer, GradientFields, InviscidFaceFluxTyped, InviscidFluxConfig,
+    BoundaryGhostBuffer, GradientFields, InviscidFluxConfig, StructuredFaceCacheF32,
     assemble_inviscid_residual_3d_typed,
 };
 use crate::error::Result;
-use crate::field::PrimitiveFillFromConserved;
 use crate::field::{ConservedFieldsT, ConservedResidualT, PrimitiveFieldsT};
 use crate::mesh::{BoundaryMesh3d, StructuredMesh3d};
 use crate::physics::{FreestreamParams, IdealGasEoS, ReferenceScales, ViscousPhysicsConfig};
@@ -36,11 +36,10 @@ pub(crate) struct EvaluateRhs3dTyped<'a, T: ComputeFloat> {
     pub interface_residual: Option<
         &'a [crate::solver::compressible::multiblock_interface::InterfaceResidualContribution],
     >,
+    pub face_cache_f32: Option<&'a StructuredFaceCacheF32>,
 }
 
-impl<T: ComputeFloat + InviscidFaceFluxTyped + PrimitiveFillFromConserved>
-    EvaluateRhs3dTyped<'_, T>
-{
+impl<T: StructuredComputeBackend> EvaluateRhs3dTyped<'_, T> {
     pub fn run(
         &mut self,
         fields: &ConservedFieldsT<T>,
@@ -67,6 +66,7 @@ impl<T: ComputeFloat + InviscidFaceFluxTyped + PrimitiveFillFromConserved>
             ghosts: self.ghosts,
             primitives: self.primitive_scratch,
             min_pressure: self.min_pressure,
+            face_cache_f32: self.face_cache_f32,
         };
         assemble_inviscid_residual_3d_typed(fields, residual, &assembly)?;
         if let Some(contributions) = self.interface_residual {

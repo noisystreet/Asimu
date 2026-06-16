@@ -3,7 +3,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use crate::boundary::BoundarySet;
-use crate::discretization::{BoundaryGhostBuffer, GradientFields};
+use crate::discretization::{BoundaryGhostBuffer, GradientFields, StructuredFaceCacheF32};
 use crate::error::Result;
 use crate::field::{ConservedResidual, PrimitiveFields, PrimitiveFieldsT};
 use crate::mesh::{BoundaryMesh3d, StructuredMesh1d, StructuredMesh3d};
@@ -52,6 +52,8 @@ pub struct CompressibleAdvanceContext3dTyped<'a, T: crate::core::ComputeFloat> {
     pub(crate) interface_residual: Option<
         &'a [crate::solver::compressible::multiblock_interface::InterfaceResidualContribution],
     >,
+    /// f32 结构化内面几何预打包（S1-a；`T=f32` 时由驱动构建）。
+    pub face_cache_f32: Option<&'a StructuredFaceCacheF32>,
 }
 
 impl<'a, T: crate::core::ComputeFloat> CompressibleAdvanceContext3dTyped<'a, T> {
