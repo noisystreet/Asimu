@@ -20,7 +20,7 @@ cargo test runs_single_tet_unstructured_dual_time_freestream_f32_step -- --nocap
 
 ### CUDA f32（P3b）
 
-约束：`compute_precision = "f32"`、`backend = "cuda"`、`lusgs_sweep = false`、`local_time_step = true`、正数 `dt`。
+约束：`compute_precision = "f32"`、`backend = "cuda"`、`local_time_step = true`、正数 `dt`；`lusgs_sweep` 可选（默认 `false`）。
 
 ```bash
 make test-cuda

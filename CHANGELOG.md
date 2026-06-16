@@ -7,7 +7,8 @@
 
 ### Added
 
-- **P3b CUDA f32 双时间步**：device \(U^n\) 快照、BDF1 存储项 kernel、LU-SGS 对角 `inv_dt_phys`；`validate` 放行 `backend=cuda` + `scheme=dual_time`（须 `lusgs_sweep=false`）；benchmark `unstructured_dual_time_freestream/case_cuda_f32.toml`；`#[ignore=gpu]` Euler/Navier-Stokes smoke。
+- **P3b CUDA f32 双时间步**：device \(U^n\) 快照、BDF1 存储项 kernel、LU-SGS 对角 `inv_dt_phys`；`validate` 放行 `backend=cuda` + `scheme=dual_time`；benchmark `unstructured_dual_time_freestream/case_cuda_f32.toml`；`#[ignore=gpu]` Euler/Navier-Stokes smoke。
+- **CUDA f32 非结构 LU-SGS 双扫**：`lusgs_sweep_unstructured_serial_f32` device 前/后扫（CellId 序）+ host `stabilize_sweep_update_f32`；`lu_sgs` / `dual_time` + `lusgs_sweep=true` validate 与单四面体 GPU smoke。
 - [docs/DEBUG_CHECKLIST.md](docs/DEBUG_CHECKLIST.md)：V&V / 无量纲 metrics 排查清单（含 Taylor–Green 解析 \(L_{\mathrm{ref}}^2\) 反例）。
 - **I4 `channel_re100_3d`**：入口/出口稳态通道 Re=100 benchmark；`compute_incompressible_boundary_mass_balance_3d` 与 `mass_flux_imbalance_ratio` metrics。
 
