@@ -64,17 +64,33 @@ fn validate_gpu_cuda_backend_enabled(case: &CaseSpec) -> Result<()> {
     match case.time.resolved_time_scheme() {
         TimeIntegrationScheme::Rk4 | TimeIntegrationScheme::Euler => {}
         TimeIntegrationScheme::LuSgs => validate_gpu_cuda_lusgs(case)?,
-        TimeIntegrationScheme::DualTime => {
-            return Err(gpu_cuda_unsupported(
-                "cuda dual_time 于 P3b 实现；当前仅支持 cpu",
-            ));
-        }
+        TimeIntegrationScheme::DualTime => validate_gpu_cuda_dual_time(case)?,
         scheme => {
             return Err(gpu_cuda_unsupported(&format!(
                 "cuda 首版不支持 time.scheme = \"{}\"",
                 scheme.label()
             )));
         }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "cuda")]
+fn validate_gpu_cuda_dual_time(case: &CaseSpec) -> Result<()> {
+    if !case.time.uses_local_time_step() {
+        return Err(gpu_cuda_unsupported(
+            "cuda dual_time 须配合 local_time_step = true",
+        ));
+    }
+    if case.time.residual_smoothing_config().enabled {
+        return Err(gpu_cuda_unsupported("cuda 首版不支持 residual_smoothing"));
+    }
+    case.time.resolved_dual_time_config()?;
+    let lu_sgs = case.time.resolved_lusgs_config()?;
+    if lu_sgs.sweep {
+        return Err(gpu_cuda_unsupported(
+            "cuda dual_time 首版须 lusgs_sweep = false（扫掠仍 CPU）",
+        ));
     }
     Ok(())
 }

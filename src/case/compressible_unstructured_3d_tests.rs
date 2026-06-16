@@ -673,3 +673,102 @@ max_steps = 2
     assert_eq!(metrics.steps, 2);
     assert!(metrics.residual_rms.is_finite());
 }
+
+#[cfg(feature = "cuda")]
+#[test]
+fn cuda_backend_dual_time_single_tet_passes_validate() {
+    let mut case = parse_case_str(
+        r#"
+name = "unstructured_cuda_dual_time_validate"
+[numerics]
+compute_precision = "f32"
+backend = "cuda"
+[mesh]
+kind = "structured_3d"
+nx = 1
+ny = 1
+nz = 1
+
+[physics]
+gamma = 1.4
+gas_constant = 287.0
+
+[freestream]
+mach = 0.3
+pressure = 101325.0
+temperature = 288.15
+
+[euler]
+flux = "roe"
+reconstruction = "first_order"
+
+[time]
+mode = "transient"
+scheme = "dual_time"
+dt = 1.0e-4
+local_time_step = true
+cfl = 0.4
+max_inner_steps = 10
+inner_tolerance = -2.0
+lusgs_sweep = false
+max_steps = 1
+"#,
+    )
+    .expect("parse");
+    attach_single_tet_farfield(&mut case);
+    super::validate::exec_backend(&case).expect("cuda dual_time validate");
+}
+
+#[cfg(feature = "cuda")]
+#[test]
+#[ignore = "gpu"]
+fn runs_single_tet_unstructured_cuda_dual_time_smoke_step() {
+    let mut case = parse_case_str(
+        r#"
+name = "unstructured_cuda_dual_time_smoke"
+[numerics]
+compute_precision = "f32"
+backend = "cuda"
+[mesh]
+kind = "structured_3d"
+nx = 1
+ny = 1
+nz = 1
+
+[physics]
+gamma = 1.4
+gas_constant = 287.0
+
+[freestream]
+mach = 0.3
+pressure = 101325.0
+temperature = 288.15
+
+[euler]
+flux = "roe"
+reconstruction = "first_order"
+
+[time]
+mode = "transient"
+scheme = "dual_time"
+dt = 1.0e-4
+local_time_step = true
+cfl = 0.001
+max_inner_steps = 20
+inner_tolerance = -2.0
+lusgs_sweep = false
+max_steps = 1
+"#,
+    )
+    .expect("parse");
+    attach_single_tet_farfield(&mut case);
+    let result = super::compressible_unstructured_3d::run(&case).expect("run");
+    let metrics = result.compressible_3d.expect("metrics");
+    assert_eq!(metrics.steps, 1);
+    assert!(
+        metrics.residual_log10 <= -2.0,
+        "cuda dual_time freestream should converge: log10={}",
+        metrics.residual_log10
+    );
+    assert!(metrics.inner_iterations > 0);
+}
