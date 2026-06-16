@@ -203,6 +203,8 @@ gas_constant = 287.0
 mach = 0.3
 pressure = 101325.0
 temperature = 288.15
+[euler]
+flux = "hllc"
 [boundary.i_min]
 kind = "wall"
 no_slip = true
@@ -240,7 +242,9 @@ max_steps = 100
         .resolved_dual_time_config()
         .expect("dual cfg")
         .expect("some");
-    assert!((dual.dt_phys - 1.0e-4).abs() < 1.0e-12);
+    let reference = case.reference.expect("reference");
+    let expected_dt = 1.0e-4 / reference.time_scale();
+    assert!((dual.dt_phys - expected_dt).abs() < 1.0e-9);
     assert_eq!(dual.max_inner_steps, 25);
     assert_eq!(dual.inner_log10_tolerance, Some(-3.0));
 }

@@ -14,6 +14,7 @@
 ### Changed
 
 - **CUDA f32 `dual_time` 谱半径驻留 device**：与 `lu_sgs` 对角路径一致，`keep_timestep_on_device` 覆盖 `DualTime`（非 sweep），内层伪时间步跳过 \(\sigma_i\)/`cell_dts` 批量 D2H；`finalize_cell_dts` 亦跳过 `spectral_min_cell_dt` 单 float D2H（返回值在内层未被消费）。
+- **可压缩无量纲化缩放 `[time].dt`**：与不可压缩一致，解析后 `dt`/`final_time` 除以 `ReferenceScales::time_scale()`（\(t_{\mathrm{ref}}=L_{\mathrm{ref}}/U_{\mathrm{ref}}\)）。
 - [docs/DEBUG_CHECKLIST.md](docs/DEBUG_CHECKLIST.md)：V&V / 无量纲 metrics 排查清单（含 Taylor–Green 解析 \(L_{\mathrm{ref}}^2\) 反例）。
 - **I4 `channel_re100_3d`**：入口/出口稳态通道 Re=100 benchmark；`compute_incompressible_boundary_mass_balance_3d` 与 `mass_flux_imbalance_ratio` metrics。
 

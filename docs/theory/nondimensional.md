@@ -18,6 +18,8 @@
 
 任意量 \(q\) 的无量纲值 \(q^*=q/q_{\mathrm{ref}}\)（或按表 1 中对应参考量）。算例 TOML **仍写 SI**；可压缩算例在 `CaseSpec` 解析完成后**必定**调用 `io::nondimensional::apply_nondimensionalization`（须 `[freestream]`）。
 
+物理时间：\(t^* = t_{\mathrm{SI}} / t_{\mathrm{ref}}\)，\(t_{\mathrm{ref}} = L_{\mathrm{ref}}/U_{\mathrm{ref}}\)（`ReferenceScales::time_scale`）。`[time].dt` 与 `final_time` 在无量纲化时除以 \(t_{\mathrm{ref}}\)（与不可压缩 `scale_incompressible_time` 同语义）。
+
 Reynolds 数与 NS 粘性缩放：
 
 \[

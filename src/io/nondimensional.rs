@@ -116,8 +116,20 @@ pub fn apply_nondimensionalization(
         configure_nondimensional_viscous(viscous, &reference);
     }
 
+    scale_time_by_reference(&mut case.time, reference.time_scale());
+
     case.reference = Some(reference);
     Ok(())
+}
+
+/// \([time].dt\)/`final_time`：SI → \(t^* = t / t_{\mathrm{ref}}\)，\(t_{\mathrm{ref}}=L_{\mathrm{ref}}/U_{\mathrm{ref}}\)。
+fn scale_time_by_reference(time: &mut super::CaseTimeConfig, time_scale: Real) {
+    if let Some(dt) = &mut time.dt {
+        *dt /= time_scale;
+    }
+    if let Some(final_time) = &mut time.final_time {
+        *final_time /= time_scale;
+    }
 }
 
 fn configure_nondimensional_viscous(
@@ -234,13 +246,7 @@ fn scale_incompressible_time(
     time: &mut super::CaseTimeConfig,
     reference: &IncompressibleReferenceScales,
 ) {
-    let time_scale = reference.time_scale();
-    if let Some(dt) = &mut time.dt {
-        *dt /= time_scale;
-    }
-    if let Some(final_time) = &mut time.final_time {
-        *final_time /= time_scale;
-    }
+    scale_time_by_reference(time, reference.time_scale());
 }
 
 #[cfg(test)]
@@ -347,6 +353,49 @@ wall_temperature = 600.0
                 ..
             } if (*temperature - 2.0).abs() < 1.0e-12
         ));
+    }
+
+    #[test]
+    fn compressible_dual_time_dt_scales_with_time_reference() {
+        let case = parse_case_str(
+            r#"
+name = "nd_dt"
+[mesh]
+kind = "structured_3d"
+nx = 2
+ny = 2
+nz = 2
+[physics]
+gamma = 1.4
+gas_constant = 287.0
+[freestream]
+mach = 0.3
+pressure = 101325.0
+temperature = 288.15
+[euler]
+flux = "hllc"
+[time]
+mode = "transient"
+scheme = "dual_time"
+dt = 1.0e-4
+local_time_step = true
+max_inner_steps = 10
+"#,
+        )
+        .expect("parse");
+        let reference = case.reference.expect("reference");
+        let dt_star = case.time.dt.expect("dt");
+        let expected = 1.0e-4 / reference.time_scale();
+        assert!(
+            (dt_star - expected).abs() < 1.0e-9,
+            "dt*={dt_star}, expected {expected}"
+        );
+        let dual = case
+            .time
+            .resolved_dual_time_config()
+            .expect("dual")
+            .expect("some");
+        assert!((dual.dt_phys - dt_star).abs() < 1.0e-12);
     }
 
     #[test]
