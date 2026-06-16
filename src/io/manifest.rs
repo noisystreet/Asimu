@@ -41,6 +41,7 @@ pub struct ManifestSolveSummary {
     pub converged: Option<bool>,
     pub residual_log10: Option<Real>,
     pub final_time: Option<Real>,
+    pub inner_iterations: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -91,6 +92,7 @@ impl RunManifest {
         let converged = optional_bool(self.solve.converged);
         let residual_log10 = optional_f64(self.solve.residual_log10);
         let final_time = optional_f64(self.solve.final_time);
+        let inner_iterations = optional_u32(self.solve.inner_iterations);
         let output_paths: Vec<String> = self
             .output_paths
             .iter()
@@ -114,7 +116,8 @@ impl RunManifest {
     "steps": {},
     "converged": {},
     "residual_log10": {},
-    "final_time": {}
+    "final_time": {},
+    "inner_iterations": {}
   }},
   "observability": {{ "wall_time_sec": {:.6} }},
   "output_paths": [{}]
@@ -136,6 +139,7 @@ impl RunManifest {
             converged,
             residual_log10,
             final_time,
+            inner_iterations,
             self.observability.wall_time_sec,
             output_paths.join(", "),
         ))
@@ -182,6 +186,11 @@ fn optional_u64(v: Option<u64>) -> String {
         .unwrap_or_else(|| "null".to_string())
 }
 
+fn optional_u32(v: Option<u32>) -> String {
+    v.map(|n| n.to_string())
+        .unwrap_or_else(|| "null".to_string())
+}
+
 fn optional_bool(v: Option<bool>) -> String {
     v.map(|b| b.to_string())
         .unwrap_or_else(|| "null".to_string())
@@ -217,6 +226,7 @@ mod tests {
                 converged: Some(true),
                 residual_log10: Some(-8.0),
                 final_time: None,
+                inner_iterations: None,
             },
             observability: ManifestObservability { wall_time_sec: 0.5 },
             output_paths: vec![PathBuf::from("output/a.csv")],

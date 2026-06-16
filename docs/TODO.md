@@ -18,4 +18,4 @@
 - [x] **P3** — V&V smoke：`unstructured_dual_time_freestream`（f64 + f32 CPU 单四面体）
 - [ ] **P3b** — CUDA f32：device `U^n`、存储项 kernel、`validate` 能力矩阵
 - [ ] **P4** — （可选）非结构 typed GMRES + DTS
-- [ ] **P5** — manifest（`compute_precision`、`exec_device`、`inner_iterations`）
+- [x] **P5** — manifest / 残差 CSV 记录 `inner_iterations`（`compute_precision`/`exec_device` 已在 config_hash）

@@ -96,6 +96,7 @@ impl CompressibleEulerSolver {
             cfl,
             is_final: time_info.is_final,
             converged: false,
+            inner_iterations: 0,
         })
     }
 }

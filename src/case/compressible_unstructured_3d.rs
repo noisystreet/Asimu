@@ -147,6 +147,7 @@ fn run_compressible_unstructured_3d_typed<T: UnstructuredComputeBackend>(
         scheme: inviscid.short_label().to_string(),
         limiter: inviscid.limiter_label().to_string(),
         converged: last.converged,
+        inner_iterations: last.inner_iterations,
     };
     log_unstructured_complete(
         &metrics,

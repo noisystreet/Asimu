@@ -139,6 +139,7 @@ pub struct CompressibleStepInfo {
     pub is_final: bool,
     /// 本步是否因 log₁₀(RMS(ρ̇)) ≤ `[time].tolerance` 触发早停（由算例编排层设置）。
     pub converged: bool,
+    pub inner_iterations: u32,
 }
 
 /// 可压缩 Euler 显式 RK4 求解器。
@@ -247,6 +248,7 @@ impl CompressibleEulerSolver {
             cfl,
             is_final: time_info.is_final,
             converged: false,
+            inner_iterations: 0,
         })
     }
 
@@ -362,6 +364,7 @@ impl CompressibleEulerSolver {
             cfl,
             is_final: time_info.is_final,
             converged: false,
+            inner_iterations: 0,
         })
     }
 
@@ -455,6 +458,7 @@ impl CompressibleEulerSolver {
             cfl,
             is_final: time_info.is_final,
             converged: false,
+            inner_iterations: 0,
         })
     }
 
@@ -565,6 +569,7 @@ impl CompressibleEulerSolver {
             cfl,
             is_final: time_info.is_final,
             converged: false,
+            inner_iterations: 0,
         })
     }
 
@@ -790,7 +795,6 @@ impl CompressibleEulerSolver {
         }
     }
 }
-
 #[cfg(test)]
 #[path = "tests_main.rs"]
 mod tests;

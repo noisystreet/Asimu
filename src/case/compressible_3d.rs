@@ -23,6 +23,8 @@ pub struct Compressible3dRunMetrics {
     pub scheme: String,
     pub limiter: String,
     pub converged: bool,
+    /// 末物理步双时间步内层迭代次数（非 dual_time 为 0）。
+    pub inner_iterations: u32,
 }
 
 pub fn run(case: &CaseSpec) -> Result<CaseRunResult> {
@@ -351,6 +353,7 @@ fn build_run_metrics(
         scheme: scheme.to_string(),
         limiter: limiter.to_string(),
         converged: last.converged,
+        inner_iterations: last.inner_iterations,
     }
 }
 

@@ -46,6 +46,7 @@ mod tests {
             cfl: 0.4,
             is_final,
             converged: false,
+            inner_iterations: 0,
         }
     }
 

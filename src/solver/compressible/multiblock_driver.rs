@@ -379,5 +379,10 @@ fn aggregate_block_step(steps: &[CompressibleStepInfo]) -> Result<CompressibleSt
         cfl: first.cfl,
         is_final: steps.iter().all(|step| step.is_final),
         converged: steps.iter().all(|step| step.converged),
+        inner_iterations: steps
+            .iter()
+            .map(|step| step.inner_iterations)
+            .max()
+            .unwrap_or(0),
     })
 }

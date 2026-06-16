@@ -356,6 +356,11 @@ fn advance_unstructured_step_typed<T: UnstructuredComputeBackend + UnstructuredC
         cfl,
         is_final: time_info.is_final,
         converged: false,
+        inner_iterations: if env.config.time_scheme == TimeIntegrationScheme::DualTime {
+            work.dual_time_state.inner_iterations
+        } else {
+            0
+        },
     })
 }
 

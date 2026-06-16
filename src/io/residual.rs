@@ -16,12 +16,12 @@ pub fn write_residual_csv(path: &Path, history: &[CompressibleStepInfo]) -> Resu
     }
     let file = File::create(path)?;
     let mut out = BufWriter::new(file);
-    writeln!(out, "step,t,dt,log10_residual")?;
+    writeln!(out, "step,t,dt,log10_residual,inner_iterations")?;
     for info in history {
         writeln!(
             out,
-            "{},{:.16e},{:.16e},{:.16e}",
-            info.step, info.physical_time, info.dt, info.residual_log10
+            "{},{:.16e},{:.16e},{:.16e},{}",
+            info.step, info.physical_time, info.dt, info.residual_log10, info.inner_iterations
         )?;
     }
     out.flush()?;

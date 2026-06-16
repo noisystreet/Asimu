@@ -43,7 +43,7 @@ fn build_run_manifest(
     output_paths: Vec<std::path::PathBuf>,
 ) -> RunManifest {
     let benchmark_expected = try_load_benchmark_expected(case).ok().flatten();
-    let (steps, converged, residual_log10, final_time) = solve_fields(result);
+    let solve = solve_fields(result);
     RunManifest {
         schema_version: MANIFEST_SCHEMA_VERSION,
         run_id: format!("{}-{started_at_unix:.3}", case.name),
@@ -59,10 +59,11 @@ fn build_run_manifest(
         solve: ManifestSolveSummary {
             kind: kind_label(result.kind).to_string(),
             summary: result.summary.clone(),
-            steps,
-            converged,
-            residual_log10,
-            final_time,
+            steps: solve.steps,
+            converged: solve.converged,
+            residual_log10: solve.residual_log10,
+            final_time: solve.final_time,
+            inner_iterations: solve.inner_iterations,
         },
         observability: ManifestObservability { wall_time_sec },
         output_paths,
@@ -95,30 +96,42 @@ fn kind_label(kind: CaseRunKind) -> &'static str {
     }
 }
 
-fn solve_fields(result: &CaseRunResult) -> (Option<u64>, Option<bool>, Option<Real>, Option<Real>) {
+#[derive(Debug, Clone, Copy, Default)]
+struct ManifestSolveFields {
+    steps: Option<u64>,
+    converged: Option<bool>,
+    residual_log10: Option<Real>,
+    final_time: Option<Real>,
+    inner_iterations: Option<u32>,
+}
+
+fn solve_fields(result: &CaseRunResult) -> ManifestSolveFields {
     if let Some(m) = &result.compressible_3d {
-        return (
-            Some(m.steps),
-            Some(m.converged),
-            Some(m.residual_log10),
-            Some(m.final_time),
-        );
+        return ManifestSolveFields {
+            steps: Some(m.steps),
+            converged: Some(m.converged),
+            residual_log10: Some(m.residual_log10),
+            final_time: Some(m.final_time),
+            inner_iterations: Some(m.inner_iterations),
+        };
     }
     if let Some(m) = &result.incompressible_3d {
-        return (
-            Some(m.steps),
-            Some(m.simplec_converged),
-            Some(m.simplec_final_residual),
-            Some(m.physical_time),
-        );
+        return ManifestSolveFields {
+            steps: Some(m.steps),
+            converged: Some(m.simplec_converged),
+            residual_log10: Some(m.simplec_final_residual),
+            final_time: Some(m.physical_time),
+            ..ManifestSolveFields::default()
+        };
     }
     if let Some(m) = &result.sod {
-        return (Some(m.steps), None, None, Some(m.final_time));
+        return ManifestSolveFields {
+            steps: Some(m.steps),
+            final_time: Some(m.final_time),
+            ..ManifestSolveFields::default()
+        };
     }
-    if let Some(_m) = &result.diffusion {
-        return (None, None, None, None);
-    }
-    (None, None, None, None)
+    ManifestSolveFields::default()
 }
 
 fn collect_output_paths(result: &CaseRunResult) -> Vec<std::path::PathBuf> {
