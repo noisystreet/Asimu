@@ -25,6 +25,8 @@ pub(crate) struct CudaPipelineState {
     pub spectral_diffusivity_on_device: bool,
     /// LU-SGS 对角更新已在 device 上写回守恒场（P4）。
     pub lusgs_diagonal_on_device: bool,
+    /// 双时间步 \(U^n\) 快照在 `cons_u_n_*` 上有效（P3b）。
+    pub u_n_on_device: bool,
 }
 
 impl CudaPipelineState {
@@ -44,6 +46,7 @@ impl CudaPipelineState {
         self.reset_rhs_step();
         self.timestep_on_device = false;
         self.lusgs_diagonal_on_device = false;
+        self.u_n_on_device = false;
         self.boundary_ghosts_on_device = false;
         self.cell_temps_on_device = false;
         self.spectral_diffusivity_on_device = false;

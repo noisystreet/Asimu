@@ -44,7 +44,7 @@ pub(crate) fn advance_unstructured_dual_time_typed<
     }
     let lu_sgs = env.config.lu_sgs;
     let inv_dt_phys = dual.inv_dt_phys();
-    work.dual_time_state.snapshot_u_n(fields)?;
+    T::snapshot_dual_time_u_n(work, fields)?;
     let mut effective_residual_rms = 0.0;
     let base_ctx = DualTimeInnerCtx {
         env,

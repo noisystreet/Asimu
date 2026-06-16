@@ -116,6 +116,15 @@ where
     f()
 }
 
+/// 合并多次 D2D 为一条 trace（双时间步 \(U^n\) 快照等）。
+pub fn d2d_batch<F>(label: &'static str, bytes: usize, elements: usize, f: F) -> Result<()>
+where
+    F: FnOnce() -> Result<()>,
+{
+    let _span = info_span!("cuda_d2d", label, bytes, elements).entered();
+    f()
+}
+
 /// 无 span 的内部 memcpy（须在 `h2d_batch` 闭包内调用）。
 pub(crate) fn memcpy_htod_unchecked<T: DeviceRepr>(
     stream: &Arc<CudaStream>,
@@ -135,4 +144,15 @@ pub(crate) fn clone_dtoh_unchecked<T: DeviceRepr + Clone>(
     stream
         .clone_dtoh(src)
         .map_err(|e| AsimuError::Exec(format!("CUDA D2H 失败: {e:?}")))
+}
+
+/// 无 span 的内部 dtod（须在 `d2d_batch` 闭包内调用）。
+pub(crate) fn memcpy_dtod_unchecked<T: DeviceRepr>(
+    stream: &Arc<CudaStream>,
+    src: &CudaSlice<T>,
+    dst: &mut CudaSlice<T>,
+) -> Result<()> {
+    stream
+        .memcpy_dtod(src, dst)
+        .map_err(|e| AsimuError::Exec(format!("CUDA D2D 失败: {e:?}")))
 }

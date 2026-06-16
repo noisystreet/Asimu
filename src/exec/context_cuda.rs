@@ -130,6 +130,35 @@ impl ExecutionContext {
             .unwrap_or(false)
     }
 
+    /// CUDA P3b：双时间步 \(U^n\) 快照在 device 上有效。
+    #[cfg(feature = "cuda")]
+    #[must_use]
+    pub fn cuda_u_n_on_device(&self) -> bool {
+        self.backend_state.cuda_u_n_on_device().unwrap_or(false)
+    }
+
+    /// CUDA P3b：物理步初 device D2D 快照 \(U^n\)。
+    #[cfg(feature = "cuda")]
+    pub fn cuda_snapshot_u_n_on_device(
+        &mut self,
+        fields: &crate::field::ConservedFieldsT<f32>,
+    ) -> Result<()> {
+        self.backend_state
+            .cuda_mut()?
+            .snapshot_u_n_on_device(fields)
+    }
+
+    /// CUDA P3b：D2H 下载 device \(U^n\) 至 host 缓冲（物理步边界同步）。
+    #[cfg(feature = "cuda")]
+    pub fn cuda_download_u_n_on_device(
+        &mut self,
+        u_n_out: &mut crate::field::ConservedFieldsT<f32>,
+    ) -> Result<()> {
+        self.backend_state
+            .cuda_mut()?
+            .download_u_n_on_device(u_n_out)
+    }
+
     /// CUDA P4：LU-SGS 步初上传守恒基态至 device。
     #[cfg(feature = "cuda")]
     pub fn cuda_upload_conserved_for_integration(

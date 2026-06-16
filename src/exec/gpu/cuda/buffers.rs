@@ -5,7 +5,10 @@ use std::sync::Arc;
 
 use cudarc::driver::{CudaSlice, CudaStream, DeviceRepr};
 
-use super::transfer::{clone_dtoh_unchecked, d2h_batch, h2d_batch, memcpy_htod_unchecked};
+use super::transfer::{
+    clone_dtoh_unchecked, d2d_batch, d2h_batch, h2d_batch, memcpy_dtod_unchecked,
+    memcpy_htod_unchecked,
+};
 use crate::error::{AsimuError, Result};
 use crate::field::{ConservedFieldsT, ConservedResidualT, PrimitiveFieldsT};
 
@@ -41,6 +44,11 @@ pub struct CudaFieldBuffers {
     pub(crate) cons_my: CudaSlice<f32>,
     pub(crate) cons_mz: CudaSlice<f32>,
     pub(crate) cons_e: CudaSlice<f32>,
+    pub(crate) cons_u_n_rho: CudaSlice<f32>,
+    pub(crate) cons_u_n_mx: CudaSlice<f32>,
+    pub(crate) cons_u_n_my: CudaSlice<f32>,
+    pub(crate) cons_u_n_mz: CudaSlice<f32>,
+    pub(crate) cons_u_n_e: CudaSlice<f32>,
     pub(crate) num_cells: usize,
 }
 
@@ -58,6 +66,7 @@ impl CudaFieldBuffers {
         }
         let prim_res = alloc_prim_and_residual_buffers(stream, num_cells)?;
         let cons = alloc_conserved_buffers(stream, num_cells)?;
+        let cons_u_n = alloc_conserved_buffers(stream, num_cells)?;
         Ok(Self {
             prim_rho: prim_res.prim_rho,
             prim_p: prim_res.prim_p,
@@ -74,6 +83,11 @@ impl CudaFieldBuffers {
             cons_my: cons.cons_my,
             cons_mz: cons.cons_mz,
             cons_e: cons.cons_e,
+            cons_u_n_rho: cons_u_n.cons_rho,
+            cons_u_n_mx: cons_u_n.cons_mx,
+            cons_u_n_my: cons_u_n.cons_my,
+            cons_u_n_mz: cons_u_n.cons_mz,
+            cons_u_n_e: cons_u_n.cons_e,
             num_cells,
         })
     }
@@ -127,6 +141,44 @@ impl CudaFieldBuffers {
             dtoh_into_unchecked(stream, &self.res_my, residual.momentum_y.values_mut())?;
             dtoh_into_unchecked(stream, &self.res_mz, residual.momentum_z.values_mut())?;
             dtoh_into_unchecked(stream, &self.res_e, residual.total_energy.values_mut())?;
+            Ok(())
+        })
+    }
+
+    /// 物理步初 D2D 快照：\(U^n \leftarrow U\)（device 守恒缓冲）。
+    pub fn snapshot_u_n_on_device(&mut self, stream: &Arc<CudaStream>) -> Result<()> {
+        let n = self.num_cells;
+        let bytes = n
+            .checked_mul(5 * size_of::<f32>())
+            .ok_or_else(|| AsimuError::Field("dual_time U^n D2D 字节数溢出".to_string()))?;
+        d2d_batch("field_conserved_u_n_snapshot", bytes, n, || {
+            memcpy_dtod_unchecked(stream, &self.cons_rho, &mut self.cons_u_n_rho)?;
+            memcpy_dtod_unchecked(stream, &self.cons_mx, &mut self.cons_u_n_mx)?;
+            memcpy_dtod_unchecked(stream, &self.cons_my, &mut self.cons_u_n_my)?;
+            memcpy_dtod_unchecked(stream, &self.cons_mz, &mut self.cons_u_n_mz)?;
+            memcpy_dtod_unchecked(stream, &self.cons_e, &mut self.cons_u_n_e)?;
+            Ok(())
+        })
+    }
+
+    pub fn download_u_n(
+        &self,
+        stream: &Arc<CudaStream>,
+        fields: &mut ConservedFieldsT<f32>,
+    ) -> Result<()> {
+        let n = fields.num_cells();
+        if n != self.num_cells {
+            return Err(AsimuError::Field(format!(
+                "U^n 下载长度 {n} 与 device 缓冲 {} 不一致",
+                self.num_cells
+            )));
+        }
+        d2h_batch("field_conserved_u_n", n * 5 * size_of::<f32>(), n, || {
+            dtoh_into_unchecked(stream, &self.cons_u_n_rho, fields.density.values_mut())?;
+            dtoh_into_unchecked(stream, &self.cons_u_n_mx, fields.momentum_x.values_mut())?;
+            dtoh_into_unchecked(stream, &self.cons_u_n_my, fields.momentum_y.values_mut())?;
+            dtoh_into_unchecked(stream, &self.cons_u_n_mz, fields.momentum_z.values_mut())?;
+            dtoh_into_unchecked(stream, &self.cons_u_n_e, fields.total_energy.values_mut())?;
             Ok(())
         })
     }
@@ -319,4 +371,78 @@ fn alloc_conserved_buffers(stream: &Arc<CudaStream>, num_cells: usize) -> Result
         cons_mz: alloc_zeros_f32(stream, num_cells)?,
         cons_e: alloc_zeros_f32(stream, num_cells)?,
     })
+}
+
+#[cfg(all(test, feature = "cuda"))]
+mod gpu_tests {
+    use std::sync::Arc;
+
+    use cudarc::driver::CudaContext;
+
+    use super::*;
+    use crate::core::ComputeFloat;
+    use crate::exec::gpu::cuda::CudaBackendState;
+    use crate::field::ConservedFieldsT;
+    use crate::physics::ConservedState;
+
+    #[test]
+    #[ignore = "gpu"]
+    fn cuda_snapshot_u_n_preserves_physical_level_after_cons_update() {
+        let ctx = Arc::new(CudaContext::new(0).expect("CUDA 设备"));
+        let stream = ctx.default_stream();
+        let mut fields = CudaFieldBuffers::try_new(&stream, 1).expect("buffers");
+        let state = ConservedState {
+            density: 1.0,
+            momentum: [0.2, 0.0, 0.0],
+            total_energy: 2.5,
+        };
+        let base = ConservedFieldsT::<f32>::uniform(1, state).expect("base");
+        fields.upload_conserved(&stream, &base).expect("upload");
+        fields.snapshot_u_n_on_device(&stream).expect("snapshot");
+
+        let mut perturbed = base.clone();
+        perturbed.density.values_mut()[0] = f32::from_real(1.5);
+        fields
+            .upload_conserved(&stream, &perturbed)
+            .expect("perturb cons");
+
+        let mut u_n = base.clone();
+        fields
+            .download_u_n(&stream, &mut u_n)
+            .expect("download u_n");
+        assert!((u_n.density.values()[0] - base.density.values()[0]).abs() < 1.0e-6);
+
+        let mut cons = base.clone();
+        fields
+            .download_conserved(&stream, &mut cons)
+            .expect("download cons");
+        assert!((cons.density.values()[0] - perturbed.density.values()[0]).abs() < 1.0e-6);
+    }
+
+    #[test]
+    #[ignore = "gpu"]
+    fn cuda_backend_snapshot_u_n_matches_host_after_d2h() {
+        let mut backend = CudaBackendState::try_new().expect("backend");
+        let state = ConservedState {
+            density: 1.1,
+            momentum: [0.0, 0.3, 0.0],
+            total_energy: 2.7,
+        };
+        let host = ConservedFieldsT::<f32>::uniform(1, state).expect("host");
+        backend
+            .snapshot_u_n_on_device(&host)
+            .expect("device snapshot");
+        let mut u_n = ConservedFieldsT::<f32>::uniform(
+            1,
+            ConservedState {
+                density: 0.0,
+                momentum: [0.0; 3],
+                total_energy: 0.0,
+            },
+        )
+        .expect("out");
+        backend.download_u_n_on_device(&mut u_n).expect("d2h u_n");
+        assert!((u_n.density.values()[0] - host.density.values()[0]).abs() < 1.0e-6);
+        assert!(backend.u_n_on_device());
+    }
 }

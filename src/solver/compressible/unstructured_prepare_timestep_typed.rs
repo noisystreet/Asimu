@@ -149,6 +149,14 @@ pub(crate) trait UnstructuredCudaPrepareSync:
         work: &mut UnstructuredStepWorkTyped<Self>,
         fields: &mut ConservedFieldsT<Self>,
     ) -> Result<()>;
+
+    /// 双时间步物理步初冻结 \(U^n\)。
+    fn snapshot_dual_time_u_n(
+        work: &mut UnstructuredStepWorkTyped<Self>,
+        fields: &ConservedFieldsT<Self>,
+    ) -> Result<()> {
+        work.dual_time_state.snapshot_u_n(fields)
+    }
 }
 
 impl UnstructuredCudaPrepareSync for f64 {

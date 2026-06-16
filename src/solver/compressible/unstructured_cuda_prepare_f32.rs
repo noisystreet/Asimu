@@ -159,4 +159,18 @@ impl UnstructuredCudaPrepareSync for f32 {
         let _ = (work, fields);
         Ok(())
     }
+
+    fn snapshot_dual_time_u_n(
+        work: &mut UnstructuredStepWorkTyped<f32>,
+        fields: &ConservedFieldsT<f32>,
+    ) -> Result<()> {
+        #[cfg(feature = "cuda")]
+        if work.exec.device() == ExecDevice::GpuCuda {
+            work.exec.cuda_snapshot_u_n_on_device(fields)?;
+            work.exec
+                .cuda_download_u_n_on_device(&mut work.dual_time_state.u_at_physical_level)?;
+            return Ok(());
+        }
+        work.dual_time_state.snapshot_u_n(fields)
+    }
 }

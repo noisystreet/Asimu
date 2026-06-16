@@ -10,7 +10,7 @@ use super::super::viscous_transport_params::build_device_viscous_transport_param
 use super::CudaBackendState;
 use crate::core::Real;
 use crate::discretization::UnstructuredSolverMeshCache;
-use crate::error::Result;
+use crate::error::{AsimuError, Result};
 use crate::field::ConservedFieldsT;
 use crate::physics::{IdealGasEoS, ViscousPhysicsConfig};
 
@@ -178,5 +178,34 @@ impl CudaBackendState {
             self.pipeline.spectral_diffusivity_on_device = true;
         }
         Ok(())
+    }
+
+    #[must_use]
+    pub(crate) fn u_n_on_device(&self) -> bool {
+        self.pipeline.u_n_on_device
+    }
+
+    /// 双时间步物理步初：device 守恒场 D2D 快照 \(U^n\)（P3b）。
+    pub fn snapshot_u_n_on_device(&mut self, conserved: &ConservedFieldsT<f32>) -> Result<()> {
+        self.ensure_fields(conserved.num_cells())?;
+        let fields = self.fields.as_mut().expect("field buffers after ensure");
+        if !self.pipeline.conserved_on_device {
+            fields.upload_conserved(&self.stream, conserved)?;
+            self.pipeline.conserved_on_device = true;
+        }
+        fields.snapshot_u_n_on_device(&self.stream)?;
+        self.pipeline.u_n_on_device = true;
+        Ok(())
+    }
+
+    /// D2H 下载 device \(U^n\)（物理步边界与 host 存储项衔接）。
+    pub fn download_u_n_on_device(&mut self, u_n_out: &mut ConservedFieldsT<f32>) -> Result<()> {
+        if !self.pipeline.u_n_on_device {
+            return Err(AsimuError::Exec(
+                "CUDA U^n 未在 device 上；请先调用 snapshot_u_n_on_device".to_string(),
+            ));
+        }
+        let fields = self.fields.as_ref().expect("field buffers");
+        fields.download_u_n(&self.stream, u_n_out)
     }
 }
