@@ -9,9 +9,8 @@ use crate::solver::compressible::helpers::{
     RefreshCompressibleStateTypedInput, finalize_cell_dts_from_sigma,
     refresh_compressible_ghosts_and_primitives_typed,
 };
-use crate::solver::compressible::spectral_radius::{
-    SpectralRadius3dParams, cell_local_dt_spectral, cell_spectral_radius_3d,
-};
+use crate::solver::compressible::spectral_radius::cell_local_dt_spectral;
+use crate::solver::compressible::spectral_radius_3d_f32::SpectralRadius3dTypedParams;
 use crate::solver::compressible::structured_compute_backend::StructuredComputeBackend;
 use crate::solver::compressible::{CompressibleAdvanceContext3dTyped, CompressibleEulerSolver};
 use crate::solver::time::{min_positive_dt, positive_fixed_dt};
@@ -58,18 +57,20 @@ impl CompressibleEulerSolver {
             primitives: &mut ctx.primitive_scratch,
         })?;
         ctx.spectral_primitives = ctx.primitive_scratch.cast_real()?;
-        let params = SpectralRadius3dParams {
+        let params = SpectralRadius3dTypedParams {
             mesh: ctx.structured,
             boundary_mesh: ctx.mesh,
             boundaries: ctx.patches,
             ghosts: ctx.ghosts,
-            primitives: &ctx.spectral_primitives,
+            primitives: &ctx.primitive_scratch,
+            face_cache_f32: ctx.face_cache_f32,
             eos: ctx.eos,
             min_pressure: p_floor,
             viscous: ctx.viscous,
         };
-        let sigma = cell_spectral_radius_3d(&params)?;
-        let volumes = params.mesh.cell_volumes();
+        let sigma_typed = T::cell_spectral_radius_3d_typed(&params)?;
+        let sigma = T::sigma_to_real(sigma_typed);
+        let volumes = ctx.structured.cell_volumes();
         let cell_dts = cell_local_dt_spectral(&volumes, &sigma, cfl)?;
         Ok((cell_dts, sigma))
     }

@@ -23,6 +23,7 @@ pub mod lu_sgs_sweep_unstructured;
 mod lu_sgs_sweep_unstructured_typed;
 pub mod sod;
 pub mod spectral_radius;
+pub mod spectral_radius_3d_f32;
 pub mod spectral_radius_f32;
 pub mod spectral_radius_unstructured;
 mod spectral_radius_unstructured_f32;

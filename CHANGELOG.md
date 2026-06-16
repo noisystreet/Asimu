@@ -13,6 +13,7 @@
 
 ### Changed
 
+- **ADR 0019 S1-b**：结构化 f32 谱半径 `cell_spectral_radius_3d_f32` + `StructuredSpectralRadiusTyped`（去除 prepare 边界 `cast_real`）。
 - **ADR 0019 S1-a**：结构化 `StructuredFaceCacheF32` 面几何 f32 预打包；f32 无粘内面装配读缓存。
 - **ADR 0019 S0 完成**：结构化可压缩 `StructuredComputeBackend` 聚合 trait；typed 驱动拆分为 `structured_prepare_timestep_typed` / `structured_explicit_typed` / `structured_lusgs_typed`（无数值变更）；ADR 状态已接受。
 - **I4 收尾**：压力出口面通量零梯度外推（`incompressible_boundary_mass_flux_3d`）；`channel_re100_3d` 增加 \(x=3L/4\) 充分发展 Poiseuille 剖面 V&V；CI 质量守恒 smoke 保持 \(<1.5\%\)（32×8 upwind）；`expected.json` 状态 `i4_inlet_outlet_vv_complete`。
