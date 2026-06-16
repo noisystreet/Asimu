@@ -1,4 +1,4 @@
-// ADR 0017 G1：非结构一阶无粘 Roe / HVL 内面通量 + scatter（f32）。
+// ADR 0017 G1：非结构一阶无粘 Roe / HVL / SLAU2 内面通量 + scatter（f32）。
 // 数值语义对齐 src/discretization/roe.rs + inviscid.rs scatter。
 
 #include <cuda_runtime.h>
@@ -335,7 +335,108 @@ __device__ inline Flux5 hvl_flux_f32(float gamma, float nx, float ny, float nz, 
     return to_global_flux(face, nx, ny, nz, t1x, t1y, t1z, t2x, t2y, t2z);
 }
 
-// flux_scheme: 0=Roe, 1=Hanel-Van Leer
+__device__ inline float speed_magnitude_slau2(const FaceFrameState &s) {
+    return sqrtf(s.un * s.un + s.ut0 * s.ut0 + s.ut1 * s.ut1);
+}
+
+__device__ inline float specific_enthalpy_slau2(const FaceFrameState &s, float gamma) {
+    float speed_sq = s.un * s.un + s.ut0 * s.ut0 + s.ut1 * s.ut1;
+    return gamma / (gamma - 1.0f) * s.p / s.rho + 0.5f * speed_sq;
+}
+
+__device__ inline float supersonic_alpha_slau2(float mach) {
+    return (fabsf(mach) >= 1.0f) ? 0.0f : 1.0f;
+}
+
+__device__ inline float signum_slau2(float x) {
+    return (x > 0.0f) - (x < 0.0f);
+}
+
+__device__ inline float pressure_beta_plus_slau2(float mach, float alpha) {
+    float s = signum_slau2(mach);
+    float mp1 = mach + 1.0f;
+    return (1.0f - alpha) * 0.5f * (1.0f + s) + alpha * 0.25f * (2.0f - mach) * mp1 * mp1;
+}
+
+__device__ inline float pressure_beta_minus_slau2(float mach, float alpha) {
+    return pressure_beta_plus_slau2(-mach, alpha);
+}
+
+__device__ inline float mass_coupling_g_slau2(float ml, float mr) {
+    float left = fmaxf(fminf(ml, 0.0f), -1.0f);
+    float right = fminf(fmaxf(mr, 0.0f), 1.0f);
+    return -left * right;
+}
+
+__device__ inline float mass_pressure_xi_slau2(float speed_l, float speed_r, float c) {
+    float speed = sqrtf(0.5f * (speed_l * speed_l + speed_r * speed_r));
+    float m_cap = fminf(speed / c, 1.0f);
+    float one_minus = 1.0f - m_cap;
+    return one_minus * one_minus;
+}
+
+__device__ inline float slau2_pressure_dissipation(float speed_l, float speed_r, float c) {
+    float speed = sqrtf(0.5f * (speed_l * speed_l + speed_r * speed_r));
+    return fminf(speed / c, 1.0f);
+}
+
+__device__ inline float interface_pressure_slau2(const FaceFrameState &left,
+                                                 const FaceFrameState &right, float c) {
+    float ml = left.un / c;
+    float mr = right.un / c;
+    float alpha_l = supersonic_alpha_slau2(ml);
+    float alpha_r = supersonic_alpha_slau2(mr);
+    float p_plus_l = pressure_beta_plus_slau2(ml, alpha_l);
+    float p_minus_r = pressure_beta_minus_slau2(mr, alpha_r);
+    float dp = right.p - left.p;
+    float p_bar = 0.5f * (left.p + right.p);
+    float diss = slau2_pressure_dissipation(speed_magnitude_slau2(left), speed_magnitude_slau2(right),
+                                            c) *
+                 (p_plus_l + p_minus_r - 1.0f) * p_bar;
+    return p_bar - 0.5f * (p_plus_l - p_minus_r) * dp + diss;
+}
+
+__device__ inline FaceFrameFlux slau2_face_flux(const FaceFrameState &left,
+                                                const FaceFrameState &right, float gamma) {
+    float c_l = fmaxf(sqrtf(gamma * left.p / left.rho), 1.0e-12f);
+    float c_r = fmaxf(sqrtf(gamma * right.p / right.rho), 1.0e-12f);
+    float c = 0.5f * (c_l + c_r);
+    float ml = left.un / c;
+    float mr = right.un / c;
+    float dp = right.p - left.p;
+    float g = mass_coupling_g_slau2(ml, mr);
+    float vn_abs =
+        (left.rho * fabsf(left.un) + right.rho * fabsf(right.un)) / (left.rho + right.rho);
+    float vn_abs_l = (1.0f - g) * vn_abs + g * fabsf(left.un);
+    float vn_abs_r = (1.0f - g) * vn_abs + g * fabsf(right.un);
+    float xi = mass_pressure_xi_slau2(speed_magnitude_slau2(left), speed_magnitude_slau2(right), c);
+    float mass =
+        0.5f * (left.rho * (left.un + vn_abs_l) + right.rho * (right.un - vn_abs_r) - xi * dp / c);
+    float p_face = interface_pressure_slau2(left, right, c);
+    float hl = specific_enthalpy_slau2(left, gamma);
+    float hr = specific_enthalpy_slau2(right, gamma);
+    float mass_plus = 0.5f * (mass + fabsf(mass));
+    float mass_minus = 0.5f * (mass - fabsf(mass));
+    FaceFrameFlux f;
+    f.mass = mass;
+    f.normal_momentum = mass_plus * left.un + mass_minus * right.un + p_face;
+    f.tangential_momentum0 = mass_plus * left.ut0 + mass_minus * right.ut0;
+    f.tangential_momentum1 = mass_plus * left.ut1 + mass_minus * right.ut1;
+    f.energy = mass_plus * hl + mass_minus * hr;
+    return f;
+}
+
+__device__ inline Flux5 slau2_flux_f32(float gamma, float nx, float ny, float nz, const Prim5 &pl,
+                                      const Prim5 &pr) {
+    float t1x, t1y, t1z, t2x, t2y, t2z;
+    face_tangents(nx, ny, nz, t1x, t1y, t1z, t2x, t2y, t2z);
+    FaceFrameState fl = frame_from_prim(gamma, pl, nx, ny, nz, t1x, t1y, t1z, t2x, t2y, t2z);
+    FaceFrameState fr = frame_from_prim(gamma, pr, nx, ny, nz, t1x, t1y, t1z, t2x, t2y, t2z);
+    FaceFrameFlux face = slau2_face_flux(fl, fr, gamma);
+    return to_global_flux(face, nx, ny, nz, t1x, t1y, t1z, t2x, t2y, t2z);
+}
+
+// flux_scheme: 0=Roe, 1=Hanel-Van Leer, 2=SLAU2
 extern "C" __global__ void inviscid_first_order_bucket_f32(
     const uint32_t *__restrict__ bucket_faces, uint32_t num_faces,
     const FaceGeom *__restrict__ face_geom, const float *__restrict__ prim_rho,
@@ -365,8 +466,10 @@ extern "C" __global__ void inviscid_first_order_bucket_f32(
     Flux5 flux;
     if (flux_scheme == 0u) {
         flux = roe_flux_f32(gamma, entropy_fix != 0u, nx, ny, nz, pl, pr);
-    } else {
+    } else if (flux_scheme == 1u) {
         flux = hvl_flux_f32(gamma, nx, ny, nz, pl, pr);
+    } else {
+        flux = slau2_flux_f32(gamma, nx, ny, nz, pl, pr);
     }
     scatter_flux(res_rho, res_mx, res_my, res_mz, res_e, g.owner, g.neighbor, g.owner_scale,
                  g.neighbor_scale, flux);
@@ -425,8 +528,10 @@ extern "C" __global__ void inviscid_first_order_boundary_f32(
     Flux5 flux;
     if (flux_scheme == 0u) {
         flux = roe_flux_f32(gamma, entropy_fix != 0u, nx, ny, nz, pl, pr);
-    } else {
+    } else if (flux_scheme == 1u) {
         flux = hvl_flux_f32(gamma, nx, ny, nz, pl, pr);
+    } else {
+        flux = slau2_flux_f32(gamma, nx, ny, nz, pl, pr);
     }
     scatter_flux_boundary_atomic(res_rho, res_mx, res_my, res_mz, res_e, o, g.owner_scale, flux);
 }

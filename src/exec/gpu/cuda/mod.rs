@@ -39,8 +39,8 @@ pub use face_geom::{ExecInteriorColorBucket, ExecInteriorFaceStatic, ExecInterio
 pub use idwls_mesh_cache::IdwlsViscousRhsHostOut;
 pub use idwls_topology::{DeviceIdwlsGhostSample, ExecIdwlsViscousTopology};
 pub use inviscid::{
-    CUDA_FLUX_SCHEME_HVL, CUDA_FLUX_SCHEME_ROE, CudaBackendState, CudaFirstOrderInviscidParams,
-    CudaPrepareRhsDeviceInput,
+    CUDA_FLUX_SCHEME_HVL, CUDA_FLUX_SCHEME_ROE, CUDA_FLUX_SCHEME_SLAU2, CudaBackendState,
+    CudaFirstOrderInviscidParams, CudaPrepareRhsDeviceInput,
 };
 pub use lusgs_sweep::{LusgsSweepCudaHostInput, LusgsSweepCudaScalars};
 pub use spectral_radius_topology::ExecSpectralRadiusTopology;

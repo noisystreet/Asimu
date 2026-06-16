@@ -9,7 +9,7 @@ use crate::field::{ConservedResidualT, PrimitiveFieldsT};
 
 /// 若当前 `ExecutionContext` 为 CUDA，在 device 上装配内面残差并返回 `Ok(true)`。
 ///
-/// `params.flux_scheme`：`CUDA_FLUX_SCHEME_ROE` 或 `CUDA_FLUX_SCHEME_HVL`。
+/// `params.flux_scheme`：`CUDA_FLUX_SCHEME_ROE`、`CUDA_FLUX_SCHEME_HVL` 或 `CUDA_FLUX_SCHEME_SLAU2`。
 pub fn try_assemble_first_order_interior_f32(
     exec: &mut ExecutionContext,
     residual: &mut ConservedResidualT<f32>,

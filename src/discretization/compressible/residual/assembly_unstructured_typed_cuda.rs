@@ -3,7 +3,8 @@
 use crate::discretization::unstructured_face_cache::UnstructuredFaceTopology;
 use crate::error::Result;
 use crate::exec::gpu::cuda::{
-    CUDA_FLUX_SCHEME_HVL, CUDA_FLUX_SCHEME_ROE, CudaFirstOrderInviscidParams,
+    CUDA_FLUX_SCHEME_HVL, CUDA_FLUX_SCHEME_ROE, CUDA_FLUX_SCHEME_SLAU2,
+    CudaFirstOrderInviscidParams,
 };
 
 use super::InviscidAssemblyUnstructuredTypedParams;
@@ -21,6 +22,7 @@ pub(super) fn cuda_first_order_f32_interior(
         crate::discretization::flux_config::FluxScheme::HanelVanLeer => {
             (CUDA_FLUX_SCHEME_HVL, false)
         }
+        crate::discretization::flux_config::FluxScheme::Slau2 => (CUDA_FLUX_SCHEME_SLAU2, false),
         _ => return Ok(false),
     };
     let exec_topo = &params.mesh_cache.cuda_inviscid_interior_topo;
@@ -55,6 +57,7 @@ pub(super) fn cuda_first_order_f32_boundary(
         crate::discretization::flux_config::FluxScheme::HanelVanLeer => {
             (CUDA_FLUX_SCHEME_HVL, false)
         }
+        crate::discretization::flux_config::FluxScheme::Slau2 => (CUDA_FLUX_SCHEME_SLAU2, false),
         _ => return Ok(false),
     };
     let boundary_ghosts_storage = if params.exec.cuda_boundary_ghosts_on_device() {
@@ -251,6 +254,81 @@ mod tests {
         let side = pair.inviscid_side();
         let (mesh, boundary, fields, ghosts, mesh_cache, primitives) = single_tet_fixture(&side);
         let config = InviscidFluxConfig::hanel_van_leer_first_order();
+
+        let mut cpu_rhs = ConservedResidualT::<f32>::zeros(mesh.num_cells()).expect("cpu rhs");
+        let mut cpu_exec = ExecutionContext::for_unit_test();
+        let mut cpu_params = InviscidAssemblyUnstructuredTypedParams {
+            mesh: &mesh,
+            eos: side.eos,
+            config: &config,
+            boundaries: &boundary,
+            ghosts: &ghosts,
+            primitives: &primitives,
+            mesh_cache: &mesh_cache,
+            gradients: None,
+            min_pressure: side.min_pressure,
+            exec: &mut cpu_exec,
+        };
+        assemble_inviscid_residual_unstructured_typed(&fields, &mut cpu_rhs, &mut cpu_params)
+            .expect("cpu assemble");
+
+        let mut cuda_rhs = ConservedResidualT::<f32>::zeros(mesh.num_cells()).expect("cuda rhs");
+        let cuda_config = ExecConfig {
+            device: ExecDevice::GpuCuda,
+            ..Default::default()
+        };
+        let mut cuda_exec =
+            ExecutionContext::new(cuda_config, MeshExecMetrics::empty()).expect("cuda exec");
+        let mut cuda_params = InviscidAssemblyUnstructuredTypedParams {
+            mesh: &mesh,
+            eos: side.eos,
+            config: &config,
+            boundaries: &boundary,
+            ghosts: &ghosts,
+            primitives: &primitives,
+            mesh_cache: &mesh_cache,
+            gradients: None,
+            min_pressure: side.min_pressure,
+            exec: &mut cuda_exec,
+        };
+        assemble_inviscid_residual_unstructured_typed(&fields, &mut cuda_rhs, &mut cuda_params)
+            .expect("cuda assemble");
+
+        for i in 0..mesh.num_cells() {
+            assert!(
+                approx_eq(
+                    cpu_rhs.density.values()[i].to_real(),
+                    cuda_rhs.density.values()[i].to_real(),
+                    1.0e-4
+                ),
+                "density cell {i}"
+            );
+            assert!(
+                approx_eq(
+                    cpu_rhs.momentum_x.values()[i].to_real(),
+                    cuda_rhs.momentum_x.values()[i].to_real(),
+                    1.0e-4
+                ),
+                "mx cell {i}"
+            );
+            assert!(
+                approx_eq(
+                    cpu_rhs.total_energy.values()[i].to_real(),
+                    cuda_rhs.total_energy.values()[i].to_real(),
+                    1.0e-3
+                ),
+                "energy cell {i}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "gpu"]
+    fn cpu_f32_matches_cuda_f32_inviscid_slau2_single_tet() {
+        let pair = FreestreamPairFixture::air_sutherland(0.2);
+        let side = pair.inviscid_side();
+        let (mesh, boundary, fields, ghosts, mesh_cache, primitives) = single_tet_fixture(&side);
+        let config = InviscidFluxConfig::slau2_first_order();
 
         let mut cpu_rhs = ConservedResidualT::<f32>::zeros(mesh.num_cells()).expect("cpu rhs");
         let mut cpu_exec = ExecutionContext::for_unit_test();

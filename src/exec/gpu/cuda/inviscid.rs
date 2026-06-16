@@ -54,6 +54,7 @@ const BLOCK_THREADS: u32 = 256;
 /// CUDA 一阶无粘通量格式（与 `inviscid_first_order_f32.cu` 一致）。
 pub const CUDA_FLUX_SCHEME_ROE: u32 = 0;
 pub const CUDA_FLUX_SCHEME_HVL: u32 = 1;
+pub const CUDA_FLUX_SCHEME_SLAU2: u32 = 2;
 
 /// 一阶无粘内面 kernel launch 参数。
 #[derive(Clone, Copy, Debug)]
