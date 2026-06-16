@@ -107,6 +107,13 @@ pub struct CudaBackendState {
     residual_sum_sq_scratch: Option<cudarc::driver::CudaSlice<f32>>,
     cell_volumes: Option<cudarc::driver::CudaSlice<f32>>,
     cell_volumes_key: Option<usize>,
+    lusgs_sweep_mesh: Option<super::lusgs_sweep_mesh_cache::CudaLusgsSweepMeshDeviceCache>,
+    lusgs_sweep_mesh_key: Option<usize>,
+    lusgs_sweep_u0_rho: Option<cudarc::driver::CudaSlice<f32>>,
+    lusgs_sweep_u0_mx: Option<cudarc::driver::CudaSlice<f32>>,
+    lusgs_sweep_u0_my: Option<cudarc::driver::CudaSlice<f32>>,
+    lusgs_sweep_u0_mz: Option<cudarc::driver::CudaSlice<f32>>,
+    lusgs_sweep_u0_e: Option<cudarc::driver::CudaSlice<f32>>,
 }
 
 impl CudaBackendState {
@@ -164,6 +171,13 @@ impl CudaBackendState {
             residual_sum_sq_scratch: None,
             cell_volumes: None,
             cell_volumes_key: None,
+            lusgs_sweep_mesh: None,
+            lusgs_sweep_mesh_key: None,
+            lusgs_sweep_u0_rho: None,
+            lusgs_sweep_u0_mx: None,
+            lusgs_sweep_u0_my: None,
+            lusgs_sweep_u0_mz: None,
+            lusgs_sweep_u0_e: None,
         })
     }
 
@@ -619,6 +633,24 @@ impl CudaBackendState {
         }
         self.spectral_mesh = Some(CudaSpectralMeshDeviceCache::try_upload(&self.stream, topo)?);
         self.spectral_mesh_key = Some(topo_key);
+        Ok(())
+    }
+
+    pub(crate) fn ensure_lusgs_sweep_mesh(
+        &mut self,
+        topo: &crate::discretization::unstructured_lusgs_sweep_exec_topo::LuSgsSweepHostTopology,
+        topo_key: usize,
+    ) -> Result<()> {
+        if self.lusgs_sweep_mesh_key == Some(topo_key) && self.lusgs_sweep_mesh.is_some() {
+            return Ok(());
+        }
+        self.lusgs_sweep_mesh = Some(
+            super::lusgs_sweep_mesh_cache::CudaLusgsSweepMeshDeviceCache::try_upload(
+                &self.stream,
+                topo,
+            )?,
+        );
+        self.lusgs_sweep_mesh_key = Some(topo_key);
         Ok(())
     }
 

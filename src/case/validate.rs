@@ -86,12 +86,7 @@ fn validate_gpu_cuda_dual_time(case: &CaseSpec) -> Result<()> {
         return Err(gpu_cuda_unsupported("cuda 首版不支持 residual_smoothing"));
     }
     case.time.resolved_dual_time_config()?;
-    let lu_sgs = case.time.resolved_lusgs_config()?;
-    if lu_sgs.sweep {
-        return Err(gpu_cuda_unsupported(
-            "cuda dual_time 首版须 lusgs_sweep = false（扫掠仍 CPU）",
-        ));
-    }
+    let _lu_sgs = case.time.resolved_lusgs_config()?;
     Ok(())
 }
 

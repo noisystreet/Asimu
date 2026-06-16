@@ -124,7 +124,9 @@ impl UnstructuredCudaPrepareSync for f32 {
     fn lusgs_skip_copy_stage_after_diagonal(work: &UnstructuredStepWorkTyped<f32>) -> bool {
         #[cfg(feature = "cuda")]
         {
-            work.exec.device() == ExecDevice::GpuCuda && work.exec.cuda_lusgs_diagonal_on_device()
+            work.exec.device() == ExecDevice::GpuCuda
+                && (work.exec.cuda_lusgs_diagonal_on_device()
+                    || work.exec.cuda_lusgs_sweep_on_device())
         }
         #[cfg(not(feature = "cuda"))]
         {

@@ -205,6 +205,10 @@ pub struct UnstructuredSolverMeshCache {
     /// 谱半径静态拓扑（init 一次；CUDA 单元并行 kernel）。
     pub spectral_radius_topo:
         crate::discretization::unstructured_spectral_exec_topo::SpectralRadiusHostTopology,
+    /// LU-SGS 扫掠 CSR 拓扑（init 一次；CUDA 串行扫掠 kernel）。
+    #[cfg(feature = "cuda")]
+    pub lusgs_sweep_topo:
+        crate::discretization::unstructured_lusgs_sweep_exec_topo::LuSgsSweepHostTopology,
     /// 无粘内面 CUDA 拓扑（init 一次；P0 消除每步 host collect）。
     #[cfg(feature = "cuda")]
     pub cuda_inviscid_interior_topo: crate::exec::gpu::cuda::ExecInteriorFaceTopology,
@@ -238,6 +242,12 @@ impl UnstructuredSolverMeshCache {
         let spectral_radius_topo =
             build_spectral_radius_host_topology(&face_topology_f32, &lsq_rhs_incidence, num_cells);
         #[cfg(feature = "cuda")]
+        let lusgs_sweep_topo =
+            crate::discretization::unstructured_lusgs_sweep_exec_topo::LuSgsSweepHostTopology::from_mesh_and_couplings(
+                mesh,
+                &lusgs_couplings_f32,
+            );
+        #[cfg(feature = "cuda")]
         let cuda_inviscid_interior_topo =
             crate::discretization::unstructured_interior_exec_topo::build_cuda_inviscid_interior_topology(
                 &face_topology_f32,
@@ -270,6 +280,8 @@ impl UnstructuredSolverMeshCache {
             lsq_rhs_incidence,
             idwls_viscous_topo: exec_idwls_viscous_topo,
             spectral_radius_topo,
+            #[cfg(feature = "cuda")]
+            lusgs_sweep_topo,
             #[cfg(feature = "cuda")]
             cuda_inviscid_interior_topo,
             #[cfg(feature = "cuda")]

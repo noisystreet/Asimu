@@ -33,6 +33,8 @@ pub mod unstructured_idwls_exec_topo;
 #[cfg(feature = "cuda")]
 pub mod unstructured_interior_exec_topo;
 pub mod unstructured_limiter;
+#[cfg(feature = "cuda")]
+pub mod unstructured_lusgs_sweep_exec_topo;
 pub mod unstructured_spectral_exec_topo;
 
 // --- 可压 FVM：稳定库 API（类型与函数）---

@@ -39,6 +39,7 @@ pub struct CudaSpectralRadiusModule {
 pub struct CudaLusgsModule {
     pub(crate) diagonal_update: CudaFunction,
     pub(crate) residual_density_sum_sq: CudaFunction,
+    pub(crate) sweep_unstructured_serial: CudaFunction,
 }
 
 /// 已加载的双时间步 kernel。
@@ -220,10 +221,20 @@ impl CudaLusgsModule {
                 .map_err(|e| {
                     AsimuError::Exec(format!("CUDA 密度残差 RMS kernel 符号未找到: {e:?}"))
                 })?;
+            let sweep_ptx = include_str!(env!("CUDA_PTX_LUSGS_SWEEP_F32"));
+            let sweep_module: Arc<CudaModule> = ctx
+                .load_module(Ptx::from_src(sweep_ptx))
+                .map_err(|e| AsimuError::Exec(format!("CUDA LU-SGS 扫掠模块加载失败: {e:?}")))?;
+            let sweep_unstructured_serial = sweep_module
+                .load_function("lusgs_sweep_unstructured_serial_f32")
+                .map_err(|e| {
+                    AsimuError::Exec(format!("CUDA LU-SGS 扫掠 kernel 符号未找到: {e:?}"))
+                })?;
             info!("cuda_lusgs_module_loaded");
             Ok(Self {
                 diagonal_update,
                 residual_density_sum_sq,
+                sweep_unstructured_serial,
             })
         }
         #[cfg(cuda_kernels_disabled)]

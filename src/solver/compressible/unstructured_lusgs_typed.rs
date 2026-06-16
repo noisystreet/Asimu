@@ -43,6 +43,10 @@ impl UnstructuredLusgsSweep for f32 {
         if !ctx.sweep {
             return Ok(());
         }
+        #[cfg(feature = "cuda")]
+        if try_cuda_lusgs_sweep_f32(fields, work, ctx)? {
+            return Ok(());
+        }
         let couplings = LuSgsUnstructuredCouplingsRef::F32(&work.mesh_cache.lusgs_couplings_f32);
         let residual = &work.storage.k1;
         let mut sweep_params = LuSgsSweepUnstructuredTypedParams {
@@ -143,6 +147,42 @@ impl UnstructuredLusgsDiagonalUpdate for f32 {
             },
         )
     }
+}
+
+#[cfg(feature = "cuda")]
+fn try_cuda_lusgs_sweep_f32(
+    fields: &mut ConservedFieldsT<f32>,
+    work: &mut UnstructuredStepWorkTyped<f32>,
+    ctx: &UnstructuredLusgsSweepContext<'_>,
+) -> Result<bool> {
+    if work.exec.device() != ExecDevice::GpuCuda {
+        return Ok(false);
+    }
+    if !work.exec.cuda_timestep_on_device() || !work.exec.cuda_residual_on_device() {
+        return Ok(false);
+    }
+    let topo_key = std::ptr::from_ref(&work.mesh_cache).addr();
+    work.exec.cuda_lusgs_sweep_update_f32(
+        crate::exec::gpu::cuda::lusgs_sweep::LusgsSweepCudaHostInput {
+            fields,
+            u0: &work.storage.u0,
+            residual: &mut work.storage.k1,
+            sweep_topo: &work.mesh_cache.lusgs_sweep_topo,
+            topo_key,
+            primitives: &work.primitives,
+            host_sigma: &work.timestep.sigma_f32,
+            host_cell_dts: &work.timestep.cell_dts_f32,
+            host_volumes: &work.volumes_f32,
+            scalars: crate::exec::gpu::cuda::lusgs_sweep::LusgsSweepCudaScalars {
+                omega: ctx.omega as f32,
+                gamma: ctx.env.config.eos.gamma as f32,
+                min_pressure: ctx.p_floor as f32,
+                inv_dt_phys: ctx.inv_dt_phys as f32,
+                backward_damping: ctx.backward_damping as f32,
+            },
+        },
+    )?;
+    Ok(true)
 }
 
 #[cfg(feature = "cuda")]

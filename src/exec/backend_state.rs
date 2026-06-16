@@ -142,6 +142,14 @@ impl BackendState {
     }
 
     #[cfg(feature = "cuda")]
+    pub(crate) fn cuda_lusgs_sweep_on_device(&self) -> Option<bool> {
+        match self {
+            Self::Cuda(state) => Some(state.lusgs_sweep_on_device()),
+            Self::Cpu => None,
+        }
+    }
+
+    #[cfg(feature = "cuda")]
     pub(crate) fn cuda_u_n_on_device(&self) -> Option<bool> {
         match self {
             Self::Cuda(state) => Some(state.u_n_on_device()),

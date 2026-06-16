@@ -37,6 +37,7 @@ fn build_cuda_kernels() {
 
     println!("cargo:rerun-if-changed=kernels/cuda/spectral_radius_unstructured_f32.cu");
     println!("cargo:rerun-if-changed=kernels/cuda/lusgs_diagonal_f32.cu");
+    println!("cargo:rerun-if-changed=kernels/cuda/lusgs_sweep_unstructured_f32.cu");
     println!("cargo:rerun-if-changed=kernels/cuda/dual_time_storage_f32.cu");
     println!("cargo:rerun-if-changed=kernels/cuda/field_f32.cu");
     println!("cargo:rerun-if-changed=kernels/cuda/boundary_bc_f32.cu");
@@ -79,6 +80,13 @@ fn build_cuda_kernels() {
         "lusgs_diagonal_f32.ptx",
         "CUDA_PTX_LUSGS_DIAGONAL_F32",
     );
+    let lusgs_sweep_ok = compile_cuda_ptx(
+        &nvcc,
+        &out_dir,
+        "kernels/cuda/lusgs_sweep_unstructured_f32.cu",
+        "lusgs_sweep_unstructured_f32.ptx",
+        "CUDA_PTX_LUSGS_SWEEP_F32",
+    );
     let dual_time_ok = compile_cuda_ptx(
         &nvcc,
         &out_dir,
@@ -106,6 +114,7 @@ fn build_cuda_kernels() {
         && idwls_ok
         && spectral_ok
         && lusgs_ok
+        && lusgs_sweep_ok
         && dual_time_ok
         && field_ok
         && bc_ok

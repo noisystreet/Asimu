@@ -14,6 +14,8 @@ mod idwls_mesh_cache;
 mod idwls_topology;
 mod inviscid;
 mod lusgs_diagonal;
+pub mod lusgs_sweep;
+mod lusgs_sweep_mesh_cache;
 mod mesh_cache;
 mod module;
 mod pipeline;
@@ -40,6 +42,7 @@ pub use inviscid::{
     CUDA_FLUX_SCHEME_HVL, CUDA_FLUX_SCHEME_ROE, CudaBackendState, CudaFirstOrderInviscidParams,
     CudaPrepareRhsDeviceInput,
 };
+pub use lusgs_sweep::{LusgsSweepCudaHostInput, LusgsSweepCudaScalars};
 pub use spectral_radius_topology::ExecSpectralRadiusTopology;
 pub use viscous_face_geom::{DeviceViscousFaceGeom, ExecViscousInteriorTopology};
 pub use viscous_transport_params::{

@@ -35,6 +35,10 @@ impl CudaBackendState {
         self.pipeline.lusgs_diagonal_on_device
     }
 
+    pub(crate) fn lusgs_sweep_on_device(&self) -> bool {
+        self.pipeline.lusgs_sweep_on_device
+    }
+
     pub fn upload_conserved_for_integration(
         &mut self,
         conserved: &ConservedFieldsT<f32>,

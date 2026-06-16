@@ -130,6 +130,23 @@ impl ExecutionContext {
             .unwrap_or(false)
     }
 
+    /// CUDA LU-SGS 双扫已在 device 写回守恒场。
+    #[cfg(feature = "cuda")]
+    pub fn cuda_lusgs_sweep_on_device(&self) -> bool {
+        self.backend_state
+            .cuda_lusgs_sweep_on_device()
+            .unwrap_or(false)
+    }
+
+    /// CUDA 非结构 LU-SGS 双扫（device 前/后扫 + host stabilize）。
+    #[cfg(feature = "cuda")]
+    pub fn cuda_lusgs_sweep_update_f32(
+        &mut self,
+        input: crate::exec::gpu::cuda::lusgs_sweep::LusgsSweepCudaHostInput<'_>,
+    ) -> Result<()> {
+        self.backend_state.cuda_mut()?.lusgs_sweep_update_f32(input)
+    }
+
     /// CUDA P3b：双时间步 \(U^n\) 快照在 device 上有效。
     #[cfg(feature = "cuda")]
     #[must_use]
