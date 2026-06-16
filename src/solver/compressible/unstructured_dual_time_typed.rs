@@ -1,10 +1,10 @@
 //! 非结构可压缩双时间步内外循环（理论见 `docs/theory/dual_time_stepping.md` §3.2）。
 
-use tracing::info_span;
+use tracing::{debug, info_span};
 
 #[cfg(feature = "cuda")]
 use crate::core::ExecDevice;
-use crate::core::Real;
+use crate::core::{Real, format_log_fixed4, log10_positive};
 use crate::error::{AsimuError, Result};
 use crate::solver::UnstructuredComputeBackend;
 use crate::solver::time::DualTimeConfig;
@@ -44,7 +44,17 @@ pub(crate) fn advance_unstructured_dual_time_typed<
     }
     let lu_sgs = env.config.lu_sgs;
     let inv_dt_phys = dual.inv_dt_phys();
-    T::snapshot_dual_time_u_n(work, fields)?;
+    let _physical_span = info_span!(
+        "unstructured_dual_time_physical_step",
+        dt_phys = dual.dt_phys,
+        max_inner_steps = dual.max_inner_steps,
+        precision = T::PRECISION.label(),
+    )
+    .entered();
+    {
+        let _span = info_span!("unstructured_dual_time_snapshot_u_n_typed").entered();
+        T::snapshot_dual_time_u_n(work, fields)?;
+    }
     let mut effective_residual_rms = 0.0;
     let base_ctx = DualTimeInnerCtx {
         env,
@@ -59,10 +69,23 @@ pub(crate) fn advance_unstructured_dual_time_typed<
         work.dual_time_state.inner_iterations = inner + 1;
         let ctx = DualTimeInnerCtx { inner, ..base_ctx };
         effective_residual_rms = dual_time_inner_iteration(&ctx, fields, work)?;
+        let log10_residual = log10_positive(effective_residual_rms);
         if dual.inner_converged(effective_residual_rms) {
+            debug!(
+                inner = inner + 1,
+                max_inner = dual.max_inner_steps,
+                log10_residual = %format_log_fixed4(log10_residual),
+                inner_converged = true,
+                "dual_time 内层早停",
+            );
             break;
         }
     }
+    debug!(
+        inner_iterations = work.dual_time_state.inner_iterations,
+        log10_residual = %format_log_fixed4(log10_positive(effective_residual_rms)),
+        "dual_time 物理步内层结束",
+    );
     Ok(effective_residual_rms)
 }
 
@@ -79,10 +102,22 @@ fn dual_time_inner_iteration<T: UnstructuredComputeBackend + UnstructuredCudaPre
     )
     .entered();
     prepare_unstructured_timestep_typed(ctx.env, fields, work, ctx.cfl, ctx.p_floor)?;
-    T::prepare_dual_time_inner_base(work, fields)?;
+    {
+        let _span = info_span!("unstructured_dual_time_copy_base_typed").entered();
+        T::prepare_dual_time_inner_base(work, fields)?;
+    }
     T::maybe_upload_lusgs_integration_base(work)?;
     dual_time_assemble_effective_rhs(ctx.env, work, fields, ctx.dual.dt_phys, ctx.p_floor)?;
-    let effective_residual_rms = T::step_density_residual_rms(work)?;
+    let effective_residual_rms = {
+        let _span = info_span!("unstructured_dual_time_rhs_monitor").entered();
+        let rms = T::step_density_residual_rms(work)?;
+        debug!(
+            inner = ctx.inner + 1,
+            log10_residual = %format_log_fixed4(log10_positive(rms)),
+            "dual_time 内层 R_eff 监控",
+        );
+        rms
+    };
     dual_time_apply_lusgs_update(
         ctx.env,
         fields,
@@ -119,6 +154,7 @@ fn dual_time_assemble_effective_rhs<T: UnstructuredComputeBackend + Unstructured
         true,
         p_floor,
     )?;
+    let _storage_span = info_span!("unstructured_dual_time_storage_typed").entered();
     T::add_dual_time_storage_residual(work, fields, dt_phys)
 }
 
@@ -131,6 +167,11 @@ fn dual_time_apply_lusgs_update<T: UnstructuredComputeBackend + UnstructuredCuda
     inv_dt_phys: Real,
 ) -> Result<()> {
     if lu_sgs.sweep {
+        let _span = info_span!(
+            "unstructured_dual_time_lusgs_sweep_typed",
+            precision = T::PRECISION.label(),
+        )
+        .entered();
         T::run_lusgs_sweep(
             fields,
             work,
@@ -144,14 +185,18 @@ fn dual_time_apply_lusgs_update<T: UnstructuredComputeBackend + UnstructuredCuda
             },
         )?;
     } else {
-        T::assign_lusgs_diagonal_update(
-            work,
-            lu_sgs.omega,
-            env.config.eos.gamma,
-            p_floor,
-            inv_dt_phys,
-        )?;
+        {
+            let _span = info_span!("unstructured_dual_time_lusgs_diagonal_typed").entered();
+            T::assign_lusgs_diagonal_update(
+                work,
+                lu_sgs.omega,
+                env.config.eos.gamma,
+                p_floor,
+                inv_dt_phys,
+            )?;
+        }
         if !T::lusgs_skip_copy_stage_after_diagonal(work) {
+            let _span = info_span!("unstructured_dual_time_lusgs_copy_stage_typed").entered();
             fields.copy_from(&work.storage.stage)?;
         }
     }
