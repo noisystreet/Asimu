@@ -41,6 +41,11 @@ pub struct CudaLusgsModule {
     pub(crate) residual_density_sum_sq: CudaFunction,
 }
 
+/// 已加载的双时间步 kernel。
+pub struct CudaDualTimeModule {
+    pub(crate) storage: CudaFunction,
+}
+
 /// 已加载的可压缩 BC kernel。
 pub struct CudaBcModule {
     pub(crate) apply_boundary_ghosts: CudaFunction,
@@ -220,6 +225,30 @@ impl CudaLusgsModule {
                 diagonal_update,
                 residual_density_sum_sq,
             })
+        }
+        #[cfg(cuda_kernels_disabled)]
+        {
+            let _ = ctx;
+            Err(AsimuError::Exec(
+                "CUDA kernel 未编译（缺少 nvcc）；请安装 CUDA toolkit 后重新构建".to_string(),
+            ))
+        }
+    }
+}
+
+impl CudaDualTimeModule {
+    pub fn try_load(ctx: &Arc<CudaContext>) -> Result<Self> {
+        #[cfg(cuda_kernels_built)]
+        {
+            let ptx_src = include_str!(env!("CUDA_PTX_DUAL_TIME_STORAGE_F32"));
+            let module: Arc<CudaModule> = ctx
+                .load_module(Ptx::from_src(ptx_src))
+                .map_err(|e| AsimuError::Exec(format!("CUDA 双时间步模块加载失败: {e:?}")))?;
+            let storage = module.load_function("dual_time_storage_f32").map_err(|e| {
+                AsimuError::Exec(format!("CUDA dual_time_storage kernel 符号未找到: {e:?}"))
+            })?;
+            info!("cuda_dual_time_module_loaded");
+            Ok(Self { storage })
         }
         #[cfg(cuda_kernels_disabled)]
         {

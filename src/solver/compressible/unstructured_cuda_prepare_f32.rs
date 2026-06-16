@@ -173,4 +173,33 @@ impl UnstructuredCudaPrepareSync for f32 {
         }
         work.dual_time_state.snapshot_u_n(fields)
     }
+
+    fn add_dual_time_storage_residual(
+        work: &mut UnstructuredStepWorkTyped<f32>,
+        fields: &ConservedFieldsT<f32>,
+        dt_phys: Real,
+    ) -> Result<()> {
+        #[cfg(feature = "cuda")]
+        if work.exec.device() == ExecDevice::GpuCuda
+            && work.exec.cuda_residual_on_device()
+            && work.exec.cuda_u_n_on_device()
+        {
+            if !work.exec.cuda_conserved_on_device() {
+                work.exec.cuda_upload_conserved_for_integration(fields)?;
+            }
+            let mesh_key = std::ptr::from_ref(&work.mesh_cache).addr();
+            return work.exec.cuda_add_physical_storage_residual_f32(
+                dt_phys as f32,
+                mesh_key,
+                &work.volumes_f32,
+            );
+        }
+        crate::solver::time::add_physical_storage_residual(
+            &mut work.storage.k1,
+            fields,
+            &work.dual_time_state.u_at_physical_level,
+            &work.volumes,
+            dt_phys,
+        )
+    }
 }

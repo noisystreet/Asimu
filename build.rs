@@ -37,6 +37,7 @@ fn build_cuda_kernels() {
 
     println!("cargo:rerun-if-changed=kernels/cuda/spectral_radius_unstructured_f32.cu");
     println!("cargo:rerun-if-changed=kernels/cuda/lusgs_diagonal_f32.cu");
+    println!("cargo:rerun-if-changed=kernels/cuda/dual_time_storage_f32.cu");
     println!("cargo:rerun-if-changed=kernels/cuda/field_f32.cu");
     println!("cargo:rerun-if-changed=kernels/cuda/boundary_bc_f32.cu");
 
@@ -78,6 +79,13 @@ fn build_cuda_kernels() {
         "lusgs_diagonal_f32.ptx",
         "CUDA_PTX_LUSGS_DIAGONAL_F32",
     );
+    let dual_time_ok = compile_cuda_ptx(
+        &nvcc,
+        &out_dir,
+        "kernels/cuda/dual_time_storage_f32.cu",
+        "dual_time_storage_f32.ptx",
+        "CUDA_PTX_DUAL_TIME_STORAGE_F32",
+    );
     let field_ok = compile_cuda_ptx(
         &nvcc,
         &out_dir,
@@ -93,7 +101,15 @@ fn build_cuda_kernels() {
         "CUDA_PTX_BOUNDARY_BC_F32",
     );
 
-    if inviscid_ok && viscous_ok && idwls_ok && spectral_ok && lusgs_ok && field_ok && bc_ok {
+    if inviscid_ok
+        && viscous_ok
+        && idwls_ok
+        && spectral_ok
+        && lusgs_ok
+        && dual_time_ok
+        && field_ok
+        && bc_ok
+    {
         println!("cargo:rustc-cfg=cuda_kernels_built");
     } else {
         println!("cargo:rustc-cfg=cuda_kernels_disabled");

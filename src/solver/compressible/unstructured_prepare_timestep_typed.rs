@@ -157,6 +157,21 @@ pub(crate) trait UnstructuredCudaPrepareSync:
     ) -> Result<()> {
         work.dual_time_state.snapshot_u_n(fields)
     }
+
+    /// 叠加 BDF1 物理存储项至有效残差。
+    fn add_dual_time_storage_residual(
+        work: &mut UnstructuredStepWorkTyped<Self>,
+        fields: &ConservedFieldsT<Self>,
+        dt_phys: Real,
+    ) -> Result<()> {
+        crate::solver::time::add_physical_storage_residual(
+            &mut work.storage.k1,
+            fields,
+            &work.dual_time_state.u_at_physical_level,
+            &work.volumes,
+            dt_phys,
+        )
+    }
 }
 
 impl UnstructuredCudaPrepareSync for f64 {

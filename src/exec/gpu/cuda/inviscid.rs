@@ -15,8 +15,8 @@ use super::idwls_mesh_cache::{
 use super::idwls_topology::ExecIdwlsViscousTopology;
 use super::mesh_cache::CudaMeshDeviceCache;
 use super::module::{
-    CudaBcModule, CudaFieldModule, CudaIdwlsModule, CudaInviscidModule, CudaLusgsModule,
-    CudaSpectralRadiusModule, CudaViscousModule,
+    CudaBcModule, CudaDualTimeModule, CudaFieldModule, CudaIdwlsModule, CudaInviscidModule,
+    CudaLusgsModule, CudaSpectralRadiusModule, CudaViscousModule,
 };
 use super::pipeline::CudaPipelineState;
 use super::spectral_radius::{launch_finalize_cell_dts, launch_spectral_radius_accumulate};
@@ -38,6 +38,8 @@ use inviscid_launch::{
 
 #[path = "cuda_boundary_assembly.rs"]
 mod cuda_boundary_assembly;
+#[path = "cuda_dual_time.rs"]
+mod cuda_dual_time;
 #[path = "cuda_field.rs"]
 mod cuda_field;
 #[path = "cuda_lusgs_timestep.rs"]
@@ -70,6 +72,7 @@ pub struct CudaBackendState {
     idwls_module: CudaIdwlsModule,
     spectral_module: CudaSpectralRadiusModule,
     lusgs_module: CudaLusgsModule,
+    dual_time_module: CudaDualTimeModule,
     bc_module: CudaBcModule,
     field_module: CudaFieldModule,
     mesh: Option<CudaMeshDeviceCache>,
@@ -102,6 +105,8 @@ pub struct CudaBackendState {
     bc_mesh: Option<super::bc_cuda::CudaBcMeshCache>,
     bc_topo_key: Option<usize>,
     residual_sum_sq_scratch: Option<cudarc::driver::CudaSlice<f32>>,
+    cell_volumes: Option<cudarc::driver::CudaSlice<f32>>,
+    cell_volumes_key: Option<usize>,
 }
 
 impl CudaBackendState {
@@ -114,6 +119,7 @@ impl CudaBackendState {
         let idwls_module = CudaIdwlsModule::try_load(&context)?;
         let spectral_module = CudaSpectralRadiusModule::try_load(&context)?;
         let lusgs_module = CudaLusgsModule::try_load(&context)?;
+        let dual_time_module = CudaDualTimeModule::try_load(&context)?;
         let bc_module = CudaBcModule::try_load(&context)?;
         let field_module = CudaFieldModule::try_load(&context)?;
         let cusparse_handle = try_create_cusparse_handle()?;
@@ -126,6 +132,7 @@ impl CudaBackendState {
             idwls_module,
             spectral_module,
             lusgs_module,
+            dual_time_module,
             bc_module,
             field_module,
             mesh: None,
@@ -155,6 +162,8 @@ impl CudaBackendState {
             bc_mesh: None,
             bc_topo_key: None,
             residual_sum_sq_scratch: None,
+            cell_volumes: None,
+            cell_volumes_key: None,
         })
     }
 

@@ -7,7 +7,7 @@ use crate::core::ExecDevice;
 use crate::core::Real;
 use crate::error::{AsimuError, Result};
 use crate::solver::UnstructuredComputeBackend;
-use crate::solver::time::{DualTimeConfig, add_physical_storage_residual};
+use crate::solver::time::DualTimeConfig;
 
 use super::unstructured_lusgs_typed::UnstructuredLusgsSweepContext;
 use super::unstructured_prepare_timestep_typed::UnstructuredCudaPrepareSync;
@@ -94,7 +94,7 @@ fn dual_time_inner_iteration<T: UnstructuredComputeBackend + UnstructuredCudaPre
     Ok(effective_residual_rms)
 }
 
-fn dual_time_assemble_effective_rhs<T: UnstructuredComputeBackend>(
+fn dual_time_assemble_effective_rhs<T: UnstructuredComputeBackend + UnstructuredCudaPrepareSync>(
     env: &UnstructuredRunEnvTyped<'_>,
     work: &mut UnstructuredStepWorkTyped<T>,
     fields: &crate::field::ConservedFieldsT<T>,
@@ -119,13 +119,7 @@ fn dual_time_assemble_effective_rhs<T: UnstructuredComputeBackend>(
         true,
         p_floor,
     )?;
-    add_physical_storage_residual(
-        &mut work.storage.k1,
-        fields,
-        &work.dual_time_state.u_at_physical_level,
-        &work.volumes,
-        dt_phys,
-    )
+    T::add_dual_time_storage_residual(work, fields, dt_phys)
 }
 
 fn dual_time_apply_lusgs_update<T: UnstructuredComputeBackend + UnstructuredCudaPrepareSync>(
