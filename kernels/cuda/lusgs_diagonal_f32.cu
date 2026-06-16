@@ -1,10 +1,11 @@
-// LU-SGS 对角更新（f32）：对齐 field/algebra.rs assign_lusgs_diagonal_update_f32。
-// out[i] = base[i] + residual[i] * (omega * dt_i / (1 + dt_i * sigma[i]))
+// LU-SGS 对角更新（f32）：对齐 field/lusgs_diagonal.rs assign_lusgs_diagonal_update_f32。
+// out[i] = base[i] + residual[i] * (omega * dt_i / (1 + dt_i * sigma[i] + dt_i * inv_dt_phys))
 
 #include <cuda_runtime.h>
 #include <stdint.h>
 
 extern "C" __global__ void lusgs_diagonal_update_f32(uint32_t num_cells, float omega,
+                                                     float inv_dt_phys,
                                                      const float *__restrict__ base_rho,
                                                      const float *__restrict__ base_mx,
                                                      const float *__restrict__ base_my,
@@ -27,7 +28,7 @@ extern "C" __global__ void lusgs_diagonal_update_f32(uint32_t num_cells, float o
         return;
     }
     float dt_i = cell_dts[i];
-    float scale = omega * dt_i / (1.0f + dt_i * sigma[i]);
+    float scale = omega * dt_i / (1.0f + dt_i * sigma[i] + dt_i * inv_dt_phys);
     out_rho[i] = base_rho[i] + res_rho[i] * scale;
     out_mx[i] = base_mx[i] + res_mx[i] * scale;
     out_my[i] = base_my[i] + res_my[i] * scale;

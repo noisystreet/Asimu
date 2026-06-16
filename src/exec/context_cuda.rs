@@ -258,10 +258,11 @@ impl ExecutionContext {
         base: &crate::field::ConservedFieldsT<f32>,
         residual: &crate::field::ConservedResidualT<f32>,
         omega: f32,
+        inv_dt_phys: f32,
     ) -> Result<()> {
         self.backend_state
             .cuda_mut()?
-            .lusgs_diagonal_update_f32(base, residual, omega)
+            .lusgs_diagonal_update_f32(base, residual, omega, inv_dt_phys)
     }
 
     /// CUDA P1：步末记录本步 H2D/D2H 次数。

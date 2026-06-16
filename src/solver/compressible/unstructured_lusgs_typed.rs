@@ -124,7 +124,7 @@ impl UnstructuredLusgsDiagonalUpdate for f32 {
         inv_dt_phys: Real,
     ) -> Result<()> {
         #[cfg(feature = "cuda")]
-        if try_cuda_lusgs_diagonal_update_f32(work, omega)? {
+        if try_cuda_lusgs_diagonal_update_f32(work, omega, inv_dt_phys)? {
             return Ok(());
         }
         #[cfg(feature = "cuda")]
@@ -149,12 +149,17 @@ impl UnstructuredLusgsDiagonalUpdate for f32 {
 fn try_cuda_lusgs_diagonal_update_f32(
     work: &mut UnstructuredStepWorkTyped<f32>,
     omega: Real,
+    inv_dt_phys: Real,
 ) -> Result<bool> {
     if work.exec.device() != ExecDevice::GpuCuda || !work.exec.cuda_timestep_on_device() {
         return Ok(false);
     }
-    work.exec
-        .cuda_lusgs_diagonal_update_f32(&work.storage.u0, &work.storage.k1, omega as f32)?;
+    work.exec.cuda_lusgs_diagonal_update_f32(
+        &work.storage.u0,
+        &work.storage.k1,
+        omega as f32,
+        inv_dt_phys as f32,
+    )?;
     Ok(true)
 }
 

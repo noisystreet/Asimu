@@ -49,6 +49,7 @@ impl CudaBackendState {
         base: &ConservedFieldsT<f32>,
         residual: &ConservedResidualT<f32>,
         omega: f32,
+        inv_dt_phys: f32,
     ) -> Result<()> {
         if !self.pipeline.timestep_on_device {
             return Err(AsimuError::Exec(
@@ -72,6 +73,7 @@ impl CudaBackendState {
             mesh.sigma(),
             mesh.cell_dts(),
             omega,
+            inv_dt_phys,
         )?;
         self.pipeline.residual_on_device = true;
         self.pipeline.timestep_on_device = false;
