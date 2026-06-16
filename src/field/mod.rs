@@ -6,6 +6,7 @@ mod algebra;
 mod conserved;
 mod incompressible;
 mod initial;
+mod lusgs_diagonal;
 mod positivity;
 mod primitive;
 mod residual;
@@ -17,7 +18,6 @@ use crate::error::Result;
 use crate::mesh::StructuredMesh1d;
 use crate::physics::IdealGasEoS;
 
-pub use algebra::{LusgsDiagonalUpdateBackend, assign_lusgs_diagonal_update_f32};
 pub use conserved::{
     ConservedFields, ConservedFieldsT, clamp_conserved_positivity, positivity_pressure_floor,
     primitive_from_conserved, primitive_from_conserved_relaxed,
@@ -26,6 +26,10 @@ pub use conserved::{
 pub use incompressible::IncompressibleFields;
 pub use initial::{
     FluidInitialConfig, InitialKind, InitialSet, ScalarInitial, build_scalar_initial,
+};
+pub use lusgs_diagonal::{
+    LusgsDiagonalCoeffs, LusgsDiagonalCoeffsF32, LusgsDiagonalUpdateBackend,
+    assign_lusgs_diagonal_update_f32,
 };
 pub use positivity::{
     is_physical_conserved, is_physical_conserved_f32, max_physical_increment_scale,

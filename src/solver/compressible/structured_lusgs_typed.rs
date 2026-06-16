@@ -4,7 +4,9 @@ use tracing::info_span;
 
 use crate::core::{ComputePrecision, Real, log10_positive};
 use crate::error::{AsimuError, Result};
-use crate::field::{ConservedFieldsT, assign_lusgs_diagonal_update_f32};
+use crate::field::{
+    ConservedFieldsT, LusgsDiagonalCoeffs, LusgsDiagonalCoeffsF32, assign_lusgs_diagonal_update_f32,
+};
 use crate::solver::compressible::structured_compute_backend::StructuredComputeBackend;
 use crate::solver::compressible::structured_timestep_buffers::StructuredLusgsDiagonalUpdate;
 use crate::solver::compressible::{
@@ -105,8 +107,8 @@ impl StructuredLusgsDiagonalUpdate for f32 {
         residual: &crate::field::ConservedResidualT<f32>,
         ctx: &CompressibleAdvanceContext3dTyped<'_, f32>,
         omega: Real,
-        gamma: Real,
-        min_pressure: Real,
+        _gamma: Real,
+        _min_pressure: Real,
     ) -> Result<()> {
         assign_lusgs_diagonal_update_f32(
             out,
@@ -114,9 +116,10 @@ impl StructuredLusgsDiagonalUpdate for f32 {
             residual,
             &ctx.timestep.sigma_f32,
             &ctx.timestep.cell_dts_f32,
-            omega as f32,
-            gamma,
-            min_pressure,
+            LusgsDiagonalCoeffsF32 {
+                omega: omega as f32,
+                inv_dt_phys: 0.0,
+            },
         )
     }
 }
@@ -136,9 +139,7 @@ impl StructuredLusgsDiagonalUpdate for f64 {
             residual,
             &ctx.timestep.sigma,
             &ctx.timestep.cell_dts,
-            omega,
-            gamma,
-            min_pressure,
+            LusgsDiagonalCoeffs::steady_pseudo_time(omega, gamma, min_pressure),
         )
     }
 }

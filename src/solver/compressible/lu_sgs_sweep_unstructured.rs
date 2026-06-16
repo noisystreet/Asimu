@@ -55,6 +55,8 @@ pub struct LuSgsSweepUnstructuredF32Input<'a> {
     pub couplings: LuSgsUnstructuredCouplingsRef<'a>,
     pub omega: f32,
     pub gamma: f32,
+    /// \(1/\Delta t_{\mathrm{phys}}\)；稳态伪时间为 0。
+    pub inv_dt_phys: f32,
 }
 
 /// 非结构 LU-SGS sweep 的逐单元时间步与标量参数。
@@ -65,6 +67,8 @@ pub struct LuSgsSweepUnstructuredInput<'a> {
     pub couplings: LuSgsUnstructuredCouplingsRef<'a>,
     pub omega: Real,
     pub gamma: Real,
+    /// \(1/\Delta t_{\mathrm{phys}}\)；稳态伪时间为 0。
+    pub inv_dt_phys: Real,
 }
 
 #[derive(Clone, Copy)]
@@ -129,6 +133,7 @@ pub fn lu_sgs_sweep_unstructured(
         volumes: input.volumes,
         omega: input.omega,
         gamma: input.gamma,
+        inv_dt_phys: input.inv_dt_phys,
     };
     {
         let _span = info_span!("lu_sgs_unstructured_forward").entered();
@@ -184,7 +189,12 @@ fn forward_sweep(
     scalars: &LuSgsSweepScalars<'_>,
 ) -> Result<()> {
     for (cell, cell_couplings) in couplings.iter().enumerate().take(fields.num_cells()) {
-        let scale = implicit_scale(scalars.dt[cell], scalars.sigma[cell], scalars.omega);
+        let scale = implicit_scale(
+            scalars.dt[cell],
+            scalars.sigma[cell],
+            scalars.omega,
+            scalars.inv_dt_phys,
+        );
         let mut source = residual_cell_vector(residual, cell);
         for coupling in cell_couplings.iter().filter(|c| c.neighbor < cell) {
             add_coupling_delta(
@@ -218,7 +228,12 @@ fn backward_sweep(
     scalars: &LuSgsSweepScalars<'_>,
 ) -> Result<()> {
     for (cell, cell_couplings) in couplings.iter().enumerate().take(fields.num_cells()).rev() {
-        let scale = implicit_scale(scalars.dt[cell], scalars.sigma[cell], scalars.omega);
+        let scale = implicit_scale(
+            scalars.dt[cell],
+            scalars.sigma[cell],
+            scalars.omega,
+            scalars.inv_dt_phys,
+        );
         let mut source = [0.0; 5];
         for coupling in cell_couplings.iter().filter(|c| c.neighbor > cell) {
             add_coupling_delta(
@@ -347,6 +362,7 @@ mod tests {
                 couplings: LuSgsUnstructuredCouplingsRef::F64(&couplings),
                 omega: 1.0,
                 gamma: eos.gamma,
+                inv_dt_phys: 0.0,
             },
         )
         .expect("sweep");

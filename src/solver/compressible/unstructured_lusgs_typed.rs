@@ -4,7 +4,9 @@
 use crate::core::ExecDevice;
 use crate::core::{ComputeFloat, Real};
 use crate::error::Result;
-use crate::field::{ConservedFieldsT, assign_lusgs_diagonal_update_f32};
+use crate::field::{
+    ConservedFieldsT, LusgsDiagonalCoeffs, LusgsDiagonalCoeffsF32, assign_lusgs_diagonal_update_f32,
+};
 
 use super::{UnstructuredRunEnvTyped, UnstructuredStepWorkTyped};
 use crate::solver::{
@@ -19,6 +21,8 @@ pub(crate) struct UnstructuredLusgsSweepContext<'a> {
     pub sweep: bool,
     pub omega: Real,
     pub backward_damping: Real,
+    /// \(1/\Delta t_{\mathrm{phys}}\)；稳态伪时间为 0。
+    pub inv_dt_phys: Real,
 }
 
 /// LU-SGS 扫掠精度分发（f32 用 `mesh_cache.lusgs_couplings_f32`）。
@@ -59,6 +63,7 @@ impl UnstructuredLusgsSweep for f32 {
                 couplings,
                 omega: ctx.omega as f32,
                 gamma: ctx.env.config.eos.gamma as f32,
+                inv_dt_phys: ctx.inv_dt_phys as f32,
             },
         )
     }
@@ -93,6 +98,7 @@ impl UnstructuredLusgsSweep for f64 {
                 couplings,
                 omega: ctx.omega,
                 gamma: ctx.env.config.eos.gamma,
+                inv_dt_phys: ctx.inv_dt_phys,
             },
         )
     }
@@ -105,6 +111,7 @@ pub(crate) trait UnstructuredLusgsDiagonalUpdate: ComputeFloat {
         omega: Real,
         gamma: Real,
         p_floor: Real,
+        inv_dt_phys: Real,
     ) -> Result<()>;
 }
 
@@ -112,8 +119,9 @@ impl UnstructuredLusgsDiagonalUpdate for f32 {
     fn assign_lusgs_diagonal_update(
         work: &mut UnstructuredStepWorkTyped<f32>,
         omega: Real,
-        gamma: Real,
-        p_floor: Real,
+        _gamma: Real,
+        _p_floor: Real,
+        inv_dt_phys: Real,
     ) -> Result<()> {
         #[cfg(feature = "cuda")]
         if try_cuda_lusgs_diagonal_update_f32(work, omega)? {
@@ -129,9 +137,10 @@ impl UnstructuredLusgsDiagonalUpdate for f32 {
             &work.storage.k1,
             &work.timestep.sigma_f32,
             &work.timestep.cell_dts_f32,
-            omega as f32,
-            gamma,
-            p_floor,
+            LusgsDiagonalCoeffsF32 {
+                omega: omega as f32,
+                inv_dt_phys: inv_dt_phys as f32,
+            },
         )
     }
 }
@@ -155,15 +164,15 @@ impl UnstructuredLusgsDiagonalUpdate for f64 {
         omega: Real,
         gamma: Real,
         p_floor: Real,
+        inv_dt_phys: Real,
     ) -> Result<()> {
         work.storage.stage.assign_lusgs_diagonal_update(
             &work.storage.u0,
             &work.storage.k1,
             &work.timestep.sigma,
             &work.timestep.cell_dts,
-            omega,
-            gamma,
-            p_floor,
+            LusgsDiagonalCoeffs::steady_pseudo_time(omega, gamma, p_floor)
+                .with_inv_dt_phys(inv_dt_phys),
         )
     }
 }

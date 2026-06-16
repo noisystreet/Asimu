@@ -66,7 +66,7 @@ use spectral_radius::{SpectralRadius3dParams, cell_local_dt_spectral, cell_spect
 use crate::core::{Real, elapsed_ms, format_log_fixed4, format_log_sci4, log10_positive};
 use crate::discretization::assemble_inviscid_residual_1d;
 use crate::error::Result;
-use crate::field::{ConservedFields, ConservedResidual};
+use crate::field::{ConservedFields, ConservedResidual, LusgsDiagonalCoeffs};
 use crate::mesh::{StructuredMesh1d, StructuredMesh3d};
 use crate::physics::{FreestreamParams, IdealGasEoS, ViscousPhysicsConfig};
 use crate::solver::state::SolverState;
@@ -543,9 +543,7 @@ impl CompressibleEulerSolver {
                     &storage.k1,
                     &sigma,
                     &cell_dts,
-                    lu_sgs.omega,
-                    eos.gamma,
-                    p_floor,
+                    LusgsDiagonalCoeffs::steady_pseudo_time(lu_sgs.omega, eos.gamma, p_floor),
                 )?;
                 fields.copy_from(&storage.stage)?;
             }

@@ -16,12 +16,14 @@ pub(crate) struct LuSgsSweepScalarsF32<'a> {
     pub volumes: &'a [f32],
     pub omega: f32,
     pub gamma: f32,
+    /// \(1/\Delta t_{\mathrm{phys}}\)；稳态伪时间为 0。
+    pub inv_dt_phys: f32,
 }
 
-/// 与对角 LU-SGS 一致（f32）：\(\Delta\mathbf{U}=\omega\,\Delta t\,\mathbf{R}/(1+\Delta t\,\sigma)\)。
+/// 与对角 LU-SGS 一致（f32）：\(\omega\Delta t/(1+\Delta t\sigma+\Delta t/\Delta t_{\mathrm{phys}})\)。
 #[inline]
-pub(crate) fn implicit_scale_f32(dt: f32, sigma: f32, omega: f32) -> f32 {
-    let denom = 1.0 + dt * sigma;
+pub(crate) fn implicit_scale_f32(dt: f32, sigma: f32, omega: f32, inv_dt_phys: f32) -> f32 {
+    let denom = 1.0 + dt * sigma + dt * inv_dt_phys;
     if !(dt > 0.0 && omega > 0.0 && denom > 0.0) {
         return 0.0;
     }
@@ -35,12 +37,14 @@ pub(crate) struct LuSgsSweepScalars<'a> {
     pub volumes: &'a [Real],
     pub omega: Real,
     pub gamma: Real,
+    /// \(1/\Delta t_{\mathrm{phys}}\)；稳态伪时间为 0。
+    pub inv_dt_phys: Real,
 }
 
-/// 与对角 LU-SGS 一致：\(\Delta\mathbf{U}=\omega\,\Delta t\,\mathbf{R}/(1+\Delta t\,\sigma)\)。
+/// 与对角 LU-SGS 一致：\(\omega\Delta t/(1+\Delta t\sigma+\Delta t/\Delta t_{\mathrm{phys}})\)。
 #[inline]
-pub(crate) fn implicit_scale(dt: Real, sigma: Real, omega: Real) -> Real {
-    let denom = 1.0 + dt * sigma;
+pub(crate) fn implicit_scale(dt: Real, sigma: Real, omega: Real, inv_dt_phys: Real) -> Real {
+    let denom = 1.0 + dt * sigma + dt * inv_dt_phys;
     if !(dt > 0.0 && omega > 0.0 && denom > 0.0) {
         return 0.0;
     }
@@ -177,7 +181,12 @@ pub(crate) fn apply_diagonal_fallback(
     scalars: &LuSgsSweepScalars<'_>,
 ) -> Result<()> {
     for cell in 0..fields.num_cells() {
-        let scale = implicit_scale(scalars.dt[cell], scalars.sigma[cell], scalars.omega);
+        let scale = implicit_scale(
+            scalars.dt[cell],
+            scalars.sigma[cell],
+            scalars.omega,
+            scalars.inv_dt_phys,
+        );
         let increment = residual_cell_vector(residual, cell);
         let base = u0.cell_state(cell)?;
         let effective = max_physical_increment_scale(&base, increment, scale, gamma, min_pressure);
@@ -394,7 +403,12 @@ pub(crate) fn apply_diagonal_fallback_f32(
     scalars: &LuSgsSweepScalarsF32<'_>,
 ) -> Result<()> {
     for cell in 0..fields.num_cells() {
-        let scale = implicit_scale_f32(scalars.dt[cell], scalars.sigma[cell], scalars.omega);
+        let scale = implicit_scale_f32(
+            scalars.dt[cell],
+            scalars.sigma[cell],
+            scalars.omega,
+            scalars.inv_dt_phys,
+        );
         let increment = residual_cell_vector_f32(residual, cell);
         let base = conserved_vector_f32(u0, cell);
         let effective =
@@ -513,7 +527,12 @@ pub(crate) fn apply_diagonal_fallback_typed<T: crate::core::ComputeFloat>(
     scalars: &LuSgsSweepScalars<'_>,
 ) -> Result<()> {
     for cell in 0..fields.num_cells() {
-        let scale = implicit_scale(scalars.dt[cell], scalars.sigma[cell], scalars.omega);
+        let scale = implicit_scale(
+            scalars.dt[cell],
+            scalars.sigma[cell],
+            scalars.omega,
+            scalars.inv_dt_phys,
+        );
         let increment = residual_cell_vector_typed(residual, cell);
         let base = u0.cell_state(cell)?;
         let effective = max_physical_increment_scale(&base, increment, scale, gamma, min_pressure);
@@ -596,4 +615,27 @@ pub(crate) fn refresh_primitive_at_cell_typed<T: PrimitiveRefreshLane>(
     primitives: &mut crate::field::PrimitiveFieldsT<T>,
 ) -> Result<()> {
     T::refresh_primitive_at_cell(fields, cell, eos, min_pressure, primitives)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn implicit_scale_decreases_with_inv_dt_phys() {
+        let steady = implicit_scale(0.1, 2.0, 1.0, 0.0);
+        let dual = implicit_scale(0.1, 2.0, 1.0, 10.0);
+        assert!(steady > 0.0);
+        assert!(dual > 0.0);
+        assert!(dual < steady);
+    }
+
+    #[test]
+    fn implicit_scale_f32_decreases_with_inv_dt_phys() {
+        let steady = implicit_scale_f32(0.1_f32, 2.0_f32, 1.0_f32, 0.0_f32);
+        let dual = implicit_scale_f32(0.1_f32, 2.0_f32, 1.0_f32, 10.0_f32);
+        assert!(steady > 0.0);
+        assert!(dual > 0.0);
+        assert!(dual < steady);
+    }
 }

@@ -53,6 +53,7 @@ pub fn lu_sgs_sweep_3d(
         volumes,
         omega,
         gamma,
+        inv_dt_phys: 0.0,
     };
     {
         let _span = info_span!("lu_sgs_sweep_forward").entered();
@@ -87,7 +88,12 @@ fn forward_cell_coupling_sweep(
         for j in 0..mesh.ny {
             for i in 0..mesh.nx {
                 let idx = mesh.cell_index(i, j, k);
-                let scale = implicit_scale(scalars.dt[idx], scalars.sigma[idx], scalars.omega);
+                let scale = implicit_scale(
+                    scalars.dt[idx],
+                    scalars.sigma[idx],
+                    scalars.omega,
+                    scalars.inv_dt_phys,
+                );
                 let mut source = residual_cell_vector(residual, idx);
                 if i > 0 {
                     add_coupling_delta(
@@ -148,7 +154,12 @@ fn backward_cell_coupling_sweep(
         for j in (0..mesh.ny).rev() {
             for i in (0..mesh.nx).rev() {
                 let idx = mesh.cell_index(i, j, k);
-                let scale = implicit_scale(scalars.dt[idx], scalars.sigma[idx], scalars.omega);
+                let scale = implicit_scale(
+                    scalars.dt[idx],
+                    scalars.sigma[idx],
+                    scalars.omega,
+                    scalars.inv_dt_phys,
+                );
                 let mut source = [0.0; 5];
                 if i + 1 < mesh.nx {
                     add_coupling_delta(
@@ -353,6 +364,7 @@ mod tests {
             volumes: &[1.0; 2],
             omega: 1.0,
             gamma: eos.gamma,
+            inv_dt_phys: 0.0,
         };
         stabilize_sweep_update(&mut fields, &u0, &bad, &residual, 0.0, eos.gamma, &scalars)
             .expect("stabilize");

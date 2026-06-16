@@ -106,6 +106,7 @@ pub fn lu_sgs_sweep_unstructured_typed<T: LuSgsUnstructuredSweepTyped + Primitiv
         volumes: input.volumes,
         omega: input.omega,
         gamma: input.gamma,
+        inv_dt_phys: input.inv_dt_phys,
     };
     match input.couplings {
         LuSgsUnstructuredCouplingsRef::F64(couplings) => {
@@ -154,7 +155,12 @@ fn forward_sweep_typed<T: LuSgsUnstructuredSweepTyped + PrimitiveRefreshLane>(
     scalars: &LuSgsSweepScalars<'_>,
 ) -> Result<()> {
     for (cell, cell_couplings) in couplings.iter().enumerate().take(fields.num_cells()) {
-        let scale = implicit_scale(scalars.dt[cell], scalars.sigma[cell], scalars.omega);
+        let scale = implicit_scale(
+            scalars.dt[cell],
+            scalars.sigma[cell],
+            scalars.omega,
+            scalars.inv_dt_phys,
+        );
         let mut source = residual_cell_vector_typed(residual, cell);
         for coupling in cell_couplings.iter().filter(|c| c.neighbor < cell) {
             add_coupling_delta_typed(
@@ -188,7 +194,12 @@ fn backward_sweep_typed<T: LuSgsUnstructuredSweepTyped + PrimitiveRefreshLane>(
     scalars: &LuSgsSweepScalars<'_>,
 ) -> Result<()> {
     for (cell, cell_couplings) in couplings.iter().enumerate().take(fields.num_cells()).rev() {
-        let scale = implicit_scale(scalars.dt[cell], scalars.sigma[cell], scalars.omega);
+        let scale = implicit_scale(
+            scalars.dt[cell],
+            scalars.sigma[cell],
+            scalars.omega,
+            scalars.inv_dt_phys,
+        );
         let mut source = [0.0; 5];
         for coupling in cell_couplings.iter().filter(|c| c.neighbor > cell) {
             add_coupling_delta_typed(
@@ -250,7 +261,12 @@ fn forward_sweep_f32_couplings(
     scalars: &LuSgsSweepScalarsF32<'_>,
 ) -> Result<()> {
     for (cell, cell_couplings) in couplings.iter().enumerate().take(fields.num_cells()) {
-        let scale = implicit_scale_f32(scalars.dt[cell], scalars.sigma[cell], scalars.omega);
+        let scale = implicit_scale_f32(
+            scalars.dt[cell],
+            scalars.sigma[cell],
+            scalars.omega,
+            scalars.inv_dt_phys,
+        );
         let mut source = residual_cell_vector_f32(residual, cell);
         for coupling in cell_couplings.iter().filter(|c| c.neighbor < cell) {
             add_coupling_delta_f32(
@@ -284,7 +300,12 @@ fn backward_sweep_f32_couplings(
     scalars: &LuSgsSweepScalarsF32<'_>,
 ) -> Result<()> {
     for (cell, cell_couplings) in couplings.iter().enumerate().take(fields.num_cells()).rev() {
-        let scale = implicit_scale_f32(scalars.dt[cell], scalars.sigma[cell], scalars.omega);
+        let scale = implicit_scale_f32(
+            scalars.dt[cell],
+            scalars.sigma[cell],
+            scalars.omega,
+            scalars.inv_dt_phys,
+        );
         let mut source = [0.0_f32; 5];
         let damp = params.backward_damping as f32;
         for coupling in cell_couplings.iter().filter(|c| c.neighbor > cell) {
@@ -367,6 +388,7 @@ pub fn lu_sgs_sweep_unstructured_f32(
         volumes: input.volumes,
         omega: input.omega,
         gamma: input.gamma,
+        inv_dt_phys: input.inv_dt_phys,
     };
     let min_p = params.min_pressure as f32;
     {
@@ -497,6 +519,7 @@ mod tests {
                 couplings: LuSgsUnstructuredCouplingsRef::F32(&mesh_cache.lusgs_couplings_f32),
                 omega: 1.0,
                 gamma: eos.gamma as f32,
+                inv_dt_phys: 0.0,
             },
         )
         .expect("sweep");

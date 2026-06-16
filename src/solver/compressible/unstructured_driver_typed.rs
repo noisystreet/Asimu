@@ -365,12 +365,19 @@ fn advance_unstructured_lusgs_typed<T: UnstructuredComputeBackend>(
                 sweep: true,
                 omega: lu_sgs.omega,
                 backward_damping: lu_sgs.sweep_backward_damping,
+                inv_dt_phys: 0.0,
             },
         )?;
     } else {
         {
             let _span = info_span!("unstructured_lusgs_diagonal_update_typed").entered();
-            T::assign_lusgs_diagonal_update(work, lu_sgs.omega, env.config.eos.gamma, p_floor)?;
+            T::assign_lusgs_diagonal_update(
+                work,
+                lu_sgs.omega,
+                env.config.eos.gamma,
+                p_floor,
+                0.0,
+            )?;
         }
         if !T::lusgs_skip_copy_stage_after_diagonal(work) {
             let _span = info_span!("unstructured_lusgs_copy_stage_typed").entered();

@@ -9,7 +9,7 @@ use tracing::info_span;
 
 use crate::core::Real;
 use crate::error::{AsimuError, Result};
-use crate::field::{ConservedFields, ConservedResidual};
+use crate::field::{ConservedFields, ConservedResidual, LusgsDiagonalCoeffs};
 
 use super::common::maybe_enforce_positivity;
 use super::rk4::Rk4Storage;
@@ -143,9 +143,11 @@ where
             &storage.k1,
             ctx.sigma,
             dt,
-            ctx.config.omega,
-            ctx.eos.map(|e| e.gamma).unwrap_or(1.4),
-            ctx.min_pressure,
+            LusgsDiagonalCoeffs::steady_pseudo_time(
+                ctx.config.omega,
+                ctx.eos.map(|e| e.gamma).unwrap_or(1.4),
+                ctx.min_pressure,
+            ),
         )?;
         fields.copy_from(&storage.stage)?;
         maybe_enforce_positivity(fields, ctx.eos, ctx.min_pressure);
