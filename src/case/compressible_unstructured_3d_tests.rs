@@ -246,6 +246,102 @@ max_steps = 1
 }
 
 #[test]
+fn runs_single_tet_unstructured_dual_time_freestream_step() {
+    let mut case = parse_case_str(
+        r#"
+name = "unstructured_dual_time_freestream"
+[mesh]
+kind = "structured_3d"
+nx = 1
+ny = 1
+nz = 1
+
+[physics]
+gamma = 1.4
+gas_constant = 287.0
+
+[freestream]
+mach = 0.3
+pressure = 101325.0
+temperature = 288.15
+
+[euler]
+flux = "hllc"
+reconstruction = "first_order"
+
+[time]
+mode = "transient"
+scheme = "dual_time"
+dt = 1.0e-4
+local_time_step = true
+cfl = 0.4
+max_inner_steps = 10
+inner_tolerance = -2.0
+max_steps = 1
+"#,
+    )
+    .expect("parse");
+    attach_single_tet_farfield(&mut case);
+    let result = super::compressible_unstructured_3d::run(&case).expect("run");
+    let metrics = result.compressible_3d.expect("metrics");
+    assert_eq!(metrics.steps, 1);
+    assert!(
+        metrics.residual_log10 <= -2.0,
+        "uniform freestream R_eff should converge: log10={}",
+        metrics.residual_log10
+    );
+}
+
+#[test]
+fn runs_single_tet_unstructured_dual_time_freestream_f32_step() {
+    let mut case = parse_case_str(
+        r#"
+name = "unstructured_dual_time_freestream_f32"
+[numerics]
+compute_precision = "f32"
+[mesh]
+kind = "structured_3d"
+nx = 1
+ny = 1
+nz = 1
+
+[physics]
+gamma = 1.4
+gas_constant = 287.0
+
+[freestream]
+mach = 0.3
+pressure = 101325.0
+temperature = 288.15
+
+[euler]
+flux = "hllc"
+reconstruction = "first_order"
+
+[time]
+mode = "transient"
+scheme = "dual_time"
+dt = 1.0e-4
+local_time_step = true
+cfl = 0.4
+max_inner_steps = 10
+inner_tolerance = -2.0
+max_steps = 1
+"#,
+    )
+    .expect("parse");
+    attach_single_tet_farfield(&mut case);
+    let result = super::compressible_unstructured_3d::run(&case).expect("run");
+    let metrics = result.compressible_3d.expect("metrics");
+    assert_eq!(metrics.steps, 1);
+    assert!(
+        metrics.residual_log10 <= -1.5,
+        "f32 uniform freestream R_eff should converge: log10={}",
+        metrics.residual_log10
+    );
+}
+
+#[test]
 fn runs_single_tet_unstructured_second_order_smoke_step() {
     let mut case = parse_case_str(
         r#"

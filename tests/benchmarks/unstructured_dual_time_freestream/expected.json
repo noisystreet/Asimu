@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "benchmark_id": "unstructured_dual_time_freestream",
+  "asimu_min_version": "0.2.0",
+  "quantities": [
+    {
+      "name": "dual_time_effective_residual_log10",
+      "value": -3.0,
+      "tolerance_abs": 1.0,
+      "source": "manufactured_uniform_field",
+      "note": "单四面体均匀来流 + dual_time 内层 LU-SGS；f64 参考 log10(R_eff,rms) ≤ -2。见 compressible_unstructured_3d_tests。"
+    }
+  ],
+  "profiles": []
+}

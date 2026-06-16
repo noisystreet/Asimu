@@ -1,0 +1,34 @@
+name = "unstructured_dual_time_freestream"
+benchmark_id = "unstructured_dual_time_freestream"
+
+# 非结构网格由集成测试 attach_single_tet_farfield 注入。
+# 运行见 README.md 与 compressible_unstructured_3d_tests。
+
+[mesh]
+kind = "structured_3d"
+nx = 1
+ny = 1
+nz = 1
+
+[physics]
+gamma = 1.4
+gas_constant = 287.0
+
+[freestream]
+mach = 0.3
+pressure = 101325.0
+temperature = 288.15
+
+[euler]
+flux = "hllc"
+reconstruction = "first_order"
+
+[time]
+mode = "transient"
+scheme = "dual_time"
+dt = 1.0e-4
+local_time_step = true
+cfl = 0.4
+max_inner_steps = 10
+inner_tolerance = -2.0
+max_steps = 1

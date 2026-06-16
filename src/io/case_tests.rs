@@ -185,6 +185,67 @@ max_steps = 10
 }
 
 #[test]
+fn parses_dual_time_time_scheme() {
+    let content = r#"
+name = "dual_time_test"
+[mesh]
+kind = "structured_3d"
+nx = 2
+ny = 2
+nz = 2
+lx = 1.0
+ly = 1.0
+lz = 1.0
+[physics]
+gamma = 1.4
+gas_constant = 287.0
+[freestream]
+mach = 0.3
+pressure = 101325.0
+temperature = 288.15
+[boundary.i_min]
+kind = "wall"
+no_slip = true
+heat = "adiabatic"
+[boundary.i_max]
+kind = "farfield"
+mach = 0.3
+pressure = 101325.0
+temperature = 288.15
+[boundary.j_min]
+kind = "symmetry"
+[boundary.j_max]
+kind = "symmetry"
+[boundary.k_min]
+kind = "wall"
+[boundary.k_max]
+kind = "outlet"
+static_pressure = 100000.0
+[time]
+mode = "transient"
+scheme = "dual_time"
+dt = 1.0e-4
+local_time_step = true
+max_inner_steps = 25
+inner_tolerance = -3.0
+max_steps = 100
+"#;
+    let case = parse_case_toml(content, None).expect("parse");
+    assert_eq!(
+        case.time.resolved_time_scheme(),
+        crate::solver::time::TimeIntegrationScheme::DualTime
+    );
+    let dual = case
+        .time
+        .resolved_dual_time_config()
+        .expect("dual cfg")
+        .expect("some");
+    assert!((dual.dt_phys - 1.0e-4).abs() < 1.0e-12);
+    assert_eq!(dual.max_inner_steps, 25);
+    assert_eq!(dual.inner_log10_tolerance, Some(-3.0));
+}
+
+#[test]
 fn parses_lusgs_diagonal_only() {
     let content = r#"
 name = "lusgs_diag"
