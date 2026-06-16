@@ -15,9 +15,7 @@ use crate::solver::compressible::multiblock::{
     BlockInterfaceLink, SharedInterfaceFace, build_multiblock_interface_metadata,
     fill_interface_ghosts,
 };
-use crate::solver::compressible::multiblock_interface::{
-    SharedInterfaceResidualParams, compute_shared_interface_residuals,
-};
+use crate::solver::compressible::multiblock_interface::SharedInterfaceResidualParams;
 use crate::solver::compressible::structured_compute_backend::StructuredComputeBackend;
 use crate::solver::compressible::structured_timestep_buffers::StructuredTimestepBuffers;
 use crate::solver::time::TransientStepControl;
@@ -184,7 +182,7 @@ fn advance_block_step_typed<T: StructuredComputeBackend>(
             blocks = env.mesh.num_blocks()
         )
         .entered();
-        compute_shared_interface_residuals(&SharedInterfaceResidualParams {
+        T::compute_shared_interface_residuals(&SharedInterfaceResidualParams {
             blocks: env.mesh.blocks(),
             shared_faces: env.shared_faces,
             snapshots: &snapshots,

@@ -7,6 +7,7 @@ use crate::core::ComputeFloat;
 use crate::discretization::InviscidFaceFluxTyped;
 use crate::discretization::compressible::residual::StructuredInviscidAssembly3dTyped;
 use crate::field::{LusgsDiagonalUpdateBackend, PrimitiveFillFromConserved};
+use crate::solver::compressible::multiblock_interface::StructuredMultiblockInterfaceTyped;
 use crate::solver::compressible::spectral_radius_3d_f32::StructuredSpectralRadiusTyped;
 use crate::solver::compressible::structured_timestep_buffers::{
     StructuredExplicitTimeAdvance, StructuredLusgsDiagonalUpdate, StructuredSpectralTimestepPrepare,
@@ -23,6 +24,7 @@ pub(crate) trait StructuredComputeBackend:
     + StructuredSpectralTimestepPrepare
     + StructuredExplicitTimeAdvance
     + StructuredLusgsDiagonalUpdate
+    + StructuredMultiblockInterfaceTyped
 {
 }
 

@@ -70,10 +70,7 @@ impl<T: StructuredComputeBackend> EvaluateRhs3dTyped<'_, T> {
         };
         assemble_inviscid_residual_3d_typed(fields, residual, &assembly)?;
         if let Some(contributions) = self.interface_residual {
-            crate::solver::compressible::multiblock_interface::apply_interface_residuals_typed(
-                residual,
-                contributions,
-            )?;
+            T::apply_interface_residuals(residual, contributions)?;
         }
         let _ = self.gradient_scratch;
         Ok(())

@@ -38,7 +38,7 @@ legacy f64 非 typed 多块路径在 S0 **保留**（数值等价）；新特性
 |------|------------------|
 | **S0** ✅ | 上表四项 + 驱动子模块拆分 |
 | S1 | `StructuredSpectralRadiusTyped`、f32 \(\Delta t_i\) 缓冲 |
-| S2 | 多块 1-to-1 接口 f32 通量 |
+| S2 | `StructuredMultiblockInterfaceTyped`、多块 1-to-1 接口 f32 通量 |
 | S3 | 结构化粘性 typed 装配 |
 | S4 | `StructuredLusgsSweepTyped`（`lusgs_sweep = true`） |
 | S5 | exec SIMD、f32 benchmark 文档 |
@@ -78,8 +78,8 @@ legacy f64 非 typed 多块路径在 S0 **保留**（数值等价）；新特性
 | **S0-a** | `StructuredComputeBackend` + `impl f32/f64` | `make check` | ✅ |
 | **S0-b** | 驱动拆分为 prepare / explicit / lusgs 子模块 | f64/f32 freestream 单测；无数值变更 | ✅ |
 | **S0-c** | ADR 定稿 + API/CHANGELOG | 文档审查 | ✅ |
-| S1 | f32 谱半径 + 显式 \(\Delta t_i\) 缓冲 | freestream f32≈f64 | 待办 |
-| S2 | 多块接口 f32 通量 | 1-to-1 freestream | 待办 |
+| S1 | f32 谱半径 + 显式 \(\Delta t_i\) 缓冲 | freestream f32≈f64 | ✅ |
+| S2 | 多块接口 f32 通量 | 1-to-1 freestream | ✅ |
 | S3 | 粘性 typed 装配 | 均匀场零 RHS | 待办 |
 | S4 | LU-SGS 扫掠 f32 | 小盒 smoke | 待办 |
 | S5 | SIMD + V&V benchmark | `docs/BENCHMARKS.md` | 待办 |

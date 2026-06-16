@@ -116,6 +116,16 @@ fn add_inviscid_flux_f32(
     flux: &InviscidFluxF32,
     scale: f32,
 ) -> Result<()> {
+    add_inviscid_flux_f32_to_cell(residual, cell, flux, scale)
+}
+
+/// f32 单元通量累加（多块接口 scatter 等复用）。
+pub(crate) fn add_inviscid_flux_f32_to_cell(
+    residual: &mut ConservedResidualT<f32>,
+    cell: usize,
+    flux: &InviscidFluxF32,
+    scale: f32,
+) -> Result<()> {
     if cell >= residual.num_cells() {
         return Err(crate::error::AsimuError::Field(format!(
             "残差单元索引越界: {cell}"

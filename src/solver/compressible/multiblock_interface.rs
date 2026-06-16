@@ -4,6 +4,7 @@ use tracing::info_span;
 
 use crate::core::Real;
 use crate::discretization::compressible::residual::inviscid_boundary_face_flux_with_normal;
+use crate::discretization::inviscid_f32::InviscidFluxF32;
 use crate::discretization::{BoundaryInviscidFluxInput, InviscidFlux};
 use crate::error::Result;
 use crate::field::{ConservedFields, ConservedResidual, PrimitiveFields};
@@ -12,10 +13,16 @@ use crate::physics::{FreestreamParams, IdealGasEoS};
 use crate::solver::compressible::multiblock::SharedInterfaceFace;
 
 #[derive(Debug, Clone)]
+pub(crate) enum InterfaceInviscidFlux {
+    Real(InviscidFlux),
+    F32(InviscidFluxF32),
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct InterfaceResidualContribution {
     pub(crate) cell: usize,
-    flux: InviscidFlux,
-    scale: Real,
+    flux: InterfaceInviscidFlux,
+    pub(crate) scale: Real,
 }
 
 pub(crate) struct SharedInterfaceResidualParams<'a> {
@@ -94,12 +101,12 @@ fn add_shared_interface_face(
     )?;
     out[face.owner_block_index].push(InterfaceResidualContribution {
         cell: face.owner_cell,
-        flux,
+        flux: InterfaceInviscidFlux::Real(flux),
         scale: face.owner_scale,
     });
     out[face.donor_block_index].push(InterfaceResidualContribution {
         cell: face.donor_cell,
-        flux,
+        flux: InterfaceInviscidFlux::Real(flux),
         scale: face.donor_scale,
     });
     Ok(())
@@ -110,28 +117,16 @@ pub(crate) fn apply_interface_residuals(
     contributions: &[InterfaceResidualContribution],
 ) -> Result<()> {
     for contribution in contributions {
+        let InterfaceInviscidFlux::Real(flux) = &contribution.flux else {
+            return Err(crate::error::AsimuError::Solver(
+                "f64 接口残差修正收到非 Real 通量".to_string(),
+            ));
+        };
         residual.add_flux_to_cell(
             contribution.cell,
-            contribution.flux.mass,
-            contribution.flux.momentum,
-            contribution.flux.energy,
-            contribution.scale,
-        )?;
-    }
-    Ok(())
-}
-
-/// typed 多块共享接口残差修正（通量仍以 f64 装配，写入 `ConservedResidualT<T>`）。
-pub(crate) fn apply_interface_residuals_typed<T: crate::core::ComputeFloat>(
-    residual: &mut crate::field::ConservedResidualT<T>,
-    contributions: &[InterfaceResidualContribution],
-) -> Result<()> {
-    for contribution in contributions {
-        residual.add_flux_to_cell(
-            contribution.cell,
-            contribution.flux.mass,
-            contribution.flux.momentum,
-            contribution.flux.energy,
+            flux.mass,
+            flux.momentum,
+            flux.energy,
             contribution.scale,
         )?;
     }
@@ -141,3 +136,18 @@ pub(crate) fn apply_interface_residuals_typed<T: crate::core::ComputeFloat>(
 fn p_floor(freestream: &FreestreamParams) -> Real {
     crate::field::positivity_pressure_floor(freestream.pressure)
 }
+
+/// 结构化 typed 多块共享接口通量（f32 原生装配与 scatter；ADR 0019 S2-a）。
+pub(crate) trait StructuredMultiblockInterfaceTyped: crate::core::ComputeFloat {
+    fn compute_shared_interface_residuals(
+        params: &SharedInterfaceResidualParams<'_>,
+    ) -> Result<Vec<Vec<InterfaceResidualContribution>>>;
+
+    fn apply_interface_residuals(
+        residual: &mut crate::field::ConservedResidualT<Self>,
+        contributions: &[InterfaceResidualContribution],
+    ) -> Result<()>;
+}
+
+#[path = "structured_multiblock_interface_typed.rs"]
+mod structured_multiblock_interface_typed;
