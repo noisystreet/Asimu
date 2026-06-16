@@ -1,0 +1,39 @@
+# 非结构网格由集成测试 attach_single_tet_farfield 注入后运行：
+#   cargo run --features cuda -- --case tests/benchmarks/unstructured_dual_time_freestream/case_cuda_f32.toml
+# CUDA f32 双时间步 smoke（device U^n + 存储项 kernel；内层 LU-SGS 对角）。
+name = "unstructured_dual_time_freestream_cuda_f32"
+benchmark_id = "unstructured_dual_time_freestream"
+
+[numerics]
+compute_precision = "f32"
+backend = "cuda"
+
+[mesh]
+kind = "structured_3d"
+nx = 1
+ny = 1
+nz = 1
+
+[physics]
+gamma = 1.4
+gas_constant = 287.0
+
+[freestream]
+mach = 0.3
+pressure = 101325.0
+temperature = 288.15
+
+[euler]
+flux = "roe"
+reconstruction = "first_order"
+
+[time]
+mode = "transient"
+scheme = "dual_time"
+dt = 1.0e-4
+local_time_step = true
+cfl = 0.4
+max_inner_steps = 10
+inner_tolerance = -2.0
+lusgs_sweep = false
+max_steps = 1

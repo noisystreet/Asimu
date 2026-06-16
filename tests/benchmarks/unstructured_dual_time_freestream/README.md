@@ -18,6 +18,18 @@ cargo test runs_single_tet_unstructured_dual_time_freestream -- --nocapture
 cargo test runs_single_tet_unstructured_dual_time_freestream_f32_step -- --nocapture
 ```
 
+### CUDA f32（P3b）
+
+约束：`compute_precision = "f32"`、`backend = "cuda"`、`lusgs_sweep = false`、`local_time_step = true`、正数 `dt`。
+
+```bash
+make test-cuda
+cargo test runs_single_tet_unstructured_cuda_dual_time_smoke_step --features cuda -- --ignored gpu
+cargo run --features cuda -- --case tests/benchmarks/unstructured_dual_time_freestream/case_cuda_f32.toml
+```
+
+见 `case_cuda_f32.toml` 与 `docs/theory/dual_time_stepping.md` §3.5。
+
 `case.toml` 为 manifest / 文档骨架；网格由 `attach_single_tet_farfield` 注入。
 
 ## 参考值
