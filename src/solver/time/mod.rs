@@ -4,6 +4,7 @@
 
 mod common;
 mod control;
+pub mod dual_time;
 pub mod euler;
 pub mod lu_sgs;
 pub mod residual_smoothing;
@@ -37,6 +38,7 @@ pub trait TimeIntegrator {
 }
 
 pub use control::TransientStepControl;
+pub use dual_time::{DualTimeConfig, DualTimeState, add_physical_storage_residual};
 pub use euler::{euler_step, euler_step_local, euler_step_local_f32};
 pub use lu_sgs::{LuSgsConfig, lu_sgs_step, lu_sgs_step_local, lu_sgs_step_sweep_local};
 pub use residual_smoothing::{ResidualSmoothingConfig, smooth_residual_3d_limited};
