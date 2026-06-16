@@ -16,6 +16,6 @@
 - [x] **P1** — LU-SGS 分母 `inv_dt_phys`（typed f32/f64 对角 + sweep）
 - [x] **P2** — `unstructured_driver_typed` 内外循环 + `DualTimeState<T>` + `scheme = "dual_time"`
 - [x] **P3** — V&V smoke：`unstructured_dual_time_freestream`（f64 + f32 CPU 单四面体）
-- [ ] **P3b** — CUDA f32：device `U^n`、存储项 kernel、`validate` 能力矩阵
+- [x] **P3b** — CUDA f32：device `U^n`、存储项 kernel、`validate` 能力矩阵
 - [ ] **P4** — （可选）非结构 typed GMRES + DTS
 - [x] **P5** — manifest / 残差 CSV 记录 `inner_iterations`（`compute_precision`/`exec_device` 已在 config_hash）
