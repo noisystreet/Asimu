@@ -187,13 +187,22 @@ impl UnstructuredCudaPrepareSync for f32 {
         fields: &mut ConservedFieldsT<f32>,
     ) -> Result<()> {
         #[cfg(feature = "cuda")]
-        if work.exec.device() == ExecDevice::GpuCuda {
+        let skip_host_u0_sync = if work.exec.device() == ExecDevice::GpuCuda {
             work.exec.cuda_reset_pipeline_step()?;
-            if work.exec.cuda_conserved_on_device() {
+            let rhs_on_device = work.exec.cuda_rhs_pipeline_active();
+            if work.exec.cuda_conserved_on_device() && !rhs_on_device {
                 work.exec.cuda_download_conserved_if_on_device(fields)?;
             }
+            rhs_on_device && work.exec.cuda_conserved_on_device()
+        } else {
+            false
+        };
+        #[cfg(not(feature = "cuda"))]
+        let skip_host_u0_sync = false;
+        if !skip_host_u0_sync {
+            work.storage.u0.copy_from(fields)?;
         }
-        work.storage.u0.copy_from(fields)
+        Ok(())
     }
 
     fn add_dual_time_storage_residual(
