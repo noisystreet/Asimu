@@ -70,7 +70,14 @@ pub(crate) fn prepare_unstructured_timestep_typed<
             fixed_dt = fixed_dt.is_some(),
         )
         .entered();
-        T::store_sigma_and_cell_dts(work, prepared, cfl, fixed_dt, env.config.local_time_step)
+        T::store_sigma_and_cell_dts(
+            work,
+            prepared,
+            cfl,
+            fixed_dt,
+            env.config.local_time_step,
+            env.config.dual_time.is_some(),
+        )
     }
 }
 
@@ -252,9 +259,11 @@ impl UnstructuredSpectralRadiusAtPrepare for f32 {
         };
         #[cfg(feature = "cuda")]
         {
-            let keep_timestep_on_device = env.config.time_scheme == TimeIntegrationScheme::LuSgs
-                && !env.config.lu_sgs.sweep
-                && work.exec.device() == ExecDevice::GpuCuda;
+            let keep_timestep_on_device = f32_cuda_keep_timestep_on_device(
+                env.config.time_scheme,
+                env.config.lu_sgs.sweep,
+                &work.exec,
+            );
             let (sigma, cell_dts) =
                 crate::solver::compressible::spectral_radius_unstructured_f32_cuda::compute_spectral_radius_f32_with_exec(
                     &params,
@@ -308,12 +317,16 @@ impl UnstructuredSpectralRadiusAtPrepare for f64 {
 
 /// 谱半径结果写入时间步缓冲（f32 原生 \(\sigma_i\)，无 prepare 边界转换）。
 pub(crate) trait UnstructuredTimestepFromSigma: UnstructuredSpectralRadiusTyped {
+    /// 写入 \(\sigma_i\) 与 `cell_dts` 并返回全局最小 \(\Delta t\)。
+    ///
+    /// `skip_cuda_min_dt_d2h`：`dual_time` 内层为 true 时跳过 `spectral_min_cell_dt` D2H（返回值未被消费）。
     fn store_sigma_and_cell_dts(
         work: &mut UnstructuredStepWorkTyped<Self>,
         prepared: TimestepPrepareSpectral<Self>,
         cfl: Real,
         fixed_dt: Option<Real>,
         local_time_step: bool,
+        skip_cuda_min_dt_d2h: bool,
     ) -> Result<Real>;
 }
 
@@ -324,6 +337,7 @@ impl UnstructuredTimestepFromSigma for f32 {
         cfl: Real,
         fixed_dt: Option<Real>,
         local_time_step: bool,
+        skip_cuda_min_dt_d2h: bool,
     ) -> Result<Real> {
         work.timestep.sigma_f32 = prepared.sigma;
         if let Some(cell_dts) = prepared.cell_dts {
@@ -336,8 +350,14 @@ impl UnstructuredTimestepFromSigma for f32 {
                 if let Some(dt) = fixed_dt {
                     return Ok(dt);
                 }
+                if skip_cuda_min_dt_d2h {
+                    // dual_time 内层返回值未被消费；LU-SGS 直接读 device σ/Δt_i。
+                    return Ok(0.0);
+                }
                 return Ok(work.exec.cuda_download_min_cell_dt_f32()? as Real);
             }
+            #[cfg(not(feature = "cuda"))]
+            let _ = skip_cuda_min_dt_d2h;
             work.timestep.cell_dts_f32 = finalize_cell_dts_from_sigma_f32(
                 &work.volumes_f32,
                 &work.timestep.sigma_f32,
@@ -357,6 +377,7 @@ impl UnstructuredTimestepFromSigma for f64 {
         cfl: Real,
         fixed_dt: Option<Real>,
         local_time_step: bool,
+        _skip_cuda_min_dt_d2h: bool,
     ) -> Result<Real> {
         work.timestep.sigma = prepared.sigma;
         work.timestep.cell_dts = if let Some(cell_dts) = prepared.cell_dts {
@@ -388,4 +409,62 @@ pub(crate) fn f32_cuda_viscous_rhs_pipeline(
     exec: &ExecutionContext,
 ) -> bool {
     env.config.viscous.is_some() && exec.device() == ExecDevice::GpuCuda
+}
+
+/// CUDA f32：谱半径 \(\sigma_i\)/`cell_dts` 驻留 device，供对角 LU-SGS 跳过批量 D2H。
+#[cfg(feature = "cuda")]
+fn f32_cuda_keep_timestep_on_device(
+    time_scheme: TimeIntegrationScheme,
+    lusgs_sweep: bool,
+    exec: &ExecutionContext,
+) -> bool {
+    if exec.device() != ExecDevice::GpuCuda || lusgs_sweep {
+        return false;
+    }
+    matches!(
+        time_scheme,
+        TimeIntegrationScheme::LuSgs | TimeIntegrationScheme::DualTime
+    )
+}
+
+#[cfg(test)]
+mod cuda_timestep_tests {
+    #[cfg(feature = "cuda")]
+    #[test]
+    fn dual_time_cuda_keeps_timestep_on_device_without_sweep() {
+        use super::f32_cuda_keep_timestep_on_device;
+        use crate::core::ExecDevice;
+        use crate::exec::{ExecConfig, ExecutionContext, MeshExecMetrics};
+        use crate::solver::time::TimeIntegrationScheme;
+
+        let exec = ExecutionContext::new(
+            ExecConfig {
+                device: ExecDevice::GpuCuda,
+                ..ExecConfig::default()
+            },
+            MeshExecMetrics::empty(),
+        )
+        .expect("cuda");
+        assert!(f32_cuda_keep_timestep_on_device(
+            TimeIntegrationScheme::DualTime,
+            false,
+            &exec,
+        ));
+        assert!(f32_cuda_keep_timestep_on_device(
+            TimeIntegrationScheme::LuSgs,
+            false,
+            &exec,
+        ));
+        assert!(!f32_cuda_keep_timestep_on_device(
+            TimeIntegrationScheme::DualTime,
+            true,
+            &exec,
+        ));
+        let cpu = ExecutionContext::for_unit_test();
+        assert!(!f32_cuda_keep_timestep_on_device(
+            TimeIntegrationScheme::DualTime,
+            false,
+            &cpu,
+        ));
+    }
 }
