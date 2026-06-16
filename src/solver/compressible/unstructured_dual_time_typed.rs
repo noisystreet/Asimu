@@ -79,7 +79,7 @@ fn dual_time_inner_iteration<T: UnstructuredComputeBackend + UnstructuredCudaPre
     )
     .entered();
     prepare_unstructured_timestep_typed(ctx.env, fields, work, ctx.cfl, ctx.p_floor)?;
-    work.storage.u0.copy_from(fields)?;
+    T::prepare_dual_time_inner_base(work, fields)?;
     T::maybe_upload_lusgs_integration_base(work)?;
     dual_time_assemble_effective_rhs(ctx.env, work, fields, ctx.dual.dt_phys, ctx.p_floor)?;
     let effective_residual_rms = T::step_density_residual_rms(work)?;

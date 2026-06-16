@@ -172,6 +172,14 @@ pub(crate) trait UnstructuredCudaPrepareSync:
             dt_phys,
         )
     }
+
+    /// 双时间步内层迭代初：同步 LU-SGS 积分基态（CUDA 保留 device 守恒场）。
+    fn prepare_dual_time_inner_base(
+        work: &mut UnstructuredStepWorkTyped<Self>,
+        fields: &mut ConservedFieldsT<Self>,
+    ) -> Result<()> {
+        work.storage.u0.copy_from(fields)
+    }
 }
 
 impl UnstructuredCudaPrepareSync for f64 {

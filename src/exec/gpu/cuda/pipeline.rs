@@ -75,4 +75,18 @@ mod tests {
         assert!(!p.timestep_on_device);
         assert!(!p.boundary_ghosts_on_device);
     }
+
+    #[test]
+    fn reset_rhs_step_preserves_u_n_on_device() {
+        let mut p = CudaPipelineState {
+            u_n_on_device: true,
+            conserved_on_device: true,
+            residual_on_device: true,
+            ..CudaPipelineState::default()
+        };
+        p.reset_rhs_step();
+        assert!(p.u_n_on_device);
+        assert!(p.conserved_on_device);
+        assert!(!p.residual_on_device);
+    }
 }
