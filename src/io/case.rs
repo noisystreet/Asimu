@@ -186,6 +186,10 @@ pub struct CaseTimeConfig {
     pub gmres_preconditioner: Option<crate::solver::GmresPreconditionerKind>,
     /// 方向分裂隐式残差光顺（仅稳态 3D 伪时间）。
     pub residual_smoothing: crate::solver::time::ResidualSmoothingConfig,
+    /// 双时间步：每物理步伪时间迭代上限（`scheme = dual_time`）。
+    pub max_inner_steps: Option<u32>,
+    /// 双时间步：内层 \(\log_{10}\|R_{\mathrm{eff}}\|_{\mathrm{rms}}\) 早停阈值。
+    pub inner_tolerance: Option<Real>,
 }
 
 impl CaseTimeConfig {
@@ -221,6 +225,23 @@ impl CaseTimeConfig {
             ..crate::solver::GmresImplicitConfig::default()
         }
     }
+
+    /// `scheme = dual_time` 时解析双时间步配置；否则为 `None`。
+    pub fn resolved_dual_time_config(&self) -> Result<Option<crate::solver::time::DualTimeConfig>> {
+        if self.resolved_time_scheme() == crate::solver::time::TimeIntegrationScheme::DualTime {
+            Ok(Some(crate::solver::time::DualTimeConfig::parse(
+                self.dt,
+                self.max_inner_steps,
+                self.inner_tolerance,
+            )?))
+        } else if self.max_inner_steps.is_some() || self.inner_tolerance.is_some() {
+            Err(crate::error::AsimuError::Config(
+                "max_inner_steps / inner_tolerance 仅用于 time.scheme = \"dual_time\"".to_string(),
+            ))
+        } else {
+            Ok(None)
+        }
+    }
 }
 
 impl Default for CaseTimeConfig {
@@ -242,6 +263,8 @@ impl Default for CaseTimeConfig {
             lusgs_sweep_backward_damping: None,
             gmres_preconditioner: None,
             residual_smoothing: crate::solver::time::ResidualSmoothingConfig::disabled(),
+            max_inner_steps: None,
+            inner_tolerance: None,
         }
     }
 }
@@ -457,6 +480,8 @@ struct TimeToml {
     residual_smoothing: Option<bool>,
     residual_smoothing_epsilon: Option<Real>,
     residual_smoothing_sweeps: Option<usize>,
+    max_inner_steps: Option<u32>,
+    inner_tolerance: Option<Real>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -734,6 +759,8 @@ fn parse_time_config(raw: Option<&TimeToml>, has_sod: bool) -> Result<CaseTimeCo
         lusgs_sweep_backward_damping,
         gmres_preconditioner,
         residual_smoothing,
+        max_inner_steps: raw.max_inner_steps,
+        inner_tolerance: raw.inner_tolerance,
     })
 }
 

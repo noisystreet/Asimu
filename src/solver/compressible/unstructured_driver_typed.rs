@@ -2,6 +2,8 @@
 
 #[path = "unstructured_cuda_prepare_f32.rs"]
 mod unstructured_cuda_prepare_f32;
+#[path = "unstructured_dual_time_typed.rs"]
+mod unstructured_dual_time_typed;
 #[path = "unstructured_explicit_typed.rs"]
 mod unstructured_explicit_typed;
 #[path = "unstructured_lusgs_typed.rs"]
@@ -9,6 +11,7 @@ mod unstructured_lusgs_typed;
 #[path = "unstructured_prepare_timestep_typed.rs"]
 mod unstructured_prepare_timestep_typed;
 
+use unstructured_dual_time_typed::advance_unstructured_dual_time_typed;
 use unstructured_explicit_typed::{
     UnstructuredExplicitTimeAdvance, advance_unstructured_explicit_typed,
 };
@@ -97,6 +100,7 @@ pub(crate) struct UnstructuredStepWorkTyped<T: ComputeFloat> {
     volumes_f32: Vec<f32>,
     timestep: UnstructuredTimestepBuffers,
     lusgs_couplings: LuSgsUnstructuredCouplings,
+    dual_time_state: crate::solver::time::DualTimeState<T>,
 }
 
 pub(crate) struct UnstructuredRunEnvTyped<'a> {
@@ -134,7 +138,12 @@ fn allocate_unstructured_step_work_typed<T: ComputeFloat>(
         storage: Rk4StorageT::new(n)?,
         state: SolverState::default(),
         integrator: RungeKutta4Integrator::new(RungeKutta4Config {
-            dt: env.config.fixed_dt.unwrap_or(0.0),
+            dt: env
+                .config
+                .dual_time
+                .map(|d| d.dt_phys)
+                .or(env.config.fixed_dt)
+                .unwrap_or(0.0),
             max_steps: env.config.max_steps,
         }),
         ghosts: BoundaryGhostBuffer::with_face_capacity(env.config.mesh.num_faces()),
@@ -159,6 +168,7 @@ fn allocate_unstructured_step_work_typed<T: ComputeFloat>(
             cell_dts_f32: Vec::new(),
         },
         lusgs_couplings: LuSgsUnstructuredCouplings::from_mesh(env.config.mesh)?,
+        dual_time_state: crate::solver::time::DualTimeState::new(n)?,
     })
 }
 
@@ -235,6 +245,56 @@ pub fn run_unstructured_typed_with_observer<T: UnstructuredComputeBackend>(
     }))
 }
 
+fn resolve_unstructured_step_dt<T: UnstructuredComputeBackend + UnstructuredCudaPrepareSync>(
+    env: &UnstructuredRunEnvTyped<'_>,
+    fields: &mut ConservedFieldsT<T>,
+    work: &mut UnstructuredStepWorkTyped<T>,
+    cfl: Real,
+    p_floor: Real,
+) -> Result<Real> {
+    if env.config.time_scheme == TimeIntegrationScheme::DualTime {
+        let dual = env
+            .config
+            .dual_time
+            .ok_or_else(|| AsimuError::Config("dual_time 推进须设置 DualTimeConfig".to_string()))?;
+        work.integrator.config.dt = dual.dt_phys;
+        return Ok(dual.dt_phys);
+    }
+    let dt = prepare_unstructured_timestep_typed(env, fields, work, cfl, p_floor)?;
+    work.integrator.config.dt = dt;
+    Ok(dt)
+}
+
+fn advance_unstructured_time_integration_typed<
+    T: UnstructuredComputeBackend + UnstructuredCudaPrepareSync,
+>(
+    env: &UnstructuredRunEnvTyped<'_>,
+    fields: &mut ConservedFieldsT<T>,
+    work: &mut UnstructuredStepWorkTyped<T>,
+    dt: Real,
+    cfl: Real,
+    p_floor: Real,
+) -> Result<()> {
+    match env.config.time_scheme {
+        TimeIntegrationScheme::LuSgs => {
+            advance_unstructured_lusgs_typed(env, fields, work, p_floor)
+        }
+        TimeIntegrationScheme::DualTime => {
+            let dual = env.config.dual_time.ok_or_else(|| {
+                AsimuError::Config("dual_time 推进须设置 DualTimeConfig".to_string())
+            })?;
+            advance_unstructured_dual_time_typed(env, fields, work, dual, cfl, p_floor).map(|_| ())
+        }
+        TimeIntegrationScheme::Euler | TimeIntegrationScheme::Rk4 => {
+            advance_unstructured_explicit_typed(env, fields, work, dt, p_floor)
+        }
+        scheme => Err(AsimuError::Config(format!(
+            "非结构 typed 路径暂不支持 time.scheme = \"{}\"",
+            scheme.label()
+        ))),
+    }
+}
+
 fn advance_unstructured_step_typed<T: UnstructuredComputeBackend + UnstructuredCudaPrepareSync>(
     env: &mut UnstructuredRunEnvTyped<'_>,
     fields: &mut ConservedFieldsT<T>,
@@ -256,8 +316,7 @@ fn advance_unstructured_step_typed<T: UnstructuredComputeBackend + UnstructuredC
         .at_step(work.state.time_step.saturating_add(1), env.config.max_steps);
     let p_floor = crate::field::positivity_pressure_floor(env.config.freestream.pressure);
     let compute_dt_start = Instant::now();
-    let dt = prepare_unstructured_timestep_typed(env, fields, work, cfl, p_floor)?;
-    work.integrator.config.dt = dt;
+    let dt = resolve_unstructured_step_dt(env, fields, work, cfl, p_floor)?;
     let compute_dt_ms = elapsed_ms(compute_dt_start);
     let time_integration_start = Instant::now();
     {
@@ -267,20 +326,7 @@ fn advance_unstructured_step_typed<T: UnstructuredComputeBackend + UnstructuredC
             precision = T::PRECISION.label(),
         )
         .entered();
-        match env.config.time_scheme {
-            TimeIntegrationScheme::LuSgs => {
-                advance_unstructured_lusgs_typed(env, fields, work, p_floor)?;
-            }
-            TimeIntegrationScheme::Euler | TimeIntegrationScheme::Rk4 => {
-                advance_unstructured_explicit_typed(env, fields, work, dt, p_floor)?;
-            }
-            scheme => {
-                return Err(AsimuError::Config(format!(
-                    "非结构 typed 路径暂不支持 time.scheme = \"{}\"",
-                    scheme.label()
-                )));
-            }
-        }
+        advance_unstructured_time_integration_typed(env, fields, work, dt, cfl, p_floor)?;
     }
     let time_integration_ms = elapsed_ms(time_integration_start);
     T::maybe_enforce_conserved_after_integration(work, env.config.eos, p_floor)?;

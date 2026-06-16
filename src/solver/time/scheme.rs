@@ -14,6 +14,8 @@ pub enum TimeIntegrationScheme {
     LuSgs,
     /// Matrix-free GMRES 隐式伪时间（LU-SGS 对角预条件器）。
     Gmres,
+    /// 双时间步：物理 BDF1 + 内层 LU-SGS 伪时间（非结构可压缩）。
+    DualTime,
     /// 不可压缩 SIMPLEC 稳态 pressure-velocity 路径（可压缩求解器不支持）。
     Simplec,
     /// 不可压缩 PISO/BDF1 瞬态 pressure-velocity 路径（可压缩求解器不支持）。
@@ -29,11 +31,12 @@ impl TimeIntegrationScheme {
             "euler" | "forward_euler" | "euler1" | "rk1" | "euler_1" => Ok(Self::Euler),
             "lu_sgs" | "lusgs" | "lu-sgs" => Ok(Self::LuSgs),
             "gmres" | "jfnk" | "matrix_free_gmres" | "matrix-free-gmres" => Ok(Self::Gmres),
+            "dual_time" | "dts" | "dual-time" => Ok(Self::DualTime),
             "simplec" => Ok(Self::Simplec),
             "piso" => Ok(Self::Piso),
             "bdf1" | "backward_euler" | "implicit_euler" => Ok(Self::Bdf1),
             other => Err(AsimuError::Config(format!(
-                "不支持的 time.scheme \"{other}\"（可用 rk4、euler、lu_sgs、gmres、simplec、piso）"
+                "不支持的 time.scheme \"{other}\"（可用 rk4、euler、lu_sgs、gmres、dual_time、simplec、piso）"
             ))),
         }
     }
@@ -45,6 +48,7 @@ impl TimeIntegrationScheme {
             Self::Euler => "euler",
             Self::LuSgs => "lu_sgs",
             Self::Gmres => "gmres",
+            Self::DualTime => "dual_time",
             Self::Simplec => "simplec",
             Self::Piso => "piso",
             Self::Bdf1 => "bdf1",
@@ -53,7 +57,7 @@ impl TimeIntegrationScheme {
 
     #[must_use]
     pub const fn is_implicit_pseudo_time(self) -> bool {
-        matches!(self, Self::LuSgs | Self::Gmres)
+        matches!(self, Self::LuSgs | Self::Gmres | Self::DualTime)
     }
 }
 
@@ -98,6 +102,14 @@ mod tests {
         assert_eq!(
             TimeIntegrationScheme::parse("simplec").expect("simplec"),
             TimeIntegrationScheme::Simplec
+        );
+    }
+
+    #[test]
+    fn parses_dual_time_aliases() {
+        assert_eq!(
+            TimeIntegrationScheme::parse("dts").expect("dual_time"),
+            TimeIntegrationScheme::DualTime
         );
     }
 

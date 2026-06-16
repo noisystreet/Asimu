@@ -530,6 +530,8 @@ fn rejects_gmres_for_connected_multiblock_at_parse() {
             tolerance: None,
             local_time_step: false,
             cfl_ramp_steps: None,
+            max_inner_steps: None,
+            inner_tolerance: None,
         },
         sod: None,
         euler: Some(EulerCaseConfig {

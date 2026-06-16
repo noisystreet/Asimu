@@ -676,20 +676,18 @@ impl CompressibleEulerSolver {
             (TimeIntegrationScheme::Euler, None) => {
                 euler_step(fields, storage, dt_global, evaluate_rhs, eos, min_pressure)
             }
-            (TimeIntegrationScheme::LuSgs, _) => Err(crate::error::AsimuError::Solver(
-                "advance_explicit_step 不支持 lu_sgs".to_string(),
-            )),
-            (TimeIntegrationScheme::Gmres, _) => Err(crate::error::AsimuError::Solver(
-                "advance_explicit_step 不支持 gmres".to_string(),
-            )),
-            (TimeIntegrationScheme::Simplec, _) => Err(crate::error::AsimuError::Solver(
-                "advance_explicit_step 不支持 simplec".to_string(),
-            )),
-            (TimeIntegrationScheme::Piso | TimeIntegrationScheme::Bdf1, _) => {
-                Err(crate::error::AsimuError::Solver(
-                    "advance_explicit_step 不支持 piso/bdf1".to_string(),
-                ))
-            }
+            (
+                TimeIntegrationScheme::LuSgs
+                | TimeIntegrationScheme::Gmres
+                | TimeIntegrationScheme::DualTime
+                | TimeIntegrationScheme::Simplec
+                | TimeIntegrationScheme::Piso
+                | TimeIntegrationScheme::Bdf1,
+                _,
+            ) => Err(crate::error::AsimuError::Solver(format!(
+                "advance_explicit_step 不支持 {}",
+                self.config.time_scheme.label()
+            ))),
         }
     }
 

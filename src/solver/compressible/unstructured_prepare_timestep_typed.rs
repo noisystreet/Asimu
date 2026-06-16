@@ -57,7 +57,11 @@ pub(crate) fn prepare_unstructured_timestep_typed<
         T::refresh_state_for_prepare(env, fields, work, p_floor)?;
         T::maybe_prepare_cuda_rhs_device_state(env, work, p_floor)?;
     }
-    let fixed_dt = env.config.fixed_dt.filter(|dt| *dt > 0.0 && dt.is_finite());
+    let fixed_dt = if env.config.dual_time.is_some() {
+        None
+    } else {
+        env.config.fixed_dt.filter(|dt| *dt > 0.0 && dt.is_finite())
+    };
     let prepared = compute_spectral_radius_at_prepare(env, work, p_floor, cfl, fixed_dt)?;
     {
         let _span = info_span!(

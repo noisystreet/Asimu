@@ -64,6 +64,11 @@ fn validate_gpu_cuda_backend_enabled(case: &CaseSpec) -> Result<()> {
     match case.time.resolved_time_scheme() {
         TimeIntegrationScheme::Rk4 | TimeIntegrationScheme::Euler => {}
         TimeIntegrationScheme::LuSgs => validate_gpu_cuda_lusgs(case)?,
+        TimeIntegrationScheme::DualTime => {
+            return Err(gpu_cuda_unsupported(
+                "cuda dual_time 于 P3b 实现；当前仅支持 cpu",
+            ));
+        }
         scheme => {
             return Err(gpu_cuda_unsupported(&format!(
                 "cuda 首版不支持 time.scheme = \"{}\"",
@@ -155,6 +160,7 @@ fn validate_f32_time_scheme(case: &CaseSpec) -> Result<()> {
     match case.time.resolved_time_scheme() {
         TimeIntegrationScheme::Rk4 | TimeIntegrationScheme::Euler => Ok(()),
         TimeIntegrationScheme::LuSgs => validate_f32_lusgs_time(case),
+        TimeIntegrationScheme::DualTime => validate_f32_dual_time(case),
         TimeIntegrationScheme::Gmres => validate_f32_gmres_time(case),
         scheme => Err(f32_unsupported(&format!(
             "f32 暂不支持 time.scheme = \"{}\"",
@@ -171,6 +177,15 @@ fn validate_f32_lusgs_time(case: &CaseSpec) -> Result<()> {
     {
         return Err(f32_unsupported("f32 仅非结构路径支持 lusgs_sweep = true"));
     }
+    Ok(())
+}
+
+fn validate_f32_dual_time(case: &CaseSpec) -> Result<()> {
+    if !matches!(case.mesh, CaseMesh::Unstructured3d(_)) {
+        return Err(f32_unsupported("f32 dual_time 仅支持非结构 3D 路径"));
+    }
+    validate_f32_lusgs_time(case)?;
+    case.time.resolved_dual_time_config()?;
     Ok(())
 }
 
@@ -234,6 +249,14 @@ pub fn unstructured_compressible(case: &CaseSpec) -> Result<()> {
         return Err(AsimuError::Config(
             "非结构网格暂不支持 time.scheme = \"gmres\"".to_string(),
         ));
+    }
+    if case.time.resolved_time_scheme() == TimeIntegrationScheme::DualTime {
+        if !case.time.uses_local_time_step() {
+            return Err(AsimuError::Config(
+                "非结构 time.scheme = \"dual_time\" 须配合 local_time_step = true".to_string(),
+            ));
+        }
+        case.time.resolved_dual_time_config()?;
     }
     Ok(())
 }
