@@ -7,6 +7,8 @@ use crate::error::Result;
 use crate::field::{
     ConservedFieldsT, LusgsDiagonalCoeffs, LusgsDiagonalCoeffsF32, assign_lusgs_diagonal_update_f32,
 };
+#[cfg(feature = "cuda")]
+use tracing::warn;
 
 use super::{UnstructuredRunEnvTyped, UnstructuredStepWorkTyped};
 use crate::solver::{
@@ -46,6 +48,12 @@ impl UnstructuredLusgsSweep for f32 {
         #[cfg(feature = "cuda")]
         if try_cuda_lusgs_sweep_f32(fields, work, ctx)? {
             return Ok(());
+        }
+        #[cfg(feature = "cuda")]
+        warn_cuda_lusgs_sweep_cpu_fallback(work);
+        #[cfg(feature = "cuda")]
+        if work.exec.cuda_rhs_pipeline_active() && work.exec.cuda_residual_on_device() {
+            work.exec.cuda_flush_rhs_residual(&mut work.storage.k1)?;
         }
         let couplings = LuSgsUnstructuredCouplingsRef::F32(&work.mesh_cache.lusgs_couplings_f32);
         let residual = &work.storage.k1;
@@ -147,6 +155,28 @@ impl UnstructuredLusgsDiagonalUpdate for f32 {
             },
         )
     }
+}
+
+#[cfg(feature = "cuda")]
+fn warn_cuda_lusgs_sweep_cpu_fallback(work: &UnstructuredStepWorkTyped<f32>) {
+    if work.exec.device() != ExecDevice::GpuCuda {
+        return;
+    }
+    if work.state.time_step > 0 {
+        return;
+    }
+    let reason = if !work.exec.cuda_timestep_on_device() {
+        "lusgs_sweep=true 时 σ/Δtᵢ 不驻留 device，CUDA 双扫 kernel 不可用"
+    } else if !work.exec.cuda_residual_on_device() {
+        "RHS 残差尚未在 device 上"
+    } else {
+        "CUDA 双扫前置条件未满足"
+    };
+    warn!(
+        reason,
+        rhs_pipeline = work.exec.cuda_rhs_pipeline_active(),
+        "CUDA f32 非结构 LU-SGS 双扫回落 CPU host 扫掠（后续步不再重复告警）"
+    );
 }
 
 #[cfg(feature = "cuda")]
