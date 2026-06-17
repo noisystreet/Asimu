@@ -3,7 +3,7 @@
 use super::super::lusgs_diagonal::{launch_lusgs_diagonal_update, launch_residual_density_sum_sq};
 use super::super::lusgs_sweep::{
     LusgsSweepCudaHostInput, LusgsSweepCudaLaunchBuffers, LusgsSweepCudaScalars,
-    launch_lusgs_sweep_unstructured_serial,
+    launch_lusgs_any_nonphysical_conserved, launch_lusgs_sweep_unstructured_serial,
 };
 use super::super::lusgs_sweep_mesh_cache::upload_u0_snapshot;
 use super::CudaBackendState;
@@ -16,6 +16,18 @@ use crate::solver::compressible::lu_sgs_common::{
 impl CudaBackendState {
     pub fn download_timestep_f32(
         &mut self,
+        sigma_out: &mut [f32],
+        cell_dts_out: &mut [f32],
+        local_time_step: bool,
+    ) -> Result<()> {
+        self.mirror_timestep_f32_to_host(sigma_out, cell_dts_out, local_time_step)?;
+        self.pipeline.timestep_on_device = false;
+        Ok(())
+    }
+
+    /// 将 device 上 σ/Δtᵢ 镜像到 host，**不**清除 `timestep_on_device`（供 LU-SGS 双扫 host stabilize）。
+    pub fn mirror_timestep_f32_to_host(
+        &self,
         sigma_out: &mut [f32],
         cell_dts_out: &mut [f32],
         local_time_step: bool,
@@ -37,7 +49,6 @@ impl CudaBackendState {
                 cell_dts_out.fill(min_dt);
             }
         }
-        self.pipeline.timestep_on_device = false;
         Ok(())
     }
 
@@ -137,8 +148,12 @@ impl CudaBackendState {
     pub fn lusgs_sweep_update_f32(&mut self, input: LusgsSweepCudaHostInput<'_>) -> Result<()> {
         self.lusgs_sweep_validate_lengths(&input)?;
         self.lusgs_sweep_prepare_buffers(&input)?;
-        let u0_bufs = self.lusgs_sweep_upload_u0(input.u0)?;
+        let from_device_cons = self.pipeline.conserved_on_device;
+        let u0_bufs = self.lusgs_sweep_upload_u0(input.u0, from_device_cons)?;
         self.lusgs_sweep_launch_device(u0_bufs, &input.scalars)?;
+        if self.lusgs_sweep_try_finish_on_device(&input.scalars)? {
+            return Ok(());
+        }
         self.lusgs_sweep_stabilize_host(input)
     }
 }
@@ -159,13 +174,9 @@ impl CudaBackendState {
             ));
         }
         let n = input.fields.num_cells();
-        if input.residual.num_cells() != n
-            || input.host_sigma.len() != n
-            || input.host_cell_dts.len() != n
-            || input.host_volumes.len() != n
-        {
+        if input.residual.num_cells() != n || input.host_volumes.len() != n {
             return Err(AsimuError::Exec(
-                "CUDA LU-SGS 扫掠：场/残差/timestep 长度不一致".to_string(),
+                "CUDA LU-SGS 扫掠：场/残差/volume 长度不一致".to_string(),
             ));
         }
         Ok(())
@@ -189,22 +200,38 @@ impl CudaBackendState {
         Ok(())
     }
 
-    fn lusgs_sweep_upload_u0(&mut self, u0: &ConservedFieldsT<f32>) -> Result<LusgsSweepU0Device> {
+    fn lusgs_sweep_upload_u0(
+        &mut self,
+        u0: &ConservedFieldsT<f32>,
+        from_device_cons: bool,
+    ) -> Result<LusgsSweepU0Device> {
         let n = u0.num_cells();
         let mut rho = take_or_alloc_u0(&mut self.lusgs_sweep_u0_rho, &self.stream, n)?;
         let mut mx = take_or_alloc_u0(&mut self.lusgs_sweep_u0_mx, &self.stream, n)?;
         let mut my = take_or_alloc_u0(&mut self.lusgs_sweep_u0_my, &self.stream, n)?;
         let mut mz = take_or_alloc_u0(&mut self.lusgs_sweep_u0_mz, &self.stream, n)?;
         let mut e = take_or_alloc_u0(&mut self.lusgs_sweep_u0_e, &self.stream, n)?;
-        upload_u0_snapshot(
-            &self.stream,
-            u0,
-            &mut rho,
-            &mut mx,
-            &mut my,
-            &mut mz,
-            &mut e,
-        )?;
+        if from_device_cons {
+            let field_bufs = self.fields.as_ref().expect("field buffers");
+            field_bufs.copy_conserved_to_u0_slices(
+                &self.stream,
+                &mut rho,
+                &mut mx,
+                &mut my,
+                &mut mz,
+                &mut e,
+            )?;
+        } else {
+            upload_u0_snapshot(
+                &self.stream,
+                u0,
+                &mut rho,
+                &mut mx,
+                &mut my,
+                &mut mz,
+                &mut e,
+            )?;
+        }
         Ok(LusgsSweepU0Device { rho, mx, my, mz, e })
     }
 
@@ -243,7 +270,72 @@ impl CudaBackendState {
         Ok(())
     }
 
+    /// device 扫掠后若全场正性已满足，跳过 host stabilize 与全量 D2H/H2D。
+    fn lusgs_sweep_try_finish_on_device(
+        &mut self,
+        scalars: &LusgsSweepCudaScalars,
+    ) -> Result<bool> {
+        if self
+            .lusgs_any_nonphysical_scratch
+            .as_ref()
+            .is_none_or(|s| s.len() != 1)
+        {
+            self.lusgs_any_nonphysical_scratch =
+                Some(self.stream.alloc_zeros::<i32>(1).map_err(|e| {
+                    AsimuError::Exec(format!("CUDA any_nonphysical 分配失败: {e:?}"))
+                })?);
+        }
+        let flag = self
+            .lusgs_any_nonphysical_scratch
+            .as_mut()
+            .expect("any_nonphysical scratch after ensure");
+        let fields = self.fields.as_ref().expect("field buffers");
+        launch_lusgs_any_nonphysical_conserved(
+            &self.stream,
+            &self.lusgs_module.sweep_any_nonphysical,
+            fields,
+            scalars.gamma,
+            scalars.min_pressure,
+            flag,
+        )?;
+        self.stream
+            .synchronize()
+            .map_err(|e| AsimuError::Exec(format!("CUDA LU-SGS 正性检查同步失败: {e:?}")))?;
+        let bad = super::super::transfer::clone_dtoh(&self.stream, "lusgs_any_nonphysical", flag)?;
+        if bad[0] != 0 {
+            return Ok(false);
+        }
+        self.pipeline.conserved_on_device = true;
+        self.pipeline.lusgs_diagonal_on_device = false;
+        self.pipeline.lusgs_sweep_on_device = true;
+        self.primitives_dirty = true;
+        Ok(true)
+    }
+
+    fn lusgs_sweep_host_timestep_for_stabilize(
+        &self,
+        n: usize,
+        host_sigma: &[f32],
+        host_cell_dts: &[f32],
+        local_time_step: bool,
+    ) -> Result<(Vec<f32>, Vec<f32>)> {
+        if host_sigma.len() == n && host_cell_dts.len() == n {
+            return Ok((host_sigma.to_vec(), host_cell_dts.to_vec()));
+        }
+        let mut sigma = vec![0.0_f32; n];
+        let mut cell_dts = vec![0.0_f32; n];
+        self.mirror_timestep_f32_to_host(&mut sigma, &mut cell_dts, local_time_step)?;
+        Ok((sigma, cell_dts))
+    }
+
     fn lusgs_sweep_stabilize_host(&mut self, input: LusgsSweepCudaHostInput<'_>) -> Result<()> {
+        let n = input.fields.num_cells();
+        let (host_sigma, host_cell_dts) = self.lusgs_sweep_host_timestep_for_stabilize(
+            n,
+            input.host_sigma,
+            input.host_cell_dts,
+            input.local_time_step,
+        )?;
         let field_bufs = self.fields.as_mut().expect("field buffers");
         let u0_host = input.u0.clone();
         field_bufs.download_conserved(&self.stream, input.fields)?;
@@ -256,8 +348,8 @@ impl CudaBackendState {
         field_bufs.download_residual(&self.stream, input.residual)?;
         self.pipeline.residual_on_device = false;
         let scalars = LuSgsSweepScalarsF32 {
-            dt: input.host_cell_dts,
-            sigma: input.host_sigma,
+            dt: &host_cell_dts,
+            sigma: &host_sigma,
             volumes: input.host_volumes,
             omega: input.scalars.omega,
             gamma: input.scalars.gamma,

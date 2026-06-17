@@ -44,6 +44,7 @@ pub struct LusgsSweepCudaHostInput<'a> {
     pub host_sigma: &'a [f32],
     pub host_cell_dts: &'a [f32],
     pub host_volumes: &'a [f32],
+    pub local_time_step: bool,
     pub scalars: LusgsSweepCudaScalars,
 }
 
@@ -103,6 +104,46 @@ pub fn launch_lusgs_sweep_unstructured_serial(
         builder
             .launch(cfg)
             .map_err(|e| AsimuError::Exec(format!("CUDA LU-SGS 扫掠 kernel launch 失败: {e:?}")))?;
+    }
+    Ok(())
+}
+
+const SWEEP_BLOCK_THREADS: u32 = 256;
+
+/// 并行检查 device 守恒场是否全部正性；`any_bad[0]==0` 表示可跳过 host stabilize。
+pub fn launch_lusgs_any_nonphysical_conserved(
+    stream: &Arc<CudaStream>,
+    function: &CudaFunction,
+    fields: &CudaFieldBuffers,
+    gamma: f32,
+    min_pressure: f32,
+    any_bad: &mut CudaSlice<i32>,
+) -> Result<()> {
+    let num_cells = fields.num_cells() as u32;
+    let _span = info_span!("cuda_lusgs_any_nonphysical", cells = num_cells,).entered();
+    stream
+        .memset_zeros(any_bad)
+        .map_err(|e| AsimuError::Exec(format!("CUDA any_nonphysical memset 失败: {e:?}")))?;
+    let num_blocks = num_cells.div_ceil(SWEEP_BLOCK_THREADS);
+    let cfg = LaunchConfig {
+        grid_dim: (num_blocks, 1, 1),
+        block_dim: (SWEEP_BLOCK_THREADS, 1, 1),
+        shared_mem_bytes: 0,
+    };
+    let mut builder = stream.launch_builder(function);
+    builder.arg(&num_cells);
+    builder.arg(&gamma);
+    builder.arg(&min_pressure);
+    builder.arg(&fields.cons_rho);
+    builder.arg(&fields.cons_mx);
+    builder.arg(&fields.cons_my);
+    builder.arg(&fields.cons_mz);
+    builder.arg(&fields.cons_e);
+    builder.arg(any_bad);
+    unsafe {
+        builder.launch(cfg).map_err(|e| {
+            AsimuError::Exec(format!("CUDA LU-SGS 正性检查 kernel launch 失败: {e:?}"))
+        })?;
     }
     Ok(())
 }

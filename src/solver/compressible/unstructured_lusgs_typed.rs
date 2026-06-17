@@ -3,7 +3,7 @@
 #[cfg(feature = "cuda")]
 use crate::core::ExecDevice;
 use crate::core::{ComputeFloat, Real};
-use crate::error::Result;
+use crate::error::{AsimuError, Result};
 use crate::field::{
     ConservedFieldsT, LusgsDiagonalCoeffs, LusgsDiagonalCoeffsF32, assign_lusgs_diagonal_update_f32,
 };
@@ -55,6 +55,11 @@ impl UnstructuredLusgsSweep for f32 {
         if work.exec.cuda_rhs_pipeline_active() && work.exec.cuda_residual_on_device() {
             work.exec.cuda_flush_rhs_residual(&mut work.storage.k1)?;
         }
+        ensure_f32_host_timestep_for_sweep(
+            work,
+            fields.num_cells(),
+            ctx.env.config.local_time_step,
+        )?;
         let couplings = LuSgsUnstructuredCouplingsRef::F32(&work.mesh_cache.lusgs_couplings_f32);
         let residual = &work.storage.k1;
         let mut sweep_params = LuSgsSweepUnstructuredTypedParams {
@@ -166,9 +171,9 @@ fn warn_cuda_lusgs_sweep_cpu_fallback(work: &UnstructuredStepWorkTyped<f32>) {
         return;
     }
     let reason = if !work.exec.cuda_timestep_on_device() {
-        "lusgs_sweep=true 时 σ/Δtᵢ 不驻留 device，CUDA 双扫 kernel 不可用"
+        "σ/Δtᵢ 未驻留 device（非 CUDA 或 prepare 未上传谱半径）"
     } else if !work.exec.cuda_residual_on_device() {
-        "RHS 残差尚未在 device 上"
+        "RHS 残差尚未在 device 上（如无粘路径未走 device 装配）"
     } else {
         "CUDA 双扫前置条件未满足"
     };
@@ -203,6 +208,7 @@ fn try_cuda_lusgs_sweep_f32(
             host_sigma: &work.timestep.sigma_f32,
             host_cell_dts: &work.timestep.cell_dts_f32,
             host_volumes: &work.volumes_f32,
+            local_time_step: ctx.env.config.local_time_step,
             scalars: crate::exec::gpu::cuda::lusgs_sweep::LusgsSweepCudaScalars {
                 omega: ctx.omega as f32,
                 gamma: ctx.env.config.eos.gamma as f32,
@@ -213,6 +219,34 @@ fn try_cuda_lusgs_sweep_f32(
         },
     )?;
     Ok(true)
+}
+
+/// device 驻留 σ/Δtᵢ 时 host 缓冲为空；双扫 stabilize 与校验须先镜像到 host。
+fn ensure_f32_host_timestep_for_sweep(
+    work: &mut UnstructuredStepWorkTyped<f32>,
+    num_cells: usize,
+    local_time_step: bool,
+) -> Result<()> {
+    if work.timestep.sigma_f32.len() == num_cells && work.timestep.cell_dts_f32.len() == num_cells {
+        return Ok(());
+    }
+    #[cfg(feature = "cuda")]
+    {
+        if work.exec.device() == ExecDevice::GpuCuda && work.exec.cuda_timestep_on_device() {
+            work.timestep.sigma_f32.resize(num_cells, 0.0);
+            work.timestep.cell_dts_f32.resize(num_cells, 0.0);
+            return work.exec.cuda_mirror_timestep_f32_to_host(
+                &mut work.timestep.sigma_f32,
+                &mut work.timestep.cell_dts_f32,
+                local_time_step,
+            );
+        }
+    }
+    Err(AsimuError::Exec(format!(
+        "LU-SGS 双扫 host σ/Δt 长度 {}/{} 与单元数 {num_cells} 不一致（local_time_step={local_time_step}）",
+        work.timestep.sigma_f32.len(),
+        work.timestep.cell_dts_f32.len(),
+    )))
 }
 
 #[cfg(feature = "cuda")]

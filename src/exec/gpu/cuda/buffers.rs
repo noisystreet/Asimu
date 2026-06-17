@@ -161,6 +161,30 @@ impl CudaFieldBuffers {
         })
     }
 
+    /// LU-SGS 双扫：device 守恒场 D2D 到外部 u0 缓冲（避免 host H2D）。
+    pub fn copy_conserved_to_u0_slices(
+        &self,
+        stream: &Arc<CudaStream>,
+        u0_rho: &mut cudarc::driver::CudaSlice<f32>,
+        u0_mx: &mut cudarc::driver::CudaSlice<f32>,
+        u0_my: &mut cudarc::driver::CudaSlice<f32>,
+        u0_mz: &mut cudarc::driver::CudaSlice<f32>,
+        u0_e: &mut cudarc::driver::CudaSlice<f32>,
+    ) -> Result<()> {
+        let n = self.num_cells;
+        let bytes = n
+            .checked_mul(5 * size_of::<f32>())
+            .ok_or_else(|| AsimuError::Field("LU-SGS u0 D2D 字节数溢出".to_string()))?;
+        d2d_batch("lusgs_sweep_u0_d2d", bytes, n, || {
+            memcpy_dtod_unchecked(stream, &self.cons_rho, u0_rho)?;
+            memcpy_dtod_unchecked(stream, &self.cons_mx, u0_mx)?;
+            memcpy_dtod_unchecked(stream, &self.cons_my, u0_my)?;
+            memcpy_dtod_unchecked(stream, &self.cons_mz, u0_mz)?;
+            memcpy_dtod_unchecked(stream, &self.cons_e, u0_e)?;
+            Ok(())
+        })
+    }
+
     pub fn download_u_n(
         &self,
         stream: &Arc<CudaStream>,

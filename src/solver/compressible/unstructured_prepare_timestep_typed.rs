@@ -258,11 +258,8 @@ impl UnstructuredSpectralRadiusAtPrepare for f32 {
         };
         #[cfg(feature = "cuda")]
         {
-            let keep_timestep_on_device = f32_cuda_keep_timestep_on_device(
-                env.config.time_scheme,
-                env.config.lu_sgs.sweep,
-                &work.exec,
-            );
+            let keep_timestep_on_device =
+                f32_cuda_keep_timestep_on_device(env.config.time_scheme, &work.exec);
             let (sigma, cell_dts) =
                 crate::solver::compressible::spectral_radius_unstructured_f32_cuda::compute_spectral_radius_f32_with_exec(
                     &params,
@@ -410,14 +407,13 @@ pub(crate) fn f32_cuda_viscous_rhs_pipeline(
     env.config.viscous.is_some() && exec.device() == ExecDevice::GpuCuda
 }
 
-/// CUDA f32：谱半径 \(\sigma_i\)/`cell_dts` 驻留 device，供对角 LU-SGS 跳过批量 D2H。
+/// CUDA f32：谱半径 \(\sigma_i\)/`cell_dts` 驻留 device，供 LU-SGS 对角/双扫与 dual_time 内层跳过批量 D2H。
 #[cfg(feature = "cuda")]
 fn f32_cuda_keep_timestep_on_device(
     time_scheme: TimeIntegrationScheme,
-    lusgs_sweep: bool,
     exec: &ExecutionContext,
 ) -> bool {
-    if exec.device() != ExecDevice::GpuCuda || lusgs_sweep {
+    if exec.device() != ExecDevice::GpuCuda {
         return false;
     }
     matches!(
@@ -430,7 +426,7 @@ fn f32_cuda_keep_timestep_on_device(
 mod cuda_timestep_tests {
     #[cfg(feature = "cuda")]
     #[test]
-    fn dual_time_cuda_keeps_timestep_on_device_without_sweep() {
+    fn dual_time_cuda_keeps_timestep_on_device_with_lusgs_sweep() {
         use super::f32_cuda_keep_timestep_on_device;
         use crate::core::ExecDevice;
         use crate::exec::{ExecConfig, ExecutionContext, MeshExecMetrics};
@@ -446,23 +442,15 @@ mod cuda_timestep_tests {
         .expect("cuda");
         assert!(f32_cuda_keep_timestep_on_device(
             TimeIntegrationScheme::DualTime,
-            false,
             &exec,
         ));
         assert!(f32_cuda_keep_timestep_on_device(
             TimeIntegrationScheme::LuSgs,
-            false,
-            &exec,
-        ));
-        assert!(!f32_cuda_keep_timestep_on_device(
-            TimeIntegrationScheme::DualTime,
-            true,
             &exec,
         ));
         let cpu = ExecutionContext::for_unit_test();
         assert!(!f32_cuda_keep_timestep_on_device(
             TimeIntegrationScheme::DualTime,
-            false,
             &cpu,
         ));
     }

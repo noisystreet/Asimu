@@ -113,6 +113,7 @@ pub struct CudaBackendState {
     lusgs_sweep_u0_my: Option<cudarc::driver::CudaSlice<f32>>,
     lusgs_sweep_u0_mz: Option<cudarc::driver::CudaSlice<f32>>,
     lusgs_sweep_u0_e: Option<cudarc::driver::CudaSlice<f32>>,
+    lusgs_any_nonphysical_scratch: Option<cudarc::driver::CudaSlice<i32>>,
 }
 
 impl CudaBackendState {
@@ -175,6 +176,7 @@ impl CudaBackendState {
             lusgs_sweep_u0_my: None,
             lusgs_sweep_u0_mz: None,
             lusgs_sweep_u0_e: None,
+            lusgs_any_nonphysical_scratch: None,
         })
     }
 

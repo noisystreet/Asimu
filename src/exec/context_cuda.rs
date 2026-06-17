@@ -270,6 +270,21 @@ impl ExecutionContext {
         )
     }
 
+    /// CUDA：镜像 device σ/Δtᵢ 到 host，保留 `timestep_on_device`（LU-SGS 双扫 stabilize）。
+    #[cfg(feature = "cuda")]
+    pub fn cuda_mirror_timestep_f32_to_host(
+        &mut self,
+        sigma_out: &mut [f32],
+        cell_dts_out: &mut [f32],
+        local_time_step: bool,
+    ) -> Result<()> {
+        self.backend_state.cuda_mut()?.mirror_timestep_f32_to_host(
+            sigma_out,
+            cell_dts_out,
+            local_time_step,
+        )
+    }
+
     /// CUDA P1：RHS 管线结束，仅残差 D2H（梯度可延后至边界面装配前）。
     #[cfg(feature = "cuda")]
     pub fn cuda_flush_rhs_residual(

@@ -40,6 +40,7 @@ pub struct CudaLusgsModule {
     pub(crate) diagonal_update: CudaFunction,
     pub(crate) residual_density_sum_sq: CudaFunction,
     pub(crate) sweep_unstructured_serial: CudaFunction,
+    pub(crate) sweep_any_nonphysical: CudaFunction,
 }
 
 /// 已加载的双时间步 kernel。
@@ -230,11 +231,17 @@ impl CudaLusgsModule {
                 .map_err(|e| {
                     AsimuError::Exec(format!("CUDA LU-SGS 扫掠 kernel 符号未找到: {e:?}"))
                 })?;
+            let sweep_any_nonphysical = sweep_module
+                .load_function("lusgs_any_nonphysical_conserved_f32")
+                .map_err(|e| {
+                    AsimuError::Exec(format!("CUDA LU-SGS 正性检查 kernel 符号未找到: {e:?}"))
+                })?;
             info!("cuda_lusgs_module_loaded");
             Ok(Self {
                 diagonal_update,
                 residual_density_sum_sq,
                 sweep_unstructured_serial,
+                sweep_any_nonphysical,
             })
         }
         #[cfg(cuda_kernels_disabled)]

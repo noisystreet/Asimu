@@ -227,3 +227,18 @@ extern "C" __global__ void lusgs_sweep_unstructured_serial_f32(
                            prim_rho, prim_p, prim_ux, prim_uy, prim_uz);
     }
 }
+
+// 并行检查守恒场是否全部满足正性；`any_bad[0]` 非 0 表示存在非法单元。
+extern "C" __global__ void lusgs_any_nonphysical_conserved_f32(
+    uint32_t num_cells, float gamma, float min_pressure, const float *__restrict__ cons_rho,
+    const float *__restrict__ cons_mx, const float *__restrict__ cons_my,
+    const float *__restrict__ cons_mz, const float *__restrict__ cons_e, int *__restrict__ any_bad) {
+    uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= num_cells) {
+        return;
+    }
+    float lane[5] = {cons_rho[i], cons_mx[i], cons_my[i], cons_mz[i], cons_e[i]};
+    if (!is_physical_conserved_f32(lane, gamma, min_pressure)) {
+        atomicExch(any_bad, 1);
+    }
+}

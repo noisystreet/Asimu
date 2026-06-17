@@ -8,6 +8,8 @@
 ### Fixed
 
 - **双时间步 BDF1 存储项量纲**：`add_physical_storage_residual` 与 CUDA kernel 不再对 \((\mathbf{U}-\mathbf{U}^n)\) 除 \(V_i\)；与 FVM 空间残差 \(\mathrm dU/\mathrm dt\) 一致，修复小单元网格内层 2 残差暴涨与 NaN。
+- **CUDA f32 `lusgs_sweep` 首步残差与监控**：device 驻留 σ/Δtᵢ 时双扫前镜像 host 缓冲（修复 stabilize 校验失败）；稳态 LU-SGS 在隐式更新**前**记录 \(R(U^0)\) 密度 RMS，sweep/对角 step=1 一致。
+- **CUDA f32 `lusgs_sweep` 性能**：device 正性检查通过时跳过 host stabilize 全量 D2H/H2D；u0 快照改为 device D2D（守恒场已在 device 时）。
 
 ### Added
 
@@ -17,6 +19,8 @@
 - **CUDA f32 SLAU2 无粘通量**：`inviscid_first_order_f32.cu` 增加 `flux_scheme=2` device kernel；装配层路由 `FluxScheme::Slau2`；单四面体 CPU/CUDA 对照 smoke（`#[ignore=gpu]`）。
 
 ### Changed
+
+- **CUDA f32 非结构 `lusgs_sweep`**：\(\sigma_i\)/\(\Delta t_i\) 与对角 LU-SGS 同样驻留 device，粘性 NS 路径走 device 双扫 kernel（正性线搜索仍在 host）。
 
 - **CUDA f32 `dual_time` 谱半径驻留 device**：与 `lu_sgs` 对角路径一致，`keep_timestep_on_device` 覆盖 `DualTime`（非 sweep），内层伪时间步跳过 \(\sigma_i\)/`cell_dts` 批量 D2H；`finalize_cell_dts` 亦跳过 `spectral_min_cell_dt` 单 float D2H（返回值在内层未被消费）。
 - **可压缩无量纲化缩放 `[time].dt`**：与不可压缩一致，解析后 `dt`/`final_time` 除以 `ReferenceScales::time_scale()`（\(t_{\mathrm{ref}}=L_{\mathrm{ref}}/U_{\mathrm{ref}}\)）。

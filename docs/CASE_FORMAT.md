@@ -176,7 +176,7 @@ backend = "cpu"           # cpu（默认）| cuda（feature cuda；ADR 0017）
 | 空间离散 | `reconstruction = first_order`；非结构另支持 `muscl` + `unstructured_limiter` |
 | 时间推进 | `euler`、`rk4`；`lu_sgs`（对角或 `lusgs_sweep`，须 `local_time_step = true`）；非结构 `dual_time`（CPU f32/f64；CUDA 仅 f32）；结构化另支持 `gmres` |
 | 粘性 / NS | 非结构 3D：`[physics.viscous]` 与 `[navier_stokes]`（梯度/通量仍为 mixed `f64`） |
-| 隐式限制 | 不支持 `lusgs_sweep = true`；非结构不支持 `gmres` |
+| 隐式限制 | 结构化 CUDA 不支持 `lusgs_sweep = true`；非结构 CUDA f32 支持 `lusgs_sweep`（device 双扫 + host stabilize）；非结构不支持 `gmres` |
 | exec scatter（P5） | 非结构 typed 无粘/粘性内面：`parallel-fvm` 下 `f32` 走 `AtomicU32` CAS scatter（与 `f64` 同色桶契约）；无 `parallel-fvm` 时串行回退 |
 | 其它 | 不支持 `residual_smoothing` |
 

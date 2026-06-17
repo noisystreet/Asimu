@@ -101,6 +101,8 @@ pub(crate) struct UnstructuredStepWorkTyped<T: ComputeFloat> {
     timestep: UnstructuredTimestepBuffers,
     lusgs_couplings: LuSgsUnstructuredCouplings,
     dual_time_state: crate::solver::time::DualTimeState<T>,
+    /// 稳态 LU-SGS：RHS 装配后、隐式更新前的密度 RMS（监控 \(R(U^0)\)，与 sweep/对角无关）。
+    density_rms_after_rhs: Option<Real>,
 }
 
 pub(crate) struct UnstructuredRunEnvTyped<'a> {
@@ -169,6 +171,7 @@ fn allocate_unstructured_step_work_typed<T: ComputeFloat>(
         },
         lusgs_couplings: LuSgsUnstructuredCouplings::from_mesh(env.config.mesh)?,
         dual_time_state: crate::solver::time::DualTimeState::new(n)?,
+        density_rms_after_rhs: None,
     })
 }
 
@@ -301,6 +304,7 @@ fn advance_unstructured_step_typed<T: UnstructuredComputeBackend + UnstructuredC
     work: &mut UnstructuredStepWorkTyped<T>,
 ) -> Result<CompressibleStepInfo> {
     let step_start = Instant::now();
+    work.density_rms_after_rhs = None;
     #[cfg(feature = "cuda")]
     if work.exec.device() == ExecDevice::GpuCuda {
         if unstructured_prepare_timestep_typed::f32_cuda_viscous_rhs_pipeline(env, &work.exec) {
@@ -331,7 +335,11 @@ fn advance_unstructured_step_typed<T: UnstructuredComputeBackend + UnstructuredC
     let time_integration_ms = elapsed_ms(time_integration_start);
     T::maybe_enforce_conserved_after_integration(work, env.config.eos, p_floor)?;
     fields.enforce_positivity(env.config.eos, p_floor);
-    let residual = T::step_density_residual_rms(work)?;
+    let residual = if let Some(rms) = work.density_rms_after_rhs.take() {
+        rms
+    } else {
+        T::step_density_residual_rms(work)?
+    };
     let time_info = work.integrator.advance(&mut work.state)?;
     let step_total_ms = elapsed_ms(step_start);
     #[cfg(feature = "cuda")]
@@ -401,6 +409,7 @@ fn advance_unstructured_lusgs_typed<T: UnstructuredComputeBackend>(
             p_floor,
         )?;
     }
+    work.density_rms_after_rhs = Some(T::step_density_residual_rms(work)?);
     if lu_sgs.sweep {
         let _span = info_span!(
             "unstructured_lusgs_sweep_typed",
