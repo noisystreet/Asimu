@@ -205,26 +205,12 @@ impl CudaBackendState {
         self.pipeline.reset_rhs_step();
     }
 
-    pub(crate) fn reset_step_transfer_counters(&mut self) {
-        super::transfer::reset_step_transfer_counters();
-    }
-
     pub(crate) fn reset_full_pipeline_step(&mut self) {
         self.pipeline.reset_step();
     }
 
     pub(crate) fn reset_between_timesteps(&mut self) {
         self.pipeline.reset_between_timesteps();
-    }
-
-    pub(crate) fn log_step_transfer_counters(&self, step: u32) {
-        let (h2d, d2h) = super::transfer::step_transfer_counters();
-        tracing::info!(
-            step,
-            cuda_h2d = h2d,
-            cuda_d2h = d2h,
-            "cuda_step_transfer_counters"
-        );
     }
 
     pub(crate) fn enable_rhs_device_pipeline(&mut self) {

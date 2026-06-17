@@ -14,16 +14,24 @@ pub struct CudaLusgsSweepMeshDeviceCache {
     areas: CudaSlice<f32>,
     normals: CudaSlice<f32>,
     volumes: CudaSlice<f32>,
+    color_cells: CudaSlice<u32>,
+    /// host 侧着色偏移（launch 按色循环用）。
+    host_color_offsets: Vec<u32>,
+    num_colors: u32,
 }
 
 impl CudaLusgsSweepMeshDeviceCache {
     pub fn try_upload(stream: &Arc<CudaStream>, topo: &LuSgsSweepHostTopology) -> Result<Self> {
+        let coloring = &topo.cell_coloring;
         Ok(Self {
             cell_offsets: clone_htod(stream, "lusgs_sweep_cell_offsets", &topo.cell_offsets)?,
             neighbors: clone_htod(stream, "lusgs_sweep_neighbors", &topo.neighbors)?,
             areas: clone_htod(stream, "lusgs_sweep_areas", &topo.areas)?,
             normals: clone_htod(stream, "lusgs_sweep_normals", &topo.normals)?,
             volumes: clone_htod(stream, "lusgs_sweep_volumes", &topo.volumes)?,
+            color_cells: clone_htod(stream, "lusgs_sweep_color_cells", &coloring.color_cells)?,
+            host_color_offsets: coloring.color_offsets.clone(),
+            num_colors: coloring.num_colors as u32,
         })
     }
 
@@ -45,6 +53,18 @@ impl CudaLusgsSweepMeshDeviceCache {
 
     pub fn volumes(&self) -> &CudaSlice<f32> {
         &self.volumes
+    }
+
+    pub fn color_cells(&self) -> &CudaSlice<u32> {
+        &self.color_cells
+    }
+
+    pub fn num_colors(&self) -> u32 {
+        self.num_colors
+    }
+
+    pub fn host_color_offsets(&self) -> &[u32] {
+        &self.host_color_offsets
     }
 }
 

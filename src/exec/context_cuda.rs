@@ -7,15 +7,6 @@ use crate::exec::spectral_radius_cuda;
 use super::ExecutionContext;
 
 impl ExecutionContext {
-    /// CUDA P1：步初重置 H2D/D2H 计数。
-    #[cfg(feature = "cuda")]
-    pub fn cuda_reset_step_transfer_counters(&mut self) -> Result<()> {
-        self.backend_state
-            .cuda_mut()?
-            .reset_step_transfer_counters();
-        Ok(())
-    }
-
     /// CUDA P1：步初清零整条 device 管线状态。
     #[cfg(feature = "cuda")]
     pub fn cuda_reset_full_pipeline_step(&mut self) -> Result<()> {
@@ -337,14 +328,6 @@ impl ExecutionContext {
         self.backend_state
             .cuda_mut()?
             .lusgs_diagonal_update_f32(base, residual, omega, inv_dt_phys)
-    }
-
-    /// CUDA P1：步末记录本步 H2D/D2H 次数。
-    #[cfg(feature = "cuda")]
-    pub fn cuda_log_step_transfer_counters(&mut self, step: u32) {
-        if let Ok(cuda) = self.backend_state.cuda_mut() {
-            cuda.log_step_transfer_counters(step);
-        }
     }
 
     /// CUDA G1：一阶无粘内面着色桶 flux + scatter（Roe / HVL）。

@@ -143,6 +143,93 @@ __device__ inline void add_coupling_delta_f32(float source[5], uint32_t cell, ui
     }
 }
 
+__device__ inline void lusgs_forward_update_cell_f32(
+    uint32_t cell, float omega, float gamma, float min_pressure, float inv_dt_phys,
+    const uint32_t *__restrict__ cell_offsets, const uint32_t *__restrict__ neighbors,
+    const float *__restrict__ areas, const float *__restrict__ normals,
+    const float *__restrict__ volumes, const float *__restrict__ sigma,
+    const float *__restrict__ cell_dts, const float *__restrict__ res_rho,
+    const float *__restrict__ res_mx, const float *__restrict__ res_my,
+    const float *__restrict__ res_mz, const float *__restrict__ res_e,
+    const float *__restrict__ u0_rho, const float *__restrict__ u0_mx,
+    const float *__restrict__ u0_my, const float *__restrict__ u0_mz,
+    const float *__restrict__ u0_e, float *__restrict__ cons_rho, float *__restrict__ cons_mx,
+    float *__restrict__ cons_my, float *__restrict__ cons_mz, float *__restrict__ cons_e,
+    float *__restrict__ prim_rho, float *__restrict__ prim_p, float *__restrict__ prim_ux,
+    float *__restrict__ prim_uy, float *__restrict__ prim_uz) {
+    float scale = implicit_scale_f32(cell_dts[cell], sigma[cell], omega, inv_dt_phys);
+    float source[5] = {res_rho[cell], res_mx[cell], res_my[cell], res_mz[cell], res_e[cell]};
+    for (uint32_t k = cell_offsets[cell]; k < cell_offsets[cell + 1]; ++k) {
+        uint32_t nb = neighbors[k];
+        if (nb >= cell) {
+            continue;
+        }
+        const float *n = &normals[k * 3];
+        add_coupling_delta_f32(source, cell, nb, areas[k], n, volumes[cell], gamma, cons_rho,
+                               cons_mx, cons_my, cons_mz, cons_e, u0_rho, u0_mx, u0_my, u0_mz, u0_e,
+                               prim_rho, prim_p, prim_ux, prim_uy, prim_uz);
+    }
+    float base[5];
+    cons_vec_f32(cons_rho, cons_mx, cons_my, cons_mz, cons_e, cell, base);
+    float effective = max_physical_increment_scale_f32(base, source, scale, gamma, min_pressure);
+    if (effective > 0.0f) {
+        float out[5];
+        apply_increment_lane_f32(base, source, effective, out);
+        write_cons_f32(cons_rho, cons_mx, cons_my, cons_mz, cons_e, cell, out);
+    }
+    fill_prim_cell_f32(cell, gamma, min_pressure, cons_rho, cons_mx, cons_my, cons_mz, cons_e,
+                       prim_rho, prim_p, prim_ux, prim_uy, prim_uz);
+}
+
+__device__ inline void lusgs_backward_update_cell_f32(
+    uint32_t cell, float omega, float gamma, float min_pressure, float inv_dt_phys,
+    float backward_damping, const uint32_t *__restrict__ cell_offsets,
+    const uint32_t *__restrict__ neighbors, const float *__restrict__ areas,
+    const float *__restrict__ normals, const float *__restrict__ volumes,
+    const float *__restrict__ sigma, const float *__restrict__ cell_dts,
+    const float *__restrict__ u0_rho, const float *__restrict__ u0_mx,
+    const float *__restrict__ u0_my, const float *__restrict__ u0_mz,
+    const float *__restrict__ u0_e, float *__restrict__ cons_rho, float *__restrict__ cons_mx,
+    float *__restrict__ cons_my, float *__restrict__ cons_mz, float *__restrict__ cons_e,
+    float *__restrict__ prim_rho, float *__restrict__ prim_p, float *__restrict__ prim_ux,
+    float *__restrict__ prim_uy, float *__restrict__ prim_uz) {
+    float scale = implicit_scale_f32(cell_dts[cell], sigma[cell], omega, inv_dt_phys);
+    float source[5] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    for (uint32_t k = cell_offsets[cell]; k < cell_offsets[cell + 1]; ++k) {
+        uint32_t nb = neighbors[k];
+        if (nb <= cell) {
+            continue;
+        }
+        const float *n = &normals[k * 3];
+        add_coupling_delta_f32(source, cell, nb, areas[k], n, volumes[cell], gamma, cons_rho,
+                               cons_mx, cons_my, cons_mz, cons_e, u0_rho, u0_mx, u0_my, u0_mz, u0_e,
+                               prim_rho, prim_p, prim_ux, prim_uy, prim_uz);
+    }
+    bool any = false;
+    for (int q = 0; q < 5; ++q) {
+        if (fabsf(source[q]) > 1.0e-30f) {
+            any = true;
+            break;
+        }
+    }
+    if (!any) {
+        return;
+    }
+    for (int q = 0; q < 5; ++q) {
+        source[q] *= backward_damping;
+    }
+    float base[5];
+    cons_vec_f32(cons_rho, cons_mx, cons_my, cons_mz, cons_e, cell, base);
+    float effective = max_physical_increment_scale_f32(base, source, scale, gamma, min_pressure);
+    if (effective > 0.0f) {
+        float out[5];
+        apply_increment_lane_f32(base, source, effective, out);
+        write_cons_f32(cons_rho, cons_mx, cons_my, cons_mz, cons_e, cell, out);
+    }
+    fill_prim_cell_f32(cell, gamma, min_pressure, cons_rho, cons_mx, cons_my, cons_mz, cons_e,
+                       prim_rho, prim_p, prim_ux, prim_uy, prim_uz);
+}
+
 extern "C" __global__ void lusgs_sweep_unstructured_serial_f32(
     uint32_t num_cells, float omega, float gamma, float min_pressure, float inv_dt_phys,
     float backward_damping, const uint32_t *__restrict__ cell_offsets,
@@ -162,70 +249,73 @@ extern "C" __global__ void lusgs_sweep_unstructured_serial_f32(
     }
 
     for (uint32_t cell = 0; cell < num_cells; ++cell) {
-        float scale = implicit_scale_f32(cell_dts[cell], sigma[cell], omega, inv_dt_phys);
-        float source[5] = {res_rho[cell], res_mx[cell], res_my[cell], res_mz[cell], res_e[cell]};
-        for (uint32_t k = cell_offsets[cell]; k < cell_offsets[cell + 1]; ++k) {
-            uint32_t nb = neighbors[k];
-            if (nb >= cell) {
-                continue;
-            }
-            const float *n = &normals[k * 3];
-            add_coupling_delta_f32(source, cell, nb, areas[k], n, volumes[cell], gamma, cons_rho,
-                                   cons_mx, cons_my, cons_mz, cons_e, u0_rho, u0_mx, u0_my, u0_mz,
-                                   u0_e, prim_rho, prim_p, prim_ux, prim_uy, prim_uz);
-        }
-        float base[5];
-        cons_vec_f32(cons_rho, cons_mx, cons_my, cons_mz, cons_e, cell, base);
-        float effective =
-            max_physical_increment_scale_f32(base, source, scale, gamma, min_pressure);
-        if (effective > 0.0f) {
-            float out[5];
-            apply_increment_lane_f32(base, source, effective, out);
-            write_cons_f32(cons_rho, cons_mx, cons_my, cons_mz, cons_e, cell, out);
-        }
-        fill_prim_cell_f32(cell, gamma, min_pressure, cons_rho, cons_mx, cons_my, cons_mz, cons_e,
-                           prim_rho, prim_p, prim_ux, prim_uy, prim_uz);
+        lusgs_forward_update_cell_f32(
+            cell, omega, gamma, min_pressure, inv_dt_phys, cell_offsets, neighbors, areas, normals,
+            volumes, sigma, cell_dts, res_rho, res_mx, res_my, res_mz, res_e, u0_rho, u0_mx,
+            u0_my, u0_mz, u0_e, cons_rho, cons_mx, cons_my, cons_mz, cons_e, prim_rho, prim_p,
+            prim_ux, prim_uy, prim_uz);
     }
 
     for (int cell_i = (int)num_cells - 1; cell_i >= 0; --cell_i) {
         uint32_t cell = (uint32_t)cell_i;
-        float scale = implicit_scale_f32(cell_dts[cell], sigma[cell], omega, inv_dt_phys);
-        float source[5] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-        for (uint32_t k = cell_offsets[cell]; k < cell_offsets[cell + 1]; ++k) {
-            uint32_t nb = neighbors[k];
-            if (nb <= cell) {
-                continue;
-            }
-            const float *n = &normals[k * 3];
-            add_coupling_delta_f32(source, cell, nb, areas[k], n, volumes[cell], gamma, cons_rho,
-                                   cons_mx, cons_my, cons_mz, cons_e, u0_rho, u0_mx, u0_my, u0_mz,
-                                   u0_e, prim_rho, prim_p, prim_ux, prim_uy, prim_uz);
-        }
-        bool any = false;
-        for (int q = 0; q < 5; ++q) {
-            if (fabsf(source[q]) > 1.0e-30f) {
-                any = true;
-                break;
-            }
-        }
-        if (!any) {
-            continue;
-        }
-        for (int q = 0; q < 5; ++q) {
-            source[q] *= backward_damping;
-        }
-        float base[5];
-        cons_vec_f32(cons_rho, cons_mx, cons_my, cons_mz, cons_e, cell, base);
-        float effective =
-            max_physical_increment_scale_f32(base, source, scale, gamma, min_pressure);
-        if (effective > 0.0f) {
-            float out[5];
-            apply_increment_lane_f32(base, source, effective, out);
-            write_cons_f32(cons_rho, cons_mx, cons_my, cons_mz, cons_e, cell, out);
-        }
-        fill_prim_cell_f32(cell, gamma, min_pressure, cons_rho, cons_mx, cons_my, cons_mz, cons_e,
-                           prim_rho, prim_p, prim_ux, prim_uy, prim_uz);
+        lusgs_backward_update_cell_f32(
+            cell, omega, gamma, min_pressure, inv_dt_phys, backward_damping, cell_offsets,
+            neighbors, areas, normals, volumes, sigma, cell_dts, u0_rho, u0_mx, u0_my, u0_mz, u0_e,
+            cons_rho, cons_mx, cons_my, cons_mz, cons_e, prim_rho, prim_p, prim_ux, prim_uy,
+            prim_uz);
     }
+}
+
+// 图着色 wavefront：同色单元并行前扫（下三角耦合 nb < cell）。
+extern "C" __global__ void lusgs_sweep_forward_color_f32(
+    uint32_t color_begin, uint32_t num_color_cells, const uint32_t *__restrict__ color_cells,
+    float omega, float gamma, float min_pressure, float inv_dt_phys,
+    const uint32_t *__restrict__ cell_offsets, const uint32_t *__restrict__ neighbors,
+    const float *__restrict__ areas, const float *__restrict__ normals,
+    const float *__restrict__ volumes, const float *__restrict__ sigma,
+    const float *__restrict__ cell_dts, const float *__restrict__ res_rho,
+    const float *__restrict__ res_mx, const float *__restrict__ res_my,
+    const float *__restrict__ res_mz, const float *__restrict__ res_e,
+    const float *__restrict__ u0_rho, const float *__restrict__ u0_mx,
+    const float *__restrict__ u0_my, const float *__restrict__ u0_mz,
+    const float *__restrict__ u0_e, float *__restrict__ cons_rho, float *__restrict__ cons_mx,
+    float *__restrict__ cons_my, float *__restrict__ cons_mz, float *__restrict__ cons_e,
+    float *__restrict__ prim_rho, float *__restrict__ prim_p, float *__restrict__ prim_ux,
+    float *__restrict__ prim_uy, float *__restrict__ prim_uz) {
+    uint32_t t = blockIdx.x * blockDim.x + threadIdx.x;
+    if (t >= num_color_cells) {
+        return;
+    }
+    uint32_t cell = color_cells[color_begin + t];
+    lusgs_forward_update_cell_f32(
+        cell, omega, gamma, min_pressure, inv_dt_phys, cell_offsets, neighbors, areas, normals,
+        volumes, sigma, cell_dts, res_rho, res_mx, res_my, res_mz, res_e, u0_rho, u0_mx, u0_my,
+        u0_mz, u0_e, cons_rho, cons_mx, cons_my, cons_mz, cons_e, prim_rho, prim_p, prim_ux,
+        prim_uy, prim_uz);
+}
+
+// 图着色 wavefront：同色单元并行后扫（上三角耦合 nb > cell）。
+extern "C" __global__ void lusgs_sweep_backward_color_f32(
+    uint32_t color_begin, uint32_t num_color_cells, const uint32_t *__restrict__ color_cells,
+    float omega, float gamma, float min_pressure, float inv_dt_phys, float backward_damping,
+    const uint32_t *__restrict__ cell_offsets, const uint32_t *__restrict__ neighbors,
+    const float *__restrict__ areas, const float *__restrict__ normals,
+    const float *__restrict__ volumes, const float *__restrict__ sigma,
+    const float *__restrict__ cell_dts, const float *__restrict__ u0_rho,
+    const float *__restrict__ u0_mx, const float *__restrict__ u0_my,
+    const float *__restrict__ u0_mz, const float *__restrict__ u0_e, float *__restrict__ cons_rho,
+    float *__restrict__ cons_mx, float *__restrict__ cons_my, float *__restrict__ cons_mz,
+    float *__restrict__ cons_e, float *__restrict__ prim_rho, float *__restrict__ prim_p,
+    float *__restrict__ prim_ux, float *__restrict__ prim_uy, float *__restrict__ prim_uz) {
+    uint32_t t = blockIdx.x * blockDim.x + threadIdx.x;
+    if (t >= num_color_cells) {
+        return;
+    }
+    uint32_t cell = color_cells[color_begin + t];
+    lusgs_backward_update_cell_f32(
+        cell, omega, gamma, min_pressure, inv_dt_phys, backward_damping, cell_offsets, neighbors,
+        areas, normals, volumes, sigma, cell_dts, u0_rho, u0_mx, u0_my, u0_mz, u0_e, cons_rho,
+        cons_mx, cons_my, cons_mz, cons_e, prim_rho, prim_p, prim_ux, prim_uy, prim_uz);
 }
 
 // 并行检查守恒场是否全部满足正性；`any_bad[0]` 非 0 表示存在非法单元。

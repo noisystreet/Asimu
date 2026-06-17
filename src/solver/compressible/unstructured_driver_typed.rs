@@ -312,7 +312,6 @@ fn advance_unstructured_step_typed<T: UnstructuredComputeBackend + UnstructuredC
         } else {
             work.exec.cuda_reset_full_pipeline_step()?;
         }
-        work.exec.cuda_reset_step_transfer_counters()?;
     }
     let cfl = env
         .config
@@ -342,11 +341,6 @@ fn advance_unstructured_step_typed<T: UnstructuredComputeBackend + UnstructuredC
     };
     let time_info = work.integrator.advance(&mut work.state)?;
     let step_total_ms = elapsed_ms(step_start);
-    #[cfg(feature = "cuda")]
-    if work.exec.device() == ExecDevice::GpuCuda {
-        work.exec
-            .cuda_log_step_transfer_counters(work.state.time_step as u32);
-    }
     debug!(
         step = work.state.time_step,
         profile_compute_dt_ms = %format_log_fixed4(compute_dt_ms),

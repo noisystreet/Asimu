@@ -15,12 +15,12 @@
 
 - **`[output].restart`**：3D 可压缩算例结束自动写出 restart TOML（单域 version=1 / 多块 version=2），精度与 `[numerics]` 一致。
 - **P3b CUDA f32 双时间步**：device \(U^n\) 快照、BDF1 存储项 kernel、LU-SGS 对角 `inv_dt_phys`；`validate` 放行 `backend=cuda` + `scheme=dual_time`；benchmark `unstructured_dual_time_freestream/case_cuda_f32.toml`；`#[ignore=gpu]` Euler/Navier-Stokes smoke。
-- **CUDA f32 非结构 LU-SGS 双扫**：`lusgs_sweep_unstructured_serial_f32` device 前/后扫（CellId 序）+ host `stabilize_sweep_update_f32`；`lu_sgs` / `dual_time` + `lusgs_sweep=true` validate 与单四面体 GPU smoke。
+- **CUDA f32 非结构 LU-SGS 双扫**：`lusgs_sweep_forward_color_f32` / `lusgs_sweep_backward_color_f32` 图着色 wavefront 并行前/后扫（生产路径）；保留 `lusgs_sweep_unstructured_serial_f32` 对照；host `stabilize_sweep_update_f32`；`lu_sgs` / `dual_time` + `lusgs_sweep=true` validate 与单四面体 GPU smoke。
 - **CUDA f32 SLAU2 无粘通量**：`inviscid_first_order_f32.cu` 增加 `flux_scheme=2` device kernel；装配层路由 `FluxScheme::Slau2`；单四面体 CPU/CUDA 对照 smoke（`#[ignore=gpu]`）。
 
 ### Changed
 
-- **CUDA f32 非结构 `lusgs_sweep`**：\(\sigma_i\)/\(\Delta t_i\) 与对角 LU-SGS 同样驻留 device，粘性 NS 路径走 device 双扫 kernel（正性线搜索仍在 host）。
+- **CUDA f32 非结构 `lusgs_sweep`**：扫掠默认走 device 图着色 wavefront（按色 launch 多 kernel）；\(\sigma_i\)/\(\Delta t_i\) 与对角 LU-SGS 同样驻留 device，粘性 NS 路径走 device 双扫 kernel（正性线搜索仍在 host）。
 
 - **CUDA f32 `dual_time` 谱半径驻留 device**：与 `lu_sgs` 对角路径一致，`keep_timestep_on_device` 覆盖 `DualTime`（非 sweep），内层伪时间步跳过 \(\sigma_i\)/`cell_dts` 批量 D2H；`finalize_cell_dts` 亦跳过 `spectral_min_cell_dt` 单 float D2H（返回值在内层未被消费）。
 - **可压缩无量纲化缩放 `[time].dt`**：与不可压缩一致，解析后 `dt`/`final_time` 除以 `ReferenceScales::time_scale()`（\(t_{\mathrm{ref}}=L_{\mathrm{ref}}/U_{\mathrm{ref}}\)）。

@@ -3,7 +3,7 @@
 use super::super::lusgs_diagonal::{launch_lusgs_diagonal_update, launch_residual_density_sum_sq};
 use super::super::lusgs_sweep::{
     LusgsSweepCudaHostInput, LusgsSweepCudaLaunchBuffers, LusgsSweepCudaScalars,
-    launch_lusgs_any_nonphysical_conserved, launch_lusgs_sweep_unstructured_serial,
+    launch_lusgs_any_nonphysical_conserved, launch_lusgs_sweep_wavefront,
 };
 use super::super::lusgs_sweep_mesh_cache::upload_u0_snapshot;
 use super::CudaBackendState;
@@ -243,22 +243,30 @@ impl CudaBackendState {
         let field_bufs = self.fields.as_ref().expect("field buffers");
         let sweep_mesh = self.lusgs_sweep_mesh.as_ref().expect("lusgs sweep mesh");
         let spectral_mesh = self.spectral_mesh.as_ref().expect("spectral mesh");
-        launch_lusgs_sweep_unstructured_serial(
+        let launch_bufs = LusgsSweepCudaLaunchBuffers {
+            fields: field_bufs,
+            sweep_mesh,
+            sigma: spectral_mesh.sigma(),
+            cell_dts: spectral_mesh.cell_dts(),
+            u0_rho: &u0.rho,
+            u0_mx: &u0.mx,
+            u0_my: &u0.my,
+            u0_mz: &u0.mz,
+            u0_e: &u0.e,
+        };
+        launch_lusgs_sweep_wavefront(
             &self.stream,
-            &self.lusgs_module.sweep_unstructured_serial,
-            &LusgsSweepCudaLaunchBuffers {
-                fields: field_bufs,
-                sweep_mesh,
-                sigma: spectral_mesh.sigma(),
-                cell_dts: spectral_mesh.cell_dts(),
-                u0_rho: &u0.rho,
-                u0_mx: &u0.mx,
-                u0_my: &u0.my,
-                u0_mz: &u0.mz,
-                u0_e: &u0.e,
-            },
+            &self.lusgs_module.sweep_forward_color,
+            &self.lusgs_module.sweep_backward_color,
+            &launch_bufs,
             scalars,
         )?;
+        let _sync_span = tracing::info_span!(
+            "cuda_lusgs_sweep_wavefront_sync",
+            cells = field_bufs.num_cells(),
+            colors = sweep_mesh.num_colors(),
+        )
+        .entered();
         self.stream
             .synchronize()
             .map_err(|e| AsimuError::Exec(format!("CUDA LU-SGS 扫掠同步失败: {e:?}")))?;
