@@ -165,6 +165,7 @@ mod tests {
             solution_cgns: None,
             solution_every: None,
             solution_vtk: false,
+            restart: None,
         });
         run_case_with_manifest(&case).expect("run");
         let manifest_path = dir.join("run-manifest.json");
@@ -188,6 +189,7 @@ mod tests {
             solution_cgns: None,
             solution_every: None,
             solution_vtk: false,
+            restart: None,
         });
         run_case_with_manifest(&case).expect("run");
         let text = std::fs::read_to_string(dir.join("run-manifest.json")).expect("read");

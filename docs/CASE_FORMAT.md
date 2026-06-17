@@ -464,6 +464,7 @@ residual_csv = "residual.csv"
 solution_cgns = "flow.cgns"
 solution_every = 100
 solution_vtk = false              # 为 true 时额外写 .vtu/.vts（需 feature io-vtk）
+restart = "restart.toml"          # 可选；算例结束时写出 * 守恒量 restart（供后续 [restart] 加载）
 ```
 
 相对路径均相对 **算例文件所在目录**；写出文件落在 `dir` 下。

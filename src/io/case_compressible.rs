@@ -28,6 +28,8 @@ pub struct CaseOutputConfig {
     pub solution_every: Option<u64>,
     /// 与 CGNS 同主文件名写出 `.vtu` / `.vts`（默认关闭）。
     pub solution_vtk: bool,
+    /// 算例结束时写出 restart TOML（单域 version=1；多块 version=2）。
+    pub restart: Option<String>,
 }
 
 impl CaseOutputConfig {
@@ -236,6 +238,7 @@ pub(super) struct OutputToml {
     solution_cgns: Option<String>,
     solution_every: Option<u64>,
     solution_vtk: Option<bool>,
+    restart: Option<String>,
 }
 
 pub(super) fn parse_euler_config(raw: &EulerToml) -> Result<EulerCaseConfig> {
@@ -268,6 +271,7 @@ pub(super) fn parse_output(raw: &OutputToml) -> CaseOutputConfig {
         solution_cgns: raw.solution_cgns.clone(),
         solution_every: raw.solution_every,
         solution_vtk: raw.solution_vtk.unwrap_or(false),
+        restart: raw.restart.clone(),
     }
 }
 
@@ -394,6 +398,21 @@ reconstruction = "first_order"
     }
 
     #[test]
+    fn parse_output_reads_restart_field() {
+        let raw = super::OutputToml {
+            dir: Some(std::path::PathBuf::from("out")),
+            residual_csv: None,
+            residual_plot: None,
+            solution_cgns: None,
+            solution_every: None,
+            solution_vtk: None,
+            restart: Some("restart.toml".into()),
+        };
+        let output = super::parse_output(&raw);
+        assert_eq!(output.restart.as_deref(), Some("restart.toml"));
+    }
+
+    #[test]
     fn interval_output_due_matches_solution_every() {
         use std::path::PathBuf;
 
@@ -404,6 +423,7 @@ reconstruction = "first_order"
             solution_cgns: Some("flow.cgns".into()),
             solution_every: Some(100),
             solution_vtk: false,
+            restart: None,
         };
         assert!(!output.interval_output_due(99));
         assert!(output.interval_output_due(100));

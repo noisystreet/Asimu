@@ -305,6 +305,9 @@ fn write_unstructured_outputs(
     let Some(output) = &case.output else {
         return Ok(written);
     };
+    if let Some(path) = super::output_3d::write_single_restart_output(case, fields)? {
+        written.push(path);
+    }
     let Some(name) = &output.solution_cgns else {
         return Ok(written);
     };

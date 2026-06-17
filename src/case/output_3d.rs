@@ -8,7 +8,10 @@ use tracing::{info, info_span, warn};
 use crate::core::{Real, format_log_sci4};
 use crate::error::{AsimuError, Result};
 use crate::field::{ConservedFields, positivity_pressure_floor};
-use crate::io::{CaseSpec, resolve_case_output_path, write_residual_csv};
+use crate::io::{
+    CaseSpec, resolve_case_output_path, write_conserved_fields_with_precision,
+    write_multiblock_conserved_fields_with_precision, write_residual_csv,
+};
 #[cfg(feature = "io-cgns")]
 use crate::io::{write_flow_cgns, write_multiblock_flow_cgns};
 use crate::mesh::{MultiBlockStructuredMesh3d, StructuredMesh3d};
@@ -32,6 +35,10 @@ pub fn write_compressible_3d_outputs(
         return Ok(Vec::new());
     };
     let mut written = write_residual_outputs(case, history)?;
+
+    if let Some(path) = write_multiblock_restart_output(case, mesh, fields)? {
+        written.push(path);
+    }
 
     if let Some(name) = &output.solution_cgns {
         let path = resolve_case_output_path(case.case_dir.as_deref(), &output.dir, name)?;
@@ -166,6 +173,72 @@ pub fn flow_vts_path(cgns: &Path) -> PathBuf {
 #[must_use]
 pub fn flow_vtu_path(cgns: &Path) -> PathBuf {
     cgns.with_extension("vtu")
+}
+
+/// 单域非结构（或单 block 结构化）算例结束写出 `[output].restart`。
+pub fn write_single_restart_output(
+    case: &CaseSpec,
+    fields: &ConservedFields,
+) -> Result<Option<PathBuf>> {
+    let Some(output) = &case.output else {
+        return Ok(None);
+    };
+    let Some(name) = &output.restart else {
+        return Ok(None);
+    };
+    let path = resolve_case_output_path(case.case_dir.as_deref(), &output.dir, name)?;
+    write_conserved_fields_with_precision(&path, fields, case.numerics.compute_precision)?;
+    info!(
+        path = %path.display(),
+        cells = fields.num_cells(),
+        precision = ?case.numerics.compute_precision,
+        "已写出 restart"
+    );
+    Ok(Some(path))
+}
+
+/// 多块结构化算例结束写出 `[output].restart`（version=2）。
+pub fn write_multiblock_restart_output(
+    case: &CaseSpec,
+    mesh: &MultiBlockStructuredMesh3d,
+    fields: &[ConservedFields],
+) -> Result<Option<PathBuf>> {
+    let Some(output) = &case.output else {
+        return Ok(None);
+    };
+    let Some(name) = &output.restart else {
+        return Ok(None);
+    };
+    if fields.len() != mesh.num_blocks() {
+        return Err(AsimuError::Field(format!(
+            "restart block 数 {} 与 mesh block 数 {} 不一致",
+            fields.len(),
+            mesh.num_blocks()
+        )));
+    }
+    let path = resolve_case_output_path(case.case_dir.as_deref(), &output.dir, name)?;
+    if mesh.num_blocks() == 1 {
+        write_conserved_fields_with_precision(&path, &fields[0], case.numerics.compute_precision)?;
+    } else {
+        let blocks: Vec<(&str, &ConservedFields)> = mesh
+            .blocks()
+            .iter()
+            .zip(fields.iter())
+            .map(|(block, field)| (block.name.as_str(), field))
+            .collect();
+        write_multiblock_conserved_fields_with_precision(
+            &path,
+            &blocks,
+            case.numerics.compute_precision,
+        )?;
+    }
+    info!(
+        path = %path.display(),
+        zones = mesh.num_blocks(),
+        precision = ?case.numerics.compute_precision,
+        "已写出 restart"
+    );
+    Ok(Some(path))
 }
 
 fn write_block_solution_flow(
