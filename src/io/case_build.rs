@@ -21,6 +21,22 @@ pub fn initial_scalar(case: &CaseSpec, name: &str) -> Result<ScalarField> {
 /// 单域 3D 守恒初场；`[restart]` 优先。
 pub fn conserved_fields(case: &CaseSpec) -> Result<ConservedFields> {
     if let Some(path) = &case.restart {
+        if path
+            .extension()
+            .and_then(|s| s.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("cgns"))
+        {
+            let eos = case.physics.eos()?;
+            let reference = case.reference.as_ref().ok_or_else(|| {
+                crate::error::AsimuError::Config("可压缩算例缺少无量纲参考量 reference".to_string())
+            })?;
+            return restart::load_conserved_fields_from_flow_cgns(
+                path,
+                case.mesh.num_cells(),
+                &eos,
+                reference,
+            );
+        }
         return restart::load_conserved_fields_checked(path, case.numerics.compute_precision);
     }
     restart::initial_freestream_conserved_fields(

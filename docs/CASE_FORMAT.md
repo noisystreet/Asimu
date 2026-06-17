@@ -407,6 +407,15 @@ NS 粘性项含 \(1/\mathrm{Re}\)；流场 CGNS/VTK 输出自动还原 SI。
 path = "restart.toml"
 ```
 
+单域非结构 3D 可压缩算例也可直接指向最终流场 `flow.cgns`（须 `io-cgns`）：
+
+```toml
+[restart]
+path = "output_steady/flow.cgns"
+```
+
+该路径会读取 `FlowSolution` 的 `Density`、`VelocityX/Y/Z`、`Pressure`（CellCenter），并按 case `reference` 缩放为无量纲守恒量后作为初场。
+
 | 版本 | 适用 | 格式 |
 |------|------|------|
 | `version = 1` | 单 block 3D / 1D | 顶层 `num_cells` + `density` / `momentum_*` / `total_energy`；可选 `compute_precision = "f32"`（缺省 `f64`） |

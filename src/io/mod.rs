@@ -20,7 +20,8 @@ pub use case::{
 pub use residual::{write_incompressible_residual_csv, write_residual_csv};
 pub use restart::{
     RestartPrecision, initial_multiblock_conserved_fields, load_conserved_fields,
-    load_conserved_fields_checked, load_conserved_fields_typed, load_multiblock_conserved_fields,
+    load_conserved_fields_checked, load_conserved_fields_from_flow_cgns,
+    load_conserved_fields_typed, load_multiblock_conserved_fields,
     load_multiblock_conserved_fields_checked, read_restart_precision, write_conserved_fields,
     write_conserved_fields_typed, write_conserved_fields_with_precision,
     write_multiblock_conserved_fields, write_multiblock_conserved_fields_with_precision,
@@ -63,10 +64,11 @@ pub use vtk::{
 pub use cgns::export_cgns_to_vtm;
 #[cfg(feature = "io-cgns")]
 pub use cgns::{
-    Cgns1to1Connection, CgnsLoadResult, CgnsMultiLoadResult, CgnsUnstructuredLoadResult,
-    CgnsZoneInfo, StructuredVertexSolution, VertexScalarFieldView, export_cgns_to_vts,
-    export_cgns_zone_to_vts, list_cgns_zones, load_cgns_all_zones, load_cgns_unstructured_zone,
-    load_cgns_zone, write_flow_cgns, write_flow_cgns_unstructured, write_multiblock_flow_cgns,
+    Cgns1to1Connection, CgnsLoadResult, CgnsMultiLoadResult, CgnsUnstructuredFlowSolution,
+    CgnsUnstructuredLoadResult, CgnsZoneInfo, StructuredVertexSolution, VertexScalarFieldView,
+    export_cgns_to_vts, export_cgns_zone_to_vts, list_cgns_zones, load_cgns_all_zones,
+    load_cgns_unstructured_flow_solution, load_cgns_unstructured_zone, load_cgns_zone,
+    write_flow_cgns, write_flow_cgns_unstructured, write_multiblock_flow_cgns,
     write_structured_vertex_solution_cgns,
 };
 

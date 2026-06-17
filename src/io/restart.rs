@@ -9,7 +9,10 @@ use crate::core::{ComputeFloat, ComputePrecision, parse_compute_precision};
 use crate::error::{AsimuError, Result};
 use crate::field::{ConservedFields, ConservedFieldsT, ScalarField};
 use crate::mesh::StructuredBlock3d;
-use crate::physics::{FreestreamContext, FreestreamParams, IdealGasEoS, ReferenceScales};
+use crate::physics::{
+    ConservedState, FreestreamContext, FreestreamParams, IdealGasEoS, PrimitiveState,
+    ReferenceScales,
+};
 
 const RESTART_VERSION_SINGLE: u32 = 1;
 const RESTART_VERSION_MULTIBLOCK: u32 = 2;
@@ -152,6 +155,98 @@ pub fn load_conserved_fields_checked(
                 .to_string(),
         )),
     }
+}
+
+/// 从非结构 `flow.cgns`（CellCenter 原始量）加载并转换为无量纲守恒场。
+///
+/// 约束：
+/// - 当前仅读取 zone=1；
+/// - 输入 `flow.cgns` 为有量纲 SI，转换时按 `reference` 缩放至 \(*\) 变量；
+/// - 守恒量通过 `ConservedState::from_primitive` 与 `eos` 一致重建。
+#[cfg(feature = "io-cgns")]
+pub fn load_conserved_fields_from_flow_cgns(
+    path: &Path,
+    expected_num_cells: usize,
+    eos: &IdealGasEoS,
+    reference: &ReferenceScales,
+) -> Result<ConservedFields> {
+    let flow = crate::io::cgns::load_cgns_unstructured_flow_solution(path, 1)?;
+    if flow.zone.nx != expected_num_cells {
+        return Err(AsimuError::Field(format!(
+            "flow.cgns 单元数 {} 与网格 {} 不一致",
+            flow.zone.nx, expected_num_cells
+        )));
+    }
+    let mut density = Vec::with_capacity(expected_num_cells);
+    let mut momentum_x = Vec::with_capacity(expected_num_cells);
+    let mut momentum_y = Vec::with_capacity(expected_num_cells);
+    let mut momentum_z = Vec::with_capacity(expected_num_cells);
+    let mut total_energy = Vec::with_capacity(expected_num_cells);
+    for i in 0..expected_num_cells {
+        let rho_si = flow.density[i];
+        let ux_si = flow.velocity_x[i];
+        let uy_si = flow.velocity_y[i];
+        let uz_si = flow.velocity_z[i];
+        let p_si = flow.pressure[i];
+        if !rho_si.is_finite()
+            || !ux_si.is_finite()
+            || !uy_si.is_finite()
+            || !uz_si.is_finite()
+            || !p_si.is_finite()
+        {
+            return Err(AsimuError::Field(format!(
+                "flow.cgns 第 {i} 个单元含非有限值"
+            )));
+        }
+        if rho_si <= 0.0 || p_si <= 0.0 {
+            return Err(AsimuError::Field(format!(
+                "flow.cgns 第 {i} 个单元密度/压力非正：rho={rho_si}, p={p_si}"
+            )));
+        }
+        let rho = rho_si / reference.density;
+        let pressure = p_si / reference.pressure;
+        let velocity = [
+            ux_si / reference.velocity,
+            uy_si / reference.velocity,
+            uz_si / reference.velocity,
+        ];
+        let temperature = pressure / (rho * eos.gas_constant);
+        let cons = ConservedState::from_primitive(
+            eos,
+            &PrimitiveState {
+                density: rho,
+                velocity,
+                pressure,
+                temperature,
+            },
+        )?;
+        density.push(cons.density);
+        momentum_x.push(cons.momentum[0]);
+        momentum_y.push(cons.momentum[1]);
+        momentum_z.push(cons.momentum[2]);
+        total_energy.push(cons.total_energy);
+    }
+    fields_from_arrays(
+        expected_num_cells,
+        &density,
+        &momentum_x,
+        &momentum_y,
+        &momentum_z,
+        &total_energy,
+    )
+}
+
+/// `io-cgns` 关闭时占位报错，避免静默回退到错误格式。
+#[cfg(not(feature = "io-cgns"))]
+pub fn load_conserved_fields_from_flow_cgns(
+    _path: &Path,
+    _expected_num_cells: usize,
+    _eos: &IdealGasEoS,
+    _reference: &ReferenceScales,
+) -> Result<ConservedFields> {
+    Err(AsimuError::Config(
+        "从 flow.cgns 读取初场须启用 feature io-cgns".to_string(),
+    ))
 }
 
 /// 从 restart 加载 typed 守恒场（校验文件精度与 `T` 一致）。
@@ -527,6 +622,54 @@ mod tests {
         let err =
             load_conserved_fields_checked(&path, ComputePrecision::F32).expect_err("f32 case");
         assert!(err.to_string().contains("f64"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[cfg(feature = "io-cgns")]
+    #[test]
+    fn loads_unstructured_flow_cgns_and_converts_to_nondimensional_conserved() {
+        use crate::io::write_flow_cgns_unstructured;
+        use crate::mesh::{CellKind, UnstructuredCell, UnstructuredMesh3d};
+        use crate::physics::ReferenceScales;
+
+        let mesh = UnstructuredMesh3d::new(
+            "tet",
+            vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            vec![UnstructuredCell::new(CellKind::Tet, vec![0, 1, 2, 3]).expect("tet")],
+        )
+        .expect("mesh");
+        let eos_dim = IdealGasEoS::AIR_STANDARD;
+        let fs_dim = FreestreamParams {
+            mach: 0.25,
+            pressure: 101_325.0,
+            temperature: 300.0,
+            ..FreestreamParams::default()
+        };
+        let reference = ReferenceScales::from_freestream(&eos_dim, &fs_dim, None).expect("ref");
+        let mut eos_nd = eos_dim;
+        eos_nd.gas_constant = reference.nondimensional_gas_constant();
+        let fields_nd = ConservedFields::from_freestream(mesh.num_cells(), &eos_dim, &fs_dim)
+            .expect("nondimensional fields");
+        let fields_dim = fields_nd
+            .to_dimensional(&reference)
+            .expect("dimensional fields");
+
+        let path = std::env::temp_dir().join("asimu_restart_from_flow_cgns_test.cgns");
+        write_flow_cgns_unstructured(&path, &mesh, &fields_dim, &eos_dim, 0.0, 1.0e-6)
+            .expect("write flow cgns");
+        let loaded =
+            load_conserved_fields_from_flow_cgns(&path, mesh.num_cells(), &eos_nd, &reference)
+                .expect("load from flow cgns");
+
+        assert!((loaded.density.values()[0] - fields_nd.density.values()[0]).abs() < 1.0e-10);
+        assert!(
+            (loaded.total_energy.values()[0] - fields_nd.total_energy.values()[0]).abs() < 1.0e-10
+        );
         let _ = std::fs::remove_file(path);
     }
 }

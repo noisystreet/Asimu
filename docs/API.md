@@ -106,6 +106,7 @@ let result = solver.run(&mesh)?;
 | `IncompressibleConvectionScheme` | 不可压缩动量预测对流格式：`upwind` 默认；`central` 为内部面中心对流入口 |
 | `load_conserved_fields(path)` / `write_conserved_fields(path, fields)` | 单 block restart TOML（version=1；默认 `f64`） |
 | `load_conserved_fields_checked(path, expected)` / `write_conserved_fields_with_precision(path, fields, precision)` | 单 block restart，校验/写入 `compute_precision` |
+| `load_conserved_fields_from_flow_cgns(path, expected_num_cells, eos, reference)` | 从非结构 `flow.cgns`（`FlowSolution` 的 `Density`/`VelocityX/Y/Z`/`Pressure`）读取 SI 原始量并按 `reference` 转无量纲守恒场 |
 | `load_conserved_fields_typed::<T>(path)` / `write_conserved_fields_typed(path, fields)` | typed 单 block restart（ADR 0016 §6） |
 | `read_restart_precision(path) -> RestartPrecision` | 读取 restart 文件标注精度（缺省 `f64`） |
 | `load_multiblock_conserved_fields(path, block_names)` / `write_multiblock_conserved_fields(path, blocks)` | 多块 restart TOML（version=2） |

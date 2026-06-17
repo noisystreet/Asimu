@@ -15,7 +15,8 @@ use super::ffi::{
     ELEM_MIXED, ELEM_PENTA_6, ELEM_PYRA_5, ELEM_QUAD_4, ELEM_TETRA_4, ELEM_TRI_3,
     GRID_LOCATION_FACE_CENTER, REAL_DOUBLE, ZONE_UNSTRUCTURED, cg_ElementDataSize,
     cg_boco_gridlocation_read, cg_boco_info, cg_boco_read, cg_coord_read, cg_elements_read,
-    cg_nbocos, cg_nsections, cg_section_read, cg_zone_read,
+    cg_field_info, cg_field_read, cg_nbocos, cg_nfields, cg_nsections, cg_nsols, cg_section_read,
+    cg_sol_info, cg_zone_read,
 };
 use super::read::{CGNS_LOCK, CgnsFile, CgnsZoneInfo, c_str_to_string, cgns_lock_error, check_cg};
 
@@ -25,6 +26,17 @@ pub struct CgnsUnstructuredLoadResult {
     pub zone: CgnsZoneInfo,
     pub mesh: UnstructuredMesh3d,
     pub boundary: BoundarySet,
+}
+
+/// CGNS 非结构单 zone `FlowSolution`（CellCenter 原始变量）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct CgnsUnstructuredFlowSolution {
+    pub zone: CgnsZoneInfo,
+    pub density: Vec<f64>,
+    pub velocity_x: Vec<f64>,
+    pub velocity_y: Vec<f64>,
+    pub velocity_z: Vec<f64>,
+    pub pressure: Vec<f64>,
 }
 
 struct CgnsSectionInfo {
@@ -51,6 +63,44 @@ pub fn load_cgns_unstructured_zone(
 ) -> Result<CgnsUnstructuredLoadResult> {
     let _guard = CGNS_LOCK.lock().map_err(|_| cgns_lock_error())?;
     load_cgns_unstructured_zone_locked(path, zone_index)
+}
+
+/// 读取指定 CGNS Unstructured zone 的 `FlowSolution`（CellCenter 原始变量）。
+pub fn load_cgns_unstructured_flow_solution(
+    path: &Path,
+    zone_index: usize,
+) -> Result<CgnsUnstructuredFlowSolution> {
+    let _guard = CGNS_LOCK.lock().map_err(|_| cgns_lock_error())?;
+    load_cgns_unstructured_flow_solution_locked(path, zone_index)
+}
+
+fn load_cgns_unstructured_flow_solution_locked(
+    path: &Path,
+    zone_index: usize,
+) -> Result<CgnsUnstructuredFlowSolution> {
+    const BASE: i32 = 1;
+    if zone_index == 0 {
+        return Err(AsimuError::Mesh("zone_index 从 1 开始".to_string()));
+    }
+    let file = CgnsFile::open(path)?;
+    let nzones = file.nzones(BASE)?;
+    if zone_index > nzones {
+        return Err(AsimuError::Mesh(format!(
+            "zone_index={zone_index} 超出范围（共 {nzones} 个 zone）"
+        )));
+    }
+    let zone = zone_index as i32;
+    let info = unstructured_zone_info(&file, BASE, zone)?;
+    let num_cells = info.nx;
+    let sol = file.find_flow_solution_index(BASE, zone)?;
+    Ok(CgnsUnstructuredFlowSolution {
+        zone: info,
+        density: file.read_flow_field(BASE, zone, sol, "Density", num_cells)?,
+        velocity_x: file.read_flow_field(BASE, zone, sol, "VelocityX", num_cells)?,
+        velocity_y: file.read_flow_field(BASE, zone, sol, "VelocityY", num_cells)?,
+        velocity_z: file.read_flow_field(BASE, zone, sol, "VelocityZ", num_cells)?,
+        pressure: file.read_flow_field(BASE, zone, sol, "Pressure", num_cells)?,
+    })
 }
 
 fn load_cgns_unstructured_zone_locked(
@@ -131,6 +181,87 @@ pub(super) fn unstructured_zone_info(
 }
 
 impl CgnsFile {
+    fn find_flow_solution_index(&self, base: i32, zone: i32) -> Result<i32> {
+        let mut nsols = 0;
+        check_cg(unsafe { cg_nsols(self.index, base, zone, &mut nsols) })?;
+        for sol in 1..=nsols {
+            let mut name = [0i8; 33];
+            let mut location = 0;
+            check_cg(unsafe {
+                cg_sol_info(
+                    self.index,
+                    base,
+                    zone,
+                    sol,
+                    name.as_mut_ptr(),
+                    &mut location,
+                )
+            })?;
+            if c_str_to_string(&name)? == "FlowSolution" {
+                return Ok(sol);
+            }
+        }
+        Err(AsimuError::Field(
+            "CGNS Unstructured zone 缺少 FlowSolution".to_string(),
+        ))
+    }
+
+    fn read_flow_field(
+        &self,
+        base: i32,
+        zone: i32,
+        sol: i32,
+        field_name: &str,
+        num_cells: usize,
+    ) -> Result<Vec<f64>> {
+        let mut nfields = 0;
+        check_cg(unsafe { cg_nfields(self.index, base, zone, sol, &mut nfields) })?;
+        let mut found = false;
+        for field in 1..=nfields {
+            let mut datatype = 0;
+            let mut name = [0i8; 33];
+            check_cg(unsafe {
+                cg_field_info(
+                    self.index,
+                    base,
+                    zone,
+                    sol,
+                    field,
+                    &mut datatype,
+                    name.as_mut_ptr(),
+                )
+            })?;
+            if c_str_to_string(&name)? == field_name {
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return Err(AsimuError::Field(format!(
+                "CGNS FlowSolution 缺少字段 {field_name}"
+            )));
+        }
+        let cname = CString::new(field_name)
+            .map_err(|_| AsimuError::Field(format!("CGNS 字段名含内嵌 NUL: {field_name}")))?;
+        let mut out = vec![0.0_f64; num_cells];
+        let rmin = [1 as CgSize];
+        let rmax = [num_cells as CgSize];
+        check_cg(unsafe {
+            cg_field_read(
+                self.index,
+                base,
+                zone,
+                sol,
+                cname.as_ptr(),
+                REAL_DOUBLE,
+                rmin.as_ptr(),
+                rmax.as_ptr(),
+                out.as_mut_ptr().cast(),
+            )
+        })?;
+        Ok(out)
+    }
+
     fn read_unstructured_points(
         &self,
         base: i32,

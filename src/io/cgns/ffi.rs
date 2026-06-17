@@ -113,6 +113,42 @@ unsafe extern "C" {
         transform: *mut c_int,
     ) -> c_int;
     pub fn cg_nsections(fn_: c_int, base: c_int, zone: c_int, nsections: *mut c_int) -> c_int;
+    pub fn cg_nsols(fn_: c_int, base: c_int, zone: c_int, nsols: *mut c_int) -> c_int;
+    pub fn cg_sol_info(
+        fn_: c_int,
+        base: c_int,
+        zone: c_int,
+        sol: c_int,
+        solname: *mut c_char,
+        location: *mut c_int,
+    ) -> c_int;
+    pub fn cg_nfields(
+        fn_: c_int,
+        base: c_int,
+        zone: c_int,
+        sol: c_int,
+        nfields: *mut c_int,
+    ) -> c_int;
+    pub fn cg_field_info(
+        fn_: c_int,
+        base: c_int,
+        zone: c_int,
+        sol: c_int,
+        field: c_int,
+        datatype: *mut DataType,
+        fieldname: *mut c_char,
+    ) -> c_int;
+    pub fn cg_field_read(
+        fn_: c_int,
+        base: c_int,
+        zone: c_int,
+        sol: c_int,
+        fieldname: *const c_char,
+        datatype: DataType,
+        rmin: *const CgSize,
+        rmax: *const CgSize,
+        data: *mut c_void,
+    ) -> c_int;
     pub fn cg_section_read(
         fn_: c_int,
         base: c_int,
