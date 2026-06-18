@@ -109,6 +109,17 @@ impl UnstructuredCudaPrepareSync for f32 {
         Ok(work.storage.k1.density_rms_norm())
     }
 
+    fn dual_time_storage_inv_dt_coeff(
+        work: &UnstructuredStepWorkTyped<f32>,
+        dt_phys: Real,
+    ) -> Real {
+        #[cfg(feature = "cuda")]
+        if work.exec.device() == ExecDevice::GpuCuda && work.exec.cuda_rhs_pipeline_active() {
+            return 1.0 / dt_phys;
+        }
+        work.dual_time_state.physical_storage_inv_dt_coeff(dt_phys)
+    }
+
     fn maybe_upload_lusgs_integration_base(
         work: &mut UnstructuredStepWorkTyped<f32>,
     ) -> Result<()> {

@@ -140,6 +140,13 @@ pub(crate) trait UnstructuredCudaPrepareSync:
 
     fn step_density_residual_rms(work: &mut UnstructuredStepWorkTyped<Self>) -> Result<Real>;
 
+    fn dual_time_storage_inv_dt_coeff(
+        work: &UnstructuredStepWorkTyped<Self>,
+        dt_phys: Real,
+    ) -> Real {
+        work.dual_time_state.physical_storage_inv_dt_coeff(dt_phys)
+    }
+
     fn maybe_upload_lusgs_integration_base(
         work: &mut UnstructuredStepWorkTyped<Self>,
     ) -> Result<()>;
@@ -171,10 +178,10 @@ pub(crate) trait UnstructuredCudaPrepareSync:
         fields: &ConservedFieldsT<Self>,
         dt_phys: Real,
     ) -> Result<()> {
-        crate::solver::time::add_physical_storage_residual(
+        crate::solver::time::add_physical_storage_residual_from_state(
             &mut work.storage.k1,
             fields,
-            &work.dual_time_state.u_at_physical_level,
+            &work.dual_time_state,
             dt_phys,
         )
     }

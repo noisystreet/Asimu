@@ -14,7 +14,7 @@ pub enum TimeIntegrationScheme {
     LuSgs,
     /// Matrix-free GMRES 隐式伪时间（LU-SGS 对角预条件器）。
     Gmres,
-    /// 双时间步：物理 BDF1 + 内层 LU-SGS 伪时间（非结构可压缩）。
+    /// 双时间步：首步 BDF1、之后 BDF2 + 内层 LU-SGS 伪时间（非结构可压缩）。
     DualTime,
     /// 不可压缩 SIMPLEC 稳态 pressure-velocity 路径（可压缩求解器不支持）。
     Simplec,

@@ -44,7 +44,6 @@ pub(crate) fn advance_unstructured_dual_time_typed<
         ));
     }
     let lu_sgs = env.config.lu_sgs;
-    let inv_dt_phys = dual.inv_dt_phys();
     let _physical_span = info_span!(
         "unstructured_dual_time_physical_step",
         dt_phys = dual.dt_phys,
@@ -56,6 +55,7 @@ pub(crate) fn advance_unstructured_dual_time_typed<
         let _span = info_span!("unstructured_dual_time_snapshot_u_n_typed").entered();
         T::snapshot_dual_time_u_n(work, fields)?;
     }
+    let inv_dt_phys = T::dual_time_storage_inv_dt_coeff(work, dual.dt_phys);
     let mut effective_residual_rms = 0.0;
     let base_ctx = DualTimeInnerCtx {
         env,
