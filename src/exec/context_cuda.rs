@@ -202,6 +202,17 @@ impl ExecutionContext {
             .download_conserved_if_on_device(fields)
     }
 
+    /// 只读 D2H 拷贝 device 守恒场；不修改 `conserved_on_device`（内层诊断）。
+    #[cfg(feature = "cuda")]
+    pub fn cuda_copy_conserved_to_host(
+        &mut self,
+        fields: &mut crate::field::ConservedFieldsT<f32>,
+    ) -> Result<()> {
+        self.backend_state
+            .cuda_mut()?
+            .copy_conserved_to_host(fields)
+    }
+
     /// CUDA P7：device 守恒场正性钳制（替代步末全表 D2H）。
     #[cfg(feature = "cuda")]
     pub fn cuda_enforce_conserved_positivity_on_device(

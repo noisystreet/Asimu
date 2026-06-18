@@ -1,10 +1,10 @@
 //! 非结构 typed 时间步准备（BC/原变量刷新、谱半径、局部 \(\Delta t\)）。
 
-use tracing::info_span;
+use tracing::{info, info_span};
 
 #[cfg(feature = "cuda")]
 use crate::core::ExecDevice;
-use crate::core::{ComputeFloat, Real};
+use crate::core::{ComputeFloat, Real, format_log_sci4};
 use crate::error::Result;
 #[cfg(feature = "cuda")]
 use crate::exec::ExecutionContext;
@@ -102,6 +102,63 @@ fn compute_spectral_radius_at_prepare<
     )
 }
 
+pub(super) fn log_pseudo_timestep_stats_f32(
+    inner: u32,
+    dt_phys: Real,
+    sigma: &[f32],
+    cell_dts: &[f32],
+) {
+    let sigma_real: Vec<Real> = sigma.iter().map(|v| *v as Real).collect();
+    let dt_real: Vec<Real> = cell_dts.iter().map(|v| *v as Real).collect();
+    log_pseudo_timestep_stats(inner, dt_phys, &sigma_real, &dt_real);
+}
+
+fn log_pseudo_timestep_stats(inner: u32, dt_phys: Real, sigma: &[Real], cell_dts: &[Real]) {
+    if sigma.len() != cell_dts.len() || sigma.is_empty() {
+        return;
+    }
+    let mut sigma_min = Real::INFINITY;
+    let mut sigma_max: Real = 0.0;
+    let mut dt_min = Real::INFINITY;
+    let mut dt_max: Real = 0.0;
+    let mut dt_sigma_min = Real::INFINITY;
+    let mut dt_sigma_max: Real = 0.0;
+    let mut dt_inv_phys_min = Real::INFINITY;
+    let mut dt_inv_phys_max: Real = 0.0;
+    let inv_dt_phys = if dt_phys > 0.0 { 1.0 / dt_phys } else { 0.0 };
+    for (&s, &dt) in sigma.iter().zip(cell_dts.iter()) {
+        if !(s.is_finite() && dt.is_finite() && s > 0.0 && dt > 0.0) {
+            continue;
+        }
+        sigma_min = sigma_min.min(s);
+        sigma_max = sigma_max.max(s);
+        dt_min = dt_min.min(dt);
+        dt_max = dt_max.max(dt);
+        let dt_sigma = dt * s;
+        dt_sigma_min = dt_sigma_min.min(dt_sigma);
+        dt_sigma_max = dt_sigma_max.max(dt_sigma);
+        let dt_inv_phys = dt * inv_dt_phys;
+        dt_inv_phys_min = dt_inv_phys_min.min(dt_inv_phys);
+        dt_inv_phys_max = dt_inv_phys_max.max(dt_inv_phys);
+    }
+    if !sigma_min.is_finite() {
+        return;
+    }
+    info!(
+        parent: None,
+        inner,
+        sigma_min = %format_log_sci4(sigma_min),
+        sigma_max = %format_log_sci4(sigma_max),
+        dtau_min = %format_log_sci4(dt_min),
+        dtau_max = %format_log_sci4(dt_max),
+        dtau_sigma_min = %format_log_sci4(dt_sigma_min),
+        dtau_sigma_max = %format_log_sci4(dt_sigma_max),
+        dtau_inv_dt_phys_min = %format_log_sci4(dt_inv_phys_min),
+        dtau_inv_dt_phys_max = %format_log_sci4(dt_inv_phys_max),
+        "dual_time 伪时间步诊断",
+    );
+}
+
 /// BC/原变量刷新后同步 device primitive（f32 CUDA 单步一次 H2D）。
 pub(crate) trait UnstructuredCudaPrepareSync:
     UnstructuredSpectralRadiusTyped + PrimitiveFillFromConserved
@@ -147,11 +204,25 @@ pub(crate) trait UnstructuredCudaPrepareSync:
         work.dual_time_state.physical_storage_inv_dt_coeff(dt_phys)
     }
 
+    fn log_dual_time_pseudo_timestep_stats(
+        _work: &mut UnstructuredStepWorkTyped<Self>,
+        _inner: u32,
+        _dt_phys: Real,
+        _local_time_step: bool,
+    ) -> Result<()> {
+        Ok(())
+    }
+
     fn maybe_upload_lusgs_integration_base(
         work: &mut UnstructuredStepWorkTyped<Self>,
     ) -> Result<()>;
 
     fn lusgs_skip_copy_stage_after_diagonal(work: &UnstructuredStepWorkTyped<Self>) -> bool;
+
+    /// 诊断用对角 trial 是否应跳过；CUDA device 管线下该 trial 会消费 timestep 驻留状态。
+    fn skip_lusgs_diag_trial_probe(_work: &UnstructuredStepWorkTyped<Self>) -> bool {
+        false
+    }
 
     fn maybe_enforce_conserved_after_integration(
         work: &mut UnstructuredStepWorkTyped<Self>,
@@ -172,7 +243,7 @@ pub(crate) trait UnstructuredCudaPrepareSync:
         work.dual_time_state.snapshot_u_n(fields)
     }
 
-    /// 叠加 BDF1 物理存储项至有效残差。
+    /// 叠加物理存储项至有效残差：首个物理步 BDF1，之后 BDF2。
     fn add_dual_time_storage_residual(
         work: &mut UnstructuredStepWorkTyped<Self>,
         fields: &ConservedFieldsT<Self>,
@@ -193,6 +264,24 @@ pub(crate) trait UnstructuredCudaPrepareSync:
     ) -> Result<()> {
         work.storage.u0.copy_from(fields)
     }
+
+    /// 内层 LU-SGS 后诊断：相对 \(U^n\) 的密度偏移（debug 级）。
+    fn debug_log_dual_time_inner_vs_u_n(
+        fields: &ConservedFieldsT<Self>,
+        work: &mut UnstructuredStepWorkTyped<Self>,
+        inner: u32,
+        dt_phys: Real,
+    ) {
+        let _ = (fields, work, inner, dt_phys);
+    }
+
+    /// 内层 LU-SGS 后复算 \(R_{\mathrm{eff}}\) 前：将积分后的守恒场同步到 host `fields`（CUDA 只读 D2H）。
+    fn sync_fields_for_post_lusgs_rhs_probe(
+        _work: &mut UnstructuredStepWorkTyped<Self>,
+        _fields: &mut ConservedFieldsT<Self>,
+    ) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl UnstructuredCudaPrepareSync for f64 {
@@ -202,6 +291,21 @@ impl UnstructuredCudaPrepareSync for f64 {
 
     fn step_density_residual_rms(work: &mut UnstructuredStepWorkTyped<f64>) -> Result<Real> {
         Ok(work.storage.k1.density_rms_norm())
+    }
+
+    fn log_dual_time_pseudo_timestep_stats(
+        work: &mut UnstructuredStepWorkTyped<f64>,
+        inner: u32,
+        dt_phys: Real,
+        _local_time_step: bool,
+    ) -> Result<()> {
+        log_pseudo_timestep_stats(
+            inner,
+            dt_phys,
+            &work.timestep.sigma,
+            &work.timestep.cell_dts,
+        );
+        Ok(())
     }
 
     fn maybe_upload_lusgs_integration_base(
@@ -227,6 +331,20 @@ impl UnstructuredCudaPrepareSync for f64 {
         _fields: &mut ConservedFieldsT<f64>,
     ) -> Result<()> {
         Ok(())
+    }
+
+    fn debug_log_dual_time_inner_vs_u_n(
+        fields: &ConservedFieldsT<f64>,
+        work: &mut UnstructuredStepWorkTyped<f64>,
+        inner: u32,
+        dt_phys: Real,
+    ) {
+        super::unstructured_dual_time_typed::log_inner_state_vs_u_n(
+            fields,
+            &work.dual_time_state.u_at_physical_level,
+            inner,
+            dt_phys,
+        );
     }
 }
 

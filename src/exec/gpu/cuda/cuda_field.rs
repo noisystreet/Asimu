@@ -66,6 +66,15 @@ impl CudaBackendState {
         Ok(())
     }
 
+    /// 只读 D2H 拷贝 device 守恒场；**不**清除 `conserved_on_device`（内层诊断用）。
+    pub fn copy_conserved_to_host(&self, fields: &mut ConservedFieldsT<f32>) -> Result<()> {
+        if !self.pipeline.conserved_on_device {
+            return Ok(());
+        }
+        let buffers = self.fields.as_ref().expect("field buffers");
+        buffers.download_conserved(&self.stream, fields)
+    }
+
     /// device 守恒场正性钳制（对齐 host `enforce_positivity` 语义；避免步末全表 D2H）。
     pub fn enforce_conserved_positivity_on_device(
         &mut self,

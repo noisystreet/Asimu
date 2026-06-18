@@ -120,6 +120,39 @@ impl UnstructuredCudaPrepareSync for f32 {
         work.dual_time_state.physical_storage_inv_dt_coeff(dt_phys)
     }
 
+    fn log_dual_time_pseudo_timestep_stats(
+        work: &mut UnstructuredStepWorkTyped<f32>,
+        inner: u32,
+        dt_phys: Real,
+        local_time_step: bool,
+    ) -> Result<()> {
+        let n = work.storage.u0.num_cells();
+        #[cfg(feature = "cuda")]
+        if work.exec.device() == ExecDevice::GpuCuda && work.exec.cuda_timestep_on_device() {
+            let mut sigma = vec![0.0_f32; n];
+            let mut cell_dts = vec![0.0_f32; n];
+            work.exec.cuda_mirror_timestep_f32_to_host(
+                &mut sigma,
+                &mut cell_dts,
+                local_time_step,
+            )?;
+            super::unstructured_prepare_timestep_typed::log_pseudo_timestep_stats_f32(
+                inner, dt_phys, &sigma, &cell_dts,
+            );
+            return Ok(());
+        }
+        if work.timestep.sigma_f32.len() == n && work.timestep.cell_dts_f32.len() == n {
+            super::unstructured_prepare_timestep_typed::log_pseudo_timestep_stats_f32(
+                inner,
+                dt_phys,
+                &work.timestep.sigma_f32,
+                &work.timestep.cell_dts_f32,
+            );
+        }
+        let _ = (inner, dt_phys, local_time_step);
+        Ok(())
+    }
+
     fn maybe_upload_lusgs_integration_base(
         work: &mut UnstructuredStepWorkTyped<f32>,
     ) -> Result<()> {
@@ -138,6 +171,18 @@ impl UnstructuredCudaPrepareSync for f32 {
             work.exec.device() == ExecDevice::GpuCuda
                 && (work.exec.cuda_lusgs_diagonal_on_device()
                     || work.exec.cuda_lusgs_sweep_on_device())
+        }
+        #[cfg(not(feature = "cuda"))]
+        {
+            let _ = work;
+            false
+        }
+    }
+
+    fn skip_lusgs_diag_trial_probe(work: &UnstructuredStepWorkTyped<f32>) -> bool {
+        #[cfg(feature = "cuda")]
+        {
+            work.exec.device() == ExecDevice::GpuCuda && work.exec.cuda_rhs_pipeline_active()
         }
         #[cfg(not(feature = "cuda"))]
         {
@@ -241,5 +286,49 @@ impl UnstructuredCudaPrepareSync for f32 {
             &work.dual_time_state.u_at_physical_level,
             dt_phys,
         )
+    }
+
+    fn debug_log_dual_time_inner_vs_u_n(
+        fields: &ConservedFieldsT<f32>,
+        work: &mut UnstructuredStepWorkTyped<f32>,
+        inner: u32,
+        dt_phys: Real,
+    ) {
+        #[cfg(feature = "cuda")]
+        if work.exec.device() == ExecDevice::GpuCuda && work.exec.cuda_conserved_on_device() {
+            let mut host = work.dual_time_state.u_at_physical_level.clone();
+            if work.exec.cuda_copy_conserved_to_host(&mut host).is_ok() {
+                super::unstructured_dual_time_typed::log_inner_state_vs_u_n(
+                    &host,
+                    &work.dual_time_state.u_at_physical_level,
+                    inner,
+                    dt_phys,
+                );
+                return;
+            }
+        }
+        super::unstructured_dual_time_typed::log_inner_state_vs_u_n(
+            fields,
+            &work.dual_time_state.u_at_physical_level,
+            inner,
+            dt_phys,
+        );
+    }
+
+    fn sync_fields_for_post_lusgs_rhs_probe(
+        work: &mut UnstructuredStepWorkTyped<f32>,
+        fields: &mut ConservedFieldsT<f32>,
+    ) -> Result<()> {
+        #[cfg(feature = "cuda")]
+        if work.exec.device() == ExecDevice::GpuCuda {
+            if work.exec.cuda_conserved_on_device() {
+                work.exec.cuda_download_conserved_if_on_device(fields)?;
+            }
+            if work.exec.cuda_residual_on_device() {
+                work.exec.cuda_flush_rhs_residual(&mut work.storage.k1)?;
+            }
+        }
+        let _ = (work, fields);
+        Ok(())
     }
 }
