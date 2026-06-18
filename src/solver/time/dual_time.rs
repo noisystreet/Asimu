@@ -86,7 +86,7 @@ impl<T: ComputeFloat> DualTimeState<T> {
 }
 
 /// 叠加 BDF1 物理存储项（式 (3)–(4)，与 `R_i=\mathrm dU_i/\mathrm dt` 同量纲）：
-/// \(R_{\mathrm{eff},i} \leftarrow R_i - (U_i-U^n_i)/\Delta t_{\mathrm{phys}}\)。
+/// \(R_{\mathrm{eff},i} \leftarrow R_i + (U_i-U^n_i)/\Delta t_{\mathrm{phys}}\)。
 ///
 /// `ConservedFields` 为单元平均守恒密度；`R_i` 已由 FVM 除以 \(V_i\)，存储项不再除 \(V_i\)。
 pub fn add_physical_storage_residual<T: ComputeFloat>(
@@ -106,35 +106,35 @@ pub fn add_physical_storage_residual<T: ComputeFloat>(
     }
     let inv_dt_phys = 1.0 / dt_phys;
     for i in 0..n {
-        subtract_storage_component(
+        add_storage_component(
             residual.density.values_mut(),
             fields.density.values(),
             u_at_level_n.density.values(),
             i,
             inv_dt_phys,
         );
-        subtract_storage_component(
+        add_storage_component(
             residual.momentum_x.values_mut(),
             fields.momentum_x.values(),
             u_at_level_n.momentum_x.values(),
             i,
             inv_dt_phys,
         );
-        subtract_storage_component(
+        add_storage_component(
             residual.momentum_y.values_mut(),
             fields.momentum_y.values(),
             u_at_level_n.momentum_y.values(),
             i,
             inv_dt_phys,
         );
-        subtract_storage_component(
+        add_storage_component(
             residual.momentum_z.values_mut(),
             fields.momentum_z.values(),
             u_at_level_n.momentum_z.values(),
             i,
             inv_dt_phys,
         );
-        subtract_storage_component(
+        add_storage_component(
             residual.total_energy.values_mut(),
             fields.total_energy.values(),
             u_at_level_n.total_energy.values(),
@@ -146,7 +146,7 @@ pub fn add_physical_storage_residual<T: ComputeFloat>(
 }
 
 #[inline]
-fn subtract_storage_component<T: ComputeFloat>(
+fn add_storage_component<T: ComputeFloat>(
     residual: &mut [T],
     field: &[T],
     u_n: &[T],
@@ -154,7 +154,7 @@ fn subtract_storage_component<T: ComputeFloat>(
     inv_dt_phys: Real,
 ) {
     let diff = field[cell].add_mul_real(u_n[cell], -1.0);
-    residual[cell] = residual[cell].add_mul_real(diff, -inv_dt_phys);
+    residual[cell] = residual[cell].add_mul_real(diff, inv_dt_phys);
 }
 
 #[cfg(test)]
@@ -183,7 +183,7 @@ mod tests {
     }
 
     #[test]
-    fn f64_storage_subtracts_from_spatial_residual() {
+    fn f64_storage_adds_to_spatial_residual() {
         let mut fields = zero_fields::<f64>(1);
         let mut u_n = zero_fields::<f64>(1);
         fields.density.values_mut()[0] = 2.0;
@@ -191,8 +191,8 @@ mod tests {
         let mut residual = ConservedResidualT::<f64>::zeros(1).expect("res");
         residual.density.values_mut()[0] = -0.5;
         add_physical_storage_residual(&mut residual, &fields, &u_n, 0.1).expect("add");
-        // -0.5 - (2-1)/0.1 = -10.5
-        assert_component(&residual, 0, -10.5);
+        // -0.5 + (2-1)/0.1 = 9.5
+        assert_component(&residual, 0, 9.5);
     }
 
     #[test]
@@ -207,9 +207,9 @@ mod tests {
         residual.density.values_mut()[0] = 0.1_f32;
         residual.density.values_mut()[1] = -0.2_f32;
         add_physical_storage_residual(&mut residual, &fields, &u_n, 0.5).expect("add");
-        // 0.1 - (1.5-1.0)/0.5 = -0.9；-0.2 - (3.0-1.0)/0.5 = -4.2
-        assert!((residual.density.values()[0].to_real() - (-0.9)).abs() < 1.0e-5);
-        assert!((residual.density.values()[1].to_real() - (-4.2)).abs() < 1.0e-5);
+        // 0.1 + (1.5-1.0)/0.5 = 1.1；-0.2 + (3.0-1.0)/0.5 = 3.8
+        assert!((residual.density.values()[0].to_real() - 1.1).abs() < 1.0e-5);
+        assert!((residual.density.values()[1].to_real() - 3.8).abs() < 1.0e-5);
     }
 
     #[test]

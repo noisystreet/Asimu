@@ -7,6 +7,7 @@
 
 ### Fixed
 
+- **双时间步 BDF1 存储项符号**：`add_physical_storage_residual` 与 CUDA `dual_time_storage_f32` 改为 \(R_{\mathrm{eff}} \mathrel{+}= (U-U^n)/\Delta t_{\mathrm{phys}}\)，与式 (3) 及 `unstructured_fvm.md` 一致（此前误为减号）。
 - **双时间步 BDF1 存储项量纲**：`add_physical_storage_residual` 与 CUDA kernel 不再对 \((\mathbf{U}-\mathbf{U}^n)\) 除 \(V_i\)；与 FVM 空间残差 \(\mathrm dU/\mathrm dt\) 一致，修复小单元网格内层 2 残差暴涨与 NaN。
 - **CUDA f32 `lusgs_sweep` 首步残差与监控**：device 驻留 σ/Δtᵢ 时双扫前镜像 host 缓冲（修复 stabilize 校验失败）；稳态 LU-SGS 在隐式更新**前**记录 \(R(U^0)\) 密度 RMS，sweep/对角 step=1 一致。
 - **CUDA f32 `lusgs_sweep` 性能**：device 正性检查通过时跳过 host stabilize 全量 D2H/H2D；u0 快照改为 device D2D（守恒场已在 device 时）。
