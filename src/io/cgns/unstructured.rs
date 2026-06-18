@@ -9,6 +9,7 @@ use crate::core::FaceId;
 use crate::error::{AsimuError, Result};
 use crate::io::limits::validate_cell_count;
 use crate::mesh::{CellKind, UnstructuredCell, UnstructuredMesh3d};
+use tracing::warn;
 
 use super::ffi::{
     BC_ELEMENT_LIST, BC_ELEMENT_RANGE, BC_POINT_LIST, BC_POINT_RANGE, CgSize, ELEM_HEXA_8,
@@ -45,17 +46,14 @@ struct CgnsSectionInfo {
     start: CgSize,
     end: CgSize,
 }
-
 struct CgnsUnstructuredElements {
     cells: Vec<UnstructuredCell>,
     boundary_faces: Vec<CgnsBoundaryFaceElement>,
 }
-
 struct CgnsBoundaryFaceElement {
     element_id: CgSize,
     nodes: Vec<usize>,
 }
-
 /// 读取指定 CGNS Unstructured zone（1-based）为 `UnstructuredMesh3d`。
 pub fn load_cgns_unstructured_zone(
     path: &Path,
@@ -64,7 +62,6 @@ pub fn load_cgns_unstructured_zone(
     let _guard = CGNS_LOCK.lock().map_err(|_| cgns_lock_error())?;
     load_cgns_unstructured_zone_locked(path, zone_index)
 }
-
 /// 读取指定 CGNS Unstructured zone 的 `FlowSolution`（CellCenter 原始变量）。
 pub fn load_cgns_unstructured_flow_solution(
     path: &Path,
@@ -392,7 +389,17 @@ impl CgnsFile {
             }
             let element_ids =
                 self.read_boco_element_ids(base, zone, boco, info.ptset_type, info.npnts)?;
-            let face_ids = map_boco_elements_to_faces(&info.name, &element_ids, &element_to_face)?;
+            let face_ids = match map_boco_elements_to_faces(
+                &info.name,
+                &element_ids,
+                &element_to_face,
+            ) {
+                Ok(face_ids) => face_ids,
+                Err(err) => {
+                    warn!(boco = info.name, error = %err, "CGNS 非结构 ZoneBC 引用无效，已跳过该边界 patch");
+                    continue;
+                }
+            };
             let resolved =
                 self.resolve_boco_type(base, zone, boco, info.bocotype, &families, &info.name)?;
             patches.push(BoundaryPatch::new(
@@ -753,7 +760,6 @@ fn is_boundary_element_section(element_type: i32) -> bool {
 mod tests {
     use super::*;
     use std::path::PathBuf;
-
     fn dualellipsoid_mix_cgns_path() -> Option<PathBuf> {
         std::env::var("ASIMU_MIX_CGNS_PATH")
             .map(PathBuf::from)
@@ -778,13 +784,12 @@ mod tests {
         assert!(loaded.mesh.num_cells() > 0);
         assert!(loaded.mesh.num_faces() > 0);
         assert_eq!(loaded.boundary.patches().len(), 3);
-        assert!(
-            loaded
-                .boundary
-                .patches()
-                .iter()
-                .all(|patch| !patch.face_ids.is_empty())
-        );
+        let all_patches_nonempty = loaded
+            .boundary
+            .patches()
+            .iter()
+            .all(|p| !p.face_ids.is_empty());
+        assert!(all_patches_nonempty);
         let report = crate::mesh::check_unstructured_mesh3d(
             &loaded.mesh,
             Some(&loaded.boundary),
