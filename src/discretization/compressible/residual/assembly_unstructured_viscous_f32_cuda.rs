@@ -31,6 +31,7 @@ pub(super) fn cuda_viscous_f32_interior(
             params.exec,
             topo,
             topo_key,
+            params.primitives.num_cells(),
             params.temperatures,
             params.viscous,
             params.eos,

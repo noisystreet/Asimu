@@ -40,6 +40,15 @@ fn try_accumulate_and_solve_idwls_f32_cuda(
     #[cfg(feature = "cuda")]
     {
         if exec.device() == crate::core::ExecDevice::GpuCuda && exec.cuda_rhs_pipeline_active() {
+            if temperatures.is_empty() {
+                if let Some(viscous) = input.viscous {
+                    exec.cuda_ensure_cell_temperatures_from_device_primitives(
+                        input.mesh.num_cells(),
+                        input.eos,
+                        viscous,
+                    )?;
+                }
+            }
             let boundary_ghosts_storage = if exec.cuda_boundary_ghosts_on_device() {
                 None
             } else {

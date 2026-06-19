@@ -16,7 +16,8 @@ use super::super::boundary_mesh_cache::{
     CudaInviscidBoundaryMeshCache, CudaViscousBoundaryMeshCache,
 };
 use super::super::field::{
-    BoundaryGhostBuffersFromConservedLaunch, launch_fill_boundary_ghost_buffers_from_conserved,
+    BoundaryGhostBuffersFromConservedLaunch, CellStaticTemperatureLaunchArgs,
+    launch_cell_static_temperature_f32, launch_fill_boundary_ghost_buffers_from_conserved,
 };
 use super::super::spectral_radius_topology::DeviceSpectralGhostPrim;
 use super::super::viscous::{ViscousBoundaryLaunch, launch_viscous_boundary};
@@ -75,14 +76,61 @@ impl CudaBackendState {
             input.min_pressure,
             num_boundary,
         )?;
-        if !self.pipeline.cell_temps_on_device {
+        self.ensure_cell_temperatures_on_device(&input)?;
+        self.pipeline.boundary_ghosts_on_device = true;
+        Ok(())
+    }
+
+    fn ensure_cell_temperatures_on_device(
+        &mut self,
+        input: &CudaPrepareRhsDeviceInput<'_>,
+    ) -> Result<()> {
+        if self.pipeline.cell_temps_on_device {
+            return Ok(());
+        }
+        let num_cells = input.mesh_cache.idwls_viscous_topo.num_cells();
+        if input.primitives.num_cells() == num_cells {
             let mut temps = Vec::new();
             cell_static_temperatures_f32(input.primitives, input.eos, input.viscous, &mut temps)?;
             let idwls_mesh = self.idwls_mesh.as_mut().expect("idwls mesh after ensure");
             idwls_mesh.upload_temperature(&self.stream, &temps)?;
             self.pipeline.cell_temps_on_device = true;
+            return Ok(());
         }
-        self.pipeline.boundary_ghosts_on_device = true;
+        self.ensure_cell_temperatures_from_device_primitives(num_cells, input.eos, input.viscous)
+    }
+
+    pub(crate) fn ensure_cell_temperatures_from_device_primitives(
+        &mut self,
+        num_cells: usize,
+        eos: &IdealGasEoS,
+        viscous: &ViscousPhysicsConfig,
+    ) -> Result<()> {
+        if self.pipeline.cell_temps_on_device {
+            return Ok(());
+        }
+        self.ensure_fields(num_cells)?;
+        let field_bufs = self.fields.as_ref().expect("field buffers after ensure");
+        let idwls_mesh = self.idwls_mesh.as_mut().expect("idwls mesh after ensure");
+        let nondim_flag = if viscous.is_nondimensional() {
+            1.0_f32
+        } else {
+            0.0_f32
+        };
+        launch_cell_static_temperature_f32(
+            &self.stream,
+            &self.field_module.cell_static_temperature,
+            CellStaticTemperatureLaunchArgs {
+                num_cells: num_cells as u32,
+                gamma: eos.gamma as f32,
+                gas_r: eos.gas_constant as f32,
+                nondim_flag,
+                prim_rho: &field_bufs.prim_rho,
+                prim_p: &field_bufs.prim_p,
+                temp_out: idwls_mesh.temperature_mut(),
+            },
+        )?;
+        self.pipeline.cell_temps_on_device = true;
         Ok(())
     }
 

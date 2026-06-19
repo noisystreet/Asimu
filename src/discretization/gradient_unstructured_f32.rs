@@ -70,7 +70,7 @@ pub fn compute_unstructured_gradients_idw_lsq_f32(
     let cuda_rhs_pipeline = false;
     out.clear();
     if cuda_rhs_pipeline {
-        // RHS device 管线下温度由 prepare 阶段写入 device，避免读取 host 侧过期 primitive。
+        // RHS device 管线下单元静温常驻 device，host primitive 可能未刷新。
         scratch.temperatures.clear();
     } else {
         scratch.prepare_temperatures(n);

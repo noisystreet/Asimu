@@ -33,6 +33,7 @@ pub fn try_prepare_unstructured_viscous_transport_f32_cuda(
     exec: &mut ExecutionContext,
     topo: &ExecViscousInteriorTopology,
     topo_key: usize,
+    num_cells: usize,
     temperatures: &[f32],
     viscous: &ViscousPhysicsConfig,
     eos: &IdealGasEoS,
@@ -40,6 +41,9 @@ pub fn try_prepare_unstructured_viscous_transport_f32_cuda(
     #[cfg(feature = "cuda")]
     {
         if exec.device() == ExecDevice::GpuCuda {
+            if temperatures.is_empty() && exec.cuda_rhs_pipeline_active() {
+                exec.cuda_ensure_cell_temperatures_from_device_primitives(num_cells, eos, viscous)?;
+            }
             exec.cuda_prepare_viscous_face_transport_f32(
                 topo,
                 topo_key,
@@ -50,7 +54,7 @@ pub fn try_prepare_unstructured_viscous_transport_f32_cuda(
             return Ok(true);
         }
     }
-    let _ = (exec, topo, topo_key, temperatures, viscous, eos);
+    let _ = (exec, topo, topo_key, num_cells, temperatures, viscous, eos);
     Ok(false)
 }
 

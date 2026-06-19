@@ -112,6 +112,19 @@ impl ExecutionContext {
             .unwrap_or(false)
     }
 
+    /// CUDA P5：确保 IDWLS 单元静温已由 device primitive 生成。
+    #[cfg(feature = "cuda")]
+    pub fn cuda_ensure_cell_temperatures_from_device_primitives(
+        &mut self,
+        num_cells: usize,
+        eos: &crate::physics::IdealGasEoS,
+        viscous: &crate::physics::ViscousPhysicsConfig,
+    ) -> Result<()> {
+        self.backend_state
+            .cuda_mut()?
+            .ensure_cell_temperatures_from_device_primitives(num_cells, eos, viscous)
+    }
+
     /// CUDA P4：LU-SGS 对角已在 device 写回守恒场。
     #[cfg(feature = "cuda")]
     #[must_use]
