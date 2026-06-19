@@ -51,6 +51,7 @@
 | [time_integration.md](time_integration.md) | `solver/time` | v1.x | **已实现（RK4 + LU-SGS + CFL）** | Blazek (2015) §6.1.4/§9.1；ADR 0005 |
 | [dual_time_stepping.md](dual_time_stepping.md) | `solver/time` · `solver/compressible/unstructured_*` | v1.x | **规划（非结构可压缩 DTS；f32/f64 + CUDA）** | Blazek (2015) §6.2；Jameson (1991)；ADR 0009/0016/0018 |
 | [low_mach_preconditioning.md](low_mach_preconditioning.md) | `solver/compressible/unstructured_*` | v1.x | **设计中（文档先行）** | Weiss & Smith (1995)；Turkel (1999)；Guillard & Viozat (1999) |
+| [low_mach_ab_hex_vortex.md](low_mach_ab_hex_vortex.md) | `output/case_hex_votexstreet` | v1.x | **实验记录（A/B）** | 内部探针对比 |
 | [nondimensional.md](nondimensional.md) | `physics` / `io` / BC | v1.x | **已实现** | Toro (2009) Ch. 1；Anderson (1995) |
 | [structured_gradients.md](structured_gradients.md) | `discretization/gradient` | v1.x | **已实现** | Vinokur (1989)；Ferziger et al. Ch. 8 |
 | [curvilinear_metrics.md](curvilinear_metrics.md) | `mesh/metrics` | v1.x | **规划** | Vinokur (1989)；CFL3D TM-2010-216758 |
