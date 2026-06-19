@@ -28,6 +28,24 @@ pub fn exec_backend(case: &CaseSpec) -> Result<()> {
     }
 }
 
+/// 低马赫预处理功能约束（P1）。
+pub fn low_mach_preconditioning(case: &CaseSpec) -> Result<()> {
+    let Some(_cfg) = case.time.low_mach_preconditioning else {
+        return Ok(());
+    };
+    if !case.is_compressible() || !matches!(case.mesh, CaseMesh::Unstructured3d(_)) {
+        return Err(AsimuError::Config(
+            "low_mach_preconditioning 目前仅支持非结构 3D 可压缩路径".to_string(),
+        ));
+    }
+    if case.numerics.exec_device == ExecDevice::GpuCuda {
+        return Err(AsimuError::Config(
+            "low_mach_preconditioning 暂不支持 backend = \"cuda\"".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 fn validate_gpu_cuda_backend(case: &CaseSpec) -> Result<()> {
     #[cfg(not(feature = "cuda"))]
     {

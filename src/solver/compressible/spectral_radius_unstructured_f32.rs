@@ -16,6 +16,7 @@ use crate::physics::{IdealGasEoS, ViscousPhysicsConfig};
 
 use super::spectral_radius_f32::{
     FacePrimitiveLaneF32, cell_viscous_diffusivity_max_f32, face_spectral_radius_f32,
+    face_spectral_radius_f32_preconditioned,
 };
 
 const PARABOLIC_SPECTRAL_FACTOR_3D_F32: f32 = 6.0;
@@ -32,6 +33,7 @@ pub struct SpectralRadiusUnstructuredF32Params<'a> {
     pub eos: &'a IdealGasEoS,
     pub min_pressure: Real,
     pub viscous: Option<&'a ViscousPhysicsConfig>,
+    pub low_mach_preconditioning: Option<crate::solver::time::LowMachPreconditioningConfig>,
 }
 
 /// 非结构面循环谱半径（f32 primitive；\(\sigma_i\) 输出为 `f32`）。
@@ -85,6 +87,7 @@ fn accumulate_hyperbolic_sigma_one_cell_f32(
 ) -> Result<()> {
     for &face_idx in &incidence.interior_as_owner[cell] {
         accumulate_interior_hyperbolic_as_owner_f32(
+            params,
             prim,
             &topology.interior[face_idx],
             gamma,
@@ -93,6 +96,7 @@ fn accumulate_hyperbolic_sigma_one_cell_f32(
     }
     for &face_idx in &incidence.interior_as_neighbor[cell] {
         accumulate_interior_hyperbolic_as_neighbor_f32(
+            params,
             prim,
             &topology.interior[face_idx],
             gamma,
@@ -124,6 +128,7 @@ fn prim_lane_f32(prim: &PrimitiveFieldsT<f32>, cell: usize) -> FacePrimitiveLane
 }
 
 fn accumulate_interior_hyperbolic_as_owner_f32(
+    params: &SpectralRadiusUnstructuredF32Params<'_>,
     prim: &PrimitiveFieldsT<f32>,
     face: &UnstructuredInteriorFaceF32,
     gamma: f32,
@@ -131,11 +136,22 @@ fn accumulate_interior_hyperbolic_as_owner_f32(
 ) {
     let left = prim_lane_f32(prim, face.owner);
     let right = prim_lane_f32(prim, face.neighbor);
-    let radius = face_spectral_radius_f32(left, right, face.normal, gamma);
+    let radius = if let Some(cfg) = params.low_mach_preconditioning {
+        face_spectral_radius_f32_preconditioned(
+            left,
+            right,
+            face.normal,
+            gamma,
+            cfg.mach_cutoff as f32,
+        )
+    } else {
+        face_spectral_radius_f32(left, right, face.normal, gamma)
+    };
     add_hyperbolic_contribution_f32(sigma_cell, radius, face.area, face.inv_owner_volume);
 }
 
 fn accumulate_interior_hyperbolic_as_neighbor_f32(
+    params: &SpectralRadiusUnstructuredF32Params<'_>,
     prim: &PrimitiveFieldsT<f32>,
     face: &UnstructuredInteriorFaceF32,
     gamma: f32,
@@ -143,7 +159,17 @@ fn accumulate_interior_hyperbolic_as_neighbor_f32(
 ) {
     let left = prim_lane_f32(prim, face.owner);
     let right = prim_lane_f32(prim, face.neighbor);
-    let radius = face_spectral_radius_f32(left, right, face.normal, gamma);
+    let radius = if let Some(cfg) = params.low_mach_preconditioning {
+        face_spectral_radius_f32_preconditioned(
+            left,
+            right,
+            face.normal,
+            gamma,
+            cfg.mach_cutoff as f32,
+        )
+    } else {
+        face_spectral_radius_f32(left, right, face.normal, gamma)
+    };
     add_hyperbolic_contribution_f32(sigma_cell, radius, face.area, face.inv_neighbor_volume);
 }
 
@@ -166,16 +192,22 @@ fn accumulate_boundary_hyperbolic_f32(
         params.min_pressure,
     )?;
     let left = prim_lane_f32(prim, face.owner);
-    let radius = face_spectral_radius_f32(
-        left,
-        FacePrimitiveLaneF32 {
-            rho: ghost_prim.density,
-            pressure: ghost_prim.pressure,
-            velocity: ghost_prim.velocity,
-        },
-        face.normal,
-        gamma,
-    );
+    let right = FacePrimitiveLaneF32 {
+        rho: ghost_prim.density,
+        pressure: ghost_prim.pressure,
+        velocity: ghost_prim.velocity,
+    };
+    let radius = if let Some(cfg) = params.low_mach_preconditioning {
+        face_spectral_radius_f32_preconditioned(
+            left,
+            right,
+            face.normal,
+            gamma,
+            cfg.mach_cutoff as f32,
+        )
+    } else {
+        face_spectral_radius_f32(left, right, face.normal, gamma)
+    };
     add_hyperbolic_contribution_f32(
         sigma_cell,
         radius,
@@ -311,6 +343,7 @@ mod tests {
                 eos: &eos,
                 min_pressure: 1.0e-8,
                 viscous: None,
+                low_mach_preconditioning: None,
             },
         )
         .expect("sigma f64");
@@ -324,6 +357,7 @@ mod tests {
                 eos: &eos,
                 min_pressure: 1.0e-8,
                 viscous: None,
+                low_mach_preconditioning: None,
             })
             .expect("sigma f32");
         assert!(approx_eq(sigma_f32[0] as Real, sigma_f64[0], 1.0e-3));
@@ -365,6 +399,7 @@ mod tests {
             eos: &eos,
             min_pressure: 1.0e-8,
             viscous: None,
+            low_mach_preconditioning: None,
         })
         .expect("inv");
         let visc = cell_spectral_radius_unstructured_f32(&SpectralRadiusUnstructuredF32Params {
@@ -376,6 +411,7 @@ mod tests {
             eos: &eos,
             min_pressure: 1.0e-8,
             viscous: Some(&viscous),
+            low_mach_preconditioning: None,
         })
         .expect("visc");
         assert!(visc[0] > base[0]);

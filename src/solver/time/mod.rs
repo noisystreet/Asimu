@@ -6,6 +6,7 @@ mod common;
 mod control;
 pub mod dual_time;
 pub mod euler;
+mod low_mach;
 pub mod lu_sgs;
 pub mod residual_smoothing;
 pub mod rk4;
@@ -43,6 +44,7 @@ pub use dual_time::{
     add_physical_storage_residual_from_state,
 };
 pub use euler::{euler_step, euler_step_local, euler_step_local_f32};
+pub use low_mach::LowMachPreconditioningConfig;
 pub use lu_sgs::{LuSgsConfig, lu_sgs_step, lu_sgs_step_local, lu_sgs_step_sweep_local};
 pub use residual_smoothing::{ResidualSmoothingConfig, smooth_residual_3d_limited};
 pub use rk4::{

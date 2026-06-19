@@ -89,6 +89,7 @@ fn dispatch_case(case: &CaseSpec) -> Result<CaseRunResult> {
     info!(name = %case.name, ?kind, "开始算例编排");
     validate::compute_precision(case)?;
     validate::exec_backend(case)?;
+    validate::low_mach_preconditioning(case)?;
     {
         let _span = debug_span!(
             "log_boundary_patches",

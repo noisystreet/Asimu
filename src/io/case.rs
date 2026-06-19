@@ -190,6 +190,8 @@ pub struct CaseTimeConfig {
     pub max_inner_steps: Option<u32>,
     /// 双时间步：内层 \(\log_{10}\|R_{\mathrm{eff}}\|_{\mathrm{rms}}\) 早停阈值。
     pub inner_tolerance: Option<Real>,
+    /// 低马赫预处理（P1）：仅非结构可压缩 CPU 路径。
+    pub low_mach_preconditioning: Option<crate::solver::time::LowMachPreconditioningConfig>,
 }
 
 impl CaseTimeConfig {
@@ -265,6 +267,7 @@ impl Default for CaseTimeConfig {
             residual_smoothing: crate::solver::time::ResidualSmoothingConfig::disabled(),
             max_inner_steps: None,
             inner_tolerance: None,
+            low_mach_preconditioning: None,
         }
     }
 }
@@ -482,6 +485,8 @@ struct TimeToml {
     residual_smoothing_sweeps: Option<usize>,
     max_inner_steps: Option<u32>,
     inner_tolerance: Option<Real>,
+    low_mach_preconditioning: Option<bool>,
+    low_mach_mach_cutoff: Option<Real>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -742,6 +747,10 @@ fn parse_time_config(raw: Option<&TimeToml>, has_sod: bool) -> Result<CaseTimeCo
         .as_deref()
         .map(crate::solver::GmresPreconditionerKind::parse)
         .transpose()?;
+    let low_mach_preconditioning = crate::solver::time::LowMachPreconditioningConfig::parse(
+        raw.low_mach_preconditioning.unwrap_or(false),
+        raw.low_mach_mach_cutoff,
+    )?;
     Ok(CaseTimeConfig {
         mode,
         dt: raw.dt,
@@ -761,6 +770,7 @@ fn parse_time_config(raw: Option<&TimeToml>, has_sod: bool) -> Result<CaseTimeCo
         residual_smoothing,
         max_inner_steps: raw.max_inner_steps,
         inner_tolerance: raw.inner_tolerance,
+        low_mach_preconditioning,
     })
 }
 

@@ -10,6 +10,7 @@ use crate::discretization::unstructured_face_cache::{
 use crate::error::{AsimuError, Result};
 use crate::field::{PrimitiveFields, PrimitiveFieldsT, primitive_from_conserved_relaxed};
 use crate::mesh::UnstructuredMesh3d;
+use crate::physics::PrimitiveState;
 use crate::physics::{IdealGasEoS, ViscousPhysicsConfig};
 
 use super::spectral_radius::{
@@ -17,6 +18,34 @@ use super::spectral_radius::{
 };
 
 const DEGENERATE_VOLUME: Real = 1.0e-30;
+
+fn face_spectral_radius_preconditioned_local(
+    prim_l: &PrimitiveState,
+    prim_r: &PrimitiveState,
+    normal: crate::core::Vector3,
+    gamma: Real,
+    mach_cutoff: Real,
+) -> Real {
+    let lam_l = normal_speed_plus_scaled_sound(prim_l, normal, gamma, mach_cutoff);
+    let lam_r = normal_speed_plus_scaled_sound(prim_r, normal, gamma, mach_cutoff);
+    0.5 * (lam_l + lam_r)
+}
+
+fn normal_speed_plus_scaled_sound(
+    prim: &PrimitiveState,
+    normal: crate::core::Vector3,
+    gamma: Real,
+    mach_cutoff: Real,
+) -> Real {
+    let rho = prim.density.max(1.0e-30);
+    let u = prim.velocity;
+    let speed = (u[0] * u[0] + u[1] * u[1] + u[2] * u[2]).sqrt();
+    let u_n = u[0] * normal.x + u[1] * normal.y + u[2] * normal.z;
+    let a = (gamma * prim.pressure.max(1.0e-30) / rho).sqrt();
+    let mach = if a > 0.0 { speed / a } else { 0.0 };
+    let beta = mach.max(mach_cutoff).min(1.0);
+    u_n.abs() + beta * a
+}
 
 pub struct SpectralRadiusUnstructuredParams<'a> {
     pub mesh: &'a UnstructuredMesh3d,
@@ -28,6 +57,8 @@ pub struct SpectralRadiusUnstructuredParams<'a> {
     pub min_pressure: Real,
     /// 若启用 Navier-Stokes，叠加非结构 face-sum 粘性/热传导抛物型谱半径。
     pub viscous: Option<&'a ViscousPhysicsConfig>,
+    /// 低马赫预处理（P1）：声速项按局部 Mach 缩放。
+    pub low_mach_preconditioning: Option<crate::solver::time::LowMachPreconditioningConfig>,
 }
 
 /// 非结构面循环谱半径：\(\sigma_i = V_i^{-1}\sum_f (|u_n|+a)_f A_f + \sigma_i^v\)。
@@ -107,6 +138,7 @@ pub struct SpectralRadiusUnstructuredTypedParams<'a, T: ComputeFloat> {
     pub eos: &'a IdealGasEoS,
     pub min_pressure: Real,
     pub viscous: Option<&'a ViscousPhysicsConfig>,
+    pub low_mach_preconditioning: Option<crate::solver::time::LowMachPreconditioningConfig>,
 }
 
 /// typed 非结构谱半径分发（f32 原生 `Vec<f32>` / f64 `Vec<Real>`）。
@@ -131,6 +163,7 @@ impl UnstructuredSpectralRadiusTyped for f64 {
             eos: params.eos,
             min_pressure: params.min_pressure,
             viscous: params.viscous,
+            low_mach_preconditioning: params.low_mach_preconditioning,
         })
     }
 }
@@ -150,6 +183,7 @@ impl UnstructuredSpectralRadiusTyped for f32 {
                 eos: params.eos,
                 min_pressure: params.min_pressure,
                 viscous: params.viscous,
+                low_mach_preconditioning: params.low_mach_preconditioning,
             },
         )
     }
@@ -166,6 +200,7 @@ fn accumulate_hyperbolic_sigma_one_cell(
     let gamma = params.eos.gamma;
     for &face_idx in &incidence.interior_as_owner[cell] {
         accumulate_interior_hyperbolic_as_owner(
+            params,
             prim,
             &topology.interior[face_idx],
             gamma,
@@ -174,6 +209,7 @@ fn accumulate_hyperbolic_sigma_one_cell(
     }
     for &face_idx in &incidence.interior_as_neighbor[cell] {
         accumulate_interior_hyperbolic_as_neighbor(
+            params,
             prim,
             &topology.interior[face_idx],
             gamma,
@@ -192,32 +228,54 @@ fn accumulate_hyperbolic_sigma_one_cell(
 }
 
 fn accumulate_interior_hyperbolic_as_owner(
+    params: &SpectralRadiusUnstructuredParams<'_>,
     prim: &PrimitiveFields,
     face: &UnstructuredInteriorFace,
     gamma: Real,
     sigma_cell: &mut Real,
 ) {
-    let radius = face_spectral_radius(
-        &prim.cell_primitive(face.owner),
-        &prim.cell_primitive(face.neighbor),
-        face.normal,
-        gamma,
-    );
+    let radius = if let Some(cfg) = params.low_mach_preconditioning {
+        face_spectral_radius_preconditioned_local(
+            &prim.cell_primitive(face.owner),
+            &prim.cell_primitive(face.neighbor),
+            face.normal,
+            gamma,
+            cfg.mach_cutoff,
+        )
+    } else {
+        face_spectral_radius(
+            &prim.cell_primitive(face.owner),
+            &prim.cell_primitive(face.neighbor),
+            face.normal,
+            gamma,
+        )
+    };
     add_hyperbolic_contribution(sigma_cell, radius, face.area, face.inv_owner_volume);
 }
 
 fn accumulate_interior_hyperbolic_as_neighbor(
+    params: &SpectralRadiusUnstructuredParams<'_>,
     prim: &PrimitiveFields,
     face: &UnstructuredInteriorFace,
     gamma: Real,
     sigma_cell: &mut Real,
 ) {
-    let radius = face_spectral_radius(
-        &prim.cell_primitive(face.owner),
-        &prim.cell_primitive(face.neighbor),
-        face.normal,
-        gamma,
-    );
+    let radius = if let Some(cfg) = params.low_mach_preconditioning {
+        face_spectral_radius_preconditioned_local(
+            &prim.cell_primitive(face.owner),
+            &prim.cell_primitive(face.neighbor),
+            face.normal,
+            gamma,
+            cfg.mach_cutoff,
+        )
+    } else {
+        face_spectral_radius(
+            &prim.cell_primitive(face.owner),
+            &prim.cell_primitive(face.neighbor),
+            face.normal,
+            gamma,
+        )
+    };
     add_hyperbolic_contribution(sigma_cell, radius, face.area, face.inv_neighbor_volume);
 }
 
@@ -235,12 +293,22 @@ fn accumulate_boundary_hyperbolic(
     })?;
     let ghost_prim =
         primitive_from_conserved_relaxed(params.eos, &ghost.conserved, params.min_pressure)?;
-    let radius = face_spectral_radius(
-        &params.primitives.cell_primitive(face.owner),
-        &ghost_prim,
-        face.normal,
-        gamma,
-    );
+    let radius = if let Some(cfg) = params.low_mach_preconditioning {
+        face_spectral_radius_preconditioned_local(
+            &params.primitives.cell_primitive(face.owner),
+            &ghost_prim,
+            face.normal,
+            gamma,
+            cfg.mach_cutoff,
+        )
+    } else {
+        face_spectral_radius(
+            &params.primitives.cell_primitive(face.owner),
+            &ghost_prim,
+            face.normal,
+            gamma,
+        )
+    };
     let inv_volume = inv_volume(face.owner_volume);
     add_hyperbolic_contribution(sigma_cell, radius, face.area, inv_volume);
     Ok(())
@@ -335,6 +403,7 @@ mod tests {
         ghosts: &'a BoundaryGhostBuffer,
         primitives: &'a PrimitiveFields,
         viscous: Option<&'a ViscousPhysicsConfig>,
+        low_mach: Option<crate::solver::time::LowMachPreconditioningConfig>,
     ) -> SpectralRadiusUnstructuredParams<'a> {
         SpectralRadiusUnstructuredParams {
             mesh,
@@ -345,6 +414,7 @@ mod tests {
             eos: &IdealGasEoS::AIR_STANDARD,
             min_pressure: 1.0e-8,
             viscous,
+            low_mach_preconditioning: low_mach,
         }
     }
 
@@ -370,7 +440,15 @@ mod tests {
         for &face in &faces {
             ghosts.insert_face(face, GhostCellState { conserved: state });
         }
-        let inviscid = spectral_params(&mesh, &mesh_cache, &boundary, &ghosts, &primitives, None);
+        let inviscid = spectral_params(
+            &mesh,
+            &mesh_cache,
+            &boundary,
+            &ghosts,
+            &primitives,
+            None,
+            None,
+        );
         let viscous_cfg = ViscousPhysicsConfig::default();
         let viscous = spectral_params(
             &mesh,
@@ -379,6 +457,7 @@ mod tests {
             &ghosts,
             &primitives,
             Some(&viscous_cfg),
+            None,
         );
         let sigma_inv = cell_spectral_radius_unstructured(&inviscid).expect("sigma inv");
         let sigma_visc = cell_spectral_radius_unstructured(&viscous).expect("sigma visc");
@@ -413,7 +492,15 @@ mod tests {
         for &face in &faces {
             ghosts.insert_face(face, GhostCellState { conserved: state });
         }
-        let params = spectral_params(&mesh, &mesh_cache, &boundary, &ghosts, &primitives, None);
+        let params = spectral_params(
+            &mesh,
+            &mesh_cache,
+            &boundary,
+            &ghosts,
+            &primitives,
+            None,
+            None,
+        );
         let parallel = cell_spectral_radius_unstructured(&params).expect("parallel");
         let mut serial = vec![0.0; mesh.num_cells()];
         let topology = &mesh_cache.face_topology;
@@ -425,5 +512,55 @@ mod tests {
         for (lhs, rhs) in parallel.iter().zip(serial.iter()) {
             assert!(approx_eq(*lhs, *rhs, 1.0e-12));
         }
+    }
+
+    #[test]
+    fn low_mach_preconditioning_reduces_hyperbolic_sigma() {
+        let (mesh, boundary) = tet_mesh_and_boundary();
+        let mesh_cache = UnstructuredSolverMeshCache::from_mesh(&mesh, &boundary).expect("cache");
+        let eos = IdealGasEoS::AIR_STANDARD;
+        let fs = FreestreamParams {
+            mach: 0.05,
+            ..FreestreamParams::default()
+        };
+        let fields = ConservedFields::from_freestream(mesh.num_cells(), &eos, &fs).expect("fields");
+        let mut primitives = PrimitiveFields::zeros(mesh.num_cells()).expect("prim");
+        primitives
+            .fill_from_conserved(&fields, &eos, 1.0e-8)
+            .expect("fill");
+        let mut ghosts = BoundaryGhostBuffer::new();
+        let state = fields.cell_state(0).expect("state");
+        for face in 0..mesh.num_faces() {
+            ghosts.insert_face(
+                crate::core::FaceId(face as u32),
+                GhostCellState { conserved: state },
+            );
+        }
+        let base = spectral_params(
+            &mesh,
+            &mesh_cache,
+            &boundary,
+            &ghosts,
+            &primitives,
+            None,
+            None,
+        );
+        let low_mach = spectral_params(
+            &mesh,
+            &mesh_cache,
+            &boundary,
+            &ghosts,
+            &primitives,
+            None,
+            Some(crate::solver::time::LowMachPreconditioningConfig { mach_cutoff: 0.1 }),
+        );
+        let sigma_base = cell_spectral_radius_unstructured(&base).expect("base");
+        let sigma_lm = cell_spectral_radius_unstructured(&low_mach).expect("low mach");
+        assert!(
+            sigma_lm[0] < sigma_base[0],
+            "sigma_lm={} sigma_base={}",
+            sigma_lm[0],
+            sigma_base[0]
+        );
     }
 }

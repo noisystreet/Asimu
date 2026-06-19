@@ -33,6 +33,8 @@ pub struct UnstructuredDriverConfig<'a> {
     pub exec_config: crate::exec::ExecConfig,
     /// 双时间步配置；`scheme = dual_time` 时必填。
     pub dual_time: Option<crate::solver::time::DualTimeConfig>,
+    /// 低马赫预处理（P1，CPU）。
+    pub low_mach_preconditioning: Option<crate::solver::time::LowMachPreconditioningConfig>,
     /// 间隔流场写出步长（`solution_every`）；observer 仅在这些步同步 host 守恒场。
     pub observer_field_sync_interval: Option<u64>,
 }

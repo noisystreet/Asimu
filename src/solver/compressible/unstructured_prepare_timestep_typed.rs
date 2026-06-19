@@ -380,9 +380,17 @@ impl UnstructuredSpectralRadiusAtPrepare for f32 {
             eos: env.config.eos,
             min_pressure: p_floor,
             viscous: env.config.viscous,
+            low_mach_preconditioning: env.config.low_mach_preconditioning,
         };
         #[cfg(feature = "cuda")]
         {
+            if work.exec.device() == ExecDevice::GpuCuda
+                && params.low_mach_preconditioning.is_some()
+            {
+                return Err(crate::error::AsimuError::Config(
+                    "low_mach_preconditioning 暂不支持 CUDA 光谱半径路径".to_string(),
+                ));
+            }
             let keep_timestep_on_device =
                 f32_cuda_keep_timestep_on_device(env.config.time_scheme, &work.exec);
             let (sigma, cell_dts) =
@@ -427,6 +435,7 @@ impl UnstructuredSpectralRadiusAtPrepare for f64 {
                 eos: env.config.eos,
                 min_pressure: p_floor,
                 viscous: env.config.viscous,
+                low_mach_preconditioning: env.config.low_mach_preconditioning,
             },
         )?;
         Ok(TimestepPrepareSpectral {

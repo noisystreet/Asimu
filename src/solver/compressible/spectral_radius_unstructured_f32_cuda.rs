@@ -88,6 +88,7 @@ pub(crate) fn compute_spectral_radius_f32_with_exec(
         eos: params.eos,
         min_pressure: params.min_pressure,
         viscous: params.viscous,
+        low_mach_preconditioning: params.low_mach_preconditioning,
     })?;
     let volumes: Vec<f32> = params
         .mesh
@@ -217,6 +218,7 @@ mod tests {
             eos: &eos,
             min_pressure: 1.0e-8,
             viscous: Some(&viscous),
+            low_mach_preconditioning: None,
         };
         let cpu = cell_spectral_radius_unstructured_f32(&SpectralRadiusUnstructuredF32Params {
             mesh: params.mesh,
@@ -227,6 +229,7 @@ mod tests {
             eos: params.eos,
             min_pressure: params.min_pressure,
             viscous: params.viscous,
+            low_mach_preconditioning: params.low_mach_preconditioning,
         })
         .expect("cpu");
 

@@ -60,6 +60,7 @@ max_steps = 2
         time_scheme: case.time.resolved_time_scheme(),
         lu_sgs: case.time.resolved_lusgs_config().expect("lu_sgs"),
         dual_time: None,
+        low_mach_preconditioning: None,
         cfl_schedule: case.cfl_schedule().expect("cfl"),
         max_steps: case.resolved_max_steps(),
         residual_tolerance: None,

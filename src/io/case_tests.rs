@@ -250,6 +250,75 @@ max_steps = 100
 }
 
 #[test]
+fn parses_low_mach_preconditioning_time_fields() {
+    let content = r#"
+name = "low_mach_time_test"
+[mesh]
+kind = "structured_3d"
+nx = 2
+ny = 2
+nz = 2
+lx = 1.0
+ly = 1.0
+lz = 1.0
+[physics]
+gamma = 1.4
+gas_constant = 287.0
+[freestream]
+mach = 0.1
+pressure = 101325.0
+temperature = 288.15
+[euler]
+flux = "hllc"
+[boundary.i_min]
+kind = "wall"
+no_slip = true
+heat = "adiabatic"
+[boundary.i_max]
+kind = "farfield"
+mach = 0.1
+pressure = 101325.0
+temperature = 288.15
+[boundary.j_min]
+kind = "symmetry"
+[boundary.j_max]
+kind = "symmetry"
+[boundary.k_min]
+kind = "wall"
+[boundary.k_max]
+kind = "outlet"
+static_pressure = 100000.0
+[time]
+scheme = "lu_sgs"
+local_time_step = true
+low_mach_preconditioning = true
+low_mach_mach_cutoff = 0.08
+max_steps = 10
+"#;
+    let case = parse_case_toml(content, None).expect("parse");
+    let cfg = case.time.low_mach_preconditioning.expect("low mach cfg");
+    assert!((cfg.mach_cutoff - 0.08).abs() < 1.0e-12);
+}
+
+#[test]
+fn rejects_invalid_low_mach_cutoff() {
+    let content = r#"
+name = "low_mach_invalid"
+[mesh]
+kind = "structured_1d"
+cells = 8
+length = 1.0
+[physics]
+diffusivity = 1.0
+[time]
+low_mach_preconditioning = true
+low_mach_mach_cutoff = 2.0
+"#;
+    let err = parse_case_toml(content, None).expect_err("invalid cutoff");
+    assert!(err.to_string().contains("low_mach_mach_cutoff"));
+}
+
+#[test]
 fn parses_lusgs_diagonal_only() {
     let content = r#"
 name = "lusgs_diag"
@@ -597,6 +666,7 @@ fn rejects_gmres_for_connected_multiblock_at_parse() {
             cfl_ramp_steps: None,
             max_inner_steps: None,
             inner_tolerance: None,
+            low_mach_preconditioning: None,
         },
         sod: None,
         euler: Some(EulerCaseConfig {
