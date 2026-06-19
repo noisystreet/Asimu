@@ -37,4 +37,4 @@ cargo run --release --bin asimu -- --case output/case_hex_votexstreet/case_stead
 在“高 `cfl_max=100` + `M_cut=0.1`”组合下，P1 低马赫预处理显著放大了局部伪时间步，导致该工况残差发散。
 因此在当前 P1 版本中，低马赫预处理需要与更保守的 CFL/截止参数联调后再使用。
 
-下一步（第 3 项）将做 `M_cut` 小范围扫参，并采用更保守 CFL 上限，寻找可收敛参数区间。
+`M_cut` 扫参结果见 [low_mach_cutoff_sweep_hex_vortex.md](low_mach_cutoff_sweep_hex_vortex.md)（`cfl_max=20`，三者均未稳定收敛）。
