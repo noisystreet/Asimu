@@ -269,7 +269,7 @@ name=<mesh_name>;cells=<count>
 | `apply_boundary_conditions` | 按 patch 顺序施加 BC |
 | `apply_dirichlet_face` / `apply_neumann` | 单面 BC |
 | `UnstructuredSolverMeshCache` / `from_mesh` | 非结构求解器网格缓存：面拓扑（`UnstructuredFaceTopology`）+ f32 预打包面几何（`face_topology_f32`）+ f32 IDWLS 矩阵（`lsq_geometry_f32`）+ f32 MUSCL 限制器样本（`cell_gradient_samples_f32`）+ f32 LU-SGS 面耦合（`lusgs_couplings_f32`）+ 内面着色（`InteriorFaceColoring`）+ IDWLS 单元–面关联（`LsqRhsCellIncidence`）+ 每单元 IDWLS 正规方程矩阵 \(A\)（`lsq_geometry`） |
-| `UnstructuredGradientLsqInput` / `compute_unstructured_gradients_idw_lsq` | `UnstructuredMesh3d` 上的逆距离加权最小二乘梯度；**必须**提供 `mesh_cache`；内部面用相邻单元中心，边界面用 ghost 镜像样本 |
+| `UnstructuredGradientLsqInput` / `compute_unstructured_gradients_idw_lsq` | `UnstructuredMesh3d` 上的逆距离平方加权最小二乘梯度（\(w=1/|\Delta\mathbf x|^2\)，对标 SU2 WLS）；**必须**提供 `mesh_cache`；内部面用相邻单元中心，边界面用面心 ghost 场值 |
 | `compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq` | 二阶线性重构用 IDWLS 梯度（\(\nabla\rho,\nabla u,\nabla p\) 等）；装配前由 `EvaluateRhsUnstructured` 调用 |
 | `UnstructuredGradientLimiter` | 非结构梯度限制器（`barth_jespersen` / `venkatakrishnan`）；与结构化 `SlopeLimiter` 独立 |
 | `UnstructuredLinearReconstructionCtx` / `reconstruct_unstructured_interior_face` | IDWLS 梯度外推 + 限制器面重构；下游接 `face_inviscid_flux_from_interface` |

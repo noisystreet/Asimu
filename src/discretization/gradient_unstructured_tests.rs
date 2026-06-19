@@ -1,7 +1,7 @@
 use super::*;
 use crate::boundary::{BoundaryKind, BoundaryPatch, BoundarySet};
 use crate::discretization::GhostCellState;
-use crate::discretization::unstructured_face_cache::mirrored_face_sample_point;
+use crate::discretization::unstructured_face_cache::UnstructuredSolverMeshCache;
 use crate::exec::{ExecBackend, ExecConfig, ExecutionContext, MeshExecMetrics};
 use crate::mesh::{CellKind, UnstructuredCell};
 use crate::physics::{ConservedState, PrimitiveState};
@@ -38,8 +38,8 @@ fn linear_field_recovers_constant_unstructured_idw_lsq_gradient() {
         .collect::<Vec<_>>();
     let mut ghosts = BoundaryGhostBuffer::new();
     for &face in &faces {
-        let sample_point = mirrored_face_sample_point(cell_center, mesh.face_metric(face).center);
-        let ghost_prim = linear_primitive_at(sample_point, &eos);
+        let face_center = mesh.face_metric(face).center;
+        let ghost_prim = linear_primitive_at(face_center, &eos);
         ghosts.insert_face(
             face,
             GhostCellState {
@@ -90,6 +90,66 @@ fn linear_field_recovers_constant_unstructured_idw_lsq_gradient() {
     assert!((grad.dt_dx.values()[0] - 10.0).abs() < 1.0e-12);
     assert!((grad.dt_dy.values()[0] + 5.0).abs() < 1.0e-12);
     assert!((grad.dt_dz.values()[0] - 2.0).abs() < 1.0e-12);
+}
+
+#[test]
+fn boundary_lsq_sample_uses_face_center_and_inverse_squared_weight() {
+    let mesh = UnstructuredMesh3d::new(
+        "hex",
+        vec![
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 1.0],
+            [1.0, 1.0, 1.0],
+            [0.0, 1.0, 1.0],
+        ],
+        vec![UnstructuredCell::new(CellKind::Hex, vec![0, 1, 2, 3, 4, 5, 6, 7]).expect("cell")],
+    )
+    .expect("mesh");
+    let faces = (0..mesh.num_faces())
+        .map(|face| crate::core::FaceId(face as u32))
+        .collect::<Vec<_>>();
+    let boundary = BoundarySet::new(vec![BoundaryPatch::new(
+        "all",
+        faces,
+        BoundaryKind::Farfield {
+            mach: 0.0,
+            pressure: 101_325.0,
+            temperature: 300.0,
+            alpha: 0.0,
+            beta: 0.0,
+        },
+    )]);
+    let cache = UnstructuredSolverMeshCache::from_mesh(&mesh, &boundary).expect("cache");
+    let owner = crate::core::CellId(0);
+    let owner_center = mesh.cell_metric(owner).center;
+    let bface = cache
+        .face_topology
+        .boundary
+        .iter()
+        .find(|f| f.owner == 0)
+        .expect("boundary face");
+    let face_center = mesh.face_metric(bface.face).center;
+    let dr = bface.lsq_dr;
+    assert!((dr.x - (face_center.x - owner_center.x)).abs() < 1.0e-12);
+    assert!((dr.y - (face_center.y - owner_center.y)).abs() < 1.0e-12);
+    assert!((dr.z - (face_center.z - owner_center.z)).abs() < 1.0e-12);
+    let dist = dr.magnitude();
+    assert!((bface.lsq_w - 1.0 / (dist * dist)).abs() < 1.0e-12);
+    let mirror = Vector3::new(
+        2.0 * face_center.x - owner_center.x,
+        2.0 * face_center.y - owner_center.y,
+        2.0 * face_center.z - owner_center.z,
+    );
+    let dr_mirror = Vector3::new(
+        mirror.x - owner_center.x,
+        mirror.y - owner_center.y,
+        mirror.z - owner_center.z,
+    );
+    assert!((dr.magnitude() - dr_mirror.magnitude()).abs() > 1.0e-6);
 }
 
 fn linear_primitive_at(point: crate::core::Vector3, eos: &IdealGasEoS) -> PrimitiveState {

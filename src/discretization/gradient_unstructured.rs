@@ -1,4 +1,4 @@
-//! 非结构网格单元中心梯度（逆距离加权最小二乘）。
+//! 非结构网格单元中心梯度（逆距离平方加权最小二乘，对标 SU2 WLS）。
 //!
 //! 理论：[`docs/theory/unstructured_fvm.md`](../../docs/theory/unstructured_fvm.md)
 

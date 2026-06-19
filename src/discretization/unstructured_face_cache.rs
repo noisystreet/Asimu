@@ -195,7 +195,7 @@ pub struct UnstructuredSolverMeshCache {
         Vec<Vec<crate::discretization::unstructured_face_cache_f32::GradientLimiterSampleF32>>,
     /// f32 LU-SGS 面耦合邻接。
     pub lusgs_couplings_f32: LuSgsUnstructuredCouplingsF32,
-    /// 每单元 IDWLS / 限制器样本（内部邻单元 + 边界 ghost 镜像点）。
+    /// 每单元 IDWLS / 限制器样本（内部邻单元 + 边界面心）。
     pub cell_gradient_samples: Vec<Vec<GradientLimiterSample>>,
     /// IDWLS RHS 单元–面关联（`parallel-fvm` 单元并行累加用）。
     pub lsq_rhs_incidence: LsqRhsCellIncidence,
@@ -513,8 +513,8 @@ fn boundary_lsq_weight(
     face: FaceId,
 ) -> (Vector3, Real) {
     let owner_center = mesh.cell_metric(owner_id).center;
-    let mirror = mirrored_face_sample_point(owner_center, mesh.face_metric(face).center);
-    lsq_dr_weight(owner_center, mirror)
+    let face_center = mesh.face_metric(face).center;
+    lsq_dr_weight(owner_center, face_center)
 }
 
 fn lsq_dr_weight(from: Vector3, to: Vector3) -> (Vector3, Real) {
@@ -523,7 +523,8 @@ fn lsq_dr_weight(from: Vector3, to: Vector3) -> (Vector3, Real) {
     if dist <= Real::EPSILON {
         (dr, 0.0)
     } else {
-        (dr, 1.0 / dist)
+        // SU2 `WEIGHTED_LEAST_SQUARES` 与 Blazek 惯例：w = 1/|Δx|²
+        (dr, 1.0 / (dist * dist))
     }
 }
 
@@ -556,14 +557,6 @@ fn boundary_viscous_kind(kind: &BoundaryKind) -> UnstructuredBoundaryViscousKind
             is_wall: false,
         },
     }
-}
-
-pub(crate) fn mirrored_face_sample_point(owner_center: Vector3, face_center: Vector3) -> Vector3 {
-    Vector3::new(
-        2.0 * face_center.x - owner_center.x,
-        2.0 * face_center.y - owner_center.y,
-        2.0 * face_center.z - owner_center.z,
-    )
 }
 
 pub(crate) fn accumulate_lsq_rhs_component(rhs: &mut Vector3, dr: Vector3, w: Real, delta: Real) {

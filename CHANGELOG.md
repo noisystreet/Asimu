@@ -22,6 +22,8 @@
 
 ### Changed
 
+- **非结构 IDWLS 权重**：粘性/二阶重构梯度样本权重由 \(1/|\Delta\mathbf x|\) 改为 \(1/|\Delta\mathbf x|^2\)，与 SU2 `WEIGHTED_LEAST_SQUARES` 一致（`unstructured_face_cache::lsq_dr_weight`）。
+- **非结构 IDWLS 边界样本**：边界面 LSQ 几何样本由单元中心→镜像点改为单元中心→**面心**，场值仍取 ghost/BC 在边界的 \(\phi_f\)（对标 SU2 边界邻点参与 WLS）。
 - **CUDA f32 非结构 `lusgs_sweep`**：扫掠默认走 device 图着色 wavefront（按色 launch 多 kernel）；\(\sigma_i\)/\(\Delta t_i\) 与对角 LU-SGS 同样驻留 device，粘性 NS 路径走 device 双扫 kernel（正性线搜索仍在 host）。
 
 - **CUDA f32 `dual_time` 谱半径驻留 device**：与 `lu_sgs` 对角路径一致，`keep_timestep_on_device` 覆盖 `DualTime`（非 sweep），内层伪时间步跳过 \(\sigma_i\)/`cell_dts` 批量 D2H；`finalize_cell_dts` 亦跳过 `spectral_min_cell_dt` 单 float D2H（返回值在内层未被消费）。
