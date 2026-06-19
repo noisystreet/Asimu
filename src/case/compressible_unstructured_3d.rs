@@ -110,6 +110,7 @@ fn run_compressible_unstructured_3d_typed<T: UnstructuredComputeBackend>(
     let driver = UnstructuredDriverConfig {
         solver: &solver,
         mesh,
+        cell_order: case.cell_order.as_deref(),
         eos: &eos,
         freestream: &freestream,
         inviscid: &inviscid,

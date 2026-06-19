@@ -199,6 +199,10 @@ pub struct UnstructuredSolverMeshCache {
     pub cell_gradient_samples: Vec<Vec<GradientLimiterSample>>,
     /// IDWLS RHS 单元–面关联（`parallel-fvm` 单元并行累加用）。
     pub lsq_rhs_incidence: LsqRhsCellIncidence,
+    /// LU-SGS / block_lusgs 扫掠顺序；默认 CellId。
+    pub solver_order: Vec<usize>,
+    /// `solver_order` 的逆映射：cell id → sweep rank。
+    pub solver_rank: Vec<usize>,
     /// IDWLS 粘性 RHS 静态拓扑（init 一次；CUDA 路径 H2D）。
     pub idwls_viscous_topo:
         crate::discretization::unstructured_idwls_exec_topo::IdwlsViscousHostTopology,
@@ -226,6 +230,14 @@ pub struct UnstructuredSolverMeshCache {
 impl UnstructuredSolverMeshCache {
     /// 由网格与边界 patch 构建面拓扑，并预计算 IDWLS 矩阵 \(A\)。
     pub fn from_mesh(mesh: &UnstructuredMesh3d, boundaries: &BoundarySet) -> Result<Self> {
+        Self::from_mesh_with_order(mesh, boundaries, None)
+    }
+
+    pub fn from_mesh_with_order(
+        mesh: &UnstructuredMesh3d,
+        boundaries: &BoundarySet,
+        solver_order: Option<&[usize]>,
+    ) -> Result<Self> {
         let face_topology = build_face_topology(mesh, boundaries)?;
         let face_topology_f32 = UnstructuredFaceTopologyF32::from_face_topology(&face_topology);
         let num_cells = mesh.num_cells();
@@ -237,6 +249,14 @@ impl UnstructuredSolverMeshCache {
             LuSgsUnstructuredCouplingsF32::from_topology_f32(num_cells, &face_topology_f32);
         let cell_gradient_samples = build_cell_gradient_samples(num_cells, &face_topology);
         let lsq_rhs_incidence = build_lsq_rhs_cell_incidence(num_cells, &face_topology);
+        let solver_order = solver_order
+            .map(|order| {
+                crate::mesh_order::validate_cell_order(order, num_cells)?;
+                Ok::<Vec<usize>, crate::error::AsimuError>(order.to_vec())
+            })
+            .transpose()?
+            .unwrap_or_else(|| crate::mesh_order::identity_order(num_cells));
+        let solver_rank = crate::mesh_order::cell_order_rank(&solver_order)?;
         let exec_idwls_viscous_topo =
             build_idwls_viscous_host_topology(&face_topology_f32, &lsq_rhs_incidence, num_cells);
         let spectral_radius_topo =
@@ -278,6 +298,8 @@ impl UnstructuredSolverMeshCache {
             lusgs_couplings_f32,
             cell_gradient_samples,
             lsq_rhs_incidence,
+            solver_order,
+            solver_rank,
             idwls_viscous_topo: exec_idwls_viscous_topo,
             spectral_radius_topo,
             #[cfg(feature = "cuda")]

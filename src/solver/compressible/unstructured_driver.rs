@@ -17,6 +17,8 @@ pub struct CompressibleUnstructuredStepView<'a> {
 pub struct UnstructuredDriverConfig<'a> {
     pub solver: &'a crate::solver::CompressibleEulerSolver,
     pub mesh: &'a crate::mesh::UnstructuredMesh3d,
+    /// 可选非结构单元扫掠顺序；不重排场存储，仅影响 sweep/预条件器遍历。
+    pub cell_order: Option<&'a [usize]>,
     pub eos: &'a crate::physics::IdealGasEoS,
     pub freestream: &'a crate::physics::FreestreamParams,
     pub inviscid: &'a crate::discretization::InviscidFluxConfig,

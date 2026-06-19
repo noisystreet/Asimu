@@ -48,12 +48,20 @@ impl<'a> LuSgsUnstructuredCouplingsRef<'a> {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct LuSgsSweepOrder<'a> {
+    pub(crate) order: &'a [usize],
+    pub(crate) rank: &'a [usize],
+}
+
 /// 非结构 LU-SGS sweep 的逐单元时间步与标量参数（f32 热路径）。
 pub struct LuSgsSweepUnstructuredF32Input<'a> {
     pub dt: &'a [f32],
     pub sigma: &'a [f32],
     pub volumes: &'a [f32],
     pub couplings: LuSgsUnstructuredCouplingsRef<'a>,
+    pub solver_order: &'a [usize],
+    pub solver_rank: &'a [usize],
     pub omega: f32,
     pub gamma: f32,
     /// \(1/\Delta t_{\mathrm{phys}}\)；稳态伪时间为 0。
@@ -66,6 +74,8 @@ pub struct LuSgsSweepUnstructuredInput<'a> {
     pub sigma: &'a [Real],
     pub volumes: &'a [Real],
     pub couplings: LuSgsUnstructuredCouplingsRef<'a>,
+    pub solver_order: &'a [usize],
+    pub solver_rank: &'a [usize],
     pub omega: Real,
     pub gamma: Real,
     /// \(1/\Delta t_{\mathrm{phys}}\)；稳态伪时间为 0。
@@ -118,6 +128,8 @@ pub fn lu_sgs_sweep_unstructured(
         || input.sigma.len() != n
         || input.volumes.len() != n
         || input.couplings.len() != n
+        || input.solver_order.len() != n
+        || input.solver_rank.len() != n
     {
         return Err(AsimuError::Solver(
             "lu_sgs_sweep_unstructured: 场/残差/dt/sigma/volume 长度不一致".to_string(),
@@ -139,11 +151,32 @@ pub fn lu_sgs_sweep_unstructured(
     };
     {
         let _span = info_span!("lu_sgs_unstructured_forward").entered();
-        forward_sweep(fields, &u0, residual, params, couplings.cells(), &scalars)?;
+        forward_sweep(
+            fields,
+            &u0,
+            residual,
+            params,
+            couplings.cells(),
+            LuSgsSweepOrder {
+                order: input.solver_order,
+                rank: input.solver_rank,
+            },
+            &scalars,
+        )?;
     }
     {
         let _span = info_span!("lu_sgs_unstructured_backward").entered();
-        backward_sweep(fields, &u0, params, couplings.cells(), &scalars)?;
+        backward_sweep(
+            fields,
+            &u0,
+            params,
+            couplings.cells(),
+            LuSgsSweepOrder {
+                order: input.solver_order,
+                rank: input.solver_rank,
+            },
+            &scalars,
+        )?;
     }
     let u_sweep = fields.clone();
     stabilize_sweep_update(
@@ -188,9 +221,11 @@ fn forward_sweep(
     residual: &ConservedResidual,
     params: &mut LuSgsSweepUnstructuredParams<'_>,
     couplings: &[Vec<LuSgsCellCoupling>],
+    sweep_order: LuSgsSweepOrder<'_>,
     scalars: &LuSgsSweepScalars<'_>,
 ) -> Result<()> {
-    for (cell, cell_couplings) in couplings.iter().enumerate().take(fields.num_cells()) {
+    for &cell in sweep_order.order {
+        let cell_couplings = &couplings[cell];
         let scale = implicit_scale(
             scalars.dt[cell],
             scalars.sigma[cell],
@@ -198,7 +233,10 @@ fn forward_sweep(
             scalars.inv_dt_phys,
         );
         let mut source = residual_cell_vector(residual, cell);
-        for coupling in cell_couplings.iter().filter(|c| c.neighbor < cell) {
+        for coupling in cell_couplings
+            .iter()
+            .filter(|c| sweep_order.rank[c.neighbor] < sweep_order.rank[cell])
+        {
             add_coupling_delta(
                 &mut source,
                 cell,
@@ -227,9 +265,11 @@ fn backward_sweep(
     u0: &ConservedFields,
     params: &mut LuSgsSweepUnstructuredParams<'_>,
     couplings: &[Vec<LuSgsCellCoupling>],
+    sweep_order: LuSgsSweepOrder<'_>,
     scalars: &LuSgsSweepScalars<'_>,
 ) -> Result<()> {
-    for (cell, cell_couplings) in couplings.iter().enumerate().take(fields.num_cells()).rev() {
+    for &cell in sweep_order.order.iter().rev() {
+        let cell_couplings = &couplings[cell];
         let scale = implicit_scale(
             scalars.dt[cell],
             scalars.sigma[cell],
@@ -237,7 +277,10 @@ fn backward_sweep(
             scalars.inv_dt_phys,
         );
         let mut source = [0.0; 5];
-        for coupling in cell_couplings.iter().filter(|c| c.neighbor > cell) {
+        for coupling in cell_couplings
+            .iter()
+            .filter(|c| sweep_order.rank[c.neighbor] > sweep_order.rank[cell])
+        {
             add_coupling_delta(
                 &mut source,
                 cell,
@@ -322,6 +365,8 @@ pub fn lu_sgs_sweep_unstructured_gmres_preconditioner(
         || input.sigma.len() != n
         || input.volumes.len() != n
         || input.couplings.len() != n
+        || input.solver_order.len() != n
+        || input.solver_rank.len() != n
         || params.frozen_primitives.num_cells() != n
     {
         return Err(AsimuError::Solver(
@@ -345,11 +390,32 @@ pub fn lu_sgs_sweep_unstructured_gmres_preconditioner(
     };
     {
         let _span = info_span!("gmres_lusgs_precond_forward").entered();
-        gmres_forward_sweep(fields, u0, residual, params, couplings.cells(), &scalars)?;
+        gmres_forward_sweep(
+            fields,
+            u0,
+            residual,
+            params,
+            couplings.cells(),
+            LuSgsSweepOrder {
+                order: input.solver_order,
+                rank: input.solver_rank,
+            },
+            &scalars,
+        )?;
     }
     {
         let _span = info_span!("gmres_lusgs_precond_backward").entered();
-        gmres_backward_sweep(fields, u0, params, couplings.cells(), &scalars)?;
+        gmres_backward_sweep(
+            fields,
+            u0,
+            params,
+            couplings.cells(),
+            LuSgsSweepOrder {
+                order: input.solver_order,
+                rank: input.solver_rank,
+            },
+            &scalars,
+        )?;
     }
     Ok(())
 }
@@ -360,9 +426,11 @@ fn gmres_forward_sweep(
     residual: &ConservedResidual,
     params: &LuSgsSweepGmresPreconditionerParams<'_>,
     couplings: &[Vec<LuSgsCellCoupling>],
+    sweep_order: LuSgsSweepOrder<'_>,
     scalars: &LuSgsSweepScalars<'_>,
 ) -> Result<()> {
-    for (cell, cell_couplings) in couplings.iter().enumerate().take(fields.num_cells()) {
+    for &cell in sweep_order.order {
+        let cell_couplings = &couplings[cell];
         let scale = implicit_scale(
             scalars.dt[cell],
             scalars.sigma[cell],
@@ -370,7 +438,10 @@ fn gmres_forward_sweep(
             scalars.inv_dt_phys,
         );
         let mut source = residual_cell_vector(residual, cell);
-        for coupling in cell_couplings.iter().filter(|c| c.neighbor < cell) {
+        for coupling in cell_couplings
+            .iter()
+            .filter(|c| sweep_order.rank[c.neighbor] < sweep_order.rank[cell])
+        {
             add_coupling_delta_frozen(
                 &mut source,
                 cell,
@@ -391,9 +462,11 @@ fn gmres_backward_sweep(
     u0: &ConservedFields,
     params: &LuSgsSweepGmresPreconditionerParams<'_>,
     couplings: &[Vec<LuSgsCellCoupling>],
+    sweep_order: LuSgsSweepOrder<'_>,
     scalars: &LuSgsSweepScalars<'_>,
 ) -> Result<()> {
-    for (cell, cell_couplings) in couplings.iter().enumerate().take(fields.num_cells()).rev() {
+    for &cell in sweep_order.order.iter().rev() {
+        let cell_couplings = &couplings[cell];
         let scale = implicit_scale(
             scalars.dt[cell],
             scalars.sigma[cell],
@@ -401,7 +474,10 @@ fn gmres_backward_sweep(
             scalars.inv_dt_phys,
         );
         let mut source = [0.0; 5];
-        for coupling in cell_couplings.iter().filter(|c| c.neighbor > cell) {
+        for coupling in cell_couplings
+            .iter()
+            .filter(|c| sweep_order.rank[c.neighbor] > sweep_order.rank[cell])
+        {
             add_coupling_delta_frozen(
                 &mut source,
                 cell,
@@ -486,6 +562,8 @@ mod tests {
         let residual = ConservedResidual::zeros(mesh.num_cells()).expect("rhs");
         let volumes = mesh.cell_volumes();
         let couplings = LuSgsUnstructuredCouplings::from_mesh(&mesh).expect("couplings");
+        let solver_order = crate::mesh_order::identity_order(mesh.num_cells());
+        let solver_rank = crate::mesh_order::cell_order_rank(&solver_order).expect("rank");
         let dt = vec![0.01; mesh.num_cells()];
         let sigma = vec![10.0; mesh.num_cells()];
         let mut params = LuSgsSweepUnstructuredParams {
@@ -504,6 +582,8 @@ mod tests {
                 sigma: &sigma,
                 volumes: &volumes,
                 couplings: LuSgsUnstructuredCouplingsRef::F64(&couplings),
+                solver_order: &solver_order,
+                solver_rank: &solver_rank,
                 omega: 1.0,
                 gamma: eos.gamma,
                 inv_dt_phys: 0.0,

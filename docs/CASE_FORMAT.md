@@ -122,6 +122,7 @@ lz = 0.25
 kind = "cgns"
 path = "mesh/wing.cgns"
 scale = 0.001 # 可选：统一缩放全部 zone 坐标
+# cell_order = "mesh/wing.rcm.order.toml" # 可选：非结构 sweep 顺序
 ```
 
 | 项 | 约定 |
@@ -131,6 +132,21 @@ scale = 0.001 # 可选：统一缩放全部 zone 坐标
 | 边界 | `ZoneBC` 自动读入；`FamilyName` 为 `IN` / `OUT` / `WALL` 时映射为入口 / 出口 / 壁面 |
 | 求解 | 多 zone CGNS 可进入 3D 可压缩求解路径；当前按 block 同步推进，1-to-1 接口通过共享无粘通量守恒装配，最终 `solution_cgns` 写为单个多 Zone CGNS 文件；严格守恒多块路径要求 `time.scheme = "lu_sgs"` 且 `lusgs_sweep = false` |
 | 导出 | `export_cgns_zone_to_vts` 或 `make cgns-to-vts IN=... OUT=...` |
+
+`cell_order` 仅支持非结构 3D 网格。该文件不会改写网格、场、restart 或输出文件的单元编号，只为 `lu_sgs` 的 `lusgs_sweep = true`、GMRES 的 `gmres_preconditioner = "lusgs_sweep"` / `"block_lusgs"` 提供前/后扫顺序。可用离线工具生成：
+
+```bash
+cargo run -p asimu-mesh-reorder -- --case case.toml --strategy rcm --output mesh.rcm.order.toml
+```
+
+`order.toml` 格式：
+
+```toml
+version = 1
+strategy = "rcm"
+num_cells = 4
+order = [3, 2, 1, 0]
+```
 
 详见 [adr/0008-cgns-io.md](adr/0008-cgns-io.md)。
 

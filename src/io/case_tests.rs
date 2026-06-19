@@ -682,6 +682,7 @@ fn rejects_gmres_for_connected_multiblock_at_parse() {
         output: None,
         observability: None,
         case_dir: None,
+        cell_order: None,
         reference: None,
         incompressible_reference: None,
         numerics: CaseNumericsConfig::default(),

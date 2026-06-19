@@ -11,6 +11,10 @@ categories = ["science", "simulation"]
 
 build = "build.rs"
 
+[workspace]
+members = ["crates/asimu-mesh-reorder"]
+resolver = "2"
+
 [dependencies]
 anyhow = "1"
 thiserror = "2"

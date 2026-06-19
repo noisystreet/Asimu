@@ -23,6 +23,10 @@ use crate::solver::compressible::gmres_implicit_3d::{
 };
 use crate::solver::compressible::spectral_radius::cell_viscous_diffusivity_max;
 
+use super::gmres_block_preconditioner_unstructured_math::{
+    block_slice, block_vector_product, cell_vector, subtract_block_product,
+    write_cell_vector_from_block_product,
+};
 use super::gmres_block_preconditioner_unstructured_state::{
     restore_cell_primitive, write_cell_primitive,
 };
@@ -57,6 +61,7 @@ pub(super) struct UnstructuredCellBlockPreconditionerBuild<'a> {
     pub inviscid: &'a InviscidFluxConfig,
     pub viscous: Option<&'a ViscousPhysicsConfig>,
     pub incidence: &'a LsqRhsCellIncidence,
+    pub solver_order: &'a [usize],
     pub dt: &'a [Real],
     pub p_floor: Real,
     pub epsilon_rel: Real,
@@ -77,6 +82,7 @@ pub(super) fn build_cell_block_preconditioner_unstructured(
         inviscid,
         viscous,
         incidence,
+        solver_order: _,
         dt,
         p_floor,
         epsilon_rel,
@@ -126,6 +132,7 @@ pub(super) fn build_block_lusgs_preconditioner_unstructured(
         inviscid,
         viscous,
         incidence,
+        solver_order,
         dt,
         p_floor,
         epsilon_rel,
@@ -162,6 +169,7 @@ pub(super) fn build_block_lusgs_preconditioner_unstructured(
         diagonal_blocks,
         off_diagonal.row_offsets,
         off_diagonal.entries,
+        solver_order,
     )
 }
 
@@ -171,6 +179,8 @@ pub(super) struct UnstructuredBlockLusgsPreconditioner {
     inverse_diagonal_blocks: Vec<Real>,
     row_offsets: Vec<usize>,
     entries: Vec<BlockLusgsEntry>,
+    solver_order: Vec<usize>,
+    solver_rank: Vec<usize>,
     forward: Vec<Real>,
 }
 
@@ -190,6 +200,7 @@ impl UnstructuredBlockLusgsPreconditioner {
         diagonal_blocks: Vec<Real>,
         row_offsets: Vec<usize>,
         entries: Vec<BlockLusgsEntry>,
+        solver_order: &[usize],
     ) -> Result<Self> {
         let block_entries = CONSERVED_COMPONENTS_3D * CONSERVED_COMPONENTS_3D;
         if diagonal_blocks.is_empty() || diagonal_blocks.len() % block_entries != 0 {
@@ -204,6 +215,8 @@ impl UnstructuredBlockLusgsPreconditioner {
                 "block_lusgs 行块数量与对角块数量不一致".to_string(),
             ));
         }
+        crate::mesh_order::validate_cell_order(solver_order, num_cells)?;
+        let solver_rank = crate::mesh_order::cell_order_rank(solver_order)?;
         let mut inverse_diagonal_blocks = vec![0.0; diagonal_blocks.len()];
         for cell in 0..num_cells {
             let offset = cell * block_entries;
@@ -215,6 +228,8 @@ impl UnstructuredBlockLusgsPreconditioner {
             inverse_diagonal_blocks,
             row_offsets,
             entries,
+            solver_order: solver_order.to_vec(),
+            solver_rank,
             forward: vec![0.0; num_cells * CONSERVED_COMPONENTS_3D],
         })
     }
@@ -232,11 +247,10 @@ impl Preconditioner for UnstructuredBlockLusgsPreconditioner {
     fn apply(&mut self, rhs: &[Real], out: &mut [Real]) -> Result<()> {
         ensure_vector_len(rhs, self.dimension(), "block_lusgs rhs")?;
         ensure_vector_len(out, self.dimension(), "block_lusgs out")?;
-        let num_cells = self.num_cells();
-        for cell in 0..num_cells {
+        for &cell in &self.solver_order {
             let mut local = cell_vector(rhs, cell);
             for entry in row_entries(&self.entries, &self.row_offsets, cell) {
-                if entry.col < cell {
+                if self.solver_rank[entry.col] < self.solver_rank[cell] {
                     subtract_block_product(
                         &mut local,
                         &entry.block,
@@ -251,13 +265,13 @@ impl Preconditioner for UnstructuredBlockLusgsPreconditioner {
                 &local,
             );
         }
-        for cell in (0..num_cells).rev() {
+        for &cell in self.solver_order.iter().rev() {
             let mut local = block_vector_product(
                 block_slice(&self.diagonal_blocks, cell),
                 &cell_vector(&self.forward, cell),
             );
             for entry in row_entries(&self.entries, &self.row_offsets, cell) {
-                if entry.col > cell {
+                if self.solver_rank[entry.col] > self.solver_rank[cell] {
                     subtract_block_product(&mut local, &entry.block, &cell_vector(out, entry.col));
                 }
             }
@@ -464,66 +478,12 @@ fn add_viscous_off_diagonal(
     }
 }
 
-fn cell_vector(values: &[Real], cell: usize) -> [Real; CONSERVED_COMPONENTS_3D] {
-    let start = cell * CONSERVED_COMPONENTS_3D;
-    [
-        values[start],
-        values[start + 1],
-        values[start + 2],
-        values[start + 3],
-        values[start + 4],
-    ]
-}
-
-fn block_slice(blocks: &[Real], cell: usize) -> &[Real] {
-    let start = cell * CONSERVED_COMPONENTS_3D * CONSERVED_COMPONENTS_3D;
-    &blocks[start..start + CONSERVED_COMPONENTS_3D * CONSERVED_COMPONENTS_3D]
-}
-
 fn row_entries<'a>(
     entries: &'a [BlockLusgsEntry],
     row_offsets: &[usize],
     cell: usize,
 ) -> &'a [BlockLusgsEntry] {
     &entries[row_offsets[cell]..row_offsets[cell + 1]]
-}
-
-fn subtract_block_product(
-    out: &mut [Real; CONSERVED_COMPONENTS_3D],
-    block: &[Real],
-    vector: &[Real; CONSERVED_COMPONENTS_3D],
-) {
-    for row in 0..CONSERVED_COMPONENTS_3D {
-        let mut value = 0.0;
-        for col in 0..CONSERVED_COMPONENTS_3D {
-            value += block[row * CONSERVED_COMPONENTS_3D + col] * vector[col];
-        }
-        out[row] -= value;
-    }
-}
-
-fn block_vector_product(
-    block: &[Real],
-    vector: &[Real; CONSERVED_COMPONENTS_3D],
-) -> [Real; CONSERVED_COMPONENTS_3D] {
-    let mut out = [0.0; CONSERVED_COMPONENTS_3D];
-    for row in 0..CONSERVED_COMPONENTS_3D {
-        for col in 0..CONSERVED_COMPONENTS_3D {
-            out[row] += block[row * CONSERVED_COMPONENTS_3D + col] * vector[col];
-        }
-    }
-    out
-}
-
-fn write_cell_vector_from_block_product(
-    out: &mut [Real],
-    cell: usize,
-    block: &[Real],
-    vector: &[Real; CONSERVED_COMPONENTS_3D],
-) {
-    let start = cell * CONSERVED_COMPONENTS_3D;
-    let product = block_vector_product(block, vector);
-    out[start..start + CONSERVED_COMPONENTS_3D].copy_from_slice(&product);
 }
 
 fn invert_fixed_block(

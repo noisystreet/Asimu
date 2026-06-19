@@ -14,6 +14,7 @@
 
 ### Added
 
+- **非结构网格扫掠重排序**：新增 `asimu-mesh-reorder` workspace crate，可从 case 读取非结构网格并生成 `identity` / `bfs` / `rcm` 的 `order.toml`；case `[mesh].cell_order` 可加载该文件，`lusgs_sweep` 与 GMRES `lusgs_sweep` / `block_lusgs` 预条件器按该顺序定义前/后扫。
 - **GMRES/LU-SGS 后续规划**：`docs/theory/linear_gmres.md` 记录非结构 `block_lusgs` 的后续路线：构造缓存、ordering/coloring、line-implicit BLU-SGS、完整粘性块、FGMRES 与 BILU/ILU 评估。
 - **`[output].restart`**：3D 可压缩算例结束自动写出 restart TOML（单域 version=1 / 多块 version=2），精度与 `[numerics]` 一致。
 - **`[restart].path = "*.cgns"`（非结构单域）**：支持从 `flow.cgns` 读取 `Density`/`VelocityX/Y/Z`/`Pressure`（CellCenter）并转换为无量纲守恒初场；大规模算例可避免超大 TOML 解析开销。

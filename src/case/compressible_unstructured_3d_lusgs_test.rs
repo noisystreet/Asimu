@@ -49,6 +49,7 @@ max_steps = 2
     let driver = UnstructuredDriverConfig {
         solver: &solver,
         mesh,
+        cell_order: None,
         eos: &eos,
         freestream: &freestream,
         inviscid: &inviscid,
@@ -125,6 +126,7 @@ max_steps = 1
     let driver = UnstructuredDriverConfig {
         solver: &solver,
         mesh,
+        cell_order: None,
         eos: &eos,
         freestream: &freestream,
         inviscid: &inviscid,
@@ -200,6 +202,7 @@ max_steps = 1
     let driver = UnstructuredDriverConfig {
         solver: &solver,
         mesh,
+        cell_order: None,
         eos: &eos,
         freestream: &freestream,
         inviscid: &inviscid,
@@ -275,6 +278,7 @@ max_steps = 1
     let driver = UnstructuredDriverConfig {
         solver: &solver,
         mesh,
+        cell_order: None,
         eos: &eos,
         freestream: &freestream,
         inviscid: &inviscid,
@@ -350,6 +354,7 @@ max_steps = 1
     let driver = UnstructuredDriverConfig {
         solver: &solver,
         mesh,
+        cell_order: None,
         eos: &eos,
         freestream: &freestream,
         inviscid: &inviscid,
@@ -429,6 +434,7 @@ max_steps = 1
     let driver = UnstructuredDriverConfig {
         solver: &solver,
         mesh,
+        cell_order: None,
         eos: &eos,
         freestream: &freestream,
         inviscid: &inviscid,

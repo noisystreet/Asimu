@@ -17,6 +17,7 @@
 | [`asimu::error`](#asimuerror) | 统一错误 |
 | [`asimu::core`](#asimucore) | 基础数值类型 |
 | [`asimu::mesh`](#asimumesh) | 网格 |
+| [`asimu::mesh_order`](#asimumesh_order) | 非结构单元扫掠顺序 |
 | [`asimu::solver`](#asimusolver) | 求解器 |
 | [`asimu::io`](#asimuio) | 输入/输出 |
 
@@ -80,6 +81,17 @@ let result = solver.run(&mesh)?;
 | `structured_mesh_diagnostics(&StructuredMesh) -> MeshDiagnostics` | 2D/3D 结构化网格诊断 |
 | `mesh1d_diagnostics` / `mesh3d_diagnostics` / `multiblock_mesh3d_diagnostics` | 1D / 3D / 多块 3D 专用诊断 |
 | `Mesh::new(name, cell_count) -> Result<Mesh>` | 构造；`cell_count == 0` 返回错误 |
+
+### `asimu::mesh_order`
+
+| 类型 / 函数 | 说明 |
+|-------------|------|
+| `CellOrderFile` | `order.toml` 数据模型：`version` / `strategy` / `num_cells` / `order` |
+| `identity_order(num_cells)` | 保持原始 `CellId` 顺序 |
+| `bfs_order(&UnstructuredMesh3d)` | 按拓扑 BFS 生成 sweep order |
+| `rcm_order(&UnstructuredMesh3d)` | reverse Cuthill-McKee 风格顺序 |
+| `load_cell_order_file(path, expected_cells)` / `write_cell_order_file(path, order)` | 读写并校验 `order.toml` |
+| `validate_cell_order(order, expected_cells)` / `cell_order_rank(order)` | permutation 校验与逆映射 |
 
 ### `asimu::solver`
 
@@ -268,7 +280,7 @@ name=<mesh_name>;cells=<count>
 | `assemble_diffusion_1d` | 1D 内部面扩散装配 |
 | `apply_boundary_conditions` | 按 patch 顺序施加 BC |
 | `apply_dirichlet_face` / `apply_neumann` | 单面 BC |
-| `UnstructuredSolverMeshCache` / `from_mesh` | 非结构求解器网格缓存：面拓扑（`UnstructuredFaceTopology`）+ f32 预打包面几何（`face_topology_f32`）+ f32 IDWLS 矩阵（`lsq_geometry_f32`）+ f32 MUSCL 限制器样本（`cell_gradient_samples_f32`）+ f32 LU-SGS 面耦合（`lusgs_couplings_f32`）+ 内面着色（`InteriorFaceColoring`）+ IDWLS 单元–面关联（`LsqRhsCellIncidence`）+ 每单元 IDWLS 正规方程矩阵 \(A\)（`lsq_geometry`） |
+| `UnstructuredSolverMeshCache` / `from_mesh` / `from_mesh_with_order` | 非结构求解器网格缓存：面拓扑（`UnstructuredFaceTopology`）+ f32 预打包面几何（`face_topology_f32`）+ f32 IDWLS 矩阵（`lsq_geometry_f32`）+ f32 MUSCL 限制器样本（`cell_gradient_samples_f32`）+ f32 LU-SGS 面耦合（`lusgs_couplings_f32`）+ sweep `solver_order`/`solver_rank` + 内面着色（`InteriorFaceColoring`）+ IDWLS 单元–面关联（`LsqRhsCellIncidence`）+ 每单元 IDWLS 正规方程矩阵 \(A\)（`lsq_geometry`） |
 | `UnstructuredGradientLsqInput` / `compute_unstructured_gradients_idw_lsq` | `UnstructuredMesh3d` 上的逆距离平方加权最小二乘梯度（\(w=1/|\Delta\mathbf x|^2\)，对标 SU2 WLS）；**必须**提供 `mesh_cache`；内部面用相邻单元中心，边界面用面心 ghost 场值 |
 | `compute_unstructured_inviscid_linear_reconstruction_gradients_idw_lsq` | 二阶线性重构用 IDWLS 梯度（\(\nabla\rho,\nabla u,\nabla p\) 等）；装配前由 `EvaluateRhsUnstructured` 调用 |
 | `UnstructuredGradientLimiter` | 非结构梯度限制器（`barth_jespersen` / `venkatakrishnan`）；与结构化 `SlopeLimiter` 独立 |

@@ -72,6 +72,37 @@ pub(super) fn parse_mesh_from_toml(
     Ok(parsed)
 }
 
+pub(super) fn parse_cell_order_from_toml(
+    path: Option<&PathBuf>,
+    mesh: &CaseMesh,
+    case_dir: Option<&Path>,
+) -> Result<Option<Vec<usize>>> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    let CaseMesh::Unstructured3d(mesh) = mesh else {
+        return Err(AsimuError::Config(
+            "mesh.cell_order 仅支持非结构 3D 网格".to_string(),
+        ));
+    };
+    let resolved = resolve_relative_case_path(path, case_dir);
+    let order = crate::mesh_order::load_cell_order_file(&resolved, mesh.num_cells())?;
+    Ok(Some(order.order))
+}
+
+fn resolve_relative_case_path(path: &Path, case_dir: Option<&Path>) -> PathBuf {
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+    if let Some(dir) = case_dir {
+        let candidate = dir.join(path);
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+    path.to_path_buf()
+}
+
 fn parse_structured_1d(raw: &MeshTomlFields, name: &str) -> Result<ParsedMesh> {
     let cells = raw
         .cells

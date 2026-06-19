@@ -2,6 +2,8 @@
 
 #[path = "gmres_block_preconditioner_unstructured.rs"]
 mod gmres_block_preconditioner_unstructured;
+#[path = "gmres_block_preconditioner_unstructured_math.rs"]
+mod gmres_block_preconditioner_unstructured_math;
 #[path = "gmres_block_preconditioner_unstructured_state.rs"]
 mod gmres_block_preconditioner_unstructured_state;
 #[path = "gmres_implicit_unstructured_typed.rs"]
@@ -132,7 +134,11 @@ fn allocate_unstructured_step_work_typed<T: ComputeFloat>(
         precision = T::PRECISION.label(),
     )
     .entered();
-    let mesh_cache = UnstructuredSolverMeshCache::from_mesh(env.config.mesh, env.config.patches)?;
+    let mesh_cache = UnstructuredSolverMeshCache::from_mesh_with_order(
+        env.config.mesh,
+        env.config.patches,
+        env.config.cell_order,
+    )?;
     let interior_faces = mesh_cache.face_topology.interior.len();
     let max_bucket_faces = mesh_cache
         .face_topology

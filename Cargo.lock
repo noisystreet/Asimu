@@ -99,6 +99,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "asimu-mesh-reorder"
+version = "0.1.0"
+dependencies = [
+ "asimu",
+ "clap",
+]
+
+[[package]]
 name = "assert_cmd"
 version = "2.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

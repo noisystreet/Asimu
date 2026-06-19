@@ -145,6 +145,8 @@ pub struct CaseSpec {
     pub output: Option<CaseOutputConfig>,
     pub observability: Option<CaseObservabilityConfig>,
     pub case_dir: Option<PathBuf>,
+    /// 非结构扫掠顺序；仅改变 LU-SGS / block_lusgs 的遍历顺序，不重排网格存储。
+    pub cell_order: Option<Vec<usize>>,
     /// 无量纲参考量；可压缩算例解析后恒为 `Some`。
     pub reference: Option<ReferenceScales>,
     /// 不可压缩无量纲参考量；不可压缩算例解析后恒为 `Some`。
@@ -395,6 +397,7 @@ struct MeshToml {
     path: Option<PathBuf>,
     scale: Option<Real>,
     metric: Option<String>,
+    cell_order: Option<PathBuf>,
     /// 已废弃：`cgns` 读入现自动加载全部 structured zone。
     zone: Option<usize>,
     #[serde(default)]
@@ -534,6 +537,11 @@ fn parse_case_toml(content: &str, case_dir: Option<&Path>) -> Result<CaseSpec> {
     let initial = resolve_initial_set(&raw.initial)?;
     let freestream = raw.freestream.as_ref().map(parse_freestream);
     let flow = parse_flow_model_configs(&raw)?;
+    let cell_order = mesh_load::parse_cell_order_from_toml(
+        raw.mesh.cell_order.as_ref(),
+        &parsed.mesh,
+        case_dir,
+    )?;
     let fluid_initial = FluidInitialConfig {
         freestream,
         scalars: initial.clone(),
@@ -564,6 +572,7 @@ fn parse_case_toml(content: &str, case_dir: Option<&Path>) -> Result<CaseSpec> {
         output: raw.output.as_ref().map(parse_output),
         observability: raw.observability.as_ref().map(parse_observability),
         case_dir: case_dir.map(Path::to_path_buf),
+        cell_order,
         reference: None,
         incompressible_reference: None,
         numerics,

@@ -17,6 +17,7 @@ pub mod field;
 pub mod io;
 pub mod linalg;
 pub mod mesh;
+pub mod mesh_order;
 pub mod physics;
 pub mod solver;
 

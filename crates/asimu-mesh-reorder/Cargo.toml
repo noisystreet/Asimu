@@ -1,0 +1,11 @@
+[package]
+name = "asimu-mesh-reorder"
+version = "0.1.0"
+edition = "2024"
+description = "Offline unstructured mesh cell ordering tool for asimu"
+license = "Apache-2.0 OR MIT"
+rust-version = "1.85"
+
+[dependencies]
+asimu = { path = "../.." }
+clap = { version = "4", features = ["derive"] }

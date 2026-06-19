@@ -122,7 +122,7 @@ $$
 A v = D_{\Delta t} v - J_R v. \tag{13}
 $$
 
-左预条件器默认使用式 (7) 的 `LusgsDiagonalPreconditioner`；`[time] gmres_preconditioner = "cell_block_diagonal"` 时使用式 (8) 的局部无粘 Jacobian 块近似；`lusgs_sweep` 时用冻结谱半径系数的线性 LU-SGS 双扫近似 \((D_{\Delta t}-J)^{-1}\)（非结构 f64）。`block_lusgs` 进一步对每个内部面构造一阶无粘 \(5\times5\) off-diagonal 块，并按
+左预条件器默认使用式 (7) 的 `LusgsDiagonalPreconditioner`；`[time] gmres_preconditioner = "cell_block_diagonal"` 时使用式 (8) 的局部无粘 Jacobian 块近似；`lusgs_sweep` 时用冻结谱半径系数的线性 LU-SGS 双扫近似 \((D_{\Delta t}-J)^{-1}\)（非结构 f64）。非结构 case 可通过 `[mesh].cell_order` 指向 `order.toml`，用 `asimu-mesh-reorder` 生成的 identity/BFS/RCM permutation 定义前扫与后扫的三角划分；该机制只改变 sweep order，不改变网格、场或输出的单元编号。`block_lusgs` 进一步对每个内部面构造一阶无粘 \(5\times5\) off-diagonal 块，并按
 
 $$
 (D+L)y=r,\qquad (D+U)z=Dy
@@ -137,7 +137,7 @@ $$
 非结构 LU-SGS 后续不再把“标量 sweep”作为主要增强方向，而是沿近期非结构 CFD 隐式求解器常用路线推进：
 
 1. **降低 `block_lusgs` 构造成本**：把面块 Jacobian 的几何无关部分、对角块逆、粘性抛物系数等拆成可复用缓存；每步只刷新依赖当前原始变量的通量导数。目标是让块预条件器在相同外层残差轨迹下减少内层 GMRES 时间，而不是被构造耗时抵消。
-2. **非结构排序与图着色**：为前/后扫引入基于拓扑层级、流向或 reverse Cuthill-McKee 的 ordering；并评估 colored LU-SGS / colored block LU-SGS。ordering 优先服务 CPU 串行传播效率，coloring 优先服务多核/GPU 并行度，两者需分别 benchmark。
+2. **非结构排序与图着色**：已具备 `order.toml` 驱动的 identity/BFS/RCM sweep order；后续补流向投影排序、ordering benchmark 自动化，并评估 colored LU-SGS / colored block LU-SGS。ordering 优先服务 CPU 串行传播效率，coloring 优先服务多核/GPU 并行度，两者需分别 benchmark。
 3. **Line-implicit / block-line LU-SGS**：针对边界层或强各向异性网格，按局部几何与流向构造隐式线，对线内 cell 做小型块三对角或稠密块求解，以缓解壁法向小尺度刚性。该方向优先在高 Re 黏性算例上验证。
 4. **更完整的粘性块**：当前只加入粘性抛物对角与内面同名分量近邻近似；后续可补壁面粘性边界块、热传导/应力张量交叉项，以及与 IDWLS 梯度样本一致的远邻耦合。完整粘性块应先有小网格 Jacobian-vector 对照测试。
 5. **FGMRES 与块 ILU/BILU 路线**：当预条件器需要随内层迭代变化（如 inner sweep、非线性限制或低精度 GPU sweep）时，引入 FGMRES；对高阶、伴随或湍流全线性化问题，评估显式块 CSR + BILU(0)/ILU(0) 作为比 LU-SGS 更稳健的预条件器。

@@ -688,6 +688,7 @@ fn curvilinear_lid_case_with_time(
         output: None,
         observability: None,
         case_dir: None,
+        cell_order: None,
         reference: None,
         incompressible_reference: None,
         numerics: asimu::io::CaseNumericsConfig::default(),

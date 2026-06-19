@@ -70,6 +70,7 @@ fn f32_unstructured_step_matches_f64_on_single_tet() {
     let driver = UnstructuredDriverConfig {
         solver: &solver,
         mesh: &mesh,
+        cell_order: None,
         eos: &eos,
         freestream: &freestream,
         inviscid: &inviscid,
@@ -115,6 +116,7 @@ fn f32_unstructured_lusgs_sweep_matches_f64_on_single_tet() {
     let driver = UnstructuredDriverConfig {
         solver: &solver,
         mesh: &mesh,
+        cell_order: None,
         eos: &eos,
         freestream: &freestream,
         inviscid: &inviscid,
@@ -169,6 +171,7 @@ fn f32_unstructured_dual_time_matches_f64_on_single_tet() {
     let driver = UnstructuredDriverConfig {
         solver: &solver,
         mesh: &mesh,
+        cell_order: None,
         eos: &eos,
         freestream: &freestream,
         inviscid: &inviscid,
