@@ -44,7 +44,7 @@ impl PcgSolver {
     pub fn solve<A, M>(
         &self,
         op: &mut A,
-        precond: &M,
+        precond: &mut M,
         b: &[Real],
         x: &mut [Real],
     ) -> Result<PcgReport>
@@ -154,7 +154,7 @@ mod tests {
             ],
         )
         .expect("matrix");
-        let precond = CsrJacobiPreconditioner::from_matrix(&matrix).expect("jacobi");
+        let mut precond = CsrJacobiPreconditioner::from_matrix(&matrix).expect("jacobi");
         let mut op = matrix;
         let b = [1.0, 0.0, 0.0];
         let mut x = [0.0; 3];
@@ -163,7 +163,7 @@ mod tests {
             tolerance: 1.0e-12,
         })
         .expect("solver")
-        .solve(&mut op, &precond, &b, &mut x)
+        .solve(&mut op, &mut precond, &b, &mut x)
         .expect("solve");
         assert!(report.converged);
         assert!(report.iterations <= 5);

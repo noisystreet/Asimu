@@ -85,22 +85,22 @@ pub(crate) fn solve_pressure_correction(
     let mut pressure_correction = vec![0.0; n];
     let (converged, iterations, residual_norm) = match config.kind {
         IncompressiblePressureLinearSolverKind::Gmres => {
-            let preconditioner = IdentityPreconditioner::new(n);
+            let mut preconditioner = IdentityPreconditioner::new(n);
             let solver = GmresSolver::new(config.gmres_config())?;
             let report = solver.solve(
                 &mut matrix,
-                &preconditioner,
+                &mut preconditioner,
                 &system.rhs,
                 &mut pressure_correction,
             )?;
             (report.converged, report.iterations, report.residual_norm)
         }
         IncompressiblePressureLinearSolverKind::Pcg => {
-            let preconditioner = CsrJacobiPreconditioner::from_matrix(&system.matrix)?;
+            let mut preconditioner = CsrJacobiPreconditioner::from_matrix(&system.matrix)?;
             let solver = PcgSolver::new(config.pcg_config())?;
             let report = solver.solve(
                 &mut matrix,
-                &preconditioner,
+                &mut preconditioner,
                 &system.rhs,
                 &mut pressure_correction,
             )?;
@@ -170,10 +170,10 @@ fn solve_momentum_component(
 ) -> Result<MomentumComponentSolve> {
     let n = system.matrix.nrows();
     let mut matrix = CsrMatrixView::new(&system.matrix);
-    let preconditioner = IdentityPreconditioner::new(n);
+    let mut preconditioner = IdentityPreconditioner::new(n);
     let solver = GmresSolver::new(gmres_config)?;
     let mut solution = vec![0.0; n];
-    let report = solver.solve(&mut matrix, &preconditioner, rhs, &mut solution)?;
+    let report = solver.solve(&mut matrix, &mut preconditioner, rhs, &mut solution)?;
     Ok(MomentumComponentSolve {
         solution,
         converged: report.converged,

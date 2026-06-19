@@ -22,7 +22,7 @@ impl Preconditioner for IdentityPreconditioner {
         self.n
     }
 
-    fn apply(&self, rhs: &[Real], out: &mut [Real]) -> Result<()> {
+    fn apply(&mut self, rhs: &[Real], out: &mut [Real]) -> Result<()> {
         ensure_vector_len(rhs, self.n, "identity preconditioner rhs")?;
         ensure_vector_len(out, self.n, "identity preconditioner out")?;
         out.copy_from_slice(rhs);
@@ -89,7 +89,7 @@ impl Preconditioner for LusgsDiagonalPreconditioner {
         self.scales.len()
     }
 
-    fn apply(&self, rhs: &[Real], out: &mut [Real]) -> Result<()> {
+    fn apply(&mut self, rhs: &[Real], out: &mut [Real]) -> Result<()> {
         ensure_vector_len(rhs, self.dimension(), "lusgs diagonal rhs")?;
         ensure_vector_len(out, self.dimension(), "lusgs diagonal out")?;
         for ((dst, src), scale) in out.iter_mut().zip(rhs.iter()).zip(self.scales.iter()) {
@@ -173,7 +173,7 @@ impl Preconditioner for CsrJacobiPreconditioner {
         self.inverse_diagonal.len()
     }
 
-    fn apply(&self, rhs: &[Real], out: &mut [Real]) -> Result<()> {
+    fn apply(&mut self, rhs: &[Real], out: &mut [Real]) -> Result<()> {
         ensure_vector_len(rhs, self.dimension(), "csr jacobi rhs")?;
         ensure_vector_len(out, self.dimension(), "csr jacobi out")?;
         for ((dst, src), inv) in out
@@ -192,7 +192,7 @@ impl Preconditioner for CellBlockDiagonalPreconditioner {
         self.num_blocks() * self.block_size
     }
 
-    fn apply(&self, rhs: &[Real], out: &mut [Real]) -> Result<()> {
+    fn apply(&mut self, rhs: &[Real], out: &mut [Real]) -> Result<()> {
         ensure_vector_len(rhs, self.dimension(), "cell block preconditioner rhs")?;
         ensure_vector_len(out, self.dimension(), "cell block preconditioner out")?;
         for block in 0..self.num_blocks() {
@@ -290,7 +290,7 @@ mod tests {
 
     #[test]
     fn lusgs_diagonal_preconditioner_repeats_cell_scales() {
-        let p = LusgsDiagonalPreconditioner::from_lusgs_diagonal(&[0.5], &[3.0], 0.5, 5)
+        let mut p = LusgsDiagonalPreconditioner::from_lusgs_diagonal(&[0.5], &[3.0], 0.5, 5)
             .expect("precond");
         let mut out = [0.0; 5];
         p.apply(&[1.0, 2.0, 3.0, 4.0, 5.0], &mut out)
@@ -301,7 +301,7 @@ mod tests {
 
     #[test]
     fn cell_block_preconditioner_solves_local_blocks() {
-        let p = CellBlockDiagonalPreconditioner::from_blocks(
+        let mut p = CellBlockDiagonalPreconditioner::from_blocks(
             2,
             vec![2.0, 0.0, 0.0, 4.0, 1.0, 1.0, 0.0, 2.0],
         )

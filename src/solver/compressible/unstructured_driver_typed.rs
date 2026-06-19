@@ -1,11 +1,19 @@
 //! 非结构 3D 可压缩 typed 时间推进驱动（ADR 0016 P3）。
 
+#[path = "gmres_block_preconditioner_unstructured.rs"]
+mod gmres_block_preconditioner_unstructured;
+#[path = "gmres_implicit_unstructured_typed.rs"]
+mod gmres_implicit_unstructured_typed;
+#[path = "gmres_lusgs_sweep_preconditioner_unstructured.rs"]
+mod gmres_lusgs_sweep_preconditioner_unstructured;
 #[path = "unstructured_cuda_prepare_f32.rs"]
 mod unstructured_cuda_prepare_f32;
 #[path = "unstructured_dual_time_typed.rs"]
 mod unstructured_dual_time_typed;
 #[path = "unstructured_explicit_typed.rs"]
 mod unstructured_explicit_typed;
+#[path = "unstructured_gmres_typed.rs"]
+mod unstructured_gmres_typed;
 #[path = "unstructured_lusgs_typed.rs"]
 mod unstructured_lusgs_typed;
 #[path = "unstructured_prepare_timestep_typed.rs"]
@@ -15,6 +23,7 @@ use unstructured_dual_time_typed::advance_unstructured_dual_time_typed;
 use unstructured_explicit_typed::{
     UnstructuredExplicitTimeAdvance, advance_unstructured_explicit_typed,
 };
+use unstructured_gmres_typed::advance_unstructured_gmres_typed;
 use unstructured_lusgs_typed::{
     UnstructuredLusgsDiagonalUpdate, UnstructuredLusgsSweep, UnstructuredLusgsSweepContext,
 };
@@ -103,6 +112,8 @@ pub(crate) struct UnstructuredStepWorkTyped<T: ComputeFloat> {
     dual_time_state: crate::solver::time::DualTimeState<T>,
     /// 稳态 LU-SGS：RHS 装配后、隐式更新前的密度 RMS（监控 \(R(U^0)\)，与 sweep/对角无关）。
     density_rms_after_rhs: Option<Real>,
+    /// 上一 GMRES 伪时间步线性迭代次数。
+    gmres_inner_iterations: u32,
 }
 
 pub(crate) struct UnstructuredRunEnvTyped<'a> {
@@ -172,6 +183,7 @@ fn allocate_unstructured_step_work_typed<T: ComputeFloat>(
         lusgs_couplings: LuSgsUnstructuredCouplings::from_mesh(env.config.mesh)?,
         dual_time_state: crate::solver::time::DualTimeState::new(n)?,
         density_rms_after_rhs: None,
+        gmres_inner_iterations: 0,
     })
 }
 
@@ -208,13 +220,6 @@ pub fn run_unstructured_typed_with_observer<T: UnstructuredComputeBackend>(
     fields: &mut ConservedFieldsT<T>,
     mut observe_step: impl FnMut(CompressibleUnstructuredStepView<'_>) -> Result<()>,
 ) -> Result<(Vec<CompressibleStepInfo>, ConservedFields)> {
-    if matches!(config.time_scheme, TimeIntegrationScheme::Gmres) {
-        return Err(AsimuError::Config(format!(
-            "compute_precision = \"{}\" 的非结构 typed 路径暂不支持 {}",
-            T::PRECISION.label(),
-            config.time_scheme.label()
-        )));
-    }
     let mut env = UnstructuredRunEnvTyped { config };
     let mut work = allocate_unstructured_step_work_typed(&env)?;
     let mut history = Vec::new();
@@ -298,6 +303,11 @@ fn advance_unstructured_time_integration_typed<
         TimeIntegrationScheme::LuSgs => {
             advance_unstructured_lusgs_typed(env, fields, work, p_floor)
         }
+        TimeIntegrationScheme::Gmres => {
+            let outcome = advance_unstructured_gmres_typed(env, fields, work, cfl, p_floor)?;
+            work.gmres_inner_iterations = outcome.gmres_iterations;
+            Ok(())
+        }
         TimeIntegrationScheme::DualTime => {
             let dual = env.config.dual_time.ok_or_else(|| {
                 AsimuError::Config("dual_time 推进须设置 DualTimeConfig".to_string())
@@ -321,6 +331,7 @@ fn advance_unstructured_step_typed<T: UnstructuredComputeBackend + UnstructuredC
 ) -> Result<CompressibleStepInfo> {
     let step_start = Instant::now();
     work.density_rms_after_rhs = None;
+    work.gmres_inner_iterations = 0;
     #[cfg(feature = "cuda")]
     if work.exec.device() == ExecDevice::GpuCuda {
         if unstructured_prepare_timestep_typed::f32_cuda_viscous_rhs_pipeline(env, &work.exec) {
@@ -376,6 +387,8 @@ fn advance_unstructured_step_typed<T: UnstructuredComputeBackend + UnstructuredC
         converged: false,
         inner_iterations: if env.config.time_scheme == TimeIntegrationScheme::DualTime {
             work.dual_time_state.inner_iterations
+        } else if env.config.time_scheme == TimeIntegrationScheme::Gmres {
+            work.gmres_inner_iterations
         } else {
             0
         },

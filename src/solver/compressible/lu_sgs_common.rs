@@ -84,6 +84,17 @@ pub(crate) fn scale_source(source: [Real; 5], factor: Real) -> [Real; 5] {
     ]
 }
 
+pub(crate) fn apply_cell_increment(
+    fields: &mut ConservedFields,
+    cell: usize,
+    scale: Real,
+    increment: [Real; 5],
+) {
+    let base = fields.cell_state(cell).expect("cell state");
+    let updated = state_after_increment(&base, increment, scale);
+    write_cell_state(fields, cell, &updated);
+}
+
 pub(crate) fn apply_limited_cell_increment(
     fields: &mut ConservedFields,
     cell: usize,

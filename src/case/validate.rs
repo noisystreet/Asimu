@@ -222,11 +222,15 @@ fn validate_f32_gmres_time(case: &CaseSpec) -> Result<()> {
     if !case.time.uses_local_time_step() {
         return Err(f32_unsupported("f32 gmres 须配合 local_time_step = true"));
     }
-    if matches!(case.mesh, CaseMesh::Unstructured3d(_)) {
-        return Err(f32_unsupported("f32 gmres 暂仅支持结构化 3D 路径"));
-    }
     if case.physics.viscous.is_some() {
         return Err(f32_unsupported("f32 gmres 暂不支持粘性通量"));
+    }
+    if case.time.resolved_gmres_config().preconditioner
+        == crate::solver::GmresPreconditionerKind::LusgsSweep
+    {
+        return Err(f32_unsupported(
+            "f32 非结构 gmres 暂不支持 gmres_preconditioner = lusgs_sweep",
+        ));
     }
     Ok(())
 }
@@ -274,11 +278,7 @@ pub fn unstructured_compressible(case: &CaseSpec) -> Result<()> {
     if case.time.residual_smoothing_config().enabled {
         warn!("非结构网格暂不支持结构化方向分裂残差光顺；本次忽略 residual_smoothing");
     }
-    if case.time.resolved_time_scheme() == TimeIntegrationScheme::Gmres {
-        return Err(AsimuError::Config(
-            "非结构网格暂不支持 time.scheme = \"gmres\"".to_string(),
-        ));
-    }
+    validate_unstructured_gmres_time(case)?;
     if case.time.resolved_time_scheme() == TimeIntegrationScheme::DualTime {
         if !case.time.uses_local_time_step() {
             return Err(AsimuError::Config(
@@ -286,6 +286,29 @@ pub fn unstructured_compressible(case: &CaseSpec) -> Result<()> {
             ));
         }
         case.time.resolved_dual_time_config()?;
+    }
+    Ok(())
+}
+
+fn validate_unstructured_gmres_time(case: &CaseSpec) -> Result<()> {
+    if case.time.resolved_time_scheme() != TimeIntegrationScheme::Gmres {
+        return Ok(());
+    }
+    if !case.time.uses_local_time_step() {
+        return Err(AsimuError::Config(
+            "非结构 time.scheme = \"gmres\" 须配合 local_time_step = true".to_string(),
+        ));
+    }
+    if case.time.resolved_gmres_config().preconditioner
+        == crate::solver::GmresPreconditionerKind::CellBlockDiagonal
+    {
+        let disc = case.compressible_discretization()?;
+        if disc.inviscid().reconstruction != ReconstructionKind::FirstOrder {
+            return Err(AsimuError::Config(
+                "非结构 gmres_preconditioner = \"cell_block_diagonal\" 暂要求 reconstruction = first_order"
+                    .to_string(),
+            ));
+        }
     }
     Ok(())
 }

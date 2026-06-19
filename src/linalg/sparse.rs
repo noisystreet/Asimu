@@ -207,7 +207,7 @@ impl Preconditioner for Ilu0Preconditioner {
         self.rows.len()
     }
 
-    fn apply(&self, rhs: &[Real], out: &mut [Real]) -> Result<()> {
+    fn apply(&mut self, rhs: &[Real], out: &mut [Real]) -> Result<()> {
         let n = self.dimension();
         ensure_vector_len(rhs, n, "ilu rhs")?;
         ensure_vector_len(out, n, "ilu out")?;
@@ -265,7 +265,7 @@ mod tests {
             ],
         )
         .expect("csr");
-        let ilu = Ilu0Preconditioner::factor(&matrix).expect("ilu");
+        let mut ilu = Ilu0Preconditioner::factor(&matrix).expect("ilu");
         let mut z = [0.0; 3];
         ilu.apply(&[1.0, 0.0, 1.0], &mut z).expect("apply");
         assert!((z[0] - 1.0).abs() < 1.0e-10);

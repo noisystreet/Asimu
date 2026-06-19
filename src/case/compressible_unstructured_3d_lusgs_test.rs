@@ -80,6 +80,226 @@ max_steps = 2
     );
 }
 
+#[test]
+fn unstructured_gmres_uniform_farfield_smoke_step() {
+    let mut case = parse_case_str(
+        r#"
+name = "unstructured_gmres_smoke"
+[mesh]
+kind = "structured_3d"
+nx = 1
+ny = 1
+nz = 1
+
+[physics]
+gamma = 1.4
+gas_constant = 287.0
+
+[freestream]
+mach = 0.3
+pressure = 101325.0
+temperature = 288.15
+
+[euler]
+flux = "hllc"
+reconstruction = "first_order"
+
+[time]
+scheme = "gmres"
+local_time_step = true
+cfl = 0.4
+max_steps = 1
+"#,
+    )
+    .expect("parse");
+    attach_single_tet_farfield(&mut case);
+    let mesh = case.mesh.as_unstructured_3d().expect("mesh");
+    let eos = case.physics.eos().expect("eos");
+    let freestream = case.freestream.expect("freestream");
+    let inviscid = case.compressible_discretization().expect("disc").inviscid();
+    let solver =
+        crate::case::compressible_unstructured_3d::build_compressible_solver(&case, &inviscid)
+            .expect("solver");
+    let mut fields = case.build_conserved_fields().expect("fields");
+    fields.density.values_mut()[0] *= 1.05;
+    let driver = UnstructuredDriverConfig {
+        solver: &solver,
+        mesh,
+        eos: &eos,
+        freestream: &freestream,
+        inviscid: &inviscid,
+        patches: &case.boundary,
+        reference: case.reference.as_ref(),
+        viscous: case.physics.viscous.as_ref(),
+        fixed_dt: case.time.dt,
+        local_time_step: case.time.uses_local_time_step(),
+        time_scheme: case.time.resolved_time_scheme(),
+        lu_sgs: case.time.resolved_lusgs_config().expect("lu_sgs"),
+        dual_time: None,
+        low_mach_preconditioning: None,
+        cfl_schedule: case.cfl_schedule().expect("cfl"),
+        max_steps: case.resolved_max_steps(),
+        residual_tolerance: None,
+        exec_config: crate::exec::ExecConfig::default(),
+        observer_field_sync_interval: None,
+    };
+    let history =
+        run_unstructured_with_observer(&driver, &mut fields, |_| Ok(())).expect("history");
+    assert_eq!(history.len(), 1);
+    assert!(history[0].residual_rms.is_finite());
+    assert!(history[0].inner_iterations > 0 || history[0].residual_log10 < -6.0);
+}
+
+#[test]
+fn unstructured_gmres_cell_block_uniform_farfield_smoke_step() {
+    let mut case = parse_case_str(
+        r#"
+name = "unstructured_gmres_cell_block_smoke"
+[mesh]
+kind = "structured_3d"
+nx = 1
+ny = 1
+nz = 1
+
+[physics]
+gamma = 1.4
+gas_constant = 287.0
+
+[freestream]
+mach = 0.3
+pressure = 101325.0
+temperature = 288.15
+
+[euler]
+flux = "hllc"
+reconstruction = "first_order"
+
+[time]
+scheme = "gmres"
+gmres_preconditioner = "cell_block_diagonal"
+local_time_step = true
+cfl = 0.4
+max_steps = 1
+"#,
+    )
+    .expect("parse");
+    attach_single_tet_farfield(&mut case);
+    let mesh = case.mesh.as_unstructured_3d().expect("mesh");
+    let eos = case.physics.eos().expect("eos");
+    let freestream = case.freestream.expect("freestream");
+    let inviscid = case.compressible_discretization().expect("disc").inviscid();
+    let solver =
+        crate::case::compressible_unstructured_3d::build_compressible_solver(&case, &inviscid)
+            .expect("solver");
+    assert_eq!(
+        solver.config.gmres.preconditioner,
+        crate::solver::GmresPreconditionerKind::CellBlockDiagonal
+    );
+    let mut fields = case.build_conserved_fields().expect("fields");
+    fields.density.values_mut()[0] *= 1.05;
+    let driver = UnstructuredDriverConfig {
+        solver: &solver,
+        mesh,
+        eos: &eos,
+        freestream: &freestream,
+        inviscid: &inviscid,
+        patches: &case.boundary,
+        reference: case.reference.as_ref(),
+        viscous: case.physics.viscous.as_ref(),
+        fixed_dt: case.time.dt,
+        local_time_step: case.time.uses_local_time_step(),
+        time_scheme: case.time.resolved_time_scheme(),
+        lu_sgs: case.time.resolved_lusgs_config().expect("lu_sgs"),
+        dual_time: None,
+        low_mach_preconditioning: None,
+        cfl_schedule: case.cfl_schedule().expect("cfl"),
+        max_steps: case.resolved_max_steps(),
+        residual_tolerance: None,
+        exec_config: crate::exec::ExecConfig::default(),
+        observer_field_sync_interval: None,
+    };
+    let history =
+        run_unstructured_with_observer(&driver, &mut fields, |_| Ok(())).expect("history");
+    assert_eq!(history.len(), 1);
+    assert!(history[0].residual_rms.is_finite());
+    assert!(history[0].inner_iterations > 0 || history[0].residual_log10 < -6.0);
+}
+
+#[test]
+fn unstructured_gmres_lusgs_sweep_uniform_farfield_smoke_step() {
+    let mut case = parse_case_str(
+        r#"
+name = "unstructured_gmres_lusgs_sweep_smoke"
+[mesh]
+kind = "structured_3d"
+nx = 1
+ny = 1
+nz = 1
+
+[physics]
+gamma = 1.4
+gas_constant = 287.0
+
+[freestream]
+mach = 0.3
+pressure = 101325.0
+temperature = 288.15
+
+[euler]
+flux = "hllc"
+reconstruction = "first_order"
+
+[time]
+scheme = "gmres"
+gmres_preconditioner = "lusgs_sweep"
+local_time_step = true
+cfl = 0.4
+max_steps = 1
+"#,
+    )
+    .expect("parse");
+    attach_single_tet_farfield(&mut case);
+    let mesh = case.mesh.as_unstructured_3d().expect("mesh");
+    let eos = case.physics.eos().expect("eos");
+    let freestream = case.freestream.expect("freestream");
+    let inviscid = case.compressible_discretization().expect("disc").inviscid();
+    let solver =
+        crate::case::compressible_unstructured_3d::build_compressible_solver(&case, &inviscid)
+            .expect("solver");
+    assert_eq!(
+        solver.config.gmres.preconditioner,
+        crate::solver::GmresPreconditionerKind::LusgsSweep
+    );
+    let mut fields = case.build_conserved_fields().expect("fields");
+    fields.density.values_mut()[0] *= 1.05;
+    let driver = UnstructuredDriverConfig {
+        solver: &solver,
+        mesh,
+        eos: &eos,
+        freestream: &freestream,
+        inviscid: &inviscid,
+        patches: &case.boundary,
+        reference: case.reference.as_ref(),
+        viscous: case.physics.viscous.as_ref(),
+        fixed_dt: case.time.dt,
+        local_time_step: case.time.uses_local_time_step(),
+        time_scheme: case.time.resolved_time_scheme(),
+        lu_sgs: case.time.resolved_lusgs_config().expect("lu_sgs"),
+        dual_time: None,
+        low_mach_preconditioning: None,
+        cfl_schedule: case.cfl_schedule().expect("cfl"),
+        max_steps: case.resolved_max_steps(),
+        residual_tolerance: None,
+        exec_config: crate::exec::ExecConfig::default(),
+        observer_field_sync_interval: None,
+    };
+    let history =
+        run_unstructured_with_observer(&driver, &mut fields, |_| Ok(())).expect("history");
+    assert_eq!(history.len(), 1);
+    assert!(history[0].residual_rms.is_finite());
+    assert!(history[0].inner_iterations > 0 || history[0].residual_log10 < -6.0);
+}
+
 fn attach_single_tet_farfield(case: &mut crate::io::CaseSpec) {
     let mesh = UnstructuredMesh3d::new(
         "tet",

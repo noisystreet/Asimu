@@ -27,7 +27,7 @@ pub trait LinearOperator {
 /// 左预条件器 \(z=M^{-1}r\)。
 pub trait Preconditioner {
     fn dimension(&self) -> usize;
-    fn apply(&self, rhs: &[Real], out: &mut [Real]) -> Result<()>;
+    fn apply(&mut self, rhs: &[Real], out: &mut [Real]) -> Result<()>;
 }
 
 /// 三对角线性系统 \(A x = b\)（行 `i` 与 `i±1` 耦合）。

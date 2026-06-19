@@ -58,7 +58,7 @@ impl GmresSolver {
     pub fn solve<A, M>(
         &self,
         op: &mut A,
-        precond: &M,
+        precond: &mut M,
         b: &[Real],
         x: &mut [Real],
     ) -> Result<GmresReport>
@@ -111,7 +111,7 @@ impl GmresSolver {
     fn restart_cycle<A, M>(
         &self,
         op: &mut A,
-        precond: &M,
+        precond: &mut M,
         x: &mut [Real],
         work: &mut GmresWork,
         beta: Real,
@@ -203,7 +203,7 @@ fn axpy(dst: &mut [Real], src: &[Real], scale: Real) {
 
 fn compute_preconditioned_residual<A, M>(
     op: &mut A,
-    precond: &M,
+    precond: &mut M,
     b: &[Real],
     x: &[Real],
     work: &mut GmresWork,
@@ -222,7 +222,7 @@ where
 
 fn apply_preconditioned_operator<A, M>(
     op: &mut A,
-    precond: &M,
+    precond: &mut M,
     x: &[Real],
     ax: &mut [Real],
     out: &mut [Real],
@@ -319,8 +319,9 @@ mod tests {
             tolerance: 1.0e-12,
         })
         .expect("gmres");
+        let mut precond = IdentityPreconditioner::new(2);
         let report = solver
-            .solve(&mut matrix, &IdentityPreconditioner::new(2), &b, &mut x)
+            .solve(&mut matrix, &mut precond, &b, &mut x)
             .expect("solve");
         assert!(report.converged, "{report:?}");
         assert!((x[0] - 0.2).abs() < 1.0e-10);
@@ -339,7 +340,7 @@ mod tests {
             ],
         )
         .expect("csr");
-        let ilu = Ilu0Preconditioner::factor(&matrix).expect("ilu");
+        let mut ilu = Ilu0Preconditioner::factor(&matrix).expect("ilu");
         let mut x = [0.0; 3];
         let report = GmresSolver::new(GmresConfig {
             restart: 3,
@@ -347,7 +348,7 @@ mod tests {
             tolerance: 1.0e-12,
         })
         .expect("gmres")
-        .solve(&mut matrix, &ilu, &[1.0, 0.0, 1.0], &mut x)
+        .solve(&mut matrix, &mut ilu, &[1.0, 0.0, 1.0], &mut x)
         .expect("solve");
         assert!(report.converged, "{report:?}");
         assert!((x[0] - 1.0).abs() < 1.0e-10);
@@ -360,18 +361,14 @@ mod tests {
         let mut matrix = CsrMatrix::from_rows(2, 2, vec![vec![(0, 1.0)], vec![(0, 0.0), (1, 0.0)]])
             .expect("csr");
         let mut x = [0.0; 2];
+        let mut precond = IdentityPreconditioner::new(2);
         let report = GmresSolver::new(GmresConfig {
             restart: 2,
             max_iters: 2,
             tolerance: 1.0e-12,
         })
         .expect("gmres")
-        .solve(
-            &mut matrix,
-            &IdentityPreconditioner::new(2),
-            &[1.0, 0.0],
-            &mut x,
-        )
+        .solve(&mut matrix, &mut precond, &[1.0, 0.0], &mut x)
         .expect("solve");
 
         assert!(report.converged, "{report:?}");

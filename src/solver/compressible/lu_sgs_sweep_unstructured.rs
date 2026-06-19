@@ -11,8 +11,9 @@ use crate::mesh::UnstructuredMesh3d;
 use crate::physics::IdealGasEoS;
 
 use crate::solver::compressible::lu_sgs_common::{
-    LuSgsSweepScalars, apply_limited_cell_increment, conserved_vector, implicit_scale,
-    refresh_primitive_at_cell, residual_cell_vector, scale_source, stabilize_sweep_update,
+    LuSgsSweepScalars, apply_cell_increment, apply_limited_cell_increment, conserved_vector,
+    implicit_scale, refresh_primitive_at_cell, residual_cell_vector, scale_source,
+    stabilize_sweep_update,
 };
 use crate::solver::compressible::spectral_radius::face_spectral_radius;
 
@@ -79,6 +80,7 @@ pub(crate) struct LuSgsCellCoupling {
 }
 
 /// 非结构 LU-SGS 拓扑邻接缓存，仅依赖网格 face owner/neighbor。
+#[derive(Clone)]
 pub struct LuSgsUnstructuredCouplings {
     cells: Vec<Vec<LuSgsCellCoupling>>,
 }
@@ -297,6 +299,148 @@ fn refresh_primitive(
         params.min_pressure,
         params.primitives,
     )
+}
+
+/// GMRES 左预条件：线性 LU-SGS 双扫（冻结原始变量谱半径，无正性限制/线搜索）。
+pub struct LuSgsSweepGmresPreconditionerParams<'a> {
+    pub eos: &'a IdealGasEoS,
+    pub frozen_primitives: &'a PrimitiveFields,
+    pub backward_damping: Real,
+}
+
+/// 近似 \((D_{\Delta t}-J) z = r\)：输出写入 `fields = u0 + z`。
+pub fn lu_sgs_sweep_unstructured_gmres_preconditioner(
+    fields: &mut ConservedFields,
+    u0: &ConservedFields,
+    residual: &ConservedResidual,
+    params: &LuSgsSweepGmresPreconditionerParams<'_>,
+    input: LuSgsSweepUnstructuredInput<'_>,
+) -> Result<()> {
+    let n = fields.num_cells();
+    if residual.num_cells() != n
+        || input.dt.len() != n
+        || input.sigma.len() != n
+        || input.volumes.len() != n
+        || input.couplings.len() != n
+        || params.frozen_primitives.num_cells() != n
+    {
+        return Err(AsimuError::Solver(
+            "lu_sgs_sweep_unstructured_gmres_preconditioner: 场/残差/dt/primitives 长度不一致"
+                .to_string(),
+        ));
+    }
+    let LuSgsUnstructuredCouplingsRef::F64(couplings) = input.couplings else {
+        return Err(AsimuError::Solver(
+            "lu_sgs_sweep_unstructured_gmres_preconditioner: 仅支持 f64 拓扑耦合".to_string(),
+        ));
+    };
+    fields.copy_from(u0)?;
+    let scalars = LuSgsSweepScalars {
+        dt: input.dt,
+        sigma: input.sigma,
+        volumes: input.volumes,
+        omega: input.omega,
+        gamma: input.gamma,
+        inv_dt_phys: input.inv_dt_phys,
+    };
+    {
+        let _span = info_span!("gmres_lusgs_precond_forward").entered();
+        gmres_forward_sweep(fields, u0, residual, params, couplings.cells(), &scalars)?;
+    }
+    {
+        let _span = info_span!("gmres_lusgs_precond_backward").entered();
+        gmres_backward_sweep(fields, u0, params, couplings.cells(), &scalars)?;
+    }
+    Ok(())
+}
+
+fn gmres_forward_sweep(
+    fields: &mut ConservedFields,
+    u0: &ConservedFields,
+    residual: &ConservedResidual,
+    params: &LuSgsSweepGmresPreconditionerParams<'_>,
+    couplings: &[Vec<LuSgsCellCoupling>],
+    scalars: &LuSgsSweepScalars<'_>,
+) -> Result<()> {
+    for (cell, cell_couplings) in couplings.iter().enumerate().take(fields.num_cells()) {
+        let scale = implicit_scale(
+            scalars.dt[cell],
+            scalars.sigma[cell],
+            scalars.omega,
+            scalars.inv_dt_phys,
+        );
+        let mut source = residual_cell_vector(residual, cell);
+        for coupling in cell_couplings.iter().filter(|c| c.neighbor < cell) {
+            add_coupling_delta_frozen(
+                &mut source,
+                cell,
+                *coupling,
+                scalars.volumes[cell],
+                fields,
+                u0,
+                params,
+            );
+        }
+        apply_cell_increment(fields, cell, scale, source);
+    }
+    Ok(())
+}
+
+fn gmres_backward_sweep(
+    fields: &mut ConservedFields,
+    u0: &ConservedFields,
+    params: &LuSgsSweepGmresPreconditionerParams<'_>,
+    couplings: &[Vec<LuSgsCellCoupling>],
+    scalars: &LuSgsSweepScalars<'_>,
+) -> Result<()> {
+    for (cell, cell_couplings) in couplings.iter().enumerate().take(fields.num_cells()).rev() {
+        let scale = implicit_scale(
+            scalars.dt[cell],
+            scalars.sigma[cell],
+            scalars.omega,
+            scalars.inv_dt_phys,
+        );
+        let mut source = [0.0; 5];
+        for coupling in cell_couplings.iter().filter(|c| c.neighbor > cell) {
+            add_coupling_delta_frozen(
+                &mut source,
+                cell,
+                *coupling,
+                scalars.volumes[cell],
+                fields,
+                u0,
+                params,
+            );
+        }
+        if source.iter().any(|c| c.abs() > Real::EPSILON) {
+            let damped = scale_source(source, params.backward_damping);
+            apply_cell_increment(fields, cell, scale, damped);
+        }
+    }
+    Ok(())
+}
+
+fn add_coupling_delta_frozen(
+    source: &mut [Real; 5],
+    cell: usize,
+    coupling: LuSgsCellCoupling,
+    volume: Real,
+    fields: &ConservedFields,
+    u0: &ConservedFields,
+    params: &LuSgsSweepGmresPreconditionerParams<'_>,
+) {
+    let lambda = face_spectral_radius(
+        &params.frozen_primitives.cell_primitive(cell),
+        &params.frozen_primitives.cell_primitive(coupling.neighbor),
+        coupling.normal,
+        params.eos.gamma,
+    );
+    let coef = coupling.area * lambda / volume.max(1.0e-30);
+    let cur = conserved_vector(fields, coupling.neighbor);
+    let old = conserved_vector(u0, coupling.neighbor);
+    for (s, (&c, &o)) in source.iter_mut().zip(cur.iter().zip(old.iter())) {
+        *s -= coef * (c - o);
+    }
 }
 
 #[cfg(test)]

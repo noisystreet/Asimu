@@ -1,5 +1,8 @@
 //! 3D 可压缩残差的 matrix-free GMRES 隐式线性化。
 
+#[path = "gmres_implicit_typed_common.rs"]
+pub(crate) mod gmres_implicit_typed_common;
+
 use std::time::Instant;
 
 use tracing::info;
@@ -198,6 +201,7 @@ pub struct GmresImplicitConfig {
 pub enum GmresPreconditionerKind {
     ScalarDiagonal,
     CellBlockDiagonal,
+    LusgsSweep,
 }
 
 impl GmresPreconditionerKind {
@@ -205,8 +209,9 @@ impl GmresPreconditionerKind {
         match raw {
             "scalar" | "scalar_diagonal" | "lusgs_diagonal" => Ok(Self::ScalarDiagonal),
             "block" | "cell_block" | "cell_block_diagonal" => Ok(Self::CellBlockDiagonal),
+            "lusgs_sweep" | "lu_sgs_sweep" | "sweep" => Ok(Self::LusgsSweep),
             other => Err(AsimuError::Config(format!(
-                "不支持的 GMRES 预条件器 \"{other}\"（可用 scalar_diagonal / cell_block_diagonal）"
+                "不支持的 GMRES 预条件器 \"{other}\"（可用 scalar_diagonal / cell_block_diagonal / lusgs_sweep）"
             ))),
         }
     }
@@ -216,6 +221,7 @@ impl GmresPreconditionerKind {
         match self {
             Self::ScalarDiagonal => "scalar_diagonal",
             Self::CellBlockDiagonal => "cell_block_diagonal",
+            Self::LusgsSweep => "lusgs_sweep",
         }
     }
 }
@@ -261,7 +267,7 @@ impl CompressibleEulerSolver {
         let rhs = residual_to_vector(&base_residual);
         let preconditioner_kind = config.preconditioner;
         let preconditioner_start = Instant::now();
-        let precond = build_gmres_preconditioner(GmresPreconditionerBuild {
+        let mut precond = build_gmres_preconditioner(GmresPreconditionerBuild {
             solver: self,
             ctx,
             fields,
@@ -288,7 +294,8 @@ impl CompressibleEulerSolver {
         };
         let mut delta = vec![0.0; rhs.len()];
         let linear_solve_start = Instant::now();
-        let report = GmresSolver::new(config.gmres)?.solve(&mut op, &precond, &rhs, &mut delta)?;
+        let report =
+            GmresSolver::new(config.gmres)?.solve(&mut op, &mut precond, &rhs, &mut delta)?;
         let linear_solve_ms = elapsed_ms(linear_solve_start);
         diagnostics.perturbation_evals = op.diagnostics.perturbation_evals;
         diagnostics.perturbation_limited_evals = op.diagnostics.perturbation_limited_evals;
@@ -321,7 +328,7 @@ impl Preconditioner for GmresImplicitPreconditioner {
         }
     }
 
-    fn apply(&self, rhs: &[Real], out: &mut [Real]) -> Result<()> {
+    fn apply(&mut self, rhs: &[Real], out: &mut [Real]) -> Result<()> {
         match self {
             Self::Scalar(p) => p.apply(rhs, out),
             Self::CellBlock(p) => p.apply(rhs, out),
@@ -361,6 +368,10 @@ pub(super) fn build_gmres_preconditioner(
                 params.p_floor,
                 params.config.epsilon,
             )?,
+        )),
+        GmresPreconditionerKind::LusgsSweep => Err(AsimuError::Config(
+            "结构化 GMRES 暂不支持 gmres_preconditioner = \"lusgs_sweep\"（请用非结构路径）"
+                .to_string(),
         )),
     }
 }

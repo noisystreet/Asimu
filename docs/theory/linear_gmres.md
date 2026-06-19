@@ -97,7 +97,7 @@ ILU(0) 适合已显式装配的稀疏 Jacobian 或扩散类线性系统。对可
 | (8) 单元块对角预条件 | `CellBlockDiagonalPreconditioner`, `GmresPreconditionerKind::CellBlockDiagonal` |
 | (9)(10) ILU(0) | `Ilu0Preconditioner` |
 | CSR 显式矩阵 | `CsrMatrix` |
-| 可压缩 matrix-free 入口 | `CompressibleEulerSolver::solve_gmres_implicit_delta_3d` |
+| 可压缩 matrix-free 入口 | `CompressibleEulerSolver::solve_gmres_implicit_delta_3d`（结构化）；非结构 `solve_gmres_implicit_delta_unstructured_typed` |
 
 ## 7. 可压缩残差的 Matrix-Free 线性化
 
@@ -121,7 +121,7 @@ $$
 A v = D_{\Delta t} v - J_R v. \tag{13}
 $$
 
-左预条件器默认使用式 (7) 的 `LusgsDiagonalPreconditioner`；`[time] gmres_preconditioner = "cell_block_diagonal"` 时使用式 (8) 的局部无粘 Jacobian 块近似。`time.scheme = "gmres"` 时，3D 可压缩求解器会调用该入口；有限差分扰动 \(U+\epsilon v\) 与最终更新 \(\Delta U\) 都会按单元限制到正密度、正压力可行范围，并在线搜索确认后接受。显式 CSR 的 `Ilu0Preconditioner` 仍用于已装配矩阵问题；当前可压缩 matrix-free 路径不装配 CSR Jacobian，因此不使用 ILU(0)。
+左预条件器默认使用式 (7) 的 `LusgsDiagonalPreconditioner`；`[time] gmres_preconditioner = "cell_block_diagonal"` 时使用式 (8) 的局部无粘 Jacobian 块近似；`lusgs_sweep` 时用冻结谱半径系数的线性 LU-SGS 双扫近似 \((D_{\Delta t}-J)^{-1}\)（非结构 f64，对标 SU2 FGMRES+LU-SGS 思路）。`time.scheme = "gmres"` 时，3D 可压缩求解器会调用该入口；有限差分扰动 \(U+\epsilon v\) 与最终更新 \(\Delta U\) 都会按单元限制到正密度、正压力可行范围，并在线搜索确认后接受。显式 CSR 的 `Ilu0Preconditioner` 仍用于已装配矩阵问题；当前可压缩 matrix-free 路径不装配 CSR Jacobian，因此不使用 ILU(0)。
 
 实现会把基础残差、预条件器构造、GMRES 线性求解等阶段耗时写入 `GmresImplicitDiagnostics::timing`，外层 `advance_gmres_step_3d` 再补充局部时间步、线搜索与整步总耗时日志；`log10_residual` 复用步初 `base_residual` 的 RMS。便于比较标量对角与块对角预条件器成本。
 
