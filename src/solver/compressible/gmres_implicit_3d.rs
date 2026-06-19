@@ -5,7 +5,7 @@ pub(crate) mod gmres_implicit_typed_common;
 
 use std::time::Instant;
 
-use tracing::info;
+use tracing::debug;
 
 use crate::core::{Real, elapsed_ms, format_log_fixed4, format_log_sci4, log10_positive};
 use crate::discretization::InviscidFluxConfig;
@@ -110,7 +110,7 @@ pub struct GmresStepLog<'a> {
 
 pub(crate) fn log_gmres_step_diagnostics(params: GmresStepLog<'_>) {
     let inner = params.delta.diagnostics.timing;
-    info!(
+    debug!(
         step = params.step,
         dt = %format_log_sci4(params.dt),
         cfl = params.cfl,

@@ -14,7 +14,7 @@
 
 ### Added
 
-- **非结构网格扫掠重排序**：新增 `asimu-mesh-reorder` workspace crate，可从 case 读取非结构网格并生成 `identity` / `bfs` / `rcm` 的 `order.toml`；case `[mesh].cell_order` 可加载该文件，`lusgs_sweep` 与 GMRES `lusgs_sweep` / `block_lusgs` 预条件器按该顺序定义前/后扫。
+- **`[time]` GMRES 线性求解配置**：`gmres_tolerance`、`gmres_max_iters`、`gmres_restart` 可配置每步内层 GMRES 容差与迭代上限；满足容差或达到 `max_iters` 即进入下一步伪时间。新增 `asimu-mesh-reorder` workspace crate，可从 case 读取非结构网格并生成 `identity` / `bfs` / `rcm` 的 `order.toml`；case `[mesh].cell_order` 可加载该文件，`lusgs_sweep` 与 GMRES `lusgs_sweep` / `block_lusgs` 预条件器按该顺序定义前/后扫。
 - **GMRES/LU-SGS 后续规划**：`docs/theory/linear_gmres.md` 记录非结构 `block_lusgs` 的后续路线：构造缓存、ordering/coloring、line-implicit BLU-SGS、完整粘性块、FGMRES 与 BILU/ILU 评估。
 - **`[output].restart`**：3D 可压缩算例结束自动写出 restart TOML（单域 version=1 / 多块 version=2），精度与 `[numerics]` 一致。
 - **`[restart].path = "*.cgns"`（非结构单域）**：支持从 `flow.cgns` 读取 `Density`/`VelocityX/Y/Z`/`Pressure`（CellCenter）并转换为无量纲守恒初场；大规模算例可避免超大 TOML 解析开销。
@@ -25,7 +25,7 @@
 
 ### Changed
 
-- **非结构 GMRES `block_lusgs` 粘性近似**：NS case 的抛物谱半径由单一 `max(ν, α)` 标量改为分量化扩散率；密度分量不加粘性扩散，动量使用 \(4\nu/3\)，能量使用 \(\gamma\nu/\mathrm{Pr}\)，边界面小尺度仍进入对角块。
+- **GMRES 隐式步诊断日志**：`GMRES 隐式步诊断` 由 `info` 降为 `debug`，`info` 级别运行不再刷屏。NS case 的抛物谱半径由单一 `max(ν, α)` 标量改为分量化扩散率；密度分量不加粘性扩散，动量使用 \(4\nu/3\)，能量使用 \(\gamma\nu/\mathrm{Pr}\)，边界面小尺度仍进入对角块。
 - **非结构 IDWLS 权重**：粘性/二阶重构梯度样本权重由 \(1/|\Delta\mathbf x|\) 改为 \(1/|\Delta\mathbf x|^2\)，与 SU2 `WEIGHTED_LEAST_SQUARES` 一致（`unstructured_face_cache::lsq_dr_weight`）。
 - **非结构 IDWLS 边界样本**：边界面 LSQ 几何样本由单元中心→镜像点改为单元中心→**面心**，场值仍取 ghost/BC 在边界的 \(\phi_f\)（对标 SU2 边界邻点参与 WLS）。
 - **CUDA f32 非结构 `lusgs_sweep`**：扫掠默认走 device 图着色 wavefront（按色 launch 多 kernel）；\(\sigma_i\)/\(\Delta t_i\) 与对角 LU-SGS 同样驻留 device，粘性 NS 路径走 device 双扫 kernel（正性线搜索仍在 host）。

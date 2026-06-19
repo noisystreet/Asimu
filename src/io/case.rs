@@ -10,6 +10,10 @@ mod case_compressible;
 mod case_incompressible;
 #[path = "case_numerics.rs"]
 mod case_numerics;
+#[path = "case_time_gmres.rs"]
+mod case_time_gmres;
+#[path = "case_time_parse.rs"]
+mod case_time_parse;
 #[path = "case_validate.rs"]
 mod case_validate;
 #[path = "mesh_load.rs"]
@@ -186,6 +190,12 @@ pub struct CaseTimeConfig {
     pub lusgs_sweep_backward_damping: Option<Real>,
     /// GMRES 左预条件器（默认 scalar_diagonal）。
     pub gmres_preconditioner: Option<crate::solver::GmresPreconditionerKind>,
+    /// GMRES 线性求解相对残差容差（`scheme = gmres`）。
+    pub gmres_tolerance: Option<Real>,
+    /// GMRES 每步最大迭代次数（`scheme = gmres`）。
+    pub gmres_max_iters: Option<usize>,
+    /// GMRES restart 长度（`scheme = gmres`）。
+    pub gmres_restart: Option<usize>,
     /// 方向分裂隐式残差光顺（仅稳态 3D 伪时间）。
     pub residual_smoothing: crate::solver::time::ResidualSmoothingConfig,
     /// 双时间步：每物理步伪时间迭代上限（`scheme = dual_time`）。
@@ -220,14 +230,8 @@ impl CaseTimeConfig {
         self.residual_smoothing
     }
 
-    #[must_use]
-    pub fn resolved_gmres_config(&self) -> crate::solver::GmresImplicitConfig {
-        crate::solver::GmresImplicitConfig {
-            preconditioner: self
-                .gmres_preconditioner
-                .unwrap_or(crate::solver::GmresPreconditionerKind::ScalarDiagonal),
-            ..crate::solver::GmresImplicitConfig::default()
-        }
+    pub fn resolved_gmres_config(&self) -> Result<crate::solver::GmresImplicitConfig> {
+        case_time_gmres::resolve_gmres_config(self)
     }
 
     /// `scheme = dual_time` 时解析双时间步配置；否则为 `None`。
@@ -266,6 +270,9 @@ impl Default for CaseTimeConfig {
             lusgs_sweep: None,
             lusgs_sweep_backward_damping: None,
             gmres_preconditioner: None,
+            gmres_tolerance: None,
+            gmres_max_iters: None,
+            gmres_restart: None,
             residual_smoothing: crate::solver::time::ResidualSmoothingConfig::disabled(),
             max_inner_steps: None,
             inner_tolerance: None,
@@ -370,7 +377,7 @@ struct CaseToml {
     initial: BTreeMap<String, InitialToml>,
     freestream: Option<FreestreamToml>,
     restart: Option<RestartToml>,
-    time: Option<TimeToml>,
+    time: Option<case_time_parse::TimeToml>,
     sod: Option<SodToml>,
     euler: Option<EulerToml>,
     navier_stokes: Option<EulerToml>,
@@ -467,32 +474,6 @@ struct RestartToml {
 }
 
 #[derive(Debug, Deserialize)]
-struct TimeToml {
-    mode: Option<String>,
-    dt: Option<Real>,
-    cfl: Option<Real>,
-    cfl_max: Option<Real>,
-    final_time: Option<Real>,
-    max_steps: Option<u64>,
-    min_steps: Option<u64>,
-    tolerance: Option<Real>,
-    local_time_step: Option<bool>,
-    cfl_ramp_steps: Option<u64>,
-    scheme: Option<String>,
-    lusgs_omega: Option<Real>,
-    lusgs_sweep: Option<bool>,
-    lusgs_sweep_backward_damping: Option<Real>,
-    gmres_preconditioner: Option<String>,
-    residual_smoothing: Option<bool>,
-    residual_smoothing_epsilon: Option<Real>,
-    residual_smoothing_sweeps: Option<usize>,
-    max_inner_steps: Option<u32>,
-    inner_tolerance: Option<Real>,
-    low_mach_preconditioning: Option<bool>,
-    low_mach_mach_cutoff: Option<Real>,
-}
-
-#[derive(Debug, Deserialize)]
 struct SodToml {
     diaphragm: Option<Real>,
     final_time: Option<Real>,
@@ -550,7 +531,7 @@ fn parse_case_toml(content: &str, case_dir: Option<&Path>) -> Result<CaseSpec> {
         .restart
         .map(|r| super::restart::resolve_restart_path(r.path, case_dir));
 
-    let time = parse_time_config(raw.time.as_ref(), raw.sod.is_some())?;
+    let time = case_time_parse::parse_time_config(raw.time.as_ref(), raw.sod.is_some())?;
     let numerics = case_numerics::parse_numerics(raw.numerics.as_ref())?;
 
     let deprecated_mesh_zone = raw.mesh.zone;
@@ -713,76 +694,6 @@ fn resolve_initial_set(initials: &BTreeMap<String, InitialToml>) -> Result<Initi
     Ok(set)
 }
 
-fn parse_time_config(raw: Option<&TimeToml>, has_sod: bool) -> Result<CaseTimeConfig> {
-    let Some(raw) = raw else {
-        return Ok(if has_sod {
-            CaseTimeConfig {
-                mode: CaseTimeMode::Transient,
-                ..CaseTimeConfig::default()
-            }
-        } else {
-            CaseTimeConfig::default()
-        });
-    };
-    let mode = match raw.mode.as_deref().unwrap_or("steady") {
-        "steady" => CaseTimeMode::Steady,
-        "transient" => CaseTimeMode::Transient,
-        other => {
-            return Err(AsimuError::Config(format!(
-                "不支持的 time.mode \"{other}\""
-            )));
-        }
-    };
-    let scheme = raw
-        .scheme
-        .as_deref()
-        .map(crate::solver::time::TimeIntegrationScheme::parse)
-        .transpose()?;
-    let lusgs_omega = raw.lusgs_omega;
-    let lusgs_sweep = raw.lusgs_sweep;
-    let lusgs_sweep_backward_damping = raw.lusgs_sweep_backward_damping;
-    let _ = crate::solver::time::LuSgsConfig::parse(
-        lusgs_omega,
-        lusgs_sweep,
-        lusgs_sweep_backward_damping,
-    )?;
-    let residual_smoothing = crate::solver::time::ResidualSmoothingConfig::parse(
-        raw.residual_smoothing.unwrap_or(false),
-        raw.residual_smoothing_epsilon,
-        raw.residual_smoothing_sweeps,
-    )?;
-    let gmres_preconditioner = raw
-        .gmres_preconditioner
-        .as_deref()
-        .map(crate::solver::GmresPreconditionerKind::parse)
-        .transpose()?;
-    let low_mach_preconditioning = crate::solver::time::LowMachPreconditioningConfig::parse(
-        raw.low_mach_preconditioning.unwrap_or(false),
-        raw.low_mach_mach_cutoff,
-    )?;
-    Ok(CaseTimeConfig {
-        mode,
-        dt: raw.dt,
-        cfl: raw.cfl,
-        cfl_max: raw.cfl_max,
-        final_time: raw.final_time,
-        max_steps: raw.max_steps,
-        min_steps: raw.min_steps,
-        tolerance: raw.tolerance,
-        local_time_step: raw.local_time_step.unwrap_or(false),
-        cfl_ramp_steps: raw.cfl_ramp_steps,
-        scheme,
-        lusgs_omega,
-        lusgs_sweep,
-        lusgs_sweep_backward_damping,
-        gmres_preconditioner,
-        residual_smoothing,
-        max_inner_steps: raw.max_inner_steps,
-        inner_tolerance: raw.inner_tolerance,
-        low_mach_preconditioning,
-    })
-}
-
 fn parse_sod_config(raw: &SodToml) -> SodCaseConfig {
     SodCaseConfig {
         diaphragm: raw.diaphragm.unwrap_or(0.5),
@@ -794,6 +705,9 @@ fn parse_sod_config(raw: &SodToml) -> SodCaseConfig {
     }
 }
 
+#[cfg(test)]
+#[path = "case_gmres_tests.rs"]
+mod case_gmres_tests;
 #[cfg(test)]
 #[path = "case_tests.rs"]
 mod case_tests;
