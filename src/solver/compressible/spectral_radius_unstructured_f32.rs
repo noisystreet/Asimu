@@ -15,8 +15,7 @@ use crate::mesh::UnstructuredMesh3d;
 use crate::physics::{IdealGasEoS, ViscousPhysicsConfig};
 
 use super::spectral_radius_f32::{
-    FacePrimitiveLaneF32, cell_viscous_diffusivity_max_f32, face_spectral_radius_f32,
-    face_spectral_radius_f32_preconditioned,
+    FacePrimitiveLaneF32, cell_viscous_diffusivity_max_f32, face_spectral_radius_f32_with_low_mach,
 };
 
 const PARABOLIC_SPECTRAL_FACTOR_3D_F32: f32 = 6.0;
@@ -136,17 +135,13 @@ fn accumulate_interior_hyperbolic_as_owner_f32(
 ) {
     let left = prim_lane_f32(prim, face.owner);
     let right = prim_lane_f32(prim, face.neighbor);
-    let radius = if let Some(cfg) = params.low_mach_preconditioning {
-        face_spectral_radius_f32_preconditioned(
-            left,
-            right,
-            face.normal,
-            gamma,
-            cfg.mach_cutoff as f32,
-        )
-    } else {
-        face_spectral_radius_f32(left, right, face.normal, gamma)
-    };
+    let radius = face_spectral_radius_f32_with_low_mach(
+        left,
+        right,
+        face.normal,
+        gamma,
+        params.low_mach_preconditioning,
+    );
     add_hyperbolic_contribution_f32(sigma_cell, radius, face.area, face.inv_owner_volume);
 }
 
@@ -159,17 +154,13 @@ fn accumulate_interior_hyperbolic_as_neighbor_f32(
 ) {
     let left = prim_lane_f32(prim, face.owner);
     let right = prim_lane_f32(prim, face.neighbor);
-    let radius = if let Some(cfg) = params.low_mach_preconditioning {
-        face_spectral_radius_f32_preconditioned(
-            left,
-            right,
-            face.normal,
-            gamma,
-            cfg.mach_cutoff as f32,
-        )
-    } else {
-        face_spectral_radius_f32(left, right, face.normal, gamma)
-    };
+    let radius = face_spectral_radius_f32_with_low_mach(
+        left,
+        right,
+        face.normal,
+        gamma,
+        params.low_mach_preconditioning,
+    );
     add_hyperbolic_contribution_f32(sigma_cell, radius, face.area, face.inv_neighbor_volume);
 }
 
@@ -197,17 +188,13 @@ fn accumulate_boundary_hyperbolic_f32(
         pressure: ghost_prim.pressure,
         velocity: ghost_prim.velocity,
     };
-    let radius = if let Some(cfg) = params.low_mach_preconditioning {
-        face_spectral_radius_f32_preconditioned(
-            left,
-            right,
-            face.normal,
-            gamma,
-            cfg.mach_cutoff as f32,
-        )
-    } else {
-        face_spectral_radius_f32(left, right, face.normal, gamma)
-    };
+    let radius = face_spectral_radius_f32_with_low_mach(
+        left,
+        right,
+        face.normal,
+        gamma,
+        params.low_mach_preconditioning,
+    );
     add_hyperbolic_contribution_f32(
         sigma_cell,
         radius,

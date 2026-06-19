@@ -39,6 +39,27 @@ pub fn face_spectral_radius_f32_preconditioned(
     0.5 * (lam_l + lam_r)
 }
 
+/// 按配置选择常规或低马赫预处理面谱半径（f32；P2 与对角 \(\sigma^\text{LM}\) 一致）。
+#[must_use]
+pub(crate) fn face_spectral_radius_f32_with_low_mach(
+    left: FacePrimitiveLaneF32,
+    right: FacePrimitiveLaneF32,
+    normal: [f32; 3],
+    gamma: f32,
+    low_mach: Option<crate::solver::time::LowMachPreconditioningConfig>,
+) -> f32 {
+    match low_mach {
+        Some(cfg) => face_spectral_radius_f32_preconditioned(
+            left,
+            right,
+            normal,
+            gamma,
+            cfg.mach_cutoff as f32,
+        ),
+        None => face_spectral_radius_f32(left, right, normal, gamma),
+    }
+}
+
 fn normal_speed_plus_sound_f32(
     rho: f32,
     pressure: f32,

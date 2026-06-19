@@ -9,6 +9,7 @@ use crate::mesh::UnstructuredMesh3d;
 use crate::physics::IdealGasEoS;
 
 use crate::discretization::unstructured_face_cache_f32::LuSgsCellCouplingF32;
+use crate::solver::compressible::low_mach_face_spectral::face_spectral_radius_with_low_mach;
 use crate::solver::compressible::lu_sgs_common::{
     LuSgsSweepScalars, LuSgsSweepScalarsF32, PrimitiveRefreshLane,
     apply_limited_cell_increment_f32, apply_limited_cell_increment_typed, conserved_vector_f32,
@@ -22,7 +23,7 @@ use crate::solver::compressible::lu_sgs_sweep_unstructured::{
 };
 use crate::solver::compressible::spectral_radius::face_spectral_radius;
 use crate::solver::compressible::spectral_radius_f32::{
-    FacePrimitiveLaneF32, face_spectral_radius_f32,
+    FacePrimitiveLaneF32, face_spectral_radius_f32, face_spectral_radius_f32_with_low_mach,
 };
 
 /// typed 非结构 LU-SGS 扫掠参数。
@@ -32,6 +33,8 @@ pub struct LuSgsSweepUnstructuredTypedParams<'a, T: ComputeFloat> {
     pub primitives: &'a mut PrimitiveFieldsT<T>,
     pub min_pressure: Real,
     pub backward_damping: Real,
+    /// 低马赫预处理（P2）：扫掠面耦合 \(\lambda_{ij}\) 与单元 \(\sigma^\text{LM}\) 一致。
+    pub low_mach_preconditioning: Option<crate::solver::time::LowMachPreconditioningConfig>,
 }
 
 /// 面耦合谱半径：f32 走原生 `face_spectral_radius_f32`，f64 与既有路径一致。
@@ -237,12 +240,12 @@ fn add_coupling_delta_typed<T: LuSgsUnstructuredSweepTyped>(
     u0: &ConservedFieldsT<T>,
     params: &LuSgsSweepUnstructuredTypedParams<'_, T>,
 ) {
-    let lambda = T::face_coupling_lambda(
-        params.primitives,
-        cell,
-        coupling.neighbor,
+    let lambda = face_spectral_radius_with_low_mach(
+        &params.primitives.cell_primitive(cell),
+        &params.primitives.cell_primitive(coupling.neighbor),
         coupling.normal,
         params.eos.gamma,
+        params.low_mach_preconditioning,
     );
     let coef = coupling.area * lambda / volume.max(1.0e-30);
     let cur = conserved_vector_typed(fields, coupling.neighbor);
@@ -344,11 +347,12 @@ fn add_coupling_delta_f32(
     u0: &ConservedFieldsT<f32>,
     params: &LuSgsSweepUnstructuredTypedParams<'_, f32>,
 ) {
-    let lambda = face_spectral_radius_f32(
+    let lambda = face_spectral_radius_f32_with_low_mach(
         prim_lane_f32(params.primitives, cell),
         prim_lane_f32(params.primitives, coupling.neighbor),
         coupling.normal,
         params.eos.gamma as f32,
+        params.low_mach_preconditioning,
     );
     let coef = coupling.area * lambda / volume.max(1.0e-30_f32);
     let cur = conserved_vector_f32(fields, coupling.neighbor);
@@ -507,6 +511,7 @@ mod tests {
             primitives: &mut primitives,
             min_pressure,
             backward_damping: 0.5,
+            low_mach_preconditioning: None,
         };
         lu_sgs_sweep_unstructured_f32(
             &mut fields,

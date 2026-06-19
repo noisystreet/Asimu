@@ -1,6 +1,6 @@
 # 低马赫预处理（可压缩非结构）
 
-> 模块：`src/solver/compressible/unstructured_*` · 版本：v1.x · 状态：**P1 部分实现（CPU 非结构）；CUDA 待实现**
+> 模块：`src/solver/compressible/unstructured_*` · 版本：v1.x · 状态：**P1–P2 部分实现（CPU 非结构）；CUDA 待实现**
 
 本文给出 asimu 在非结构可压缩路径上引入**低马赫预处理**（Low-Mach Preconditioning）的设计目标、数学形式与落地计划。背景见 [unstructured_fvm.md](unstructured_fvm.md)、[time_integration.md](time_integration.md)、[dual_time_stepping.md](dual_time_stepping.md)。
 
@@ -125,7 +125,7 @@ R_\text{eff}(U)=R(U)+\text{storage}(U;\Delta t_\text{phys}),
 | 配置解析与校验 | `src/io/case.rs` / `src/case/validate.rs` | 新增 `[time]` 字段与约束 |
 | 低马赫因子计算 | `src/solver/compressible/unstructured_prepare_timestep_typed.rs` | 基于局部 primitive 计算 \(\beta\) |
 | 谱半径修改 | `UnstructuredSpectralRadiusAtPrepare` 实现 | 用 \(a_p=\beta a\) 替换声速项 |
-| LU-SGS 对角一致性 | `unstructured_lusgs_typed.rs` / sweep typed | 对角分母与 \(\sigma^\text{LM}\) 一致 |
+| LU-SGS 扫掠/对角一致性 | `lu_sgs_sweep_unstructured_typed.rs` / `spectral_radius*.rs` | P2：扫掠 \(\lambda_{ij}\) 与 \(\sigma^\text{LM}\) 共用 \(\beta\) 缩放；对角分母已用 \(\sigma^\text{LM}\) |
 | CUDA 同步 | `unstructured_cuda_prepare_f32.rs` + CUDA kernel 参数 | 将 \(\beta\)/等效声速下发 device |
 | 日志与诊断 | 现有 `dual_time 伪时间步诊断` | 增加 `mach_min/max`、`beta_min/max` |
 
@@ -144,10 +144,11 @@ R_\text{eff}(U)=R(U)+\text{storage}(U;\Delta t_\text{phys}),
 - 支持 `lu_sgs` 稳态 CPU f64；
 - 给出低马赫算例收敛对比（迭代数、残差降幅）。
 
-### P2（一致性增强）
+### P2（一致性增强）— **部分实现**
 
-- LU-SGS 对角项与预处理谱半径一致；
-- 加入平滑退化策略，减少 `M~0.3` 附近切换抖动。
+- LU-SGS 扫掠面耦合 \(\lambda_{ij}\) 与预处理谱半径一致（`face_spectral_radius_with_low_mach`）；
+- 对角隐式分母已通过 \(\sigma^\text{LM}\) 与 \(\Delta\tau^\text{LM}\) 一致（P1）；
+- 平滑退化策略（`low_mach_max_mach` / `blend`）仍待实现。
 
 ### P3（dual-time）
 

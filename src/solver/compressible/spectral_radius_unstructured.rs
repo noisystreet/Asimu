@@ -10,42 +10,12 @@ use crate::discretization::unstructured_face_cache::{
 use crate::error::{AsimuError, Result};
 use crate::field::{PrimitiveFields, PrimitiveFieldsT, primitive_from_conserved_relaxed};
 use crate::mesh::UnstructuredMesh3d;
-use crate::physics::PrimitiveState;
 use crate::physics::{IdealGasEoS, ViscousPhysicsConfig};
 
-use super::spectral_radius::{
-    add_viscous_parabolic_face_sigma, cell_viscous_diffusivity_max, face_spectral_radius,
-};
+use super::low_mach_face_spectral::face_spectral_radius_with_low_mach;
+use super::spectral_radius::{add_viscous_parabolic_face_sigma, cell_viscous_diffusivity_max};
 
 const DEGENERATE_VOLUME: Real = 1.0e-30;
-
-fn face_spectral_radius_preconditioned_local(
-    prim_l: &PrimitiveState,
-    prim_r: &PrimitiveState,
-    normal: crate::core::Vector3,
-    gamma: Real,
-    mach_cutoff: Real,
-) -> Real {
-    let lam_l = normal_speed_plus_scaled_sound(prim_l, normal, gamma, mach_cutoff);
-    let lam_r = normal_speed_plus_scaled_sound(prim_r, normal, gamma, mach_cutoff);
-    0.5 * (lam_l + lam_r)
-}
-
-fn normal_speed_plus_scaled_sound(
-    prim: &PrimitiveState,
-    normal: crate::core::Vector3,
-    gamma: Real,
-    mach_cutoff: Real,
-) -> Real {
-    let rho = prim.density.max(1.0e-30);
-    let u = prim.velocity;
-    let speed = (u[0] * u[0] + u[1] * u[1] + u[2] * u[2]).sqrt();
-    let u_n = u[0] * normal.x + u[1] * normal.y + u[2] * normal.z;
-    let a = (gamma * prim.pressure.max(1.0e-30) / rho).sqrt();
-    let mach = if a > 0.0 { speed / a } else { 0.0 };
-    let beta = mach.max(mach_cutoff).min(1.0);
-    u_n.abs() + beta * a
-}
 
 pub struct SpectralRadiusUnstructuredParams<'a> {
     pub mesh: &'a UnstructuredMesh3d,
@@ -234,22 +204,13 @@ fn accumulate_interior_hyperbolic_as_owner(
     gamma: Real,
     sigma_cell: &mut Real,
 ) {
-    let radius = if let Some(cfg) = params.low_mach_preconditioning {
-        face_spectral_radius_preconditioned_local(
-            &prim.cell_primitive(face.owner),
-            &prim.cell_primitive(face.neighbor),
-            face.normal,
-            gamma,
-            cfg.mach_cutoff,
-        )
-    } else {
-        face_spectral_radius(
-            &prim.cell_primitive(face.owner),
-            &prim.cell_primitive(face.neighbor),
-            face.normal,
-            gamma,
-        )
-    };
+    let radius = face_spectral_radius_with_low_mach(
+        &prim.cell_primitive(face.owner),
+        &prim.cell_primitive(face.neighbor),
+        face.normal,
+        gamma,
+        params.low_mach_preconditioning,
+    );
     add_hyperbolic_contribution(sigma_cell, radius, face.area, face.inv_owner_volume);
 }
 
@@ -260,22 +221,13 @@ fn accumulate_interior_hyperbolic_as_neighbor(
     gamma: Real,
     sigma_cell: &mut Real,
 ) {
-    let radius = if let Some(cfg) = params.low_mach_preconditioning {
-        face_spectral_radius_preconditioned_local(
-            &prim.cell_primitive(face.owner),
-            &prim.cell_primitive(face.neighbor),
-            face.normal,
-            gamma,
-            cfg.mach_cutoff,
-        )
-    } else {
-        face_spectral_radius(
-            &prim.cell_primitive(face.owner),
-            &prim.cell_primitive(face.neighbor),
-            face.normal,
-            gamma,
-        )
-    };
+    let radius = face_spectral_radius_with_low_mach(
+        &prim.cell_primitive(face.owner),
+        &prim.cell_primitive(face.neighbor),
+        face.normal,
+        gamma,
+        params.low_mach_preconditioning,
+    );
     add_hyperbolic_contribution(sigma_cell, radius, face.area, face.inv_neighbor_volume);
 }
 
@@ -293,22 +245,13 @@ fn accumulate_boundary_hyperbolic(
     })?;
     let ghost_prim =
         primitive_from_conserved_relaxed(params.eos, &ghost.conserved, params.min_pressure)?;
-    let radius = if let Some(cfg) = params.low_mach_preconditioning {
-        face_spectral_radius_preconditioned_local(
-            &params.primitives.cell_primitive(face.owner),
-            &ghost_prim,
-            face.normal,
-            gamma,
-            cfg.mach_cutoff,
-        )
-    } else {
-        face_spectral_radius(
-            &params.primitives.cell_primitive(face.owner),
-            &ghost_prim,
-            face.normal,
-            gamma,
-        )
-    };
+    let radius = face_spectral_radius_with_low_mach(
+        &params.primitives.cell_primitive(face.owner),
+        &ghost_prim,
+        face.normal,
+        gamma,
+        params.low_mach_preconditioning,
+    );
     let inv_volume = inv_volume(face.owner_volume);
     add_hyperbolic_contribution(sigma_cell, radius, face.area, inv_volume);
     Ok(())

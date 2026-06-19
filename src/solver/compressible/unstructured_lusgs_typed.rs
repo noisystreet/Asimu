@@ -68,6 +68,7 @@ impl UnstructuredLusgsSweep for f32 {
             primitives: &mut work.primitives,
             min_pressure: ctx.p_floor,
             backward_damping: ctx.backward_damping,
+            low_mach_preconditioning: ctx.env.config.low_mach_preconditioning,
         };
         lu_sgs_sweep_unstructured_f32(
             fields,
@@ -103,6 +104,7 @@ impl UnstructuredLusgsSweep for f64 {
             primitives: &mut work.primitives,
             min_pressure: ctx.p_floor,
             backward_damping: ctx.backward_damping,
+            low_mach_preconditioning: ctx.env.config.low_mach_preconditioning,
         };
         lu_sgs_sweep_unstructured_typed(
             fields,
