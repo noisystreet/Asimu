@@ -154,7 +154,7 @@ let result = solver.run(&mesh)?;
 | `UnstructuredCell` | 单个非结构单元（`kind` + 全局节点索引） |
 | `UnstructuredMesh3d` | 混合单元非结构 3D 网格；构造期完成面拓扑（owner/neighbor）、体积与面度量 |
 
-**`UnstructuredMesh3d::new(name, points, cells)`**：节点顺序遵循 VTK；面合并按排序后的节点键（三角↔三角、四边↔四边）；非流形（≥3 单元共面）返回 `Mesh` 错误。Tier 1 读入：CGNS unstructured zone、VTU。非结构 case 支持单域无粘 Euler（一阶或 `reconstruction = muscl` 对应的**二阶线性重构** + `unstructured_limiter = barth_jespersen | venkatakrishnan`）、IDWLS 粘性梯度与 Navier-Stokes 粘性通量、含粘性抛物项的 local time step、显式 Euler/RK4、对角 LU-SGS 与按 CellId 拓扑邻接的 LU-SGS sweep、稳态 matrix-free GMRES（`scalar_diagonal` / `cell_block_diagonal` / `lusgs_sweep` / `block_lusgs` 预条件，CPU f64；NS 块预条件含粘性抛物谱半径近似；f32 暂不支持粘性 GMRES 与 sweep 类预条件；块预条件须一阶无粘）；非结构 CGNS 流场写出暂未实现。术语与算法见 [adr/0012-unstructured-gradient-limiters.md](adr/0012-unstructured-gradient-limiters.md)。
+**`UnstructuredMesh3d::new(name, points, cells)`**：节点顺序遵循 VTK；面合并按排序后的节点键（三角↔三角、四边↔四边）；非流形（≥3 单元共面）返回 `Mesh` 错误。Tier 1 读入：CGNS unstructured zone、VTU。非结构 case 支持单域无粘 Euler（一阶或 `reconstruction = muscl` 对应的**二阶线性重构** + `unstructured_limiter = barth_jespersen | venkatakrishnan`）、IDWLS 粘性梯度与 Navier-Stokes 粘性通量、含粘性抛物项的 local time step、显式 Euler/RK4、对角 LU-SGS 与按 CellId 拓扑邻接的 LU-SGS sweep、稳态 matrix-free GMRES（`scalar_diagonal` / `cell_block_diagonal` / `lusgs_sweep` / `block_lusgs` 预条件，CPU f64；NS `block_lusgs` 预条件含分量化粘性抛物谱半径近似：密度不加粘性扩散，动量/能量分别使用 \(4\nu/3\) 与 \(\gamma\nu/\mathrm{Pr}\)；f32 暂不支持粘性 GMRES 与 sweep 类预条件；块预条件须一阶无粘）；非结构 CGNS 流场写出暂未实现。术语与算法见 [adr/0012-unstructured-gradient-limiters.md](adr/0012-unstructured-gradient-limiters.md)。
 
 | `write_vts(&StructuredMesh, &Path) -> Result<()>` | 写出 appended 二进制 VTS |
 

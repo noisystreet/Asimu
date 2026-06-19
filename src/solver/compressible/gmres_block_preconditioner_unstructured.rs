@@ -21,7 +21,6 @@ use crate::field::{max_physical_increment_scale, state_after_increment};
 use crate::solver::compressible::gmres_implicit_3d::{
     CONSERVED_COMPONENTS_3D, component_basis_increment, conserved_component_scales,
 };
-use crate::solver::compressible::spectral_radius::cell_viscous_diffusivity_max;
 
 use super::gmres_block_preconditioner_unstructured_math::{
     block_slice, block_vector_product, cell_vector, subtract_block_product,
@@ -30,8 +29,14 @@ use super::gmres_block_preconditioner_unstructured_math::{
 use super::gmres_block_preconditioner_unstructured_state::{
     restore_cell_primitive, write_cell_primitive,
 };
+use super::gmres_block_preconditioner_unstructured_viscous::{
+    ViscousCellDiffusivity, add_component_sigma, add_viscous_off_diagonal,
+    local_viscous_diffusivity, viscous_component_sigma,
+};
 
-const PARABOLIC_SPECTRAL_FACTOR_3D: Real = 6.0;
+#[cfg(test)]
+#[path = "gmres_block_preconditioner_unstructured_tests.rs"]
+mod tests;
 
 struct UnstructuredCellBlockContext<'a> {
     mesh: &'a UnstructuredMesh3d,
@@ -43,7 +48,7 @@ struct UnstructuredCellBlockContext<'a> {
     ghosts: &'a BoundaryGhostBuffer,
     exec: &'a crate::exec::ExecutionContext,
     inviscid: &'a InviscidFluxConfig,
-    viscous_diffusivity: Option<&'a [Real]>,
+    viscous_diffusivity: Option<&'a [ViscousCellDiffusivity]>,
     fields: &'a ConservedFields,
     p_floor: Real,
     epsilon_rel: Real,
@@ -358,7 +363,7 @@ fn off_diagonal_block(
     primitives: &mut PrimitiveFields,
     row_cell: usize,
     source_cell: usize,
-    viscous_coupling: Real,
+    viscous_coupling: [Real; CONSERVED_COMPONENTS_3D],
 ) -> Result<[Real; CONSERVED_COMPONENTS_3D * CONSERVED_COMPONENTS_3D]> {
     let base_state = ctx.fields.cell_state(source_cell)?;
     let base_primitive = primitives.cell_primitive(source_cell);
@@ -416,66 +421,48 @@ fn off_diagonal_block(
     Ok(block)
 }
 
-fn local_viscous_diffusivity(
-    primitives: &PrimitiveFields,
-    eos: &IdealGasEoS,
-    viscous: Option<&ViscousPhysicsConfig>,
-) -> Result<Option<Vec<Real>>> {
-    viscous
-        .map(|config| cell_viscous_diffusivity_max(primitives, eos, config))
-        .transpose()
-}
-
 fn interior_viscous_coupling(
     ctx: &UnstructuredCellBlockContext<'_>,
     cell: usize,
     area: Real,
     volume: Real,
-) -> Real {
+) -> [Real; CONSERVED_COMPONENTS_3D] {
     let Some(diffusivity) = ctx.viscous_diffusivity else {
-        return 0.0;
+        return [0.0; CONSERVED_COMPONENTS_3D];
     };
-    viscous_face_sigma(diffusivity[cell], area, volume)
+    viscous_component_sigma(diffusivity[cell], area, volume)
 }
 
-fn cell_viscous_diagonal_sigma(ctx: &UnstructuredCellBlockContext<'_>, cell: usize) -> Real {
+fn cell_viscous_diagonal_sigma(
+    ctx: &UnstructuredCellBlockContext<'_>,
+    cell: usize,
+) -> [Real; CONSERVED_COMPONENTS_3D] {
     if ctx.viscous_diffusivity.is_none() {
-        return 0.0;
+        return [0.0; CONSERVED_COMPONENTS_3D];
     }
-    let mut sigma = 0.0;
+    let mut sigma = [0.0; CONSERVED_COMPONENTS_3D];
     for &face_idx in &ctx.incidence.interior_as_owner[cell] {
         let face = &ctx.topology.interior[face_idx];
-        sigma += interior_viscous_coupling(ctx, cell, face.area, face.owner_volume);
+        add_component_sigma(
+            &mut sigma,
+            interior_viscous_coupling(ctx, cell, face.area, face.owner_volume),
+        );
     }
     for &face_idx in &ctx.incidence.interior_as_neighbor[cell] {
         let face = &ctx.topology.interior[face_idx];
-        sigma += interior_viscous_coupling(ctx, cell, face.area, face.neighbor_volume);
+        add_component_sigma(
+            &mut sigma,
+            interior_viscous_coupling(ctx, cell, face.area, face.neighbor_volume),
+        );
     }
     for &face_idx in &ctx.incidence.boundary_faces[cell] {
         let face = &ctx.topology.boundary[face_idx];
-        sigma += interior_viscous_coupling(ctx, cell, face.area, face.owner_volume);
+        add_component_sigma(
+            &mut sigma,
+            interior_viscous_coupling(ctx, cell, face.area, face.owner_volume),
+        );
     }
     sigma
-}
-
-fn viscous_face_sigma(diffusivity: Real, area: Real, volume: Real) -> Real {
-    if diffusivity > 0.0 && area > Real::EPSILON && volume > 1.0e-30 {
-        PARABOLIC_SPECTRAL_FACTOR_3D * diffusivity * area * area / (volume * volume)
-    } else {
-        0.0
-    }
-}
-
-fn add_viscous_off_diagonal(
-    block: &mut [Real; CONSERVED_COMPONENTS_3D * CONSERVED_COMPONENTS_3D],
-    coupling: Real,
-) {
-    if coupling <= 0.0 {
-        return;
-    }
-    for component in 0..CONSERVED_COMPONENTS_3D {
-        block[component * CONSERVED_COMPONENTS_3D + component] -= coupling;
-    }
 }
 
 fn row_entries<'a>(
@@ -744,12 +731,12 @@ fn write_block_column(
     col: usize,
     dt_cell: Real,
     jv: [Real; CONSERVED_COMPONENTS_3D],
-    viscous_diagonal_sigma: Real,
+    viscous_diagonal_sigma: [Real; CONSERVED_COMPONENTS_3D],
 ) {
     let block_offset = cell * CONSERVED_COMPONENTS_3D * CONSERVED_COMPONENTS_3D;
     for row in 0..CONSERVED_COMPONENTS_3D {
         let diagonal = if row == col {
-            1.0 / dt_cell + viscous_diagonal_sigma
+            1.0 / dt_cell + viscous_diagonal_sigma[row]
         } else {
             0.0
         };

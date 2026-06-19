@@ -6,6 +6,8 @@ mod gmres_block_preconditioner_unstructured;
 mod gmres_block_preconditioner_unstructured_math;
 #[path = "gmres_block_preconditioner_unstructured_state.rs"]
 mod gmres_block_preconditioner_unstructured_state;
+#[path = "gmres_block_preconditioner_unstructured_viscous.rs"]
+mod gmres_block_preconditioner_unstructured_viscous;
 #[path = "gmres_implicit_unstructured_typed.rs"]
 mod gmres_implicit_unstructured_typed;
 #[path = "gmres_lusgs_sweep_preconditioner_unstructured.rs"]
