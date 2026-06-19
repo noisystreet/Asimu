@@ -53,6 +53,7 @@
 | [low_mach_preconditioning.md](low_mach_preconditioning.md) | `solver/compressible/unstructured_*` | v1.x | **P1–P2 部分实现（CPU）** | Weiss & Smith (1995)；Turkel (1999)；Guillard & Viozat (1999) |
 | [low_mach_ab_hex_vortex.md](low_mach_ab_hex_vortex.md) | `output/case_hex_votexstreet` | v1.x | **实验记录（A/B）** | 内部探针对比 |
 | [low_mach_cutoff_sweep_hex_vortex.md](low_mach_cutoff_sweep_hex_vortex.md) | `output/case_hex_votexstreet` | v1.x | **实验记录（M_cut 扫参）** | P1 cutoff 扫参 |
+| [low_mach_p2_hex_vortex.md](low_mach_p2_hex_vortex.md) | `output/case_hex_votexstreet` | v1.x | **实验记录（P2 验证）** | 扫掠耦合一致性 |
 | [nondimensional.md](nondimensional.md) | `physics` / `io` / BC | v1.x | **已实现** | Toro (2009) Ch. 1；Anderson (1995) |
 | [structured_gradients.md](structured_gradients.md) | `discretization/gradient` | v1.x | **已实现** | Vinokur (1989)；Ferziger et al. Ch. 8 |
 | [curvilinear_metrics.md](curvilinear_metrics.md) | `mesh/metrics` | v1.x | **规划** | Vinokur (1989)；CFL3D TM-2010-216758 |
