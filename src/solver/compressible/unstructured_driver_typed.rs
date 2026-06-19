@@ -223,19 +223,29 @@ pub fn run_unstructured_typed_with_observer<T: UnstructuredComputeBackend>(
         let step = advance_unstructured_step_typed(&mut env, fields, &mut work)?;
         let mut step = step;
         let stop = control.finalize_step(&mut step);
-        let time_scale = env
-            .config
-            .reference
-            .map(|reference| reference.time_scale())
-            .unwrap_or(1.0);
-        let dt_s = format!("{}s", format_log_sci4(step.dt * time_scale));
-        let t_s = format!("{}s", format_log_sci4(step.physical_time * time_scale));
-        info!(
-            step = step.step,
-            dt = %dt_s,
-            t = %t_s,
-            cfl = %format_log_fixed5(step.cfl),
-        );
+        if env.config.time_scheme == TimeIntegrationScheme::DualTime {
+            let time_scale = env
+                .config
+                .reference
+                .map(|reference| reference.time_scale())
+                .unwrap_or(1.0);
+            let dt_s = format!("{}s", format_log_sci4(step.dt * time_scale));
+            let t_s = format!("{}s", format_log_sci4(step.physical_time * time_scale));
+            info!(
+                step = step.step,
+                dt = %dt_s,
+                t = %t_s,
+                cfl = %format_log_fixed5(step.cfl),
+            );
+        } else {
+            info!(
+                step = step.step,
+                dt = %format_log_sci4(step.dt),
+                t = %format_log_sci4(step.physical_time),
+                log10_residual = %format_log_fixed4(step.residual_log10),
+                cfl = %format_log_fixed5(step.cfl),
+            );
+        }
         history.push(step);
         unstructured_typed_observer_post_step(
             &env,
