@@ -3,7 +3,8 @@
 use std::time::Instant;
 
 use super::gmres_block_preconditioner_unstructured::{
-    UnstructuredCellBlockPreconditionerBuild, build_cell_block_preconditioner_unstructured,
+    UnstructuredBlockLusgsPreconditioner, UnstructuredCellBlockPreconditionerBuild,
+    build_block_lusgs_preconditioner_unstructured, build_cell_block_preconditioner_unstructured,
 };
 use super::gmres_lusgs_sweep_preconditioner_unstructured::{
     LusgsSweepUnstructuredGmresPreconditioner, LusgsSweepUnstructuredGmresPreconditionerBuild,
@@ -37,6 +38,7 @@ enum UnstructuredGmresPreconditioner {
     Scalar(LusgsDiagonalPreconditioner),
     CellBlock(CellBlockDiagonalPreconditioner),
     LusgsSweep(Box<LusgsSweepUnstructuredGmresPreconditioner>),
+    BlockLusgs(Box<UnstructuredBlockLusgsPreconditioner>),
 }
 
 impl Preconditioner for UnstructuredGmresPreconditioner {
@@ -45,6 +47,7 @@ impl Preconditioner for UnstructuredGmresPreconditioner {
             Self::Scalar(p) => p.dimension(),
             Self::CellBlock(p) => p.dimension(),
             Self::LusgsSweep(p) => p.dimension(),
+            Self::BlockLusgs(p) => p.dimension(),
         }
     }
 
@@ -53,6 +56,7 @@ impl Preconditioner for UnstructuredGmresPreconditioner {
             Self::Scalar(p) => p.apply(rhs, out),
             Self::CellBlock(p) => p.apply(rhs, out),
             Self::LusgsSweep(p) => p.apply(rhs, out),
+            Self::BlockLusgs(p) => p.apply(rhs, out),
         }
     }
 }
@@ -179,6 +183,7 @@ fn build_unstructured_gmres_preconditioner<T: ComputeFloat>(
                         fields: &fields_f64,
                         primitives: &mut primitives_f64,
                         inviscid: env.config.inviscid,
+                        viscous: env.config.viscous,
                         dt,
                         p_floor,
                         epsilon_rel: config.epsilon,
@@ -206,6 +211,35 @@ fn build_unstructured_gmres_preconditioner<T: ComputeFloat>(
                         omega: lu_sgs.omega,
                         backward_damping: lu_sgs.sweep_backward_damping,
                         inv_dt_phys: 0.0,
+                    },
+                )?,
+            ))
+        }
+        GmresPreconditionerKind::BlockLusgs => {
+            if T::PRECISION != ComputePrecision::F64 {
+                return Err(AsimuError::Config(
+                    "非结构 gmres_preconditioner = \"block_lusgs\" 暂仅支持 compute_precision = \"f64\""
+                        .to_string(),
+                ));
+            }
+            let fields_f64 = fields.cast_real()?;
+            let mut primitives_f64 = work.primitives.cast_real()?;
+            UnstructuredGmresPreconditioner::BlockLusgs(Box::new(
+                build_block_lusgs_preconditioner_unstructured(
+                    UnstructuredCellBlockPreconditionerBuild {
+                        mesh: env.config.mesh,
+                        eos: env.config.eos,
+                        patches: env.config.patches,
+                        topology: &work.mesh_cache.face_topology,
+                        ghosts: &work.ghosts,
+                        exec: &work.exec,
+                        fields: &fields_f64,
+                        primitives: &mut primitives_f64,
+                        inviscid: env.config.inviscid,
+                        viscous: env.config.viscous,
+                        dt,
+                        p_floor,
+                        epsilon_rel: config.epsilon,
                     },
                 )?,
             ))

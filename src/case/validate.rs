@@ -225,11 +225,13 @@ fn validate_f32_gmres_time(case: &CaseSpec) -> Result<()> {
     if case.physics.viscous.is_some() {
         return Err(f32_unsupported("f32 gmres 暂不支持粘性通量"));
     }
-    if case.time.resolved_gmres_config().preconditioner
-        == crate::solver::GmresPreconditionerKind::LusgsSweep
-    {
+    if matches!(
+        case.time.resolved_gmres_config().preconditioner,
+        crate::solver::GmresPreconditionerKind::LusgsSweep
+            | crate::solver::GmresPreconditionerKind::BlockLusgs
+    ) {
         return Err(f32_unsupported(
-            "f32 非结构 gmres 暂不支持 gmres_preconditioner = lusgs_sweep",
+            "f32 非结构 gmres 暂不支持 gmres_preconditioner = lusgs_sweep / block_lusgs",
         ));
     }
     Ok(())
@@ -299,15 +301,18 @@ fn validate_unstructured_gmres_time(case: &CaseSpec) -> Result<()> {
             "非结构 time.scheme = \"gmres\" 须配合 local_time_step = true".to_string(),
         ));
     }
-    if case.time.resolved_gmres_config().preconditioner
-        == crate::solver::GmresPreconditionerKind::CellBlockDiagonal
-    {
+    let preconditioner = case.time.resolved_gmres_config().preconditioner;
+    if matches!(
+        preconditioner,
+        crate::solver::GmresPreconditionerKind::CellBlockDiagonal
+            | crate::solver::GmresPreconditionerKind::BlockLusgs
+    ) {
         let disc = case.compressible_discretization()?;
         if disc.inviscid().reconstruction != ReconstructionKind::FirstOrder {
-            return Err(AsimuError::Config(
-                "非结构 gmres_preconditioner = \"cell_block_diagonal\" 暂要求 reconstruction = first_order"
-                    .to_string(),
-            ));
+            return Err(AsimuError::Config(format!(
+                "非结构 gmres_preconditioner = \"{}\" 暂要求 reconstruction = first_order",
+                preconditioner.as_str()
+            )));
         }
     }
     Ok(())

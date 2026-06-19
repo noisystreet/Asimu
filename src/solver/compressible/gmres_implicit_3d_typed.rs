@@ -79,6 +79,12 @@ impl CompressibleEulerSolver {
                         .to_string(),
                 ));
             }
+            GmresPreconditionerKind::BlockLusgs => {
+                return Err(crate::error::AsimuError::Config(
+                    "结构化 GMRES 暂不支持 gmres_preconditioner = \"block_lusgs\"（请用非结构路径）"
+                        .to_string(),
+                ));
+            }
         };
         let preconditioner_build_ms = elapsed_ms(preconditioner_start);
         let zero_state = ConservedState {

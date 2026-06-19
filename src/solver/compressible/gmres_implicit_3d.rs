@@ -202,6 +202,7 @@ pub enum GmresPreconditionerKind {
     ScalarDiagonal,
     CellBlockDiagonal,
     LusgsSweep,
+    BlockLusgs,
 }
 
 impl GmresPreconditionerKind {
@@ -210,8 +211,9 @@ impl GmresPreconditionerKind {
             "scalar" | "scalar_diagonal" | "lusgs_diagonal" => Ok(Self::ScalarDiagonal),
             "block" | "cell_block" | "cell_block_diagonal" => Ok(Self::CellBlockDiagonal),
             "lusgs_sweep" | "lu_sgs_sweep" | "sweep" => Ok(Self::LusgsSweep),
+            "block_lusgs" | "block_lu_sgs" | "block_lu-sgs" => Ok(Self::BlockLusgs),
             other => Err(AsimuError::Config(format!(
-                "不支持的 GMRES 预条件器 \"{other}\"（可用 scalar_diagonal / cell_block_diagonal / lusgs_sweep）"
+                "不支持的 GMRES 预条件器 \"{other}\"（可用 scalar_diagonal / cell_block_diagonal / lusgs_sweep / block_lusgs）"
             ))),
         }
     }
@@ -222,6 +224,7 @@ impl GmresPreconditionerKind {
             Self::ScalarDiagonal => "scalar_diagonal",
             Self::CellBlockDiagonal => "cell_block_diagonal",
             Self::LusgsSweep => "lusgs_sweep",
+            Self::BlockLusgs => "block_lusgs",
         }
     }
 }
@@ -371,6 +374,10 @@ pub(super) fn build_gmres_preconditioner(
         )),
         GmresPreconditionerKind::LusgsSweep => Err(AsimuError::Config(
             "结构化 GMRES 暂不支持 gmres_preconditioner = \"lusgs_sweep\"（请用非结构路径）"
+                .to_string(),
+        )),
+        GmresPreconditionerKind::BlockLusgs => Err(AsimuError::Config(
+            "结构化 GMRES 暂不支持 gmres_preconditioner = \"block_lusgs\"（请用非结构路径）"
                 .to_string(),
         )),
     }

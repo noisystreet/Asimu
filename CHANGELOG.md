@@ -19,7 +19,7 @@
 - **P3b CUDA f32 双时间步**：device \(U^n\) 快照、BDF1 存储项 kernel、LU-SGS 对角 `inv_dt_phys`；`validate` 放行 `backend=cuda` + `scheme=dual_time`；benchmark `unstructured_dual_time_freestream/case_cuda_f32.toml`；`#[ignore=gpu]` Euler/Navier-Stokes smoke。
 - **CUDA f32 非结构 LU-SGS 双扫**：`lusgs_sweep_forward_color_f32` / `lusgs_sweep_backward_color_f32` 图着色 wavefront 并行前/后扫（生产路径）；保留 `lusgs_sweep_unstructured_serial_f32` 对照；host `stabilize_sweep_update_f32`；`lu_sgs` / `dual_time` + `lusgs_sweep=true` validate 与单四面体 GPU smoke。
 - **CUDA f32 SLAU2 无粘通量**：`inviscid_first_order_f32.cu` 增加 `flux_scheme=2` device kernel；装配层路由 `FluxScheme::Slau2`；单四面体 CPU/CUDA 对照 smoke（`#[ignore=gpu]`）。
-- **非结构 GMRES（P4）**：`time.scheme = "gmres"` + `local_time_step = true` 在非结构 3D 可压缩 CPU 路径可用；预条件支持 `scalar_diagonal`、`cell_block_diagonal`（须 `reconstruction = first_order`）、`lusgs_sweep`（f64；复用 `[time]` LU-SGS `omega` / `lusgs_sweep_backward_damping`）；`inner_iterations` 记录每步 GMRES 线性迭代次数。
+- **非结构 GMRES（P4）**：`time.scheme = "gmres"` + `local_time_step = true` 在非结构 3D 可压缩 CPU 路径可用；预条件支持 `scalar_diagonal`、`cell_block_diagonal`（须 `reconstruction = first_order`；NS case 叠加粘性抛物对角谱半径）、`lusgs_sweep`（f64；复用 `[time]` LU-SGS `omega` / `lusgs_sweep_backward_damping`）、`block_lusgs`（f64；一阶无粘 5×5 面块双扫，NS case 叠加粘性抛物对角与内面近邻近似）；`inner_iterations` 记录每步 GMRES 线性迭代次数。
 
 ### Changed
 
