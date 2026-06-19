@@ -14,6 +14,7 @@
 
 ### Added
 
+- **GMRES/LU-SGS 后续规划**：`docs/theory/linear_gmres.md` 记录非结构 `block_lusgs` 的后续路线：构造缓存、ordering/coloring、line-implicit BLU-SGS、完整粘性块、FGMRES 与 BILU/ILU 评估。
 - **`[output].restart`**：3D 可压缩算例结束自动写出 restart TOML（单域 version=1 / 多块 version=2），精度与 `[numerics]` 一致。
 - **`[restart].path = "*.cgns"`（非结构单域）**：支持从 `flow.cgns` 读取 `Density`/`VelocityX/Y/Z`/`Pressure`（CellCenter）并转换为无量纲守恒初场；大规模算例可避免超大 TOML 解析开销。
 - **P3b CUDA f32 双时间步**：device \(U^n\) 快照、BDF1 存储项 kernel、LU-SGS 对角 `inv_dt_phys`；`validate` 放行 `backend=cuda` + `scheme=dual_time`；benchmark `unstructured_dual_time_freestream/case_cuda_f32.toml`；`#[ignore=gpu]` Euler/Navier-Stokes smoke。
