@@ -5,16 +5,17 @@ use crate::core::Real;
 use crate::discretization::compressible::residual::{
     InviscidAssemblyUnstructuredParams, is_degenerate_volume,
 };
+use crate::discretization::unstructured_face_cache::LsqRhsCellIncidence;
 use crate::discretization::{
     BoundaryGhostBuffer, InviscidFlux, InviscidFluxConfig, ReconstructionKind,
     UnstructuredFaceTopology, face_inviscid_flux_first_order_boundary_soa,
     face_inviscid_flux_first_order_interior_soa,
 };
 use crate::error::{AsimuError, Result};
-use crate::field::{ConservedFields, PrimitiveFields, primitive_from_conserved_relaxed};
+use crate::field::{ConservedFields, PrimitiveFields};
 use crate::linalg::{CellBlockDiagonalPreconditioner, Preconditioner, ensure_vector_len};
 use crate::mesh::UnstructuredMesh3d;
-use crate::physics::{ConservedState, IdealGasEoS, PrimitiveState, ViscousPhysicsConfig};
+use crate::physics::{IdealGasEoS, ViscousPhysicsConfig};
 
 use crate::field::{max_physical_increment_scale, state_after_increment};
 use crate::solver::compressible::gmres_implicit_3d::{
@@ -22,19 +23,18 @@ use crate::solver::compressible::gmres_implicit_3d::{
 };
 use crate::solver::compressible::spectral_radius::cell_viscous_diffusivity_max;
 
-const PARABOLIC_SPECTRAL_FACTOR_3D: Real = 6.0;
+use super::gmres_block_preconditioner_unstructured_state::{
+    restore_cell_primitive, write_cell_primitive,
+};
 
-struct CellFaceIncidence {
-    interior: Vec<Vec<usize>>,
-    boundary: Vec<Vec<usize>>,
-}
+const PARABOLIC_SPECTRAL_FACTOR_3D: Real = 6.0;
 
 struct UnstructuredCellBlockContext<'a> {
     mesh: &'a UnstructuredMesh3d,
     eos: &'a IdealGasEoS,
     patches: &'a BoundarySet,
     topology: &'a UnstructuredFaceTopology,
-    incidence: &'a CellFaceIncidence,
+    incidence: &'a LsqRhsCellIncidence,
     volumes: &'a [Real],
     ghosts: &'a BoundaryGhostBuffer,
     exec: &'a crate::exec::ExecutionContext,
@@ -56,6 +56,7 @@ pub(super) struct UnstructuredCellBlockPreconditionerBuild<'a> {
     pub primitives: &'a mut PrimitiveFields,
     pub inviscid: &'a InviscidFluxConfig,
     pub viscous: Option<&'a ViscousPhysicsConfig>,
+    pub incidence: &'a LsqRhsCellIncidence,
     pub dt: &'a [Real],
     pub p_floor: Real,
     pub epsilon_rel: Real,
@@ -75,6 +76,7 @@ pub(super) fn build_cell_block_preconditioner_unstructured(
         primitives,
         inviscid,
         viscous,
+        incidence,
         dt,
         p_floor,
         epsilon_rel,
@@ -85,7 +87,6 @@ pub(super) fn build_cell_block_preconditioner_unstructured(
         ));
     }
     let n = fields.num_cells();
-    let incidence = build_cell_face_incidence(topology, n);
     let volumes = mesh.cell_volumes();
     let viscous_diffusivity = local_viscous_diffusivity(primitives, eos, viscous)?;
     let mut blocks = vec![0.0; n * CONSERVED_COMPONENTS_3D * CONSERVED_COMPONENTS_3D];
@@ -94,7 +95,7 @@ pub(super) fn build_cell_block_preconditioner_unstructured(
         eos,
         patches,
         topology,
-        incidence: &incidence,
+        incidence,
         volumes: &volumes,
         ghosts,
         exec,
@@ -124,6 +125,7 @@ pub(super) fn build_block_lusgs_preconditioner_unstructured(
         primitives,
         inviscid,
         viscous,
+        incidence,
         dt,
         p_floor,
         epsilon_rel,
@@ -134,7 +136,6 @@ pub(super) fn build_block_lusgs_preconditioner_unstructured(
         ));
     }
     let n = fields.num_cells();
-    let incidence = build_cell_face_incidence(topology, n);
     let volumes = mesh.cell_volumes();
     let viscous_diffusivity = local_viscous_diffusivity(primitives, eos, viscous)?;
     let ctx = UnstructuredCellBlockContext {
@@ -142,7 +143,7 @@ pub(super) fn build_block_lusgs_preconditioner_unstructured(
         eos,
         patches,
         topology,
-        incidence: &incidence,
+        incidence,
         volumes: &volumes,
         ghosts,
         exec,
@@ -157,27 +158,38 @@ pub(super) fn build_block_lusgs_preconditioner_unstructured(
         fill_cell_block(&mut diagonal_blocks, &ctx, primitives, cell, dt_cell)?;
     }
     let off_diagonal = fill_off_diagonal_blocks(&ctx, primitives)?;
-    UnstructuredBlockLusgsPreconditioner::from_blocks(diagonal_blocks, off_diagonal)
+    UnstructuredBlockLusgsPreconditioner::from_blocks(
+        diagonal_blocks,
+        off_diagonal.row_offsets,
+        off_diagonal.entries,
+    )
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct UnstructuredBlockLusgsPreconditioner {
     diagonal_blocks: Vec<Real>,
     inverse_diagonal_blocks: Vec<Real>,
-    row_blocks: Vec<Vec<BlockLusgsEntry>>,
+    row_offsets: Vec<usize>,
+    entries: Vec<BlockLusgsEntry>,
     forward: Vec<Real>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 struct BlockLusgsEntry {
     col: usize,
     block: [Real; CONSERVED_COMPONENTS_3D * CONSERVED_COMPONENTS_3D],
 }
 
+struct BlockLusgsRows {
+    row_offsets: Vec<usize>,
+    entries: Vec<BlockLusgsEntry>,
+}
+
 impl UnstructuredBlockLusgsPreconditioner {
     fn from_blocks(
         diagonal_blocks: Vec<Real>,
-        row_blocks: Vec<Vec<BlockLusgsEntry>>,
+        row_offsets: Vec<usize>,
+        entries: Vec<BlockLusgsEntry>,
     ) -> Result<Self> {
         let block_entries = CONSERVED_COMPONENTS_3D * CONSERVED_COMPONENTS_3D;
         if diagonal_blocks.is_empty() || diagonal_blocks.len() % block_entries != 0 {
@@ -186,7 +198,8 @@ impl UnstructuredBlockLusgsPreconditioner {
             ));
         }
         let num_cells = diagonal_blocks.len() / block_entries;
-        if row_blocks.len() != num_cells {
+        if row_offsets.len() != num_cells + 1 || row_offsets.last().copied() != Some(entries.len())
+        {
             return Err(AsimuError::Linalg(
                 "block_lusgs 行块数量与对角块数量不一致".to_string(),
             ));
@@ -200,24 +213,14 @@ impl UnstructuredBlockLusgsPreconditioner {
         Ok(Self {
             diagonal_blocks,
             inverse_diagonal_blocks,
-            row_blocks,
+            row_offsets,
+            entries,
             forward: vec![0.0; num_cells * CONSERVED_COMPONENTS_3D],
         })
     }
 
     fn num_cells(&self) -> usize {
-        self.row_blocks.len()
-    }
-
-    fn diagonal_block(&self, cell: usize) -> &[Real] {
-        let start = cell * CONSERVED_COMPONENTS_3D * CONSERVED_COMPONENTS_3D;
-        &self.diagonal_blocks[start..start + CONSERVED_COMPONENTS_3D * CONSERVED_COMPONENTS_3D]
-    }
-
-    fn inverse_diagonal_block(&self, cell: usize) -> &[Real] {
-        let start = cell * CONSERVED_COMPONENTS_3D * CONSERVED_COMPONENTS_3D;
-        &self.inverse_diagonal_blocks
-            [start..start + CONSERVED_COMPONENTS_3D * CONSERVED_COMPONENTS_3D]
+        self.row_offsets.len().saturating_sub(1)
     }
 }
 
@@ -229,39 +232,39 @@ impl Preconditioner for UnstructuredBlockLusgsPreconditioner {
     fn apply(&mut self, rhs: &[Real], out: &mut [Real]) -> Result<()> {
         ensure_vector_len(rhs, self.dimension(), "block_lusgs rhs")?;
         ensure_vector_len(out, self.dimension(), "block_lusgs out")?;
-        for cell in 0..self.num_cells() {
+        let num_cells = self.num_cells();
+        for cell in 0..num_cells {
             let mut local = cell_vector(rhs, cell);
-            for entry in self.row_blocks[cell]
-                .iter()
-                .filter(|entry| entry.col < cell)
-            {
-                subtract_block_product(
-                    &mut local,
-                    &entry.block,
-                    &cell_vector(&self.forward, entry.col),
-                );
+            for entry in row_entries(&self.entries, &self.row_offsets, cell) {
+                if entry.col < cell {
+                    subtract_block_product(
+                        &mut local,
+                        &entry.block,
+                        &cell_vector(&self.forward, entry.col),
+                    );
+                }
             }
-            let inverse_diagonal = fixed_block(self.inverse_diagonal_block(cell));
             write_cell_vector_from_block_product(
                 &mut self.forward,
                 cell,
-                &inverse_diagonal,
+                block_slice(&self.inverse_diagonal_blocks, cell),
                 &local,
             );
         }
-        for cell in (0..self.num_cells()).rev() {
-            let mut local =
-                block_vector_product(self.diagonal_block(cell), &cell_vector(&self.forward, cell));
-            for entry in self.row_blocks[cell]
-                .iter()
-                .filter(|entry| entry.col > cell)
-            {
-                subtract_block_product(&mut local, &entry.block, &cell_vector(out, entry.col));
+        for cell in (0..num_cells).rev() {
+            let mut local = block_vector_product(
+                block_slice(&self.diagonal_blocks, cell),
+                &cell_vector(&self.forward, cell),
+            );
+            for entry in row_entries(&self.entries, &self.row_offsets, cell) {
+                if entry.col > cell {
+                    subtract_block_product(&mut local, &entry.block, &cell_vector(out, entry.col));
+                }
             }
             write_cell_vector_from_block_product(
                 out,
                 cell,
-                self.inverse_diagonal_block(cell),
+                block_slice(&self.inverse_diagonal_blocks, cell),
                 &local,
             );
         }
@@ -272,28 +275,68 @@ impl Preconditioner for UnstructuredBlockLusgsPreconditioner {
 fn fill_off_diagonal_blocks(
     ctx: &UnstructuredCellBlockContext<'_>,
     primitives: &mut PrimitiveFields,
-) -> Result<Vec<Vec<BlockLusgsEntry>>> {
+) -> Result<BlockLusgsRows> {
     let n = ctx.fields.num_cells();
-    let mut rows = vec![Vec::new(); n];
+    let row_offsets = block_lusgs_row_offsets(ctx, n);
+    let mut next_offsets = row_offsets.clone();
+    let mut entries = vec![BlockLusgsEntry::default(); ctx.topology.interior.len() * 2];
     for face in &ctx.topology.interior {
         let owner_viscous =
             interior_viscous_coupling(ctx, face.owner, face.area, face.owner_volume);
         let owner_block =
             off_diagonal_block(ctx, primitives, face.owner, face.neighbor, owner_viscous)?;
-        rows[face.owner].push(BlockLusgsEntry {
-            col: face.neighbor,
-            block: owner_block,
-        });
+        write_block_lusgs_entry(
+            &mut entries,
+            &mut next_offsets,
+            face.owner,
+            BlockLusgsEntry {
+                col: face.neighbor,
+                block: owner_block,
+            },
+        );
         let neighbor_viscous =
             interior_viscous_coupling(ctx, face.neighbor, face.area, face.neighbor_volume);
         let neighbor_block =
             off_diagonal_block(ctx, primitives, face.neighbor, face.owner, neighbor_viscous)?;
-        rows[face.neighbor].push(BlockLusgsEntry {
-            col: face.owner,
-            block: neighbor_block,
-        });
+        write_block_lusgs_entry(
+            &mut entries,
+            &mut next_offsets,
+            face.neighbor,
+            BlockLusgsEntry {
+                col: face.owner,
+                block: neighbor_block,
+            },
+        );
     }
-    Ok(rows)
+    Ok(BlockLusgsRows {
+        row_offsets,
+        entries,
+    })
+}
+
+fn block_lusgs_row_offsets(ctx: &UnstructuredCellBlockContext<'_>, n: usize) -> Vec<usize> {
+    let mut row_counts = vec![0usize; n];
+    for face in &ctx.topology.interior {
+        row_counts[face.owner] += 1;
+        row_counts[face.neighbor] += 1;
+    }
+    let mut row_offsets = Vec::with_capacity(n + 1);
+    row_offsets.push(0);
+    for count in row_counts {
+        row_offsets.push(row_offsets.last().copied().unwrap_or(0) + count);
+    }
+    row_offsets
+}
+
+fn write_block_lusgs_entry(
+    entries: &mut [BlockLusgsEntry],
+    next_offsets: &mut [usize],
+    row: usize,
+    entry: BlockLusgsEntry,
+) {
+    let index = next_offsets[row];
+    entries[index] = entry;
+    next_offsets[row] += 1;
 }
 
 fn off_diagonal_block(
@@ -386,16 +429,15 @@ fn cell_viscous_diagonal_sigma(ctx: &UnstructuredCellBlockContext<'_>, cell: usi
         return 0.0;
     }
     let mut sigma = 0.0;
-    for &face_idx in &ctx.incidence.interior[cell] {
+    for &face_idx in &ctx.incidence.interior_as_owner[cell] {
         let face = &ctx.topology.interior[face_idx];
-        let volume = if face.owner == cell {
-            face.owner_volume
-        } else {
-            face.neighbor_volume
-        };
-        sigma += interior_viscous_coupling(ctx, cell, face.area, volume);
+        sigma += interior_viscous_coupling(ctx, cell, face.area, face.owner_volume);
     }
-    for &face_idx in &ctx.incidence.boundary[cell] {
+    for &face_idx in &ctx.incidence.interior_as_neighbor[cell] {
+        let face = &ctx.topology.interior[face_idx];
+        sigma += interior_viscous_coupling(ctx, cell, face.area, face.neighbor_volume);
+    }
+    for &face_idx in &ctx.incidence.boundary_faces[cell] {
         let face = &ctx.topology.boundary[face_idx];
         sigma += interior_viscous_coupling(ctx, cell, face.area, face.owner_volume);
     }
@@ -433,10 +475,17 @@ fn cell_vector(values: &[Real], cell: usize) -> [Real; CONSERVED_COMPONENTS_3D] 
     ]
 }
 
-fn fixed_block(block: &[Real]) -> [Real; CONSERVED_COMPONENTS_3D * CONSERVED_COMPONENTS_3D] {
-    let mut out = [0.0; CONSERVED_COMPONENTS_3D * CONSERVED_COMPONENTS_3D];
-    out.copy_from_slice(block);
-    out
+fn block_slice(blocks: &[Real], cell: usize) -> &[Real] {
+    let start = cell * CONSERVED_COMPONENTS_3D * CONSERVED_COMPONENTS_3D;
+    &blocks[start..start + CONSERVED_COMPONENTS_3D * CONSERVED_COMPONENTS_3D]
+}
+
+fn row_entries<'a>(
+    entries: &'a [BlockLusgsEntry],
+    row_offsets: &[usize],
+    cell: usize,
+) -> &'a [BlockLusgsEntry] {
+    &entries[row_offsets[cell]..row_offsets[cell + 1]]
 }
 
 fn subtract_block_product(
@@ -570,22 +619,6 @@ fn extract_fixed_inverse(
     inverse
 }
 
-fn build_cell_face_incidence(
-    topology: &UnstructuredFaceTopology,
-    n_cells: usize,
-) -> CellFaceIncidence {
-    let mut interior = vec![Vec::new(); n_cells];
-    let mut boundary = vec![Vec::new(); n_cells];
-    for (idx, face) in topology.interior.iter().enumerate() {
-        interior[face.owner].push(idx);
-        interior[face.neighbor].push(idx);
-    }
-    for (idx, bface) in topology.boundary.iter().enumerate() {
-        boundary[bface.owner].push(idx);
-    }
-    CellFaceIncidence { interior, boundary }
-}
-
 fn fill_cell_block(
     blocks: &mut [Real],
     ctx: &UnstructuredCellBlockContext<'_>,
@@ -595,6 +628,7 @@ fn fill_cell_block(
 ) -> Result<()> {
     let base_state = ctx.fields.cell_state(cell)?;
     let base_primitive = primitives.cell_primitive(cell);
+    let viscous_diagonal_sigma = cell_viscous_diagonal_sigma(ctx, cell);
     let base_local = local_inviscid_residual(
         cell,
         &inviscid_params(ctx, primitives),
@@ -633,14 +667,7 @@ fn fill_cell_block(
             ctx.volumes,
         )?;
         let jv = local_residual_difference(perturbed_local, base_local, eps);
-        write_block_column(
-            blocks,
-            cell,
-            col,
-            dt_cell,
-            jv,
-            cell_viscous_diagonal_sigma(ctx, cell),
-        );
+        write_block_column(blocks, cell, col, dt_cell, jv, viscous_diagonal_sigma);
     }
     restore_cell_primitive(primitives, cell, base_primitive);
     Ok(())
@@ -669,14 +696,14 @@ fn local_inviscid_residual(
     cell: usize,
     params: &InviscidAssemblyUnstructuredParams<'_>,
     topology: &UnstructuredFaceTopology,
-    incidence: &CellFaceIncidence,
+    incidence: &LsqRhsCellIncidence,
     volumes: &[Real],
 ) -> Result<[Real; CONSERVED_COMPONENTS_3D]> {
     let mut out = [0.0; CONSERVED_COMPONENTS_3D];
     if is_degenerate_volume(volumes[cell]) {
         return Ok(out);
     }
-    for &face_idx in &incidence.interior[cell] {
+    for &face_idx in &incidence.interior_as_owner[cell] {
         let face = &topology.interior[face_idx];
         if face.owner_rhs_scale == 0.0 && face.neighbor_rhs_scale == 0.0 {
             continue;
@@ -689,13 +716,24 @@ fn local_inviscid_residual(
             params.eos,
             params.config,
         )?;
-        if face.owner == cell {
-            add_flux_vector(&mut out, &flux, face.owner_rhs_scale);
-        } else if face.neighbor == cell {
-            add_flux_vector(&mut out, &flux, face.neighbor_rhs_scale);
-        }
+        add_flux_vector(&mut out, &flux, face.owner_rhs_scale);
     }
-    for &bidx in &incidence.boundary[cell] {
+    for &face_idx in &incidence.interior_as_neighbor[cell] {
+        let face = &topology.interior[face_idx];
+        if face.owner_rhs_scale == 0.0 && face.neighbor_rhs_scale == 0.0 {
+            continue;
+        }
+        let flux = face_inviscid_flux_first_order_interior_soa(
+            face.owner,
+            face.neighbor,
+            params.primitives,
+            face.normal,
+            params.eos,
+            params.config,
+        )?;
+        add_flux_vector(&mut out, &flux, face.neighbor_rhs_scale);
+    }
+    for &bidx in &incidence.boundary_faces[cell] {
         let bface = &topology.boundary[bidx];
         if bface.owner_rhs_scale == 0.0 {
             continue;
@@ -757,28 +795,4 @@ fn write_block_column(
         };
         blocks[block_offset + row * CONSERVED_COMPONENTS_3D + col] = diagonal - jv[row];
     }
-}
-
-fn write_cell_primitive(
-    primitives: &mut PrimitiveFields,
-    cell: usize,
-    state: &ConservedState,
-    eos: &IdealGasEoS,
-    p_floor: Real,
-) -> Result<()> {
-    let prim = primitive_from_conserved_relaxed(eos, state, p_floor)?;
-    primitives.density.values_mut()[cell] = prim.density;
-    primitives.pressure.values_mut()[cell] = prim.pressure;
-    primitives.velocity_x.values_mut()[cell] = prim.velocity[0];
-    primitives.velocity_y.values_mut()[cell] = prim.velocity[1];
-    primitives.velocity_z.values_mut()[cell] = prim.velocity[2];
-    Ok(())
-}
-
-fn restore_cell_primitive(primitives: &mut PrimitiveFields, cell: usize, prim: PrimitiveState) {
-    primitives.density.values_mut()[cell] = prim.density;
-    primitives.pressure.values_mut()[cell] = prim.pressure;
-    primitives.velocity_x.values_mut()[cell] = prim.velocity[0];
-    primitives.velocity_y.values_mut()[cell] = prim.velocity[1];
-    primitives.velocity_z.values_mut()[cell] = prim.velocity[2];
 }

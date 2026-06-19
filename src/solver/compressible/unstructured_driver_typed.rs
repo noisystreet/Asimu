@@ -2,6 +2,8 @@
 
 #[path = "gmres_block_preconditioner_unstructured.rs"]
 mod gmres_block_preconditioner_unstructured;
+#[path = "gmres_block_preconditioner_unstructured_state.rs"]
+mod gmres_block_preconditioner_unstructured_state;
 #[path = "gmres_implicit_unstructured_typed.rs"]
 mod gmres_implicit_unstructured_typed;
 #[path = "gmres_lusgs_sweep_preconditioner_unstructured.rs"]
