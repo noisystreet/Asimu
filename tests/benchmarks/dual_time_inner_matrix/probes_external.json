@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "description": "双时间步内层外部探针矩阵（大网格 / restart；默认文件内路径不存在时 skip）",
+  "probes": [
+    {
+      "id": "hex_vortex_no_restart_cpu_f64",
+      "case_path": "output/case_hex_votexstreet/case.toml",
+      "min_drop": 0.05,
+      "expect": "decrease",
+      "log_level": "info",
+      "skip_if_missing": true,
+      "note": "六面体涡街非定常；无 restart 或 freestream 初场"
+    },
+    {
+      "id": "hex_vortex_steady_restart_observe",
+      "case_path": "output/case_hex_votexstreet/case_steady.toml",
+      "expect": "observe_only",
+      "log_level": "info",
+      "skip_if_missing": true,
+      "note": "定常算例非 dual_time；仅作占位，需换成 dual_time + restart 探针 TOML"
+    }
+  ]
+}

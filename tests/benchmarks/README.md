@@ -12,6 +12,7 @@
 | `sod_1d/` | v1.x | Sod 激波管 vs 精确 Riemann 解 |
 | `unstructured_freestream/` | v0.2+ | 非结构均匀来流 RHS 近零（一阶 / 二阶线性重构 BJ·V） |
 | `unstructured_dual_time_freestream/` | v1.x | 非结构 `dual_time` 均匀来流内层收敛 smoke（f64 + f32 CPU；CUDA f32 见 `case_cuda_f32.toml`） |
+| `dual_time_inner_matrix/` | v1.x | 双时间步内层成败矩阵（CI 内置探针 + 外部 JSON） |
 | `unstructured_cuda_freestream/` | v1.3 | CUDA G1：f32 非结构一阶 Roe device kernel 端到端 smoke |
 | `channel_poiseuille/` | v0.3 | 不可压缩通道流 smoke V&V 骨架 |
 | `lid_driven_cavity_re100/` | v0.4 | 不可压缩 Re=100 顶盖方腔（16×16 稳态 SIMPLEC + Ghia V&V） |
