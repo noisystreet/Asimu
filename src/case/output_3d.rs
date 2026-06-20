@@ -386,6 +386,71 @@ fn prepare_multiblock_dimensional_flow_output(
     Ok((fields_out, eos_out, time_out, p_floor))
 }
 
+/// 由 `residual_csv` 路径推导默认 PNG 文件名（同目录、同 stem）。
+#[must_use]
+pub(crate) fn default_residual_plot_name(csv_name: &str) -> String {
+    let path = Path::new(csv_name);
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("residual");
+    match path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        Some(parent) => parent
+            .join(format!("{stem}.png"))
+            .to_string_lossy()
+            .into_owned(),
+        None => format!("{stem}.png"),
+    }
+}
+
+/// 写出残差 CSV 并绘制曲线图（`residual_plot` 未配置时使用默认 PNG 路径）。
+pub(crate) fn write_residual_csv_and_plot(
+    case: &CaseSpec,
+    csv_name: &str,
+    write_csv: impl FnOnce(&Path) -> Result<()>,
+) -> Result<Vec<PathBuf>> {
+    let Some(output) = &case.output else {
+        return Ok(Vec::new());
+    };
+    let mut written = Vec::new();
+    let path = resolve_case_output_path(case.case_dir.as_deref(), &output.dir, csv_name)?;
+    {
+        let _span = info_span!("write_residual_csv", path = %path.display()).entered();
+        write_csv(&path)?;
+    }
+    info!(path = %path.display(), "已写出残差 CSV");
+    written.push(path.clone());
+    written.extend(plot_residual_csv_output(
+        case,
+        &path,
+        csv_name,
+        output.residual_plot.as_deref(),
+    )?);
+    Ok(written)
+}
+
+fn plot_residual_csv_output(
+    case: &CaseSpec,
+    csv_path: &Path,
+    csv_name: &str,
+    plot_name: Option<&str>,
+) -> Result<Vec<PathBuf>> {
+    let Some(output) = &case.output else {
+        return Ok(Vec::new());
+    };
+    let plot_file = plot_name
+        .map(str::to_string)
+        .unwrap_or_else(|| default_residual_plot_name(csv_name));
+    let plot_path = resolve_case_output_path(case.case_dir.as_deref(), &output.dir, &plot_file)?;
+    let _span = info_span!("plot_residual", path = %plot_path.display()).entered();
+    if let Err(err) = plot_residual_csv(csv_path, &plot_path) {
+        warn!(error = %err, "残差曲线图未生成（需 python3 + matplotlib）");
+        return Ok(Vec::new());
+    }
+    info!(path = %plot_path.display(), "已写出残差曲线图");
+    Ok(vec![plot_path])
+}
+
 pub(crate) fn write_residual_outputs(
     case: &CaseSpec,
     history: &[CompressibleStepInfo],
@@ -394,29 +459,10 @@ pub(crate) fn write_residual_outputs(
     let Some(output) = &case.output else {
         return Ok(Vec::new());
     };
-    let mut written = Vec::new();
-    if let Some(name) = &output.residual_csv {
-        let path = resolve_case_output_path(case.case_dir.as_deref(), &output.dir, name)?;
-        {
-            let _span = info_span!("write_residual_csv", path = %path.display()).entered();
-            write_residual_csv(&path, history)?;
-        }
-        info!(path = %path.display(), "已写出残差 CSV");
-        written.push(path.clone());
-
-        if let Some(plot_name) = &output.residual_plot {
-            let plot_path =
-                resolve_case_output_path(case.case_dir.as_deref(), &output.dir, plot_name)?;
-            let _span = info_span!("plot_residual", path = %plot_path.display()).entered();
-            if let Err(err) = plot_residual_csv(&path, &plot_path) {
-                warn!(error = %err, "残差曲线图未生成（需 python3 + matplotlib）");
-            } else {
-                info!(path = %plot_path.display(), "已写出残差曲线图");
-                written.push(plot_path);
-            }
-        }
-    }
-    Ok(written)
+    let Some(name) = &output.residual_csv else {
+        return Ok(Vec::new());
+    };
+    write_residual_csv_and_plot(case, name, |path| write_residual_csv(path, history))
 }
 
 /// 由 `flow.cgns` 或 `snapshots/flow.cgns` 生成间隔输出文件名。
@@ -464,6 +510,15 @@ pub(crate) fn plot_residual_csv(csv: &Path, png: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_residual_plot_name_from_csv() {
+        assert_eq!(default_residual_plot_name("residual.csv"), "residual.png");
+        assert_eq!(
+            default_residual_plot_name("plots/residual.csv"),
+            "plots/residual.png"
+        );
+    }
 
     #[test]
     fn flow_snapshot_name_from_base() {

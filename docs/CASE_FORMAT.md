@@ -503,7 +503,7 @@ restart = "restart.toml"          # 可选；算例结束时写出 * 守恒量 r
 
 `solution_cgns` / `solution_vtk` 流场含：可压缩输出 `Density`、`VelocityX/Y/Z`、`Pressure`、`MachNumber`、`Temperature`；不可压缩输出 `Pressure`、`VelocityX/Y/Z`（结构化 CGNS 为 Vertex 插值，非结构 CGNS 与 VTK 均为单元中心）。多块 3D case 的最终流场与 `solution_every` 间隔快照均写为单个 CGNS 文件、每个 block 一个 Structured Zone；非结构单域 case 写为单个 Unstructured Zone（按 tet/hex/pyramid/prism 分固定类型 section）。
 
-配置 `residual_csv`（及可选 `residual_plot`）时，算例结束会写出残差 CSV 与曲线图；可压缩多步路径在 `solution_every` 间隔也会同步刷新。不可压缩 SIMPLEC/PISO 会在最终输出时写出逐步 pressure-velocity residual CSV；同时配置 `solution_cgns` 与 `solution_every` 时，还会写出 `flow_step000100.cgns` 形式的间隔快照。
+配置 `residual_csv` 时，算例结束会写出残差 CSV，并**默认**在同目录生成同名 PNG 曲线图（如 `residual.csv` → `residual.png`）；可用 `residual_plot = "custom.png"` 覆盖输出路径。需本机 `python3` 与 `matplotlib`；缺失时仅告警，不影响 CSV 写出。可压缩多步路径在 `solution_every` 间隔也会同步刷新 CSV 与曲线图。不可压缩 SIMPLEC/PISO 会在最终输出时写出逐步 pressure-velocity residual CSV；同时配置 `solution_cgns` 与 `solution_every` 时，还会写出 `flow_step000100.cgns` 形式的间隔快照。
 
 ### 7.2 `[observability]` — Chrome trace
 

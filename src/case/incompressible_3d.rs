@@ -595,24 +595,12 @@ pub(crate) fn write_incompressible_residual_outputs(
     };
     let mut written = Vec::new();
     if let Some(name) = &output.residual_csv {
-        let path = resolve_case_output_path(case.case_dir.as_deref(), &output.dir, name)?;
-        write_incompressible_residual_csv(
-            &path,
-            history,
-            incompressible_physical_time_scale(case),
-        )?;
-        info!(path = %path.display(), "已写出不可压缩残差 CSV");
-        written.push(path.clone());
-        if let Some(plot_name) = &output.residual_plot {
-            let plot_path =
-                resolve_case_output_path(case.case_dir.as_deref(), &output.dir, plot_name)?;
-            if let Err(err) = super::output_3d::plot_residual_csv(&path, &plot_path) {
-                tracing::warn!(error = %err, "不可压缩残差曲线图未生成（需 python3 + matplotlib）");
-            } else {
-                info!(path = %plot_path.display(), "已写出不可压缩残差曲线图");
-                written.push(plot_path);
-            }
-        }
+        let scale = incompressible_physical_time_scale(case);
+        written.extend(super::output_3d::write_residual_csv_and_plot(
+            case,
+            name,
+            |path| write_incompressible_residual_csv(path, history, scale),
+        )?);
     }
     Ok(written)
 }
