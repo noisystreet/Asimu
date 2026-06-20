@@ -46,6 +46,21 @@ pub(super) fn add_component_sigma(
     }
 }
 
+pub(super) fn viscous_coupling_from_scale(
+    diffusivity: ViscousCellDiffusivity,
+    parabolic_scale: Real,
+) -> [Real; CONSERVED_COMPONENTS_3D] {
+    if parabolic_scale <= 0.0 {
+        return [0.0; CONSERVED_COMPONENTS_3D];
+    }
+    let mut sigma = [0.0; CONSERVED_COMPONENTS_3D];
+    sigma[1] = parabolic_scale * diffusivity.momentum.max(0.0);
+    sigma[2] = sigma[1];
+    sigma[3] = sigma[1];
+    sigma[4] = parabolic_scale * diffusivity.energy.max(0.0);
+    sigma
+}
+
 pub(super) fn viscous_component_sigma(
     diffusivity: ViscousCellDiffusivity,
     area: Real,

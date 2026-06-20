@@ -409,6 +409,132 @@ fn combine_fluxes(flux_l: InviscidFlux, flux_r: InviscidFlux, diss: Dissipation)
     }
 }
 
+fn dissipation_to_vector(d: &Dissipation) -> [Real; 5] {
+    [
+        d.mass,
+        d.momentum[0],
+        d.momentum[1],
+        d.momentum[2],
+        d.energy,
+    ]
+}
+
+fn roe_right_eigenvectors(
+    roe: &RoeAverages,
+    normal: Vector3,
+    t1: Vector3,
+    t2: Vector3,
+) -> [[Real; 5]; 5] {
+    let u = roe.velocity;
+    let h = roe.enthalpy;
+    let a = roe.a;
+    let un = roe.un;
+    let n = [normal.x, normal.y, normal.z];
+    let t1v = [t1.x, t1.y, t1.z];
+    let t2v = [t2.x, t2.y, t2.z];
+    let vectors = [
+        eigenvector_acoustic(u, h, a, un, n, -1.0),
+        eigenvector_contact(u),
+        eigenvector_shear(t1v, tangential_velocity(u, t1)),
+        eigenvector_shear(t2v, tangential_velocity(u, t2)),
+        eigenvector_acoustic(u, h, a, un, n, 1.0),
+    ];
+    let mut matrix = [[0.0; 5]; 5];
+    for (col, vector) in vectors.iter().enumerate() {
+        let v = dissipation_to_vector(vector);
+        for row in 0..5 {
+            matrix[row][col] = v[row];
+        }
+    }
+    matrix
+}
+
+fn invert_5x5(matrix: [[Real; 5]; 5]) -> Result<[[Real; 5]; 5]> {
+    let mut aug = [[0.0; 10]; 5];
+    for (row, matrix_row) in matrix.iter().enumerate() {
+        aug[row][..5].copy_from_slice(matrix_row);
+        aug[row][5 + row] = 1.0;
+    }
+    for pivot in 0..5 {
+        let mut max_row = pivot;
+        let mut max_val = aug[pivot][pivot].abs();
+        for (row, aug_row) in aug.iter().enumerate().skip(pivot + 1) {
+            let val = aug_row[pivot].abs();
+            if val > max_val {
+                max_val = val;
+                max_row = row;
+            }
+        }
+        if max_val < Real::EPSILON {
+            return Err(AsimuError::Linalg(
+                "Roe 绝对 Jacobian：右特征矩阵奇异".to_string(),
+            ));
+        }
+        if max_row != pivot {
+            aug.swap(max_row, pivot);
+        }
+        let pivot_value = aug[pivot][pivot];
+        aug[pivot]
+            .iter_mut()
+            .for_each(|value| *value /= pivot_value);
+        for row in 0..5 {
+            if row == pivot {
+                continue;
+            }
+            let factor = aug[row][pivot];
+            if factor == 0.0 {
+                continue;
+            }
+            let pivot_row = aug[pivot];
+            for col in 0..10 {
+                aug[row][col] -= factor * pivot_row[col];
+            }
+        }
+    }
+    let mut inverse = [[0.0; 5]; 5];
+    for row in 0..5 {
+        for col in 0..5 {
+            inverse[row][col] = aug[row][5 + col];
+        }
+    }
+    Ok(inverse)
+}
+
+/// 冻结 Roe 平均态的 \(|A_{\mathrm{roe}}|\)（守恒变量，对应 \(\hat F \approx \tfrac12(F_L+F_R)-\tfrac12|A|(U_R-U_L)\) 线性化）。
+pub(crate) fn roe_absolute_flux_jacobian_frozen(
+    _left: &ConservedState,
+    _right: &ConservedState,
+    prim_l: &PrimitiveState,
+    prim_r: &PrimitiveState,
+    normal: Vector3,
+    eos: &IdealGasEoS,
+    config: &RoeFluxConfig,
+) -> Result<[[Real; 5]; 5]> {
+    let n = normalize_or_error(normal)?;
+    let roe = roe_averages(prim_l, prim_r, _left, _right, eos.gamma, n)?;
+    let (t1, t2) = face_tangent_basis(n);
+    let right_eigen = roe_right_eigenvectors(&roe, n, t1, t2);
+    let left_eigen = invert_5x5(right_eigen)?;
+    let delta = entropy_delta(&roe, config);
+    let lambdas = [
+        fixed_eigenvalue(roe.un - roe.a, delta, config.entropy_fix),
+        fixed_eigenvalue(roe.un, delta, config.entropy_fix),
+        fixed_eigenvalue(roe.un, delta, config.entropy_fix),
+        fixed_eigenvalue(roe.un, delta, config.entropy_fix),
+        fixed_eigenvalue(roe.un + roe.a, delta, config.entropy_fix),
+    ];
+    let mut abs_a = [[0.0; 5]; 5];
+    for k in 0..5 {
+        let lam = lambdas[k];
+        for i in 0..5 {
+            for j in 0..5 {
+                abs_a[i][j] += lam * right_eigen[i][k] * left_eigen[k][j];
+            }
+        }
+    }
+    Ok(abs_a)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

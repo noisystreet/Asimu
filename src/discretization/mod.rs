@@ -8,6 +8,7 @@
 //! [`inviscid_flux.md`](../../docs/theory/inviscid_flux.md)（Euler FVM）。
 
 pub mod bc;
+pub mod block_lusgs_preconditioner_topology;
 pub mod compressible;
 pub mod diffusion_1d;
 pub mod flux_common;
@@ -39,8 +40,8 @@ pub mod unstructured_spectral_exec_topo;
 
 // --- 可压 FVM：稳定库 API（类型与函数）---
 pub use compressible::{
-    BoundaryGhostBuffer, BoundaryGhosts1d, BoundaryInviscidFluxInput, FaceFluxInput,
-    GhostCellState, InterfacePrimitiveStates, InviscidAssemblyUnstructuredParams,
+    BoundaryGhostBuffer, BoundaryGhosts1d, BoundaryInviscidFluxInput, ConservedFluxJacobian,
+    FaceFluxInput, GhostCellState, InterfacePrimitiveStates, InviscidAssemblyUnstructuredParams,
     InviscidBoundary1d, InviscidFaceFluxTyped, InviscidFlux, PrimitiveMusclStencil1d,
     RoeFluxConfig, UnstructuredLinearReconstructionCtx, ViscousAssembly3dInput,
     ViscousAssembly3dParams, ViscousAssemblyUnstructuredF32Input, ViscousAssemblyUnstructuredInput,
@@ -58,8 +59,10 @@ pub use compressible::{
     face_inviscid_flux_first_order_boundary_soa, face_inviscid_flux_first_order_boundary_soa_f32,
     face_inviscid_flux_first_order_interior_soa, face_inviscid_flux_first_order_interior_soa_f32,
     face_inviscid_flux_from_interface, face_inviscid_flux_from_interface_f32,
-    face_transport_coefficients, farfield_ghost, hanel_van_leer_flux, hllc_flux, inlet_ghost,
-    interface_conserved_pair, outlet_ghost, physical_inviscid_flux, reconstruct_face_primitives,
+    face_transport_coefficients, farfield_ghost, first_order_face_flux_jacobian_supported,
+    first_order_interior_flux_jacobian, hanel_van_leer_flux, hllc_flux, inlet_ghost,
+    interface_conserved_pair, outlet_ghost, physical_inviscid_flux,
+    physical_inviscid_flux_jacobian_conserved, reconstruct_face_primitives,
     reconstruct_first_order, reconstruct_unstructured_boundary_face,
     reconstruct_unstructured_interior_face, roe_flux, slau2_flux, symmetry_ghost, van_leer_flux,
     viscous_face_flux, wall_face_conduction, wall_ghost, wall_ghost_temperature,
@@ -106,6 +109,9 @@ use crate::linalg::LinearSystem;
 use crate::mesh::Mesh;
 
 pub use bc::{apply_boundary_conditions, apply_dirichlet, apply_dirichlet_face, apply_neumann};
+pub use block_lusgs_preconditioner_topology::{
+    BlockLusgsOffDiagonalSlot, BlockLusgsPreconditionerTopology,
+};
 pub use diffusion_1d::assemble_diffusion_1d;
 pub use flux_config::{FluxScheme, InviscidFluxConfig, ReconstructionKind, SlopeLimiter};
 pub use gradient::{

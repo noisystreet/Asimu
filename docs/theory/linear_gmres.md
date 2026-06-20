@@ -136,7 +136,7 @@ $$
 
 非结构 LU-SGS 后续不再把“标量 sweep”作为主要增强方向，而是沿近期非结构 CFD 隐式求解器常用路线推进：
 
-1. **降低 `block_lusgs` 构造成本**：把面块 Jacobian 的几何无关部分、对角块逆、粘性抛物系数等拆成可复用缓存；每步只刷新依赖当前原始变量的通量导数。目标是让块预条件器在相同外层残差轨迹下减少内层 GMRES 时间，而不是被构造耗时抵消。
+- **降低 `block_lusgs` 构造成本**：`BlockLusgsPreconditionerTopology` 在 mesh init 预打包行 CSR 与面块 slot（含粘性抛物尺度 \(6A_f^2/V_i^2\)）；GMRES 步间复用 `UnstructuredBlockLusgsPreconditioner` 缓冲并 `refresh` 块系数与对角逆，避免逐步重分配 row_offsets/entries/solver_order。**已实现**一阶 Roe / Hanel–Van Leer 面通量解析 Jacobian（`face_flux_jacobian`），`block_lusgs` off-diagonal 与内面对角项不再走局部残差有限差分；边界面仍用 5 次边界残差 FD。Roe 采用冻结 \(|A_{\mathrm{roe}}|\) 线性化（与 Harten 熵修正通量的 FD 在预条件器意义下近似一致）。
 2. **非结构排序与图着色**：已具备 `order.toml` 驱动的 identity/BFS/RCM sweep order；后续补流向投影排序、ordering benchmark 自动化，并评估 colored LU-SGS / colored block LU-SGS。ordering 优先服务 CPU 串行传播效率，coloring 优先服务多核/GPU 并行度，两者需分别 benchmark。
 3. **Line-implicit / block-line LU-SGS**：针对边界层或强各向异性网格，按局部几何与流向构造隐式线，对线内 cell 做小型块三对角或稠密块求解，以缓解壁法向小尺度刚性。该方向优先在高 Re 黏性算例上验证。
 4. **更完整的粘性块**：当前已用分量化粘性扩散率区分密度、动量与能量，并把边界面小尺度加入对角；后续可补边界 ghost 刷新后的完整块 Jacobian、热传导/应力张量交叉项，以及与 IDWLS 梯度样本一致的远邻耦合。完整粘性块应先有小网格 Jacobian-vector 对照测试。

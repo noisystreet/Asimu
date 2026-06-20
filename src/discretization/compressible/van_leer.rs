@@ -56,12 +56,12 @@ fn fvs_flux(
 }
 
 #[derive(Clone, Copy)]
-struct FaceFrameState {
-    rho: Real,
-    un: Real,
-    ut: [Real; 2],
-    p: Real,
-    rho_e: Real,
+pub(crate) struct FaceFrameState {
+    pub(crate) rho: Real,
+    pub(crate) un: Real,
+    pub(crate) ut: [Real; 2],
+    pub(crate) p: Real,
+    pub(crate) rho_e: Real,
 }
 
 #[derive(Clone, Copy)]
@@ -72,7 +72,7 @@ struct FaceFrameFlux {
     energy: Real,
 }
 
-fn face_frame_from_conserved(
+pub(crate) fn face_frame_from_conserved(
     cons: &ConservedState,
     gamma: Real,
     normal: Vector3,
@@ -104,7 +104,7 @@ fn face_frame_from_conserved(
     })
 }
 
-fn validate_face_state(state: &FaceFrameState) -> Result<()> {
+pub(crate) fn validate_face_state(state: &FaceFrameState) -> Result<()> {
     if state.rho <= 0.0 || state.p <= 0.0 {
         return Err(AsimuError::Field(
             "Van Leer 状态须为正密度与压力".to_string(),
@@ -113,11 +113,11 @@ fn validate_face_state(state: &FaceFrameState) -> Result<()> {
     Ok(())
 }
 
-fn sound_speed(rho: Real, pressure: Real, gamma: Real) -> Real {
+pub(crate) fn sound_speed(rho: Real, pressure: Real, gamma: Real) -> Real {
     (gamma * pressure / rho).sqrt()
 }
 
-fn specific_enthalpy(state: &FaceFrameState, gamma: Real) -> Real {
+pub(crate) fn specific_enthalpy(state: &FaceFrameState, gamma: Real) -> Real {
     let a = sound_speed(state.rho, state.p, gamma);
     a * a / (gamma - 1.0)
         + 0.5 * (state.un * state.un + state.ut[0] * state.ut[0] + state.ut[1] * state.ut[1])

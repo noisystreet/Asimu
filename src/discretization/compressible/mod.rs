@@ -6,6 +6,7 @@
 pub mod bc_compressible;
 pub mod face_flux;
 pub mod face_flux_f32;
+pub mod face_flux_jacobian;
 pub mod face_flux_typed;
 #[cfg(test)]
 pub(crate) mod freestream_pair;
@@ -23,6 +24,7 @@ pub mod slau2;
 pub mod slau2_f32;
 pub mod van_leer;
 pub mod van_leer_f32;
+pub mod van_leer_jacobian;
 pub mod viscous;
 pub mod viscous_assembly;
 pub mod viscous_boundary_f32;
@@ -41,6 +43,10 @@ pub use face_flux::{
 pub use face_flux_f32::{
     face_inviscid_flux_first_order_boundary_soa_f32,
     face_inviscid_flux_first_order_interior_soa_f32, face_inviscid_flux_from_interface_f32,
+};
+pub use face_flux_jacobian::{
+    ConservedFluxJacobian, first_order_face_flux_jacobian_supported,
+    first_order_interior_flux_jacobian, physical_inviscid_flux_jacobian_conserved,
 };
 pub use face_flux_typed::InviscidFaceFluxTyped;
 pub use hllc::hllc_flux;

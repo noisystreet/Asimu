@@ -115,6 +115,8 @@ pub(crate) struct UnstructuredStepWorkTyped<T: ComputeFloat> {
     volumes_f32: Vec<f32>,
     timestep: UnstructuredTimestepBuffers,
     lusgs_couplings: LuSgsUnstructuredCouplings,
+    block_lusgs_preconditioner:
+        Option<gmres_block_preconditioner_unstructured::UnstructuredBlockLusgsPreconditioner>,
     dual_time_state: crate::solver::time::DualTimeState<T>,
     /// 稳态 LU-SGS：RHS 装配后、隐式更新前的密度 RMS（监控 \(R(U^0)\)，与 sweep/对角无关）。
     density_rms_after_rhs: Option<Real>,
@@ -191,6 +193,7 @@ fn allocate_unstructured_step_work_typed<T: ComputeFloat>(
             cell_dts_f32: Vec::new(),
         },
         lusgs_couplings: LuSgsUnstructuredCouplings::from_mesh(env.config.mesh)?,
+        block_lusgs_preconditioner: None,
         dual_time_state: crate::solver::time::DualTimeState::new(n)?,
         density_rms_after_rhs: None,
         gmres_inner_iterations: 0,
@@ -314,7 +317,7 @@ fn advance_unstructured_time_integration_typed<
             advance_unstructured_lusgs_typed(env, fields, work, p_floor)
         }
         TimeIntegrationScheme::Gmres => {
-            let outcome = advance_unstructured_gmres_typed(env, fields, work, cfl, p_floor)?;
+            let outcome = advance_unstructured_gmres_typed(env, fields, work, dt, p_floor)?;
             work.gmres_inner_iterations = outcome.gmres_iterations;
             Ok(())
         }

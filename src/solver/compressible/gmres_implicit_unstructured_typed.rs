@@ -2,9 +2,11 @@
 
 use std::time::Instant;
 
+use tracing::info_span;
+
 use super::gmres_block_preconditioner_unstructured::{
     UnstructuredBlockLusgsPreconditioner, UnstructuredCellBlockPreconditionerBuild,
-    build_block_lusgs_preconditioner_unstructured, build_cell_block_preconditioner_unstructured,
+    build_cell_block_preconditioner_unstructured,
 };
 use super::gmres_lusgs_sweep_preconditioner_unstructured::{
     LusgsSweepUnstructuredGmresPreconditioner, LusgsSweepUnstructuredGmresPreconditionerBuild,
@@ -38,7 +40,7 @@ enum UnstructuredGmresPreconditioner {
     Scalar(LusgsDiagonalPreconditioner),
     CellBlock(CellBlockDiagonalPreconditioner),
     LusgsSweep(Box<LusgsSweepUnstructuredGmresPreconditioner>),
-    BlockLusgs(Box<UnstructuredBlockLusgsPreconditioner>),
+    BlockLusgs(UnstructuredBlockLusgsPreconditioner),
 }
 
 impl Preconditioner for UnstructuredGmresPreconditioner {
@@ -72,17 +74,35 @@ pub(crate) fn solve_gmres_implicit_delta_unstructured_typed<
     p_floor: Real,
     config: GmresImplicitConfig,
 ) -> Result<UnstructuredGmresSolveResult> {
+    let cells = fields.num_cells();
+    let _span = info_span!(
+        "gmres_implicit_solve_unstructured_typed",
+        cells,
+        gmres_preconditioner = config.preconditioner.as_str(),
+        gmres_restart = config.gmres.restart,
+        gmres_max_iters = config.gmres.max_iters,
+    )
+    .entered();
     let total_start = Instant::now();
     validate_gmres_inputs(fields.num_cells(), dt, sigma, config.epsilon)?;
     let mut base_residual = ConservedResidualT::<T>::zeros(fields.num_cells())?;
     let base_residual_start = Instant::now();
-    evaluate_unstructured_rhs(env, work, fields, &mut base_residual, p_floor)?;
+    {
+        let _span = info_span!("gmres_base_residual", cells).entered();
+        evaluate_unstructured_rhs(env, work, fields, &mut base_residual, p_floor)?;
+    }
     let base_residual_ms = elapsed_ms(base_residual_start);
     let base_residual_rms = base_residual.density_rms_norm();
     let rhs = residual_to_vector_typed(&base_residual);
     let preconditioner_kind = config.preconditioner;
     let preconditioner_start = Instant::now();
-    let mut precond =
+    let mut precond = {
+        let _span = info_span!(
+            "gmres_preconditioner_build",
+            cells,
+            gmres_preconditioner = preconditioner_kind.as_str(),
+        )
+        .entered();
         build_unstructured_gmres_preconditioner(UnstructuredGmresPreconditionerBuild {
             env,
             work,
@@ -92,7 +112,8 @@ pub(crate) fn solve_gmres_implicit_delta_unstructured_typed<
             p_floor,
             config,
             lu_sgs: env.config.solver.config.lu_sgs,
-        })?;
+        })?
+    };
     let preconditioner_build_ms = elapsed_ms(preconditioner_start);
     let zero_state = ConservedState {
         density: 0.0,
@@ -114,11 +135,24 @@ pub(crate) fn solve_gmres_implicit_delta_unstructured_typed<
     };
     let mut delta = vec![0.0; rhs.len()];
     let linear_solve_start = Instant::now();
-    let report = GmresSolver::new(config.gmres)?.solve(&mut op, &mut precond, &rhs, &mut delta)?;
-    let linear_solve_ms = elapsed_ms(linear_solve_start);
+    let report = {
+        let _span = info_span!(
+            "gmres_linear_solve",
+            cells,
+            gmres_restart = config.gmres.restart,
+            gmres_max_iters = config.gmres.max_iters,
+        )
+        .entered();
+        GmresSolver::new(config.gmres)?.solve(&mut op, &mut precond, &rhs, &mut delta)?
+    };
     diagnostics.perturbation_evals = op.diagnostics.perturbation_evals;
     diagnostics.perturbation_limited_evals = op.diagnostics.perturbation_limited_evals;
     diagnostics.min_perturbation_scale = op.diagnostics.min_perturbation_scale;
+    drop(op);
+    if let UnstructuredGmresPreconditioner::BlockLusgs(block_precond) = precond {
+        work.block_lusgs_preconditioner = Some(block_precond);
+    }
+    let linear_solve_ms = elapsed_ms(linear_solve_start);
     diagnostics.timing = GmresImplicitTiming {
         base_residual_ms,
         preconditioner_build_ms,
@@ -185,7 +219,6 @@ fn build_unstructured_gmres_preconditioner<T: ComputeFloat>(
                         inviscid: env.config.inviscid,
                         viscous: env.config.viscous,
                         incidence: &work.mesh_cache.lsq_rhs_incidence,
-                        solver_order: &work.mesh_cache.solver_order,
                         dt,
                         p_floor,
                         epsilon_rel: config.epsilon,
@@ -219,38 +252,63 @@ fn build_unstructured_gmres_preconditioner<T: ComputeFloat>(
                 )?,
             ))
         }
-        GmresPreconditionerKind::BlockLusgs => {
-            if T::PRECISION != ComputePrecision::F64 {
-                return Err(AsimuError::Config(
-                    "非结构 gmres_preconditioner = \"block_lusgs\" 暂仅支持 compute_precision = \"f64\""
-                        .to_string(),
-                ));
-            }
-            let fields_f64 = fields.cast_real()?;
-            let mut primitives_f64 = work.primitives.cast_real()?;
-            UnstructuredGmresPreconditioner::BlockLusgs(Box::new(
-                build_block_lusgs_preconditioner_unstructured(
-                    UnstructuredCellBlockPreconditionerBuild {
-                        mesh: env.config.mesh,
-                        eos: env.config.eos,
-                        patches: env.config.patches,
-                        topology: &work.mesh_cache.face_topology,
-                        ghosts: &work.ghosts,
-                        exec: &work.exec,
-                        fields: &fields_f64,
-                        primitives: &mut primitives_f64,
-                        inviscid: env.config.inviscid,
-                        viscous: env.config.viscous,
-                        incidence: &work.mesh_cache.lsq_rhs_incidence,
-                        solver_order: &work.mesh_cache.solver_order,
-                        dt,
-                        p_floor,
-                        epsilon_rel: config.epsilon,
-                    },
-                )?,
-            ))
-        }
+        GmresPreconditionerKind::BlockLusgs => UnstructuredGmresPreconditioner::BlockLusgs(
+            take_and_refresh_block_lusgs_preconditioner(
+                env,
+                work,
+                fields,
+                dt,
+                p_floor,
+                config.epsilon,
+            )?,
+        ),
     })
+}
+
+fn take_and_refresh_block_lusgs_preconditioner<T: ComputeFloat>(
+    env: &UnstructuredRunEnvTyped<'_>,
+    work: &mut UnstructuredStepWorkTyped<T>,
+    fields: &ConservedFieldsT<T>,
+    dt: &[Real],
+    p_floor: Real,
+    epsilon_rel: Real,
+) -> Result<UnstructuredBlockLusgsPreconditioner> {
+    if T::PRECISION != ComputePrecision::F64 {
+        return Err(AsimuError::Config(
+            "非结构 gmres_preconditioner = \"block_lusgs\" 暂仅支持 compute_precision = \"f64\""
+                .to_string(),
+        ));
+    }
+    let fields_f64 = fields.cast_real()?;
+    let mut primitives_f64 = work.primitives.cast_real()?;
+    if work.block_lusgs_preconditioner.is_none() {
+        work.block_lusgs_preconditioner = Some(UnstructuredBlockLusgsPreconditioner::allocate(
+            &work.mesh_cache.block_lusgs_topology,
+            &work.mesh_cache.solver_order,
+            &work.mesh_cache.solver_rank,
+        )?);
+    }
+    let mut precond = work
+        .block_lusgs_preconditioner
+        .take()
+        .expect("block_lusgs 预条件器缓存");
+    precond.refresh(UnstructuredCellBlockPreconditionerBuild {
+        mesh: env.config.mesh,
+        eos: env.config.eos,
+        patches: env.config.patches,
+        topology: &work.mesh_cache.face_topology,
+        ghosts: &work.ghosts,
+        exec: &work.exec,
+        fields: &fields_f64,
+        primitives: &mut primitives_f64,
+        inviscid: env.config.inviscid,
+        viscous: env.config.viscous,
+        incidence: &work.mesh_cache.lsq_rhs_incidence,
+        dt,
+        p_floor,
+        epsilon_rel,
+    })?;
+    Ok(precond)
 }
 
 struct MatrixFreeUnstructuredResidualOperatorTyped<'a, T: ComputeFloat> {

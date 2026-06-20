@@ -7,7 +7,7 @@
 
 ### Fixed
 
-- **双时间步 BDF1 存储项符号**：`add_physical_storage_residual` 与 CUDA `dual_time_storage_f32` 改为 \(R_{\mathrm{eff}} \mathrel{+}= (U-U^n)/\Delta t_{\mathrm{phys}}\)，与式 (3) 及 `unstructured_fvm.md` 一致（此前误为减号）。
+- **非结构 GMRES 重复 `prepare_timestep`**：driver 在 `resolve_unstructured_step_dt` 已计算 σ/Δtᵢ 后，GMRES 步内不再二次调用 `prepare_unstructured_timestep_typed`，复用 `work.timestep` 缓冲（每步约省一次谱半径 + BC/原变量刷新）。`add_physical_storage_residual` 与 CUDA `dual_time_storage_f32` 改为 \(R_{\mathrm{eff}} \mathrel{+}= (U-U^n)/\Delta t_{\mathrm{phys}}\)，与式 (3) 及 `unstructured_fvm.md` 一致（此前误为减号）。
 - **双时间步 BDF1 存储项量纲**：`add_physical_storage_residual` 与 CUDA kernel 不再对 \((\mathbf{U}-\mathbf{U}^n)\) 除 \(V_i\)；与 FVM 空间残差 \(\mathrm dU/\mathrm dt\) 一致，修复小单元网格内层 2 残差暴涨与 NaN。
 - **CUDA f32 `lusgs_sweep` 首步残差与监控**：device 驻留 σ/Δtᵢ 时双扫前镜像 host 缓冲（修复 stabilize 校验失败）；稳态 LU-SGS 在隐式更新**前**记录 \(R(U^0)\) 密度 RMS，sweep/对角 step=1 一致。
 - **CUDA f32 `lusgs_sweep` 性能**：device 正性检查通过时跳过 host stabilize 全量 D2H/H2D；u0 快照改为 device D2D（守恒场已在 device 时）。
@@ -15,6 +15,8 @@
 ### Added
 
 - **`[time]` GMRES 线性求解配置**：`gmres_tolerance`、`gmres_max_iters`、`gmres_restart` 可配置每步内层 GMRES 容差与迭代上限；满足容差或达到 `max_iters` 即进入下一步伪时间。新增 `asimu-mesh-reorder` workspace crate，可从 case 读取非结构网格并生成 `identity` / `bfs` / `rcm` 的 `order.toml`；case `[mesh].cell_order` 可加载该文件，`lusgs_sweep` 与 GMRES `lusgs_sweep` / `block_lusgs` 预条件器按该顺序定义前/后扫。
+- **非结构 `block_lusgs` 面块缓存**：`BlockLusgsPreconditionerTopology` 在 mesh init 预打包行 CSR 与 off-diagonal slot；GMRES 步间复用预条件器缓冲并 `refresh` 块系数，避免逐步重分配拓扑与 entry 数组。
+- **非结构 `block_lusgs` 解析面块 Jacobian**：一阶 Roe / Hanel–Van Leer 内面通量 \(\partial\hat F/\partial U\)（`discretization/compressible/face_flux_jacobian.rs`）；off-diagonal 与内面对角无粘项改解析装配，边界面仍用局部边界残差 FD。
 - **GMRES/LU-SGS 后续规划**：`docs/theory/linear_gmres.md` 记录非结构 `block_lusgs` 的后续路线：构造缓存、ordering/coloring、line-implicit BLU-SGS、完整粘性块、FGMRES 与 BILU/ILU 评估。
 - **`[output].restart`**：3D 可压缩算例结束自动写出 restart TOML（单域 version=1 / 多块 version=2），精度与 `[numerics]` 一致。
 - **`[restart].path = "*.cgns"`（非结构单域）**：支持从 `flow.cgns` 读取 `Density`/`VelocityX/Y/Z`/`Pressure`（CellCenter）并转换为无量纲守恒初场；大规模算例可避免超大 TOML 解析开销。
