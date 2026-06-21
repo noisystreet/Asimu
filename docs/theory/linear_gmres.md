@@ -128,7 +128,7 @@ $$
 (D+L)y=r,\qquad (D+U)z=Dy
 $$
 
-做一次块 LU-SGS 双扫。Navier-Stokes case 会把粘性/热传导的抛物谱半径加入对角块，并在内部面加入同名守恒分量的扩散型近邻块；密度分量不叠加粘性扩散，动量分量使用 \(4\nu/3\)，能量分量使用 \(\lambda/(\rho c_v)=\gamma\nu/\mathrm{Pr}\)。边界面的抛物时间尺度进入对角块，用于覆盖壁面小尺度刚性；内部面近邻块仍只保留分量对角扩散，不包含应力张量/热传导的完整交叉导数。该近似覆盖了高 Re/低 Re 下最硬的粘性时间尺度，但仍不是完整粘性 Jacobian。首版仍不包含边界 ghost 刷新后的完整块 Jacobian 与 MUSCL 远邻梯度耦合。`time.scheme = "gmres"` 时，3D 可压缩求解器会调用该入口；有限差分扰动 \(U+\epsilon v\) 与最终更新 \(\Delta U\) 都会按单元限制到正密度、正压力可行范围，并在线搜索确认后接受。显式 CSR 的 `Ilu0Preconditioner` 仍用于已装配矩阵问题；当前可压缩 matrix-free 路径不装配 CSR Jacobian，因此不使用 ILU(0)。
+做一次块 LU-SGS 双扫。Navier-Stokes case 会把粘性/热传导的抛物谱半径加入对角块，并在内部面加入动量对角扩散与 **应力张量诱导的动量交叉近邻块**（\(c_\mathrm{shear}\,n_i n_j,\ i\neq j\)，\(c_\mathrm{shear}=\sigma_\mathrm{par}\nu\)）；密度分量不叠加粘性扩散，动量对角使用 \(4\nu/3\)，能量分量使用 \(\lambda/(\rho c_v)=\gamma\nu/\mathrm{Pr}\)。边界面的抛物时间尺度进入对角块，用于覆盖壁面小尺度刚性；热传导/粘性做功的完整能量交叉项与 IDWLS 远邻梯度仍未耦合。后扫邻居块贡献乘 `[time].lusgs_sweep_backward_damping`（默认 0.5），与标量 `lu_sgs` 双扫一致。
 
 实现会把基础残差、预条件器构造、GMRES 线性求解等阶段耗时写入 `GmresImplicitDiagnostics::timing`，外层 `advance_gmres_step_3d` 再补充局部时间步、线搜索与整步总耗时日志；`log10_residual` 复用步初 `base_residual` 的 RMS。便于比较标量对角与块对角预条件器成本。
 
@@ -136,10 +136,10 @@ $$
 
 非结构 LU-SGS 后续不再把“标量 sweep”作为主要增强方向，而是沿近期非结构 CFD 隐式求解器常用路线推进：
 
-- **降低 `block_lusgs` 构造成本**：`BlockLusgsPreconditionerTopology` 在 mesh init 预打包行 CSR 与面块 slot（含粘性抛物尺度 \(6A_f^2/V_i^2\)）；GMRES 步间复用 `UnstructuredBlockLusgsPreconditioner` 缓冲并 `refresh` 块系数与对角逆，避免逐步重分配 row_offsets/entries/solver_order。**已实现**一阶 Roe / Hanel–Van Leer 面通量解析 Jacobian（`face_flux_jacobian`），`block_lusgs` off-diagonal 与内面对角项不再走局部残差有限差分；边界面仍用 5 次边界残差 FD。Roe 采用冻结 \(|A_{\mathrm{roe}}|\) 线性化（与 Harten 熵修正通量的 FD 在预条件器意义下近似一致）。
+- **降低 `block_lusgs` 构造成本**：…**已实现**一阶 Roe / Hanel–Van Leer 面通量解析 Jacobian；边界面 ghost 对 wall/symmetry/farfield（含 Riemann 混合）及 **亚声速 outlet** 解析 \(\partial U_g/\partial U\)；亚声速 inlet / 热流壁 / 钳制区仍数值 ghost Jacobian。块双扫后扫已接入 `lusgs_sweep_backward_damping`。
 2. **非结构排序与图着色**：已具备 `order.toml` 驱动的 identity/BFS/RCM sweep order；后续补流向投影排序、ordering benchmark 自动化，并评估 colored LU-SGS / colored block LU-SGS。ordering 优先服务 CPU 串行传播效率，coloring 优先服务多核/GPU 并行度，两者需分别 benchmark。
 3. **Line-implicit / block-line LU-SGS**：针对边界层或强各向异性网格，按局部几何与流向构造隐式线，对线内 cell 做小型块三对角或稠密块求解，以缓解壁法向小尺度刚性。该方向优先在高 Re 黏性算例上验证。
-4. **更完整的粘性块**：当前已用分量化粘性扩散率区分密度、动量与能量，并把边界面小尺度加入对角；后续可补边界 ghost 刷新后的完整块 Jacobian、热传导/应力张量交叉项，以及与 IDWLS 梯度样本一致的远邻耦合。完整粘性块应先有小网格 Jacobian-vector 对照测试。
+4. **更完整的粘性块**：当前已用分量化粘性扩散率区分密度、动量与能量，内面近邻块含动量应力交叉项 \(c_\mathrm{shear} n_i n_j\)，边界面小尺度加入对角；后续可补热传导/粘性做功能量交叉项、热流壁解析 ghost，以及与 IDWLS 梯度样本一致的远邻耦合。完整粘性块应先有小网格 Jacobian-vector 对照测试。
 5. **FGMRES 与块 ILU/BILU 路线**：当预条件器需要随内层迭代变化（如 inner sweep、非线性限制或低精度 GPU sweep）时，引入 FGMRES；对高阶、伴随或湍流全线性化问题，评估显式块 CSR + BILU(0)/ILU(0) 作为比 LU-SGS 更稳健的预条件器。
 6. **性能可移植实现**：CPU 先复用 `parallel-fvm` 着色桶与 SoA 面缓存；GPU 路径避免串行 Gauss-Seidel 依赖，优先研究 colored/block smoother 或作为 GMRES 预条件器的多色 sweep。
 

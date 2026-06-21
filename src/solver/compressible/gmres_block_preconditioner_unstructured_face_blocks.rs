@@ -1,6 +1,66 @@
 //! block_lusgs 面块 Jacobian 装配（解析 + 有限差分）。
 
+use tracing::warn;
+
 use super::*;
+
+struct FiniteDifferencePerturbation {
+    increment: [Real; CONSERVED_COMPONENTS_3D],
+    epsilon: Real,
+}
+
+/// 守恒量有限差分扰动：先试 \(+\mathbf{e}_j\)，再试 \(-\mathbf{e}_j\)；均不可行则返回 `None`。
+fn finite_difference_perturbation(
+    base_state: &crate::physics::ConservedState,
+    col: usize,
+    epsilon_rel: Real,
+    gamma: Real,
+    p_floor: Real,
+) -> Option<FiniteDifferencePerturbation> {
+    let scales = conserved_component_scales(base_state);
+    let requested_eps = epsilon_rel.sqrt() * scales[col];
+    if requested_eps <= 0.0 || !requested_eps.is_finite() {
+        return None;
+    }
+    for sign in [1.0, -1.0] {
+        let mut increment = component_basis_increment(col);
+        if sign < 0.0 {
+            for entry in &mut increment {
+                *entry *= -1.0;
+            }
+        }
+        let eps =
+            max_physical_increment_scale(base_state, increment, requested_eps, gamma, p_floor);
+        if eps > 0.0 {
+            return Some(FiniteDifferencePerturbation {
+                increment,
+                epsilon: eps,
+            });
+        }
+    }
+    None
+}
+
+fn finite_difference_jacobian_column(
+    base: [Real; CONSERVED_COMPONENTS_3D],
+    perturbed: [Real; CONSERVED_COMPONENTS_3D],
+    perturbation: &FiniteDifferencePerturbation,
+    col: usize,
+) -> [Real; CONSERVED_COMPONENTS_3D] {
+    if perturbation.increment[col] >= 0.0 {
+        local_residual_difference(perturbed, base, perturbation.epsilon)
+    } else {
+        local_residual_difference(base, perturbed, perturbation.epsilon)
+    }
+}
+
+fn warn_zero_finite_difference_column(cell: usize, col: usize, context: &str) {
+    warn!(
+        cell,
+        component = col,
+        "{context}：cell {cell} 分量 {col} 无法构造正性扰动，Jacobian 列置零"
+    );
+}
 
 pub(super) fn off_diagonal_block(
     ctx: &UnstructuredCellBlockContext<'_>,
@@ -46,14 +106,13 @@ fn off_diagonal_block_analytic(
             face.owner
         }
     );
-    let viscous_coupling = viscous_coupling_from_slot(ctx, slot);
     let mut block = [0.0; CONSERVED_COMPONENTS_3D * CONSERVED_COMPONENTS_3D];
     for row in 0..CONSERVED_COMPONENTS_3D {
         for col in 0..CONSERVED_COMPONENTS_3D {
             block[row * CONSERVED_COMPONENTS_3D + col] = -scale * d_source.data[row][col];
         }
     }
-    add_viscous_off_diagonal(&mut block, viscous_coupling);
+    add_viscous_off_diagonal_from_slot(&mut block, ctx, slot, face.normal);
     Ok(block)
 }
 
@@ -64,7 +123,6 @@ fn off_diagonal_block_finite_difference(
 ) -> Result<[Real; CONSERVED_COMPONENTS_3D * CONSERVED_COMPONENTS_3D]> {
     let row_cell = slot.row;
     let source_cell = slot.col;
-    let viscous_coupling = viscous_coupling_from_slot(ctx, slot);
     let base_state = ctx.fields.cell_state(source_cell)?;
     let base_primitive = primitives.cell_primitive(source_cell);
     let base_local = local_inviscid_residual(
@@ -74,29 +132,24 @@ fn off_diagonal_block_finite_difference(
         ctx.incidence,
         ctx.volumes,
     )?;
-    let scales = conserved_component_scales(&base_state);
     let mut block = [0.0; CONSERVED_COMPONENTS_3D * CONSERVED_COMPONENTS_3D];
-    for (col, scale) in scales
-        .iter()
-        .copied()
-        .enumerate()
-        .take(CONSERVED_COMPONENTS_3D)
-    {
-        let requested_eps = ctx.epsilon_rel.sqrt() * scale;
-        let unit = component_basis_increment(col);
-        let eps = max_physical_increment_scale(
+    for col in 0..CONSERVED_COMPONENTS_3D {
+        let Some(perturbation) = finite_difference_perturbation(
             &base_state,
-            unit,
-            requested_eps,
+            col,
+            ctx.epsilon_rel,
             ctx.eos.gamma,
             ctx.p_floor,
-        );
-        if eps <= 0.0 {
-            return Err(AsimuError::Solver(format!(
-                "GMRES block_lusgs 预条件器：cell {source_cell} 分量 {col} 无法构造正性扰动"
-            )));
-        }
-        let perturbed_state = state_after_increment(&base_state, unit, eps);
+        ) else {
+            warn_zero_finite_difference_column(
+                source_cell,
+                col,
+                "block_lusgs off-diagonal 有限差分",
+            );
+            continue;
+        };
+        let perturbed_state =
+            state_after_increment(&base_state, perturbation.increment, perturbation.epsilon);
         write_cell_primitive(
             primitives,
             source_cell,
@@ -111,24 +164,32 @@ fn off_diagonal_block_finite_difference(
             ctx.incidence,
             ctx.volumes,
         )?;
-        let jv = local_residual_difference(perturbed_local, base_local, eps);
+        let jv = finite_difference_jacobian_column(base_local, perturbed_local, &perturbation, col);
         for row in 0..CONSERVED_COMPONENTS_3D {
             block[row * CONSERVED_COMPONENTS_3D + col] = -jv[row];
         }
     }
-    add_viscous_off_diagonal(&mut block, viscous_coupling);
+    let face = &ctx.topology.interior[slot.face_idx];
+    add_viscous_off_diagonal_from_slot(&mut block, ctx, slot, face.normal);
     restore_cell_primitive(primitives, source_cell, base_primitive);
     Ok(block)
 }
 
-fn viscous_coupling_from_slot(
+fn add_viscous_off_diagonal_from_slot(
+    block: &mut [Real; CONSERVED_COMPONENTS_3D * CONSERVED_COMPONENTS_3D],
     ctx: &UnstructuredCellBlockContext<'_>,
     slot: &BlockLusgsOffDiagonalSlot,
-) -> [Real; CONSERVED_COMPONENTS_3D] {
+    normal: crate::core::Vector3,
+) {
     let Some(diffusivity) = ctx.viscous_diffusivity else {
-        return [0.0; CONSERVED_COMPONENTS_3D];
+        return;
     };
-    viscous_coupling_from_scale(diffusivity[slot.row], slot.viscous_parabolic_scale)
+    add_viscous_off_diagonal(
+        block,
+        diffusivity[slot.row],
+        slot.viscous_parabolic_scale,
+        normal,
+    );
 }
 
 fn interior_viscous_coupling(
@@ -334,20 +395,7 @@ fn fill_cell_block_analytic(
         subtract_scaled_flux_jacobian(&mut block, face.neighbor_rhs_scale, &d_fr);
     }
     let base_state = ctx.fields.cell_state(cell)?;
-    let base_boundary = local_boundary_inviscid_residual(
-        cell,
-        &inviscid_params(ctx, primitives),
-        ctx.topology,
-        ctx.incidence,
-    )?;
-    accumulate_boundary_cell_block_finite_difference(
-        &mut block,
-        ctx,
-        primitives,
-        cell,
-        &base_state,
-        &base_boundary,
-    )?;
+    accumulate_boundary_cell_block(&mut block, ctx, primitives, cell, &base_state)?;
     for col in 0..CONSERVED_COMPONENTS_3D {
         for row in 0..CONSERVED_COMPONENTS_3D {
             let diagonal = if row == col {
@@ -376,6 +424,83 @@ fn subtract_scaled_flux_jacobian(
     }
 }
 
+fn accumulate_boundary_cell_block(
+    block: &mut [Real; CONSERVED_COMPONENTS_3D * CONSERVED_COMPONENTS_3D],
+    ctx: &UnstructuredCellBlockContext<'_>,
+    primitives: &mut PrimitiveFields,
+    cell: usize,
+    base_state: &crate::physics::ConservedState,
+) -> Result<()> {
+    if first_order_face_flux_jacobian_supported(ctx.inviscid) {
+        accumulate_boundary_cell_block_analytic(block, ctx, primitives, cell)
+    } else {
+        let base_boundary = local_boundary_inviscid_residual(
+            cell,
+            &inviscid_params(ctx, primitives),
+            ctx.topology,
+            ctx.incidence,
+        )?;
+        accumulate_boundary_cell_block_finite_difference(
+            block,
+            ctx,
+            primitives,
+            cell,
+            base_state,
+            &base_boundary,
+        )
+    }
+}
+
+fn accumulate_boundary_cell_block_analytic(
+    block: &mut [Real; CONSERVED_COMPONENTS_3D * CONSERVED_COMPONENTS_3D],
+    ctx: &UnstructuredCellBlockContext<'_>,
+    primitives: &PrimitiveFields,
+    cell: usize,
+) -> Result<()> {
+    use crate::discretization::BoundaryFluxJacobianContext;
+    use crate::discretization::first_order_boundary_flux_jacobian_wrt_owner;
+    use crate::mesh::FaceGeometry3d;
+
+    let owner_state = ctx.fields.cell_state(cell)?;
+    let prim_owner = primitives.cell_primitive(cell);
+    for &bidx in &ctx.incidence.boundary_faces[cell] {
+        let bface = &ctx.topology.boundary[bidx];
+        if bface.owner_rhs_scale == 0.0 {
+            continue;
+        }
+        let ghost = ctx.ghosts.get_face(bface.face).ok_or_else(|| {
+            AsimuError::Boundary(format!(
+                "边界面 FaceId({}) 缺少 ghost 状态",
+                bface.face.index()
+            ))
+        })?;
+        let geom = FaceGeometry3d {
+            normal: bface.normal,
+            spacing: bface.spacing,
+            area: bface.area,
+            center: crate::core::Vector3::new(0.0, 0.0, 0.0),
+        };
+        let jac_ctx = BoundaryFluxJacobianContext {
+            normal: bface.normal,
+            inviscid_kind: bface.inviscid,
+            geom: &geom,
+            eos: ctx.eos,
+            config: ctx.inviscid,
+            p_floor: ctx.p_floor,
+            viscous: ctx.viscous,
+            epsilon_rel: ctx.epsilon_rel,
+        };
+        let jac = first_order_boundary_flux_jacobian_wrt_owner(
+            &owner_state,
+            &ghost.conserved,
+            &prim_owner,
+            &jac_ctx,
+        )?;
+        subtract_scaled_flux_jacobian(block, bface.owner_rhs_scale, &jac);
+    }
+    Ok(())
+}
+
 fn accumulate_boundary_cell_block_finite_difference(
     block: &mut [Real; CONSERVED_COMPONENTS_3D * CONSERVED_COMPONENTS_3D],
     ctx: &UnstructuredCellBlockContext<'_>,
@@ -385,28 +510,19 @@ fn accumulate_boundary_cell_block_finite_difference(
     base_boundary: &[Real; CONSERVED_COMPONENTS_3D],
 ) -> Result<()> {
     let base_primitive = primitives.cell_primitive(cell);
-    let scales = conserved_component_scales(base_state);
-    for (col, scale) in scales
-        .iter()
-        .copied()
-        .enumerate()
-        .take(CONSERVED_COMPONENTS_3D)
-    {
-        let requested_eps = ctx.epsilon_rel.sqrt() * scale;
-        let unit = component_basis_increment(col);
-        let eps = max_physical_increment_scale(
+    for col in 0..CONSERVED_COMPONENTS_3D {
+        let Some(perturbation) = finite_difference_perturbation(
             base_state,
-            unit,
-            requested_eps,
+            col,
+            ctx.epsilon_rel,
             ctx.eos.gamma,
             ctx.p_floor,
-        );
-        if eps <= 0.0 {
-            return Err(AsimuError::Solver(format!(
-                "GMRES block_lusgs 预条件器：cell {cell} 分量 {col} 无法构造正性扰动"
-            )));
-        }
-        let perturbed_state = state_after_increment(base_state, unit, eps);
+        ) else {
+            warn_zero_finite_difference_column(cell, col, "block_lusgs 边界面有限差分");
+            continue;
+        };
+        let perturbed_state =
+            state_after_increment(base_state, perturbation.increment, perturbation.epsilon);
         write_cell_primitive(primitives, cell, &perturbed_state, ctx.eos, ctx.p_floor)?;
         let perturbed_boundary = local_boundary_inviscid_residual(
             cell,
@@ -414,7 +530,12 @@ fn accumulate_boundary_cell_block_finite_difference(
             ctx.topology,
             ctx.incidence,
         )?;
-        let jv = local_residual_difference(perturbed_boundary, *base_boundary, eps);
+        let jv = finite_difference_jacobian_column(
+            *base_boundary,
+            perturbed_boundary,
+            &perturbation,
+            col,
+        );
         for row in 0..CONSERVED_COMPONENTS_3D {
             block[row * CONSERVED_COMPONENTS_3D + col] -= jv[row];
         }
@@ -440,28 +561,27 @@ fn fill_cell_block_finite_difference(
         ctx.incidence,
         ctx.volumes,
     )?;
-    let scales = conserved_component_scales(&base_state);
-    for (col, scale) in scales
-        .iter()
-        .copied()
-        .enumerate()
-        .take(CONSERVED_COMPONENTS_3D)
-    {
-        let requested_eps = ctx.epsilon_rel.sqrt() * scale;
-        let unit = component_basis_increment(col);
-        let eps = max_physical_increment_scale(
+    for col in 0..CONSERVED_COMPONENTS_3D {
+        let Some(perturbation) = finite_difference_perturbation(
             &base_state,
-            unit,
-            requested_eps,
+            col,
+            ctx.epsilon_rel,
             ctx.eos.gamma,
             ctx.p_floor,
-        );
-        if eps <= 0.0 {
-            return Err(AsimuError::Solver(format!(
-                "GMRES 局部块预条件器：cell {cell} 分量 {col} 无法构造正性扰动"
-            )));
-        }
-        let perturbed_state = state_after_increment(&base_state, unit, eps);
+        ) else {
+            warn_zero_finite_difference_column(cell, col, "block_lusgs 对角块有限差分");
+            write_block_column(
+                blocks,
+                cell,
+                col,
+                dt_cell,
+                [0.0; CONSERVED_COMPONENTS_3D],
+                viscous_diagonal_sigma,
+            );
+            continue;
+        };
+        let perturbed_state =
+            state_after_increment(&base_state, perturbation.increment, perturbation.epsilon);
         write_cell_primitive(primitives, cell, &perturbed_state, ctx.eos, ctx.p_floor)?;
         let perturbed_local = local_inviscid_residual(
             cell,
@@ -470,7 +590,7 @@ fn fill_cell_block_finite_difference(
             ctx.incidence,
             ctx.volumes,
         )?;
-        let jv = local_residual_difference(perturbed_local, base_local, eps);
+        let jv = finite_difference_jacobian_column(base_local, perturbed_local, &perturbation, col);
         write_block_column(blocks, cell, col, dt_cell, jv, viscous_diagonal_sigma);
     }
     restore_cell_primitive(primitives, cell, base_primitive);

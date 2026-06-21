@@ -243,10 +243,28 @@ fn f32_unsupported(detail: &str) -> AsimuError {
 
 /// 非结构可压缩离散与时间格式约束。
 pub fn unstructured_compressible(case: &CaseSpec) -> Result<()> {
+    validate_unstructured_muscl_reconstruction(case)?;
+    if case.time.residual_smoothing_config().enabled {
+        warn!("非结构网格暂不支持结构化方向分裂残差光顺；本次忽略 residual_smoothing");
+    }
+    validate_unstructured_gmres_time(case)?;
+    validate_unstructured_block_lusgs_time(case)?;
+    if case.time.resolved_time_scheme() == TimeIntegrationScheme::DualTime {
+        if !case.time.uses_local_time_step() {
+            return Err(AsimuError::Config(
+                "非结构 time.scheme = \"dual_time\" 须配合 local_time_step = true".to_string(),
+            ));
+        }
+        case.time.resolved_dual_time_config()?;
+    }
+    Ok(())
+}
+
+fn validate_unstructured_muscl_reconstruction(case: &CaseSpec) -> Result<()> {
     let disc = case.compressible_discretization()?;
     let inviscid = disc.inviscid();
     match inviscid.reconstruction {
-        ReconstructionKind::FirstOrder => {}
+        ReconstructionKind::FirstOrder => Ok(()),
         ReconstructionKind::Muscl => {
             if inviscid.unstructured_gradient_limiter.is_none() {
                 if disc.limiter.is_some() {
@@ -275,21 +293,9 @@ pub fn unstructured_compressible(case: &CaseSpec) -> Result<()> {
                     )));
                 }
             }
+            Ok(())
         }
     }
-    if case.time.residual_smoothing_config().enabled {
-        warn!("非结构网格暂不支持结构化方向分裂残差光顺；本次忽略 residual_smoothing");
-    }
-    validate_unstructured_gmres_time(case)?;
-    if case.time.resolved_time_scheme() == TimeIntegrationScheme::DualTime {
-        if !case.time.uses_local_time_step() {
-            return Err(AsimuError::Config(
-                "非结构 time.scheme = \"dual_time\" 须配合 local_time_step = true".to_string(),
-            ));
-        }
-        case.time.resolved_dual_time_config()?;
-    }
-    Ok(())
 }
 
 fn validate_unstructured_gmres_time(case: &CaseSpec) -> Result<()> {
@@ -314,6 +320,24 @@ fn validate_unstructured_gmres_time(case: &CaseSpec) -> Result<()> {
                 preconditioner.as_str()
             )));
         }
+    }
+    Ok(())
+}
+
+fn validate_unstructured_block_lusgs_time(case: &CaseSpec) -> Result<()> {
+    if case.time.resolved_time_scheme() != TimeIntegrationScheme::BlockLusgs {
+        return Ok(());
+    }
+    if !case.time.uses_local_time_step() {
+        return Err(AsimuError::Config(
+            "非结构 time.scheme = \"block_lusgs\" 须配合 local_time_step = true".to_string(),
+        ));
+    }
+    let disc = case.compressible_discretization()?;
+    if disc.inviscid().reconstruction != ReconstructionKind::FirstOrder {
+        return Err(AsimuError::Config(
+            "非结构 time.scheme = \"block_lusgs\" 暂要求 reconstruction = first_order".to_string(),
+        ));
     }
     Ok(())
 }

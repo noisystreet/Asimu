@@ -5,8 +5,15 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **standalone `block_lusgs` 时间积分**：每伪时间步冻结块 Jacobian 后 **一次**对称双扫 \( \Delta U \approx \omega M^{-1} R \)（标准 BLU-SGS 伪时间步；无内层迭代配置项）。
+
 ### Fixed
 
+- **block_lusgs 粘性近邻块与后扫阻尼**：内面 off-diagonal 叠加动量应力交叉项 \(c_\mathrm{shear} n_i n_j\)（\(c_\mathrm{shear}=\sigma_\mathrm{par}\nu\)）；块双扫后扫邻居耦合乘 `[time].lusgs_sweep_backward_damping`（与标量 `lu_sgs` 一致）。
+- **block_lusgs inlet/outlet 解析 ghost Jacobian**：亚声速出口 \(\partial U_g/\partial U\) 解析链式；亚声速入口经 Mach 隐式方程仍用守恒 FD（与 `bc_compressible::inlet_ghost` 一致）；超声速入口/出口分别为远场解析与 \(\mathbf I\)。
+- **block_lusgs 边界面有限差分正性失败**：边界面 Jacobian 仍走 FD 时，若 \(+\mathbf{e}_j\) 扰动不可行则尝试 \(-\mathbf{e}_j\)；双向均失败则该列置零并 `warn`，不再中断整步（预条件器允许近似缺列）。
 - **非结构 GMRES 重复 `prepare_timestep`**：driver 在 `resolve_unstructured_step_dt` 已计算 σ/Δtᵢ 后，GMRES 步内不再二次调用 `prepare_unstructured_timestep_typed`，复用 `work.timestep` 缓冲（每步约省一次谱半径 + BC/原变量刷新）。`add_physical_storage_residual` 与 CUDA `dual_time_storage_f32` 改为 \(R_{\mathrm{eff}} \mathrel{+}= (U-U^n)/\Delta t_{\mathrm{phys}}\)，与式 (3) 及 `unstructured_fvm.md` 一致（此前误为减号）。
 - **双时间步 BDF1 存储项量纲**：`add_physical_storage_residual` 与 CUDA kernel 不再对 \((\mathbf{U}-\mathbf{U}^n)\) 除 \(V_i\)；与 FVM 空间残差 \(\mathrm dU/\mathrm dt\) 一致，修复小单元网格内层 2 残差暴涨与 NaN。
 - **CUDA f32 `lusgs_sweep` 首步残差与监控**：device 驻留 σ/Δtᵢ 时双扫前镜像 host 缓冲（修复 stabilize 校验失败）；稳态 LU-SGS 在隐式更新**前**记录 \(R(U^0)\) 密度 RMS，sweep/对角 step=1 一致。
@@ -24,6 +31,7 @@
 - **CUDA f32 非结构 LU-SGS 双扫**：`lusgs_sweep_forward_color_f32` / `lusgs_sweep_backward_color_f32` 图着色 wavefront 并行前/后扫（生产路径）；保留 `lusgs_sweep_unstructured_serial_f32` 对照；host `stabilize_sweep_update_f32`；`lu_sgs` / `dual_time` + `lusgs_sweep=true` validate 与单四面体 GPU smoke。
 - **CUDA f32 SLAU2 无粘通量**：`inviscid_first_order_f32.cu` 增加 `flux_scheme=2` device kernel；装配层路由 `FluxScheme::Slau2`；单四面体 CPU/CUDA 对照 smoke（`#[ignore=gpu]`）。
 - **非结构 GMRES（P4）**：`time.scheme = "gmres"` + `local_time_step = true` 在非结构 3D 可压缩 CPU 路径可用；预条件支持 `scalar_diagonal`、`cell_block_diagonal`（须 `reconstruction = first_order`；NS case 叠加粘性抛物对角谱半径）、`lusgs_sweep`（f64；复用 `[time]` LU-SGS `omega` / `lusgs_sweep_backward_damping`）、`block_lusgs`（f64；一阶无粘 5×5 面块双扫，NS case 叠加粘性抛物对角与内面近邻近似）；`inner_iterations` 记录每步 GMRES 线性迭代次数。
+- **非结构 `block_lusgs` 时间积分**：`time.scheme = "block_lusgs"` 在非结构 3D 可压缩 CPU f64 路径可用（须 `local_time_step = true` 与 `reconstruction = first_order`）；每步装配一阶无粘 5×5 面块 Jacobian 并块 LU-SGS 双扫求解 \(\Delta U\)，步间复用预条件器拓扑缓冲。
 
 ### Changed
 

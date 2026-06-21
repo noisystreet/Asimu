@@ -31,7 +31,10 @@ mod unstructured_driver;
 mod unstructured_driver_typed;
 pub mod wave_speed;
 
-pub use context::CompressibleAdvanceContext3dTyped;
+pub use context::{
+    CompressibleAdvanceContext1d, CompressibleAdvanceContext3d, CompressibleAdvanceContext3dTyped,
+    ResidualCorrection3d, ResidualCorrection3dHandle,
+};
 pub use lu_sgs_sweep_unstructured_typed::{
     LuSgsSweepUnstructuredTypedParams, LuSgsUnstructuredSweepTyped, lu_sgs_sweep_unstructured_f32,
     lu_sgs_sweep_unstructured_typed,
@@ -51,10 +54,6 @@ pub use unstructured_driver::{
 pub(crate) use unstructured_driver_typed::UnstructuredComputeBackend;
 pub use unstructured_driver_typed::run_unstructured_typed_with_observer;
 
-pub use context::{
-    CompressibleAdvanceContext1d, CompressibleAdvanceContext3d, ResidualCorrection3d,
-    ResidualCorrection3dHandle,
-};
 pub use gmres_implicit_3d::{GmresImplicitConfig, GmresImplicitDelta, GmresPreconditionerKind};
 use gmres_implicit_3d::{
     GmresStepLog, GmresStepTiming, apply_delta_with_line_search, log_gmres_step_diagnostics,
@@ -684,6 +683,7 @@ impl CompressibleEulerSolver {
             (
                 TimeIntegrationScheme::LuSgs
                 | TimeIntegrationScheme::Gmres
+                | TimeIntegrationScheme::BlockLusgs
                 | TimeIntegrationScheme::DualTime
                 | TimeIntegrationScheme::Simplec
                 | TimeIntegrationScheme::Piso

@@ -4,12 +4,14 @@
 //! [`interface_reconstruction.md`](../../../docs/theory/interface_reconstruction.md)。
 
 pub mod bc_compressible;
+pub mod boundary_flux_jacobian;
 pub mod face_flux;
 pub mod face_flux_f32;
 pub mod face_flux_jacobian;
 pub mod face_flux_typed;
 #[cfg(test)]
 pub(crate) mod freestream_pair;
+pub mod ghost_state_jacobian;
 pub mod hllc;
 pub mod hllc_f32;
 pub mod inviscid;
@@ -35,6 +37,9 @@ pub use bc_compressible::{
     BoundaryGhostBuffer, GhostCellState, apply_compressible_boundary_conditions,
     apply_compressible_boundary_conditions_typed, farfield_ghost, inlet_ghost, outlet_ghost,
     symmetry_ghost, wall_ghost,
+};
+pub use boundary_flux_jacobian::{
+    BoundaryFluxJacobianContext, first_order_boundary_flux_jacobian_wrt_owner,
 };
 pub use face_flux::{
     FaceFluxInput, face_inviscid_flux, face_inviscid_flux_first_order_boundary_soa,

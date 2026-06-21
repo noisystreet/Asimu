@@ -1,4 +1,4 @@
-use crate::core::Real;
+use crate::core::{Real, Vector3};
 use crate::error::Result;
 use crate::field::PrimitiveFields;
 use crate::physics::{IdealGasEoS, ViscousPhysicsConfig};
@@ -80,11 +80,29 @@ pub(super) fn viscous_component_sigma(
 
 pub(super) fn add_viscous_off_diagonal(
     block: &mut [Real; CONSERVED_COMPONENTS_3D * CONSERVED_COMPONENTS_3D],
-    coupling: [Real; CONSERVED_COMPONENTS_3D],
+    diffusivity: ViscousCellDiffusivity,
+    parabolic_scale: Real,
+    normal: Vector3,
 ) {
+    let coupling = viscous_coupling_from_scale(diffusivity, parabolic_scale);
     for (component, &value) in coupling.iter().enumerate() {
         if value > 0.0 {
             block[component * CONSERVED_COMPONENTS_3D + component] -= value;
+        }
+    }
+    if parabolic_scale <= 0.0 {
+        return;
+    }
+    let shear = parabolic_scale * (diffusivity.momentum / MOMENTUM_VISCOUS_FACTOR_3D).max(0.0);
+    if shear <= Real::EPSILON {
+        return;
+    }
+    let n = [normal.x, normal.y, normal.z];
+    for i in 0..3 {
+        for j in 0..3 {
+            if i != j {
+                block[(1 + i) * CONSERVED_COMPONENTS_3D + (1 + j)] -= shear * n[i] * n[j];
+            }
         }
     }
 }

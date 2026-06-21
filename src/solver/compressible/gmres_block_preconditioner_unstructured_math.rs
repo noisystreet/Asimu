@@ -23,13 +23,19 @@ pub(super) fn subtract_block_product(
     out: &mut [Real; CONSERVED_COMPONENTS_3D],
     block: &[Real],
     vector: &[Real; CONSERVED_COMPONENTS_3D],
+    neighbor_damping: Real,
 ) {
+    let damping = if neighbor_damping >= 1.0 - Real::EPSILON {
+        1.0
+    } else {
+        neighbor_damping.max(0.0)
+    };
     for row in 0..CONSERVED_COMPONENTS_3D {
         let mut value = 0.0;
         for col in 0..CONSERVED_COMPONENTS_3D {
             value += block[row * CONSERVED_COMPONENTS_3D + col] * vector[col];
         }
-        out[row] -= value;
+        out[row] -= damping * value;
     }
 }
 

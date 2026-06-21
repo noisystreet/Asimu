@@ -12,6 +12,8 @@ mod gmres_block_preconditioner_unstructured_viscous;
 mod gmres_implicit_unstructured_typed;
 #[path = "gmres_lusgs_sweep_preconditioner_unstructured.rs"]
 mod gmres_lusgs_sweep_preconditioner_unstructured;
+#[path = "unstructured_block_lusgs_typed.rs"]
+mod unstructured_block_lusgs_typed;
 #[path = "unstructured_cuda_prepare_f32.rs"]
 mod unstructured_cuda_prepare_f32;
 #[path = "unstructured_dual_time_typed.rs"]
@@ -25,6 +27,7 @@ mod unstructured_lusgs_typed;
 #[path = "unstructured_prepare_timestep_typed.rs"]
 mod unstructured_prepare_timestep_typed;
 
+use unstructured_block_lusgs_typed::advance_unstructured_block_lusgs_typed;
 use unstructured_dual_time_typed::advance_unstructured_dual_time_typed;
 use unstructured_explicit_typed::{
     UnstructuredExplicitTimeAdvance, advance_unstructured_explicit_typed,
@@ -122,6 +125,8 @@ pub(crate) struct UnstructuredStepWorkTyped<T: ComputeFloat> {
     density_rms_after_rhs: Option<Real>,
     /// 上一 GMRES 伪时间步线性迭代次数。
     gmres_inner_iterations: u32,
+    /// standalone block_lusgs 内层 Richardson 迭代次数。
+    block_lusgs_inner_iterations: u32,
 }
 
 pub(crate) struct UnstructuredRunEnvTyped<'a> {
@@ -142,6 +147,7 @@ fn allocate_unstructured_step_work_typed<T: ComputeFloat>(
         env.config.mesh,
         env.config.patches,
         env.config.cell_order,
+        *env.config.freestream,
     )?;
     let interior_faces = mesh_cache.face_topology.interior.len();
     let max_bucket_faces = mesh_cache
@@ -197,6 +203,7 @@ fn allocate_unstructured_step_work_typed<T: ComputeFloat>(
         dual_time_state: crate::solver::time::DualTimeState::new(n)?,
         density_rms_after_rhs: None,
         gmres_inner_iterations: 0,
+        block_lusgs_inner_iterations: 0,
     })
 }
 
@@ -321,6 +328,9 @@ fn advance_unstructured_time_integration_typed<
             work.gmres_inner_iterations = outcome.gmres_iterations;
             Ok(())
         }
+        TimeIntegrationScheme::BlockLusgs => {
+            advance_unstructured_block_lusgs_typed(env, fields, work, p_floor)
+        }
         TimeIntegrationScheme::DualTime => {
             let dual = env.config.dual_time.ok_or_else(|| {
                 AsimuError::Config("dual_time 推进须设置 DualTimeConfig".to_string())
@@ -345,6 +355,7 @@ fn advance_unstructured_step_typed<T: UnstructuredComputeBackend + UnstructuredC
     let step_start = Instant::now();
     work.density_rms_after_rhs = None;
     work.gmres_inner_iterations = 0;
+    work.block_lusgs_inner_iterations = 0;
     #[cfg(feature = "cuda")]
     if work.exec.device() == ExecDevice::GpuCuda {
         if unstructured_prepare_timestep_typed::f32_cuda_viscous_rhs_pipeline(env, &work.exec) {
@@ -402,6 +413,8 @@ fn advance_unstructured_step_typed<T: UnstructuredComputeBackend + UnstructuredC
             work.dual_time_state.inner_iterations
         } else if env.config.time_scheme == TimeIntegrationScheme::Gmres {
             work.gmres_inner_iterations
+        } else if env.config.time_scheme == TimeIntegrationScheme::BlockLusgs {
+            work.block_lusgs_inner_iterations
         } else {
             0
         },

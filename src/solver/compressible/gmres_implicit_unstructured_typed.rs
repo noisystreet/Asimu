@@ -222,6 +222,7 @@ fn build_unstructured_gmres_preconditioner<T: ComputeFloat>(
                         dt,
                         p_floor,
                         epsilon_rel: config.epsilon,
+                        backward_damping: lu_sgs.sweep_backward_damping,
                     },
                 )?,
             )
@@ -265,7 +266,7 @@ fn build_unstructured_gmres_preconditioner<T: ComputeFloat>(
     })
 }
 
-fn take_and_refresh_block_lusgs_preconditioner<T: ComputeFloat>(
+pub(crate) fn take_and_refresh_block_lusgs_preconditioner<T: ComputeFloat>(
     env: &UnstructuredRunEnvTyped<'_>,
     work: &mut UnstructuredStepWorkTyped<T>,
     fields: &ConservedFieldsT<T>,
@@ -307,6 +308,7 @@ fn take_and_refresh_block_lusgs_preconditioner<T: ComputeFloat>(
         dt,
         p_floor,
         epsilon_rel,
+        backward_damping: env.config.lu_sgs.sweep_backward_damping,
     })?;
     Ok(precond)
 }

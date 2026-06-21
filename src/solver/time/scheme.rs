@@ -14,6 +14,8 @@ pub enum TimeIntegrationScheme {
     LuSgs,
     /// Matrix-free GMRES 隐式伪时间（LU-SGS 对角预条件器）。
     Gmres,
+    /// 块 LU-SGS 隐式伪时间（一阶无粘 5×5 面块双扫；非结构 f64）。
+    BlockLusgs,
     /// 双时间步：首步 BDF1、之后 BDF2 + 内层 LU-SGS 伪时间（非结构可压缩）。
     DualTime,
     /// 不可压缩 SIMPLEC 稳态 pressure-velocity 路径（可压缩求解器不支持）。
@@ -31,12 +33,13 @@ impl TimeIntegrationScheme {
             "euler" | "forward_euler" | "euler1" | "rk1" | "euler_1" => Ok(Self::Euler),
             "lu_sgs" | "lusgs" | "lu-sgs" => Ok(Self::LuSgs),
             "gmres" | "jfnk" | "matrix_free_gmres" | "matrix-free-gmres" => Ok(Self::Gmres),
+            "block_lusgs" | "block_lu_sgs" | "block_lu-sgs" => Ok(Self::BlockLusgs),
             "dual_time" | "dts" | "dual-time" => Ok(Self::DualTime),
             "simplec" => Ok(Self::Simplec),
             "piso" => Ok(Self::Piso),
             "bdf1" | "backward_euler" | "implicit_euler" => Ok(Self::Bdf1),
             other => Err(AsimuError::Config(format!(
-                "不支持的 time.scheme \"{other}\"（可用 rk4、euler、lu_sgs、gmres、dual_time、simplec、piso）"
+                "不支持的 time.scheme \"{other}\"（可用 rk4、euler、lu_sgs、gmres、block_lusgs、dual_time、simplec、piso）"
             ))),
         }
     }
@@ -48,6 +51,7 @@ impl TimeIntegrationScheme {
             Self::Euler => "euler",
             Self::LuSgs => "lu_sgs",
             Self::Gmres => "gmres",
+            Self::BlockLusgs => "block_lusgs",
             Self::DualTime => "dual_time",
             Self::Simplec => "simplec",
             Self::Piso => "piso",
@@ -57,7 +61,10 @@ impl TimeIntegrationScheme {
 
     #[must_use]
     pub const fn is_implicit_pseudo_time(self) -> bool {
-        matches!(self, Self::LuSgs | Self::Gmres | Self::DualTime)
+        matches!(
+            self,
+            Self::LuSgs | Self::Gmres | Self::BlockLusgs | Self::DualTime
+        )
     }
 }
 
@@ -78,6 +85,14 @@ mod tests {
         assert_eq!(
             TimeIntegrationScheme::parse("matrix-free-gmres").expect("gmres"),
             TimeIntegrationScheme::Gmres
+        );
+    }
+
+    #[test]
+    fn parses_block_lusgs_aliases() {
+        assert_eq!(
+            TimeIntegrationScheme::parse("block_lu_sgs").expect("block_lusgs"),
+            TimeIntegrationScheme::BlockLusgs
         );
     }
 

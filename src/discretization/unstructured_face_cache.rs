@@ -20,6 +20,7 @@ use crate::discretization::unstructured_idwls_exec_topo::build_idwls_viscous_hos
 use crate::discretization::unstructured_spectral_exec_topo::build_spectral_radius_host_topology;
 use crate::error::Result;
 use crate::mesh::UnstructuredMesh3d;
+use crate::physics::FreestreamParams;
 
 /// 非结构内部面拓扑（粘性通量 + IDWLS 邻接样本）。
 #[derive(Debug, Clone)]
@@ -44,6 +45,28 @@ pub struct UnstructuredInteriorFace {
     pub dr_neighbor_to_face: Vector3,
 }
 
+/// 边界面无粘 BC 类别（block_lusgs 解析 Jacobian 用）。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum UnstructuredBoundaryInviscidKind {
+    Wall {
+        no_slip: bool,
+        heat: WallHeat,
+    },
+    Symmetry,
+    Farfield(FreestreamParams),
+    Inlet {
+        supersonic: bool,
+        total_pressure: Real,
+        total_temperature: Real,
+        velocity_direction: [Real; 3],
+        freestream: FreestreamParams,
+    },
+    Outlet {
+        supersonic: bool,
+        static_pressure: Real,
+    },
+}
+
 /// 非结构边界面拓扑。
 #[derive(Debug, Clone, Copy)]
 pub struct UnstructuredBoundaryFace {
@@ -55,6 +78,7 @@ pub struct UnstructuredBoundaryFace {
     /// \(-A_f / V_{\mathrm{owner}}\)，边界面 owner 残差装配用。
     pub owner_rhs_scale: Real,
     pub spacing: Real,
+    pub inviscid: UnstructuredBoundaryInviscidKind,
     pub viscous: UnstructuredBoundaryViscousKind,
     pub lsq_dr: Vector3,
     pub lsq_w: Real,
@@ -232,15 +256,24 @@ pub struct UnstructuredSolverMeshCache {
 impl UnstructuredSolverMeshCache {
     /// 由网格与边界 patch 构建面拓扑，并预计算 IDWLS 矩阵 \(A\)。
     pub fn from_mesh(mesh: &UnstructuredMesh3d, boundaries: &BoundarySet) -> Result<Self> {
-        Self::from_mesh_with_order(mesh, boundaries, None)
+        Self::from_mesh_with_order(mesh, boundaries, None, FreestreamParams::default())
+    }
+
+    pub fn from_mesh_with_freestream(
+        mesh: &UnstructuredMesh3d,
+        boundaries: &BoundarySet,
+        freestream: FreestreamParams,
+    ) -> Result<Self> {
+        Self::from_mesh_with_order(mesh, boundaries, None, freestream)
     }
 
     pub fn from_mesh_with_order(
         mesh: &UnstructuredMesh3d,
         boundaries: &BoundarySet,
         solver_order: Option<&[usize]>,
+        freestream_default: FreestreamParams,
     ) -> Result<Self> {
-        let face_topology = build_face_topology(mesh, boundaries)?;
+        let face_topology = build_face_topology(mesh, boundaries, freestream_default)?;
         let face_topology_f32 = UnstructuredFaceTopologyF32::from_face_topology(&face_topology);
         let num_cells = mesh.num_cells();
         let lsq_geometry = precompute_lsq_geometry(num_cells, &face_topology);
@@ -347,6 +380,7 @@ fn build_lsq_rhs_cell_incidence(
 fn build_face_topology(
     mesh: &UnstructuredMesh3d,
     boundaries: &BoundarySet,
+    freestream_default: FreestreamParams,
 ) -> Result<UnstructuredFaceTopology> {
     let mut interior = Vec::new();
     for face in 0..mesh.num_faces() {
@@ -388,6 +422,7 @@ fn build_face_topology(
             continue;
         }
         let viscous = boundary_viscous_kind(&patch.kind);
+        let inviscid = boundary_inviscid_kind(&patch.kind, freestream_default);
         for &face in &patch.face_ids {
             let owner_id = mesh.face_owner(face)?;
             let owner = owner_id.index() as usize;
@@ -403,6 +438,7 @@ fn build_face_topology(
                 owner_volume,
                 owner_rhs_scale: -metric.area * inv_volume(owner_volume),
                 spacing: boundary_spacing(mesh, owner_id, face),
+                inviscid,
                 viscous,
                 lsq_dr,
                 lsq_w,
@@ -571,6 +607,67 @@ fn boundary_spacing(mesh: &UnstructuredMesh3d, owner: CellId, face: FaceId) -> R
     let cell = mesh.cell_metric(owner).center;
     let face_center = mesh.face_metric(face).center;
     vec_sub(cell, face_center).magnitude()
+}
+
+fn boundary_inviscid_kind(
+    kind: &BoundaryKind,
+    freestream_default: FreestreamParams,
+) -> UnstructuredBoundaryInviscidKind {
+    match kind {
+        BoundaryKind::Wall { no_slip, heat, .. } => UnstructuredBoundaryInviscidKind::Wall {
+            no_slip: *no_slip,
+            heat: *heat,
+        },
+        BoundaryKind::Symmetry => UnstructuredBoundaryInviscidKind::Symmetry,
+        BoundaryKind::Farfield {
+            mach,
+            pressure,
+            temperature,
+            alpha,
+            beta,
+        } => UnstructuredBoundaryInviscidKind::Farfield(FreestreamParams {
+            mach: *mach,
+            pressure: *pressure,
+            temperature: *temperature,
+            alpha: *alpha,
+            beta: *beta,
+            velocity_direction: [1.0, 0.0, 0.0],
+        }),
+        BoundaryKind::Inlet {
+            total_pressure,
+            total_temperature,
+            velocity_direction,
+            supersonic,
+            ..
+        } => UnstructuredBoundaryInviscidKind::Inlet {
+            supersonic: *supersonic,
+            total_pressure: *total_pressure,
+            total_temperature: *total_temperature,
+            velocity_direction: *velocity_direction,
+            freestream: freestream_default,
+        },
+        BoundaryKind::TurbulentInlet {
+            total_pressure,
+            total_temperature,
+            velocity_direction,
+            ..
+        } => UnstructuredBoundaryInviscidKind::Inlet {
+            supersonic: false,
+            total_pressure: *total_pressure,
+            total_temperature: *total_temperature,
+            velocity_direction: *velocity_direction,
+            freestream: freestream_default,
+        },
+        BoundaryKind::Outlet {
+            static_pressure,
+            supersonic,
+            ..
+        } => UnstructuredBoundaryInviscidKind::Outlet {
+            supersonic: *supersonic,
+            static_pressure: *static_pressure,
+        },
+        _ => UnstructuredBoundaryInviscidKind::Farfield(freestream_default),
+    }
 }
 
 fn boundary_viscous_kind(kind: &BoundaryKind) -> UnstructuredBoundaryViscousKind {

@@ -35,7 +35,7 @@ use super::gmres_block_preconditioner_unstructured_state::{
 };
 use super::gmres_block_preconditioner_unstructured_viscous::{
     ViscousCellDiffusivity, add_component_sigma, add_viscous_off_diagonal,
-    local_viscous_diffusivity, viscous_component_sigma, viscous_coupling_from_scale,
+    local_viscous_diffusivity, viscous_component_sigma,
 };
 
 #[cfg(test)]
@@ -53,6 +53,7 @@ struct UnstructuredCellBlockContext<'a> {
     exec: &'a crate::exec::ExecutionContext,
     inviscid: &'a InviscidFluxConfig,
     viscous_diffusivity: Option<&'a [ViscousCellDiffusivity]>,
+    viscous: Option<&'a ViscousPhysicsConfig>,
     fields: &'a ConservedFields,
     p_floor: Real,
     epsilon_rel: Real,
@@ -73,6 +74,8 @@ pub(super) struct UnstructuredCellBlockPreconditionerBuild<'a> {
     pub dt: &'a [Real],
     pub p_floor: Real,
     pub epsilon_rel: Real,
+    /// 块双扫后扫邻居耦合阻尼；仅 `block_lusgs` 预条件器使用。
+    pub backward_damping: Real,
 }
 
 pub(super) fn build_cell_block_preconditioner_unstructured(
@@ -93,7 +96,7 @@ pub(super) fn build_cell_block_preconditioner_unstructured(
         dt,
         p_floor,
         epsilon_rel,
-        ..
+        backward_damping: _,
     } = params;
     if inviscid.reconstruction != ReconstructionKind::FirstOrder {
         return Err(AsimuError::Config(
@@ -115,6 +118,7 @@ pub(super) fn build_cell_block_preconditioner_unstructured(
         exec,
         inviscid,
         viscous_diffusivity: viscous_diffusivity.as_deref(),
+        viscous,
         fields,
         p_floor,
         epsilon_rel,
@@ -135,6 +139,7 @@ pub(super) struct UnstructuredBlockLusgsPreconditioner {
     solver_order: Vec<usize>,
     solver_rank: Vec<usize>,
     forward: Vec<Real>,
+    backward_damping: Real,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -170,6 +175,7 @@ impl UnstructuredBlockLusgsPreconditioner {
             solver_order: solver_order.to_vec(),
             solver_rank: solver_rank.to_vec(),
             forward: vec![0.0; num_cells * CONSERVED_COMPONENTS_3D],
+            backward_damping: 0.5,
         })
     }
 
@@ -192,6 +198,7 @@ impl UnstructuredBlockLusgsPreconditioner {
             dt,
             p_floor,
             epsilon_rel,
+            backward_damping,
             ..
         } = params;
         if inviscid.reconstruction != ReconstructionKind::FirstOrder {
@@ -218,6 +225,7 @@ impl UnstructuredBlockLusgsPreconditioner {
             exec,
             inviscid,
             viscous_diffusivity: viscous_diffusivity.as_deref(),
+            viscous,
             fields,
             p_floor,
             epsilon_rel,
@@ -234,6 +242,7 @@ impl UnstructuredBlockLusgsPreconditioner {
         for (entry, slot) in self.entries.iter_mut().zip(&self.off_diagonal_slots) {
             entry.block = face_blocks::off_diagonal_block(&ctx, primitives, slot)?;
         }
+        self.backward_damping = backward_damping;
         self.refresh_inverse_diagonal_blocks()?;
         Ok(())
     }
@@ -271,6 +280,7 @@ impl Preconditioner for UnstructuredBlockLusgsPreconditioner {
                         &mut local,
                         &entry.block,
                         &cell_vector(&self.forward, entry.col),
+                        1.0,
                     );
                 }
             }
@@ -288,7 +298,12 @@ impl Preconditioner for UnstructuredBlockLusgsPreconditioner {
             );
             for entry in face_blocks::row_entries(&self.entries, &self.row_offsets, cell) {
                 if self.solver_rank[entry.col] > self.solver_rank[cell] {
-                    subtract_block_product(&mut local, &entry.block, &cell_vector(out, entry.col));
+                    subtract_block_product(
+                        &mut local,
+                        &entry.block,
+                        &cell_vector(out, entry.col),
+                        self.backward_damping,
+                    );
                 }
             }
             write_cell_vector_from_block_product(
