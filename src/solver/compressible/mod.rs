@@ -2,6 +2,7 @@
 use std::time::Instant;
 
 mod context;
+mod euler_config;
 mod gmres_block_preconditioner_3d;
 mod gmres_implicit_3d;
 pub mod helpers;
@@ -31,10 +32,14 @@ mod unstructured_driver;
 mod unstructured_driver_typed;
 pub mod wave_speed;
 
+pub use crate::solver::time::{
+    CflSchedule, LuSgsConfig, ResidualSmoothingConfig, RungeKutta4Config,
+};
 pub use context::{
     CompressibleAdvanceContext1d, CompressibleAdvanceContext3d, CompressibleAdvanceContext3dTyped,
     ResidualCorrection3d, ResidualCorrection3dHandle,
 };
+pub use euler_config::CompressibleEulerConfig;
 pub use lu_sgs_sweep_unstructured_typed::{
     LuSgsSweepUnstructuredTypedParams, LuSgsUnstructuredSweepTyped, lu_sgs_sweep_unstructured_f32,
     lu_sgs_sweep_unstructured_typed,
@@ -67,12 +72,12 @@ use crate::discretization::assemble_inviscid_residual_1d;
 use crate::error::Result;
 use crate::field::{ConservedFields, ConservedResidual, LusgsDiagonalCoeffs};
 use crate::mesh::{StructuredMesh1d, StructuredMesh3d};
-use crate::physics::{FreestreamParams, IdealGasEoS, ViscousPhysicsConfig};
+use crate::physics::{FreestreamParams, IdealGasEoS};
 use crate::solver::state::SolverState;
 use crate::solver::time::{
-    CflSchedule, LuSgsConfig, ResidualSmoothingConfig, Rk4Storage, RungeKutta4Config,
-    RungeKutta4Integrator, TimeIntegrationScheme, TimeIntegrator, euler_step, euler_step_local,
-    min_positive_dt, positive_fixed_dt, rk4_step, rk4_step_local, smooth_residual_3d_limited,
+    Rk4Storage, RungeKutta4Integrator, TimeIntegrationScheme, TimeIntegrator, euler_step,
+    euler_step_local, min_positive_dt, positive_fixed_dt, rk4_step, rk4_step_local,
+    smooth_residual_3d_limited,
 };
 use helpers::{
     RefreshCompressibleStateInput, finalize_cell_dts_from_sigma,
@@ -86,41 +91,6 @@ use wave_speed::max_wave_speed;
 pub enum CompressibleTimeMode {
     Steady,
     Transient,
-}
-
-/// 显式可压缩 Euler 求解器配置。
-#[derive(Debug, Clone, PartialEq)]
-pub struct CompressibleEulerConfig {
-    pub time: RungeKutta4Config,
-    pub inviscid: crate::discretization::InviscidFluxConfig,
-    /// `Some` 时叠加层流粘性通量（Navier-Stokes）。
-    pub viscous: Option<ViscousPhysicsConfig>,
-    pub cfl_schedule: CflSchedule,
-    pub time_mode: CompressibleTimeMode,
-    pub local_time_step: bool,
-    /// 时间积分格式（`rk4` 默认；`euler` 排错；`lu_sgs`/`gmres` 隐式伪时间）。
-    pub time_scheme: TimeIntegrationScheme,
-    /// `lu_sgs` 松弛因子等（显式格式下忽略）。
-    pub lu_sgs: LuSgsConfig,
-    pub gmres: GmresImplicitConfig,
-    pub residual_smoothing: ResidualSmoothingConfig,
-}
-
-impl Default for CompressibleEulerConfig {
-    fn default() -> Self {
-        Self {
-            time: RungeKutta4Config::default(),
-            inviscid: crate::discretization::InviscidFluxConfig::default(),
-            viscous: None,
-            cfl_schedule: CflSchedule::constant(0.4),
-            time_mode: CompressibleTimeMode::Transient,
-            local_time_step: false,
-            time_scheme: TimeIntegrationScheme::Rk4,
-            lu_sgs: LuSgsConfig::default(),
-            gmres: GmresImplicitConfig::default(),
-            residual_smoothing: ResidualSmoothingConfig::default(),
-        }
-    }
 }
 
 /// 单步推进结果。
@@ -528,6 +498,7 @@ impl CompressibleEulerSolver {
                     primitives: &mut ctx.primitive_scratch,
                     min_pressure: p_floor,
                     backward_damping: lu_sgs.sweep_backward_damping,
+                    low_mach_preconditioning: self.config.low_mach_preconditioning,
                 };
                 let _span = info_span!("lu_sgs_sweep").entered();
                 lu_sgs_sweep_3d(
@@ -773,8 +744,7 @@ impl CompressibleEulerSolver {
         })?;
         let params = self.spectral_radius_params(ctx, p_floor);
         let sigma = cell_spectral_radius_3d(&params)?;
-        let volumes = params.mesh.cell_volumes();
-        let cell_dts = cell_local_dt_spectral(&volumes, &sigma, cfl)?;
+        let cell_dts = cell_local_dt_spectral(&params.mesh.cell_volumes(), &sigma, cfl)?;
         Ok((cell_dts, sigma))
     }
 

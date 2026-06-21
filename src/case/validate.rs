@@ -28,9 +28,9 @@ pub fn exec_backend(case: &CaseSpec) -> Result<()> {
     }
 }
 
-/// 低马赫预处理功能约束（P1）。
+/// 低马赫预处理功能约束（P1–P4）。
 pub fn low_mach_preconditioning(case: &CaseSpec) -> Result<()> {
-    let Some(_cfg) = case.time.low_mach_preconditioning else {
+    let Some(cfg) = case.time.low_mach_preconditioning else {
         return Ok(());
     };
     if !case.is_compressible() || !matches!(case.mesh, CaseMesh::Unstructured3d(_)) {
@@ -42,6 +42,27 @@ pub fn low_mach_preconditioning(case: &CaseSpec) -> Result<()> {
         return Err(AsimuError::Config(
             "low_mach_preconditioning 暂不支持 backend = \"cuda\"".to_string(),
         ));
+    }
+    if cfg.jacobian {
+        let disc = case.compressible_discretization()?;
+        if disc.inviscid().reconstruction != ReconstructionKind::FirstOrder {
+            return Err(AsimuError::Config(
+                "low_mach_jacobian 暂要求 reconstruction = first_order".to_string(),
+            ));
+        }
+        if case.numerics.compute_precision != ComputePrecision::F64 {
+            return Err(AsimuError::Config(
+                "low_mach_jacobian 块双扫暂仅支持 compute_precision = \"f64\"".to_string(),
+            ));
+        }
+        if case.time.scheme == Some(TimeIntegrationScheme::LuSgs)
+            && !case.time.lusgs_sweep.unwrap_or(false)
+        {
+            return Err(AsimuError::Config(
+                "low_mach_jacobian 须配合 lusgs_sweep = true 或 gmres/block_lusgs 预条件"
+                    .to_string(),
+            ));
+        }
     }
     Ok(())
 }

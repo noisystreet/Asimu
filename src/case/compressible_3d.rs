@@ -330,6 +330,7 @@ fn build_compressible_solver(
         lu_sgs: case.time.resolved_lusgs_config()?,
         gmres: case.time.resolved_gmres_config()?,
         residual_smoothing: case.time.residual_smoothing_config(),
+        low_mach_preconditioning: case.time.low_mach_preconditioning,
     }))
 }
 

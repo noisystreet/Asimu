@@ -51,7 +51,8 @@ pub use face_flux_f32::{
 };
 pub use face_flux_jacobian::{
     ConservedFluxJacobian, first_order_face_flux_jacobian_supported,
-    first_order_interior_flux_jacobian, physical_inviscid_flux_jacobian_conserved,
+    first_order_interior_flux_jacobian, first_order_interior_flux_jacobian_with_low_mach,
+    physical_inviscid_flux_jacobian_conserved,
 };
 pub use face_flux_typed::InviscidFaceFluxTyped;
 pub use hllc::hllc_flux;

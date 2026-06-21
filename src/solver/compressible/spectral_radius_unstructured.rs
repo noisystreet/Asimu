@@ -495,7 +495,12 @@ mod tests {
             &ghosts,
             &primitives,
             None,
-            Some(crate::solver::time::LowMachPreconditioningConfig { mach_cutoff: 0.1 }),
+            Some(crate::solver::time::LowMachPreconditioningConfig {
+                mach_cutoff: 0.1,
+                max_mach: 0.3,
+                blend: crate::solver::time::LowMachBlend::Smooth,
+                jacobian: false,
+            }),
         );
         let sigma_base = cell_spectral_radius_unstructured(&base).expect("base");
         let sigma_lm = cell_spectral_radius_unstructured(&low_mach).expect("low mach");

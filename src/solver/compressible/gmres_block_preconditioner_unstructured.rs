@@ -13,7 +13,7 @@ use crate::discretization::{
     BoundaryGhostBuffer, InviscidFlux, InviscidFluxConfig, ReconstructionKind,
     UnstructuredFaceTopology, face_inviscid_flux_first_order_boundary_soa,
     face_inviscid_flux_first_order_interior_soa, first_order_face_flux_jacobian_supported,
-    first_order_interior_flux_jacobian,
+    first_order_interior_flux_jacobian_with_low_mach,
 };
 use crate::error::{AsimuError, Result};
 use crate::field::{ConservedFields, PrimitiveFields};
@@ -57,6 +57,7 @@ struct UnstructuredCellBlockContext<'a> {
     fields: &'a ConservedFields,
     p_floor: Real,
     epsilon_rel: Real,
+    low_mach_preconditioning: Option<crate::solver::time::LowMachPreconditioningConfig>,
 }
 
 pub(super) struct UnstructuredCellBlockPreconditionerBuild<'a> {
@@ -76,6 +77,7 @@ pub(super) struct UnstructuredCellBlockPreconditionerBuild<'a> {
     pub epsilon_rel: Real,
     /// 块双扫后扫邻居耦合阻尼；仅 `block_lusgs` 预条件器使用。
     pub backward_damping: Real,
+    pub low_mach_preconditioning: Option<crate::solver::time::LowMachPreconditioningConfig>,
 }
 
 pub(super) fn build_cell_block_preconditioner_unstructured(
@@ -97,6 +99,7 @@ pub(super) fn build_cell_block_preconditioner_unstructured(
         p_floor,
         epsilon_rel,
         backward_damping: _,
+        low_mach_preconditioning,
     } = params;
     if inviscid.reconstruction != ReconstructionKind::FirstOrder {
         return Err(AsimuError::Config(
@@ -122,6 +125,7 @@ pub(super) fn build_cell_block_preconditioner_unstructured(
         fields,
         p_floor,
         epsilon_rel,
+        low_mach_preconditioning,
     };
     for (cell, &dt_cell) in dt.iter().enumerate().take(n) {
         face_blocks::fill_cell_block(&mut blocks, &ctx, primitives, cell, dt_cell)?;
@@ -199,7 +203,7 @@ impl UnstructuredBlockLusgsPreconditioner {
             p_floor,
             epsilon_rel,
             backward_damping,
-            ..
+            low_mach_preconditioning,
         } = params;
         if inviscid.reconstruction != ReconstructionKind::FirstOrder {
             return Err(AsimuError::Config(
@@ -229,6 +233,7 @@ impl UnstructuredBlockLusgsPreconditioner {
             fields,
             p_floor,
             epsilon_rel,
+            low_mach_preconditioning,
         };
         for (cell, &dt_cell) in dt.iter().enumerate().take(n) {
             face_blocks::fill_cell_block(

@@ -33,6 +33,9 @@ pub(super) struct TimeToml {
     pub inner_tolerance: Option<Real>,
     pub low_mach_preconditioning: Option<bool>,
     pub low_mach_mach_cutoff: Option<Real>,
+    pub low_mach_max_mach: Option<Real>,
+    pub low_mach_blend: Option<String>,
+    pub low_mach_jacobian: Option<bool>,
 }
 
 pub(super) fn parse_time_config(raw: Option<&TimeToml>, has_sod: bool) -> Result<CaseTimeConfig> {
@@ -81,6 +84,9 @@ pub(super) fn parse_time_config(raw: Option<&TimeToml>, has_sod: bool) -> Result
     let low_mach_preconditioning = crate::solver::time::LowMachPreconditioningConfig::parse(
         raw.low_mach_preconditioning.unwrap_or(false),
         raw.low_mach_mach_cutoff,
+        raw.low_mach_max_mach,
+        raw.low_mach_blend.as_deref(),
+        raw.low_mach_jacobian,
     )?;
     Ok(CaseTimeConfig {
         mode,

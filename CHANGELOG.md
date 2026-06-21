@@ -5,6 +5,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- **低马赫预处理退化策略**：`[time].low_mach_max_mach`（默认 0.3）与 `low_mach_blend`（`smooth` | `hard_cut`）；\(M_\text{loc}\ge M_\text{max}\) 时声速项退化为常规可压缩谱半径，\(M_\text{cut}<M<M_\text{max}\) 在 `smooth` 下线性混合。见 [theory/low_mach_preconditioning.md](docs/theory/low_mach_preconditioning.md) §3.1。
+- **低马赫 LU-SGS P2–P4**：GMRES `lusgs_sweep` 预条件与结构化扫掠接低马赫；P3 预处理 Riemann 特征速度；P4 `[time].low_mach_jacobian` 块双扫 + 预处理 Roe 面 Jacobian（`lu_sgs`+`lusgs_sweep`，f64）。
+
 ### Changed
 
 - **standalone `block_lusgs` 时间积分**：每伪时间步冻结块 Jacobian 后 **一次**对称双扫 \( \Delta U \approx \omega M^{-1} R \)（标准 BLU-SGS 伪时间步；无内层迭代配置项）。

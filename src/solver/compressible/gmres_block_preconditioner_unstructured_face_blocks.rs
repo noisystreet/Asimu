@@ -84,7 +84,7 @@ fn off_diagonal_block_analytic(
     let right = ctx.fields.cell_state(face.neighbor)?;
     let prim_l = primitives.cell_primitive(face.owner);
     let prim_r = primitives.cell_primitive(face.neighbor);
-    let (d_fl, d_fr) = first_order_interior_flux_jacobian(
+    let (d_fl, d_fr) = first_order_interior_flux_jacobian_with_low_mach(
         &left,
         &right,
         &prim_l,
@@ -92,6 +92,7 @@ fn off_diagonal_block_analytic(
         face.normal,
         ctx.eos,
         ctx.inviscid,
+        ctx.low_mach_preconditioning,
     )?;
     let (scale, d_source) = if slot.row == face.owner {
         (face.owner_rhs_scale, d_fr)
@@ -366,7 +367,7 @@ fn fill_cell_block_analytic(
         let right = ctx.fields.cell_state(face.neighbor)?;
         let prim_l = primitives.cell_primitive(face.owner);
         let prim_r = primitives.cell_primitive(face.neighbor);
-        let (d_fl, _d_fr) = first_order_interior_flux_jacobian(
+        let (d_fl, _d_fr) = first_order_interior_flux_jacobian_with_low_mach(
             &left,
             &right,
             &prim_l,
@@ -374,6 +375,7 @@ fn fill_cell_block_analytic(
             face.normal,
             ctx.eos,
             ctx.inviscid,
+            ctx.low_mach_preconditioning,
         )?;
         subtract_scaled_flux_jacobian(&mut block, face.owner_rhs_scale, &d_fl);
     }
@@ -383,7 +385,7 @@ fn fill_cell_block_analytic(
         let right = ctx.fields.cell_state(face.neighbor)?;
         let prim_l = primitives.cell_primitive(face.owner);
         let prim_r = primitives.cell_primitive(face.neighbor);
-        let (_d_fl, d_fr) = first_order_interior_flux_jacobian(
+        let (_d_fl, d_fr) = first_order_interior_flux_jacobian_with_low_mach(
             &left,
             &right,
             &prim_l,
@@ -391,6 +393,7 @@ fn fill_cell_block_analytic(
             face.normal,
             ctx.eos,
             ctx.inviscid,
+            ctx.low_mach_preconditioning,
         )?;
         subtract_scaled_flux_jacobian(&mut block, face.neighbor_rhs_scale, &d_fr);
     }

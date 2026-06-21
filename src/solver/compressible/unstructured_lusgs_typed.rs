@@ -2,15 +2,17 @@
 
 #[cfg(feature = "cuda")]
 use crate::core::ExecDevice;
-use crate::core::{ComputeFloat, Real};
+use crate::core::{ComputeFloat, ComputePrecision, Real};
 use crate::error::{AsimuError, Result};
 use crate::field::{
     ConservedFieldsT, LusgsDiagonalCoeffs, LusgsDiagonalCoeffsF32, assign_lusgs_diagonal_update_f32,
 };
+use tracing::info_span;
 #[cfg(feature = "cuda")]
 use tracing::warn;
 
 use super::{UnstructuredRunEnvTyped, UnstructuredStepWorkTyped};
+use crate::solver::time::LuSgsConfig;
 use crate::solver::{
     LuSgsSweepUnstructuredF32Input, LuSgsSweepUnstructuredInput, LuSgsSweepUnstructuredTypedParams,
     LuSgsUnstructuredCouplingsRef, lu_sgs_sweep_unstructured_f32, lu_sgs_sweep_unstructured_typed,
@@ -34,6 +36,68 @@ pub(crate) trait UnstructuredLusgsSweep: ComputeFloat {
         work: &mut UnstructuredStepWorkTyped<Self>,
         ctx: &UnstructuredLusgsSweepContext<'_>,
     ) -> Result<()>;
+
+    /// `low_mach_jacobian` 块双扫（仅 f64）。
+    fn run_lusgs_block_jacobian_sweep(
+        env: &UnstructuredRunEnvTyped<'_>,
+        fields: &mut ConservedFieldsT<Self>,
+        work: &mut UnstructuredStepWorkTyped<Self>,
+        p_floor: Real,
+        omega: Real,
+    ) -> Result<()>;
+}
+
+/// 非结构 LU-SGS 扫掠：`low_mach_jacobian` 时块双扫，否则标量双扫。
+pub(crate) fn run_unstructured_lusgs_sweep_typed<T: UnstructuredLusgsSweep>(
+    env: &UnstructuredRunEnvTyped<'_>,
+    fields: &mut ConservedFieldsT<T>,
+    work: &mut UnstructuredStepWorkTyped<T>,
+    p_floor: Real,
+    lu_sgs: LuSgsConfig,
+) -> Result<()> {
+    if env
+        .config
+        .low_mach_preconditioning
+        .is_some_and(|cfg| cfg.jacobian)
+    {
+        validate_low_mach_jacobian_lusgs_sweep::<T>(env)?;
+        let _span = info_span!("unstructured_lusgs_block_jacobian_sweep").entered();
+        T::run_lusgs_block_jacobian_sweep(env, fields, work, p_floor, lu_sgs.omega)
+    } else {
+        let _span = info_span!(
+            "unstructured_lusgs_sweep_typed",
+            precision = T::PRECISION.label(),
+        )
+        .entered();
+        T::run_lusgs_sweep(
+            fields,
+            work,
+            &UnstructuredLusgsSweepContext {
+                env,
+                p_floor,
+                sweep: true,
+                omega: lu_sgs.omega,
+                backward_damping: lu_sgs.sweep_backward_damping,
+                inv_dt_phys: 0.0,
+            },
+        )
+    }
+}
+
+fn validate_low_mach_jacobian_lusgs_sweep<T: ComputeFloat>(
+    env: &UnstructuredRunEnvTyped<'_>,
+) -> Result<()> {
+    if T::PRECISION != ComputePrecision::F64 {
+        return Err(AsimuError::Config(
+            "low_mach_jacobian 块双扫暂仅支持 compute_precision = \"f64\"".to_string(),
+        ));
+    }
+    if env.config.inviscid.reconstruction != crate::discretization::ReconstructionKind::FirstOrder {
+        return Err(AsimuError::Config(
+            "low_mach_jacobian 块双扫暂要求 reconstruction = first_order".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 impl UnstructuredLusgsSweep for f32 {
@@ -87,6 +151,18 @@ impl UnstructuredLusgsSweep for f32 {
             },
         )
     }
+
+    fn run_lusgs_block_jacobian_sweep(
+        _env: &UnstructuredRunEnvTyped<'_>,
+        _fields: &mut ConservedFieldsT<f32>,
+        _work: &mut UnstructuredStepWorkTyped<f32>,
+        _p_floor: Real,
+        _omega: Real,
+    ) -> Result<()> {
+        Err(AsimuError::Config(
+            "low_mach_jacobian 块双扫暂仅支持 compute_precision = \"f64\"".to_string(),
+        ))
+    }
 }
 
 impl UnstructuredLusgsSweep for f64 {
@@ -123,6 +199,18 @@ impl UnstructuredLusgsSweep for f64 {
                 gamma: ctx.env.config.eos.gamma,
                 inv_dt_phys: ctx.inv_dt_phys,
             },
+        )
+    }
+
+    fn run_lusgs_block_jacobian_sweep(
+        env: &UnstructuredRunEnvTyped<'_>,
+        fields: &mut ConservedFieldsT<f64>,
+        work: &mut UnstructuredStepWorkTyped<f64>,
+        p_floor: Real,
+        omega: Real,
+    ) -> Result<()> {
+        super::unstructured_block_lusgs_typed::apply_lusgs_block_jacobian_sweep_f64(
+            env, fields, work, p_floor, omega,
         )
     }
 }

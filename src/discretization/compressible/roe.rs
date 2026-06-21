@@ -500,6 +500,47 @@ fn invert_5x5(matrix: [[Real; 5]; 5]) -> Result<[[Real; 5]; 5]> {
     Ok(inverse)
 }
 
+/// 冻结 Roe 平均态的 \(|A_{\mathrm{roe,prec}}|\)：声学特征值用 \(\beta a\) 替代 \(a\)（Weiss–Smith 型）。
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn roe_absolute_flux_jacobian_frozen_precond(
+    left: &ConservedState,
+    right: &ConservedState,
+    prim_l: &PrimitiveState,
+    prim_r: &PrimitiveState,
+    normal: Vector3,
+    eos: &IdealGasEoS,
+    config: &RoeFluxConfig,
+    beta: Real,
+) -> Result<[[Real; 5]; 5]> {
+    if beta >= 1.0 - 1.0e-12 {
+        return roe_absolute_flux_jacobian_frozen(left, right, prim_l, prim_r, normal, eos, config);
+    }
+    let n = normalize_or_error(normal)?;
+    let roe = roe_averages(prim_l, prim_r, left, right, eos.gamma, n)?;
+    let (t1, t2) = face_tangent_basis(n);
+    let right_eigen = roe_right_eigenvectors(&roe, n, t1, t2);
+    let left_eigen = invert_5x5(right_eigen)?;
+    let delta = entropy_delta(&roe, config);
+    let a_pre = beta * roe.a;
+    let lambdas = [
+        fixed_eigenvalue(roe.un - a_pre, delta, config.entropy_fix),
+        fixed_eigenvalue(roe.un, delta, config.entropy_fix),
+        fixed_eigenvalue(roe.un, delta, config.entropy_fix),
+        fixed_eigenvalue(roe.un, delta, config.entropy_fix),
+        fixed_eigenvalue(roe.un + a_pre, delta, config.entropy_fix),
+    ];
+    let mut abs_a = [[0.0; 5]; 5];
+    for k in 0..5 {
+        let lam = lambdas[k];
+        for i in 0..5 {
+            for j in 0..5 {
+                abs_a[i][j] += lam * right_eigen[i][k] * left_eigen[k][j];
+            }
+        }
+    }
+    Ok(abs_a)
+}
+
 /// 冻结 Roe 平均态的 \(|A_{\mathrm{roe}}|\)（守恒变量，对应 \(\hat F \approx \tfrac12(F_L+F_R)-\tfrac12|A|(U_R-U_L)\) 线性化）。
 pub(crate) fn roe_absolute_flux_jacobian_frozen(
     _left: &ConservedState,

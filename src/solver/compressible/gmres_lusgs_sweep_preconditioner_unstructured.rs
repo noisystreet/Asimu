@@ -29,6 +29,7 @@ pub(crate) struct LusgsSweepUnstructuredGmresPreconditionerBuild {
     pub omega: Real,
     pub backward_damping: Real,
     pub inv_dt_phys: Real,
+    pub low_mach_preconditioning: Option<crate::solver::time::LowMachPreconditioningConfig>,
 }
 
 pub(crate) struct LusgsSweepUnstructuredGmresPreconditioner {
@@ -46,6 +47,7 @@ pub(crate) struct LusgsSweepUnstructuredGmresPreconditioner {
     omega: Real,
     backward_damping: Real,
     inv_dt_phys: Real,
+    low_mach_preconditioning: Option<crate::solver::time::LowMachPreconditioningConfig>,
 }
 
 impl LusgsSweepUnstructuredGmresPreconditioner {
@@ -73,6 +75,7 @@ impl LusgsSweepUnstructuredGmresPreconditioner {
             omega: params.omega,
             backward_damping: params.backward_damping,
             inv_dt_phys: params.inv_dt_phys,
+            low_mach_preconditioning: params.low_mach_preconditioning,
         })
     }
 }
@@ -94,6 +97,7 @@ impl Preconditioner for LusgsSweepUnstructuredGmresPreconditioner {
                 eos: &self.eos,
                 frozen_primitives: &self.frozen_primitives,
                 backward_damping: self.backward_damping,
+                low_mach_preconditioning: self.low_mach_preconditioning,
             },
             LuSgsSweepUnstructuredInput {
                 dt: &self.dt,

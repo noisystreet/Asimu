@@ -1,6 +1,6 @@
 # 低马赫预处理（可压缩非结构）
 
-> 模块：`src/solver/compressible/unstructured_*` · 版本：v1.x · 状态：**P1–P2 部分实现（CPU 非结构）；CUDA 待实现**
+> 模块：`src/solver/compressible/unstructured_*` · 版本：v1.x · 状态：**P1–P2 已实现（CPU 非结构）；CUDA 待实现**
 
 本文给出 asimu 在非结构可压缩路径上引入**低马赫预处理**（Low-Mach Preconditioning）的设计目标、数学形式与落地计划。背景见 [unstructured_fvm.md](unstructured_fvm.md)、[time_integration.md](time_integration.md)、[dual_time_stepping.md](dual_time_stepping.md)。
 
@@ -86,19 +86,16 @@ R_\text{eff}(U)=R(U)+\text{storage}(U;\Delta t_\text{phys}),
 
 ---
 
-## 3. 配置设计（提案）
+## 3. 配置
 
-> 以下字段为**提案**，当前代码尚未生效。
-
-建议在 `[time]` 增加：
+在 `[time]` 增加：
 
 ```toml
 [time]
-# 规划中：低马赫预处理
-# low_mach_preconditioning = false
+low_mach_preconditioning = false
 # low_mach_mach_cutoff = 0.1    # M_cut
-# low_mach_max_mach = 0.3       # 超过该值逐步退化到常规可压缩形式
-# low_mach_blend = "smooth"     # smooth | hard_cut
+# low_mach_max_mach = 0.3       # M_max：超过该值逐步退化到常规可压缩形式
+# low_mach_jacobian = false   # true：块双扫 + 预处理 Roe 面 Jacobian（须 f64、first_order、lusgs_sweep 或 block/gmres 预条件）
 ```
 
 字段语义：
@@ -109,12 +106,30 @@ R_\text{eff}(U)=R(U)+\text{storage}(U;\Delta t_\text{phys}),
 | `low_mach_mach_cutoff` | `0.1` | 式 (1) 的 \(M_\text{cut}\) |
 | `low_mach_max_mach` | `0.3` | 从低马赫模型向常规模型退化的上界 |
 | `low_mach_blend` | `smooth` | 平滑退化（推荐）或硬阈值 |
+| `low_mach_jacobian` | `false` | 启用预处理 Roe 面 Jacobian；`lu_sgs`+`lusgs_sweep` 时走块双扫 |
 
-约束建议：
+约束：
 
 - 仅对可压缩 3D 非结构路径生效；
 - `scheme = "lu_sgs"` 与 `scheme = "dual_time"` 优先支持；
-- 先做 CPU f64，再扩展 CPU f32 / CUDA f32。
+- CPU f64/f32 已支持；CUDA 待实现。
+
+### 3.1 退化策略（P2）
+
+记 \(M_\text{loc}=|u|/a\)，预处理声速乘子 \(\beta_\text{lm}=\max(M_\text{loc},M_\text{cut})\)。
+
+**`hard_cut`**：若 \(M_\text{loc}\ge M_\text{max}\)，取 \(\beta_\text{eff}=1\)（与常规可压缩谱半径一致）；否则 \(\beta_\text{eff}=\beta_\text{lm}\)。
+
+**`smooth`**：若 \(M_\text{loc}\ge M_\text{max}\)，\(\beta_\text{eff}=1\)；若 \(M_\text{loc}\le M_\text{cut}\)，\(\beta_\text{eff}=\beta_\text{lm}\)；否则
+
+\[
+\beta_\text{eff}
+= w\,\beta_\text{lm} + (1-w),\qquad
+w=\frac{M_\text{max}-M_\text{loc}}{M_\text{max}-M_\text{cut}}.
+\tag{6}
+\]
+
+面谱半径与 LU-SGS 扫掠共用 `LowMachPreconditioningConfig::sound_speed_multiplier`（`low_mach_face_spectral.rs` / `spectral_radius_f32.rs`）。
 
 ---
 
@@ -144,21 +159,27 @@ R_\text{eff}(U)=R(U)+\text{storage}(U;\Delta t_\text{phys}),
 - 支持 `lu_sgs` 稳态 CPU f64；
 - 给出低马赫算例收敛对比（迭代数、残差降幅）。
 
-### P2（一致性增强）— **部分实现**
+### P2（一致性增强）— **已实现**
 
 - LU-SGS 扫掠面耦合 \(\lambda_{ij}\) 与预处理谱半径一致（`face_spectral_radius_with_low_mach`）；
 - 对角隐式分母已通过 \(\sigma^\text{LM}\) 与 \(\Delta\tau^\text{LM}\) 一致（P1）；
-- 平滑退化策略（`low_mach_max_mach` / `blend`）仍待实现。
+- **`low_mach_max_mach` / `low_mach_blend` 平滑或硬阈值退化**（`LowMachPreconditioningConfig::sound_speed_multiplier`）。
 
-### P3（dual-time）
+### P3（预处理特征速度）— **已实现**
+
+- 面/单元 \(\lambda\) 由预处理 Riemann 声学特征速度 \(\lambda_\pm=\tfrac12(u_n\pm\sqrt{u_n^2+\beta^2 a^2})\) 导出（`side_preconditioned_hyperbolic_lambda`）；
+- \(M\ge M_\text{max}\) 或 \(\beta\to1\) 时退化为常规 \(|u_n|+a\)。
+
+### P4（块双扫 + 预处理 Jacobian）— **已实现（CPU f64 非结构）**
+
+- `[time].low_mach_jacobian = true` 时 `block_lusgs` / GMRES 块预条件使用预处理 Roe \(|A|\)（`first_order_interior_flux_jacobian_with_low_mach`）；
+- `scheme = "lu_sgs"` 且 `lusgs_sweep = true` 时以 block LU-SGS 双扫替代标量扫掠（`apply_lusgs_block_jacobian_sweep_f64`）。
+
+### P5（dual-time / CUDA）
 
 - 在 `dual_time` 内层启用同一预处理；
-- 与 BDF1/BDF2、inner 诊断日志联动。
-
-### P4（CUDA f32）
-
-- 与 CPU 路径对齐；
-- 补齐 device 侧预处理参数与单测/回归。
+- 与 BDF1/BDF2、inner 诊断日志联动；
+- 与 CPU 路径对齐，补齐 device 侧预处理参数与单测/回归。
 
 ---
 

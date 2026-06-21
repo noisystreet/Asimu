@@ -223,6 +223,7 @@ fn build_unstructured_gmres_preconditioner<T: ComputeFloat>(
                         p_floor,
                         epsilon_rel: config.epsilon,
                         backward_damping: lu_sgs.sweep_backward_damping,
+                        low_mach_preconditioning: env.config.low_mach_preconditioning,
                     },
                 )?,
             )
@@ -249,6 +250,7 @@ fn build_unstructured_gmres_preconditioner<T: ComputeFloat>(
                         omega: lu_sgs.omega,
                         backward_damping: lu_sgs.sweep_backward_damping,
                         inv_dt_phys: 0.0,
+                        low_mach_preconditioning: env.config.low_mach_preconditioning,
                     },
                 )?,
             ))
@@ -309,6 +311,7 @@ pub(crate) fn take_and_refresh_block_lusgs_preconditioner<T: ComputeFloat>(
         p_floor,
         epsilon_rel,
         backward_damping: env.config.lu_sgs.sweep_backward_damping,
+        low_mach_preconditioning: env.config.low_mach_preconditioning,
     })?;
     Ok(precond)
 }

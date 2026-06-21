@@ -14,7 +14,7 @@ use super::{
 };
 use crate::core::{ComputeFloat, ComputePrecision, Real, elapsed_ms};
 use crate::error::{AsimuError, Result};
-use crate::field::ConservedFieldsT;
+use crate::field::{ConservedFields, ConservedFieldsT};
 use crate::linalg::{GmresReport, Preconditioner};
 use crate::solver::compressible::gmres_implicit_3d::gmres_implicit_typed_common::{
     apply_delta_with_line_search_typed, residual_to_vector_typed,
@@ -220,4 +220,53 @@ fn unstructured_timestep_real_slices<T: ComputeFloat>(
             work.timestep.sigma_f32.iter().map(|v| *v as Real).collect(),
         )
     }
+}
+
+/// `lu_sgs` + `low_mach_jacobian`：block LU-SGS 双扫替代标量扫掠（f64）。
+pub(crate) fn apply_lusgs_block_jacobian_sweep_f64(
+    env: &UnstructuredRunEnvTyped<'_>,
+    fields: &mut ConservedFields,
+    work: &mut UnstructuredStepWorkTyped<f64>,
+    p_floor: Real,
+    omega: Real,
+) -> Result<()> {
+    use super::gmres_implicit_unstructured_typed::take_and_refresh_block_lusgs_preconditioner;
+
+    let (dt, _sigma) = unstructured_timestep_real_slices(work);
+    let epsilon_rel = crate::solver::GmresImplicitConfig::default().epsilon;
+    let mut precond =
+        take_and_refresh_block_lusgs_preconditioner(env, work, fields, &dt, p_floor, epsilon_rel)?;
+    let rhs = residual_to_vector_typed(&work.storage.k1);
+    let mut delta = vec![0.0; rhs.len()];
+    precond.apply(&rhs, &mut delta)?;
+    work.block_lusgs_preconditioner = Some(precond);
+    if omega < 1.0 - 1.0e-12 {
+        for entry in &mut delta {
+            *entry *= omega;
+        }
+    }
+    let base_residual_rms = work.storage.k1.density_rms_norm();
+    let implicit_delta = GmresImplicitDelta {
+        delta,
+        report: GmresReport {
+            converged: true,
+            iterations: 1,
+            residual_norm: 0.0,
+        },
+        base_residual_rms,
+        diagnostics: GmresImplicitDiagnostics::new(GmresPreconditionerKind::BlockLusgs),
+    };
+    apply_block_lusgs_update_typed(BlockLusgsUpdateParams {
+        fields,
+        stage: &mut work.storage.stage,
+        base: &work.storage.u0,
+        residual: &work.storage.k1,
+        delta: &implicit_delta,
+        eos: env.config.eos,
+        p_floor,
+        dt: &work.timestep.cell_dts,
+        sigma: &work.timestep.sigma,
+        volumes: &work.volumes,
+        omega,
+    })
 }

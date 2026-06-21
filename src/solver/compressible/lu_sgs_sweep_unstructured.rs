@@ -349,6 +349,7 @@ pub struct LuSgsSweepGmresPreconditionerParams<'a> {
     pub eos: &'a IdealGasEoS,
     pub frozen_primitives: &'a PrimitiveFields,
     pub backward_damping: Real,
+    pub low_mach_preconditioning: Option<crate::solver::time::LowMachPreconditioningConfig>,
 }
 
 /// 近似 \((D_{\Delta t}-J) z = r\)：输出写入 `fields = u0 + z`。
@@ -505,12 +506,14 @@ fn add_coupling_delta_frozen(
     u0: &ConservedFields,
     params: &LuSgsSweepGmresPreconditionerParams<'_>,
 ) {
-    let lambda = face_spectral_radius(
-        &params.frozen_primitives.cell_primitive(cell),
-        &params.frozen_primitives.cell_primitive(coupling.neighbor),
-        coupling.normal,
-        params.eos.gamma,
-    );
+    let lambda =
+        crate::solver::compressible::low_mach_face_spectral::face_spectral_radius_with_low_mach(
+            &params.frozen_primitives.cell_primitive(cell),
+            &params.frozen_primitives.cell_primitive(coupling.neighbor),
+            coupling.normal,
+            params.eos.gamma,
+            params.low_mach_preconditioning,
+        );
     let coef = coupling.area * lambda / volume.max(1.0e-30);
     let cur = conserved_vector(fields, coupling.neighbor);
     let old = conserved_vector(u0, coupling.neighbor);

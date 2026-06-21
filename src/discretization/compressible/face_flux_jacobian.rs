@@ -3,13 +3,17 @@
 //! 理论：[`docs/theory/inviscid_flux.md`](../../../docs/theory/inviscid_flux.md) §4–§5；
 //! 用于 `block_lusgs` 预条件器面块装配，替代 off-diagonal / 对角无粘项的有限差分。
 
+#![allow(clippy::too_many_arguments)]
+
 use crate::core::{Real, Vector3};
 use crate::discretization::flux_config::{FluxScheme, InviscidFluxConfig};
 use crate::error::{AsimuError, Result};
 use crate::physics::{ConservedState, IdealGasEoS, PrimitiveState};
 
 use super::inviscid::velocity_dot_normal;
-use super::roe::{RoeFluxConfig, roe_absolute_flux_jacobian_frozen};
+use super::roe::{
+    RoeFluxConfig, roe_absolute_flux_jacobian_frozen, roe_absolute_flux_jacobian_frozen_precond,
+};
 use super::van_leer_jacobian::fvs_flux_jacobian_wrt_conserved;
 
 /// \(\partial \hat{\mathbf{F}} / \partial \mathbf{U}\)（行：通量分量，列：守恒分量）。
@@ -56,6 +60,26 @@ pub fn first_order_face_flux_jacobian_supported(config: &InviscidFluxConfig) -> 
         && matches!(config.scheme, FluxScheme::Roe(_) | FluxScheme::HanelVanLeer)
 }
 
+/// 一阶内面通量 Jacobian；`low_mach` 且 `jacobian=true` 时用预处理 Roe \(|A|\)。
+pub fn first_order_interior_flux_jacobian_with_low_mach(
+    left: &ConservedState,
+    right: &ConservedState,
+    prim_l: &PrimitiveState,
+    prim_r: &PrimitiveState,
+    normal: Vector3,
+    eos: &IdealGasEoS,
+    config: &InviscidFluxConfig,
+    low_mach: Option<crate::solver::time::LowMachPreconditioningConfig>,
+) -> Result<(ConservedFluxJacobian, ConservedFluxJacobian)> {
+    if let Some(cfg) = low_mach.filter(|c| c.jacobian) {
+        let beta = cfg.face_average_sound_speed_multiplier(prim_l, prim_r, eos.gamma);
+        return first_order_interior_flux_jacobian_precond(
+            left, right, prim_l, prim_r, normal, eos, config, beta,
+        );
+    }
+    first_order_interior_flux_jacobian(left, right, prim_l, prim_r, normal, eos, config)
+}
+
 /// 一阶内面通量：\(\partial \hat{\mathbf{F}} / \partial \mathbf{U}_L\) 与 \(\partial \hat{\mathbf{F}} / \partial \mathbf{U}_R\)。
 pub fn first_order_interior_flux_jacobian(
     left: &ConservedState,
@@ -81,6 +105,51 @@ pub fn first_order_interior_flux_jacobian(
             "解析面块 Jacobian 暂仅支持 first_order Roe / HanelVanLeer".to_string(),
         )),
     }
+}
+
+fn first_order_interior_flux_jacobian_precond(
+    left: &ConservedState,
+    right: &ConservedState,
+    prim_l: &PrimitiveState,
+    prim_r: &PrimitiveState,
+    normal: Vector3,
+    eos: &IdealGasEoS,
+    config: &InviscidFluxConfig,
+    beta: Real,
+) -> Result<(ConservedFluxJacobian, ConservedFluxJacobian)> {
+    match config.scheme {
+        FluxScheme::Roe(roe_cfg) => roe_interior_flux_jacobian_precond(
+            left, right, prim_l, prim_r, normal, eos, &roe_cfg, beta,
+        ),
+        FluxScheme::HanelVanLeer => {
+            first_order_interior_flux_jacobian(left, right, prim_l, prim_r, normal, eos, config)
+        }
+        _ => Err(AsimuError::Config(
+            "预处理面块 Jacobian 暂仅支持 first_order Roe".to_string(),
+        )),
+    }
+}
+
+fn roe_interior_flux_jacobian_precond(
+    left: &ConservedState,
+    right: &ConservedState,
+    prim_l: &PrimitiveState,
+    prim_r: &PrimitiveState,
+    normal: Vector3,
+    eos: &IdealGasEoS,
+    roe_cfg: &RoeFluxConfig,
+    beta: Real,
+) -> Result<(ConservedFluxJacobian, ConservedFluxJacobian)> {
+    let abs_a = roe_absolute_flux_jacobian_frozen_precond(
+        left, right, prim_l, prim_r, normal, eos, roe_cfg, beta,
+    )?;
+    let a_l = physical_inviscid_flux_jacobian_conserved(left, prim_l, normal, eos.gamma);
+    let a_r = physical_inviscid_flux_jacobian_conserved(right, prim_r, normal, eos.gamma);
+    let abs_j = matrix_to_jacobian(abs_a);
+    Ok((
+        a_l.add_jacobian(abs_j).scale(0.5),
+        a_r.add_jacobian(abs_j.scale(-1.0)).scale(0.5),
+    ))
 }
 
 fn roe_interior_flux_jacobian(

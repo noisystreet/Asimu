@@ -193,3 +193,53 @@ fn hanel_flux_jacobian_matches_finite_difference() {
     assert_jacobian_close(d_fl.data, fd_left, 0.15);
     assert_jacobian_close(d_fr.data, fd_right, 0.15);
 }
+
+#[test]
+fn roe_preconditioned_jacobian_reduces_acoustic_block_at_low_mach() {
+    let eos = IdealGasEoS::new(1.4, 287.0).expect("eos");
+    let normal = Vector3::new(1.0, 0.0, 0.0);
+    let config = InviscidFluxConfig::roe_first_order();
+    let prim = PrimitiveState {
+        density: 1.0,
+        pressure: 101_325.0,
+        velocity: [10.0, 0.0, 0.0],
+        temperature: 300.0,
+    };
+    let left = ConservedState::from_primitive(&eos, &prim).expect("left");
+    let right = left;
+    let (d_phys, _) =
+        first_order_interior_flux_jacobian(&left, &right, &prim, &prim, normal, &eos, &config)
+            .expect("phys");
+    let lm = crate::solver::time::LowMachPreconditioningConfig {
+        mach_cutoff: 0.1,
+        max_mach: 0.3,
+        blend: crate::solver::time::LowMachBlend::Smooth,
+        jacobian: true,
+    };
+    let (d_pre, _) = first_order_interior_flux_jacobian_with_low_mach(
+        &left,
+        &right,
+        &prim,
+        &prim,
+        normal,
+        &eos,
+        &config,
+        Some(lm),
+    )
+    .expect("pre");
+    let norm_phys: Real = d_phys
+        .data
+        .iter()
+        .flatten()
+        .map(|v| v * v)
+        .sum::<Real>()
+        .sqrt();
+    let norm_pre: Real = d_pre
+        .data
+        .iter()
+        .flatten()
+        .map(|v| v * v)
+        .sum::<Real>()
+        .sqrt();
+    assert!(norm_pre < norm_phys);
+}

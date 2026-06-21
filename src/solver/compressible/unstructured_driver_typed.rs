@@ -34,7 +34,7 @@ use unstructured_explicit_typed::{
 };
 use unstructured_gmres_typed::advance_unstructured_gmres_typed;
 use unstructured_lusgs_typed::{
-    UnstructuredLusgsDiagonalUpdate, UnstructuredLusgsSweep, UnstructuredLusgsSweepContext,
+    UnstructuredLusgsDiagonalUpdate, UnstructuredLusgsSweep, run_unstructured_lusgs_sweep_typed,
 };
 pub(crate) use unstructured_prepare_timestep_typed::{
     UnstructuredCudaPrepareSync, UnstructuredSpectralRadiusAtPrepare,
@@ -460,23 +460,7 @@ fn advance_unstructured_lusgs_typed<T: UnstructuredComputeBackend>(
     }
     work.density_rms_after_rhs = Some(T::step_density_residual_rms(work)?);
     if lu_sgs.sweep {
-        let _span = info_span!(
-            "unstructured_lusgs_sweep_typed",
-            precision = T::PRECISION.label(),
-        )
-        .entered();
-        T::run_lusgs_sweep(
-            fields,
-            work,
-            &UnstructuredLusgsSweepContext {
-                env,
-                p_floor,
-                sweep: true,
-                omega: lu_sgs.omega,
-                backward_damping: lu_sgs.sweep_backward_damping,
-                inv_dt_phys: 0.0,
-            },
-        )?;
+        run_unstructured_lusgs_sweep_typed::<T>(env, fields, work, p_floor, lu_sgs)?;
     } else {
         {
             let _span = info_span!("unstructured_lusgs_diagonal_update_typed").entered();

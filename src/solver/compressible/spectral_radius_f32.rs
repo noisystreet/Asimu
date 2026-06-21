@@ -25,21 +25,7 @@ pub fn face_spectral_radius_f32(
     0.5 * (lam_l + lam_r)
 }
 
-/// 低马赫预处理法向谱半径（f32）：声速项按 \(\beta=\max(M, M_{\text{cut}})\) 缩放。
-#[must_use]
-pub fn face_spectral_radius_f32_preconditioned(
-    left: FacePrimitiveLaneF32,
-    right: FacePrimitiveLaneF32,
-    normal: [f32; 3],
-    gamma: f32,
-    mach_cutoff: f32,
-) -> f32 {
-    let lam_l = normal_speed_plus_scaled_sound_f32(left, normal, gamma, mach_cutoff);
-    let lam_r = normal_speed_plus_scaled_sound_f32(right, normal, gamma, mach_cutoff);
-    0.5 * (lam_l + lam_r)
-}
-
-/// 按配置选择常规或低马赫预处理面谱半径（f32；P2 与对角 \(\sigma^\text{LM}\) 一致）。
+/// 按配置选择常规或低马赫预处理面谱半径（f32；P2–P3 与对角 \(\sigma^\text{LM}\) 一致）。
 #[must_use]
 pub(crate) fn face_spectral_radius_f32_with_low_mach(
     left: FacePrimitiveLaneF32,
@@ -48,16 +34,9 @@ pub(crate) fn face_spectral_radius_f32_with_low_mach(
     gamma: f32,
     low_mach: Option<crate::solver::time::LowMachPreconditioningConfig>,
 ) -> f32 {
-    match low_mach {
-        Some(cfg) => face_spectral_radius_f32_preconditioned(
-            left,
-            right,
-            normal,
-            gamma,
-            cfg.mach_cutoff as f32,
-        ),
-        None => face_spectral_radius_f32(left, right, normal, gamma),
-    }
+    super::low_mach_face_spectral::face_spectral_radius_f32_with_low_mach_unified(
+        left, right, normal, gamma, low_mach,
+    )
 }
 
 fn normal_speed_plus_sound_f32(
@@ -71,22 +50,6 @@ fn normal_speed_plus_sound_f32(
     let u_n = velocity[0] * normal[0] + velocity[1] * normal[1] + velocity[2] * normal[2];
     let a = (gamma * pressure.max(1.0e-30_f32) / rho).sqrt();
     u_n.abs() + a
-}
-
-fn normal_speed_plus_scaled_sound_f32(
-    prim: FacePrimitiveLaneF32,
-    normal: [f32; 3],
-    gamma: f32,
-    mach_cutoff: f32,
-) -> f32 {
-    let rho = prim.rho.max(1.0e-30_f32);
-    let vel = prim.velocity;
-    let speed = (vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2]).sqrt();
-    let u_n = vel[0] * normal[0] + vel[1] * normal[1] + vel[2] * normal[2];
-    let a = (gamma * prim.pressure.max(1.0e-30_f32) / rho).sqrt();
-    let mach = if a > 0.0 { speed / a } else { 0.0 };
-    let beta = mach.max(mach_cutoff).min(1.0);
-    u_n.abs() + beta * a
 }
 
 /// 每单元 \(\max(\nu,\alpha)\)（f32 原始变量；输运系数边界转 Real 一次）。

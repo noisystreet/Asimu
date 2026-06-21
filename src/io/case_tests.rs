@@ -293,11 +293,17 @@ scheme = "lu_sgs"
 local_time_step = true
 low_mach_preconditioning = true
 low_mach_mach_cutoff = 0.08
+low_mach_max_mach = 0.25
+low_mach_blend = "hard_cut"
+low_mach_jacobian = true
 max_steps = 10
 "#;
     let case = parse_case_toml(content, None).expect("parse");
     let cfg = case.time.low_mach_preconditioning.expect("low mach cfg");
     assert!((cfg.mach_cutoff - 0.08).abs() < 1.0e-12);
+    assert!((cfg.max_mach - 0.25).abs() < 1.0e-12);
+    assert_eq!(cfg.blend, crate::solver::time::LowMachBlend::HardCut);
+    assert!(cfg.jacobian);
 }
 
 #[test]

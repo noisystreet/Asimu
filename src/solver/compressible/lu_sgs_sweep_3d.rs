@@ -13,11 +13,11 @@ use crate::field::{ConservedFields, ConservedResidual, PrimitiveFields};
 use crate::mesh::StructuredMesh3d;
 use crate::physics::IdealGasEoS;
 
+use crate::solver::compressible::low_mach_face_spectral::face_spectral_radius_with_low_mach;
 use crate::solver::compressible::lu_sgs_common::{
     LuSgsSweepScalars, apply_limited_cell_increment, conserved_vector, implicit_scale,
     refresh_primitive_at_cell, residual_cell_vector, scale_source, stabilize_sweep_update,
 };
-use crate::solver::compressible::spectral_radius::face_spectral_radius;
 
 /// LU-SGS 扫掠参数。
 pub struct LuSgsSweep3dParams<'a> {
@@ -27,6 +27,7 @@ pub struct LuSgsSweep3dParams<'a> {
     pub min_pressure: Real,
     /// 后扫邻居耦合阻尼 \(\in(0,1]\)。
     pub backward_damping: Real,
+    pub low_mach_preconditioning: Option<crate::solver::time::LowMachPreconditioningConfig>,
 }
 
 /// LU-SGS 双扫：前向 (+i,+j,+k) 与后向 (−i,−j,−k)，含稳定化。
@@ -99,7 +100,15 @@ fn forward_cell_coupling_sweep(
                     add_coupling_delta(
                         &mut source,
                         mesh.cell_index(i - 1, j, k),
-                        i_face_lambda(mesh, params.primitives, params.eos.gamma, i - 1, j, k)?,
+                        i_face_lambda(
+                            mesh,
+                            params.primitives,
+                            params.eos.gamma,
+                            params.low_mach_preconditioning,
+                            i - 1,
+                            j,
+                            k,
+                        )?,
                         mesh.i_face_metric(i - 1, j, k).area,
                         scalars.volumes[idx],
                         fields,
@@ -110,7 +119,15 @@ fn forward_cell_coupling_sweep(
                     add_coupling_delta(
                         &mut source,
                         mesh.cell_index(i, j - 1, k),
-                        j_face_lambda(mesh, params.primitives, params.eos.gamma, i, j - 1, k)?,
+                        j_face_lambda(
+                            mesh,
+                            params.primitives,
+                            params.eos.gamma,
+                            params.low_mach_preconditioning,
+                            i,
+                            j - 1,
+                            k,
+                        )?,
                         mesh.j_face_metric(i, j - 1, k).area,
                         scalars.volumes[idx],
                         fields,
@@ -121,7 +138,15 @@ fn forward_cell_coupling_sweep(
                     add_coupling_delta(
                         &mut source,
                         mesh.cell_index(i, j, k - 1),
-                        k_face_lambda(mesh, params.primitives, params.eos.gamma, i, j, k - 1)?,
+                        k_face_lambda(
+                            mesh,
+                            params.primitives,
+                            params.eos.gamma,
+                            params.low_mach_preconditioning,
+                            i,
+                            j,
+                            k - 1,
+                        )?,
                         mesh.k_face_metric(i, j, k - 1).area,
                         scalars.volumes[idx],
                         fields,
@@ -165,7 +190,15 @@ fn backward_cell_coupling_sweep(
                     add_coupling_delta(
                         &mut source,
                         mesh.cell_index(i + 1, j, k),
-                        i_face_lambda(mesh, params.primitives, params.eos.gamma, i, j, k)?,
+                        i_face_lambda(
+                            mesh,
+                            params.primitives,
+                            params.eos.gamma,
+                            params.low_mach_preconditioning,
+                            i,
+                            j,
+                            k,
+                        )?,
                         mesh.i_face_metric(i, j, k).area,
                         scalars.volumes[idx],
                         fields,
@@ -176,7 +209,15 @@ fn backward_cell_coupling_sweep(
                     add_coupling_delta(
                         &mut source,
                         mesh.cell_index(i, j + 1, k),
-                        j_face_lambda(mesh, params.primitives, params.eos.gamma, i, j, k)?,
+                        j_face_lambda(
+                            mesh,
+                            params.primitives,
+                            params.eos.gamma,
+                            params.low_mach_preconditioning,
+                            i,
+                            j,
+                            k,
+                        )?,
                         mesh.j_face_metric(i, j, k).area,
                         scalars.volumes[idx],
                         fields,
@@ -187,7 +228,15 @@ fn backward_cell_coupling_sweep(
                     add_coupling_delta(
                         &mut source,
                         mesh.cell_index(i, j, k + 1),
-                        k_face_lambda(mesh, params.primitives, params.eos.gamma, i, j, k)?,
+                        k_face_lambda(
+                            mesh,
+                            params.primitives,
+                            params.eos.gamma,
+                            params.low_mach_preconditioning,
+                            i,
+                            j,
+                            k,
+                        )?,
                         mesh.k_face_metric(i, j, k).area,
                         scalars.volumes[idx],
                         fields,
@@ -233,17 +282,19 @@ fn i_face_lambda(
     mesh: &StructuredMesh3d,
     prim: &PrimitiveFields,
     gamma: Real,
+    low_mach: Option<crate::solver::time::LowMachPreconditioningConfig>,
     i: usize,
     j: usize,
     k: usize,
 ) -> Result<Real> {
     let owner = mesh.cell_index(i, j, k);
     let neighbor = mesh.cell_index(i + 1, j, k);
-    Ok(face_spectral_radius(
+    Ok(face_spectral_radius_with_low_mach(
         &prim.cell_primitive(owner),
         &prim.cell_primitive(neighbor),
         mesh.i_face_metric(i, j, k).normal,
         gamma,
+        low_mach,
     ))
 }
 
@@ -251,17 +302,19 @@ fn j_face_lambda(
     mesh: &StructuredMesh3d,
     prim: &PrimitiveFields,
     gamma: Real,
+    low_mach: Option<crate::solver::time::LowMachPreconditioningConfig>,
     i: usize,
     j: usize,
     k: usize,
 ) -> Result<Real> {
     let owner = mesh.cell_index(i, j, k);
     let neighbor = mesh.cell_index(i, j + 1, k);
-    Ok(face_spectral_radius(
+    Ok(face_spectral_radius_with_low_mach(
         &prim.cell_primitive(owner),
         &prim.cell_primitive(neighbor),
         mesh.j_face_metric(i, j, k).normal,
         gamma,
+        low_mach,
     ))
 }
 
@@ -269,17 +322,19 @@ fn k_face_lambda(
     mesh: &StructuredMesh3d,
     prim: &PrimitiveFields,
     gamma: Real,
+    low_mach: Option<crate::solver::time::LowMachPreconditioningConfig>,
     i: usize,
     j: usize,
     k: usize,
 ) -> Result<Real> {
     let owner = mesh.cell_index(i, j, k);
     let neighbor = mesh.cell_index(i, j, k + 1);
-    Ok(face_spectral_radius(
+    Ok(face_spectral_radius_with_low_mach(
         &prim.cell_primitive(owner),
         &prim.cell_primitive(neighbor),
         mesh.k_face_metric(i, j, k).normal,
         gamma,
+        low_mach,
     ))
 }
 
@@ -329,6 +384,7 @@ mod tests {
             primitives: &mut primitives,
             min_pressure,
             backward_damping: 0.5,
+            low_mach_preconditioning: None,
         };
         lu_sgs_sweep_3d(
             &mut fields,
